@@ -10,7 +10,7 @@ customize it to your needs
 ## Quickstart
 
 ```
-git clone
+git clone https://github.com/gosom/google-maps-scraper.git
 cd google-maps-scraper
 go mod download
 go build
