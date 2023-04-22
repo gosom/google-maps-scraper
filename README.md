@@ -11,6 +11,20 @@ customize it to your needs
 
 ## Quickstart
 
+### Using docker:
+
+```
+touch results.csv && docker run -v $PWD/example-queries.txt:/example-queries -v $PWD/results.csv:/results.csv gosom/google-maps-scraper -depth 1 -input /example-queries -results /results.csv
+```
+
+file `results.csv` will contain the parsed results.
+
+
+### On your host
+
+(tested only on Ubuntu 22.04)
+
+
 ```
 git clone https://github.com/gosom/google-maps-scraper.git
 cd google-maps-scraper
@@ -27,6 +41,8 @@ a place page.
 For the initial searches it requires between 20-70 seconds. 
 
 The results are written when they arrive in the `results` file you specified
+
+### Command line options
 
 try `./google-maps-scraper -h` to see the command line options available:
 

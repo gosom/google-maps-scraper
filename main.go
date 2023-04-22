@@ -13,11 +13,20 @@ import (
 	"github.com/gosom/scrapemate"
 	"github.com/gosom/scrapemate/adapters/writers/csvwriter"
 	"github.com/gosom/scrapemate/scrapemateapp"
+	"github.com/playwright-community/playwright-go"
 
 	"github.com/gosom/google-maps-scraper/gmaps"
 )
 
 func main() {
+	// just install playwrighy
+	if os.Getenv("PLAYWRIGHT_INSTALL_ONLY") == "1" {
+		if err := installPlaywright(); err != nil {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
 	if err := run(); err != nil {
 		os.Stderr.WriteString(err.Error() + "\n")
 		os.Exit(1)
@@ -104,4 +113,8 @@ func createSeedJobs(r io.Reader, maxDepth int) (jobs []scrapemate.IJob, err erro
 		jobs = append(jobs, gmaps.NewGmapJob(query, maxDepth))
 	}
 	return jobs, scanner.Err()
+}
+
+func installPlaywright() error {
+	return playwright.Install()
 }
