@@ -1,6 +1,8 @@
 # Google maps scraper
 
-A command line google maps parser build using [scrapemate](https://github.com/gosom/scrapemate)
+A command line google maps parser build using 
+
+[scrapemate](https://github.com/gosom/scrapemate) web crawling framework.
 
 You can use this repository either as is, or you can use it's code as a base and
 customize it to your needs
