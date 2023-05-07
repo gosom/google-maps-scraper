@@ -16,19 +16,23 @@ type GmapJob struct {
 	scrapemate.Job
 
 	MaxDepth int
+	LangCode string
 }
 
-func NewGmapJob(query string, maxDepth int) *GmapJob {
+func NewGmapJob(langCode, query string, maxDepth int) *GmapJob {
 	query = url.QueryEscape(query)
 	job := GmapJob{
 		Job: scrapemate.Job{
 			Method:     "GET",
 			URL:        "https://www.google.com/maps/search/" + query,
+			UrlParams:  map[string]string{"hl": langCode},
 			MaxRetries: 3,
-			Priority:   0,
+			Priority:   1,
 		},
 		MaxDepth: maxDepth,
+		LangCode: langCode,
 	}
+
 	return &job
 }
 
@@ -45,7 +49,7 @@ func (j *GmapJob) Process(ctx context.Context, resp scrapemate.Response) (any, [
 	var next []scrapemate.IJob
 	doc.Find(`div[role='article']>a`).Each(func(i int, s *goquery.Selection) {
 		if href := s.AttrOr("href", ""); href != "" {
-			nextJob := NewPlaceJob(href)
+			nextJob := NewPlaceJob(j.LangCode, href)
 			next = append(next, nextJob)
 		}
 	})
@@ -53,35 +57,17 @@ func (j *GmapJob) Process(ctx context.Context, resp scrapemate.Response) (any, [
 	return nil, next, nil
 }
 
-func (j *GmapJob) BrowserActions(browser playwright.Browser) scrapemate.Response {
+func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scrapemate.Response {
 	var resp scrapemate.Response
-	bctx, err := browser.NewContext(playwright.BrowserNewContextOptions{})
-	if err != nil {
-		resp.Error = err
-		return resp
-	}
-	defer bctx.Close()
-
-	page, err := bctx.NewPage()
-	if err != nil {
-		resp.Error = err
-		return resp
-	}
-	defer page.Close()
-	if err := page.SetViewportSize(1920, 1080); err != nil {
-		resp.Error = err
-		return resp
-	}
-	pageResponse, err := page.Goto(j.GetURL(), playwright.PageGotoOptions{
-		WaitUntil: playwright.WaitUntilStateNetworkidle,
+	pageResponse, err := page.Goto(j.GetFullURL(), playwright.PageGotoOptions{
+		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
 	})
 	if err != nil {
 		resp.Error = err
 		return resp
 	}
 
-	// Now we need to click that we do not accept cookies.
-	if err := page.Click(`button[aria-label='Reject all']`); err != nil {
+	if err := clickRejectCookiesIfRequired(page); err != nil {
 		resp.Error = err
 		return resp
 	}
@@ -90,8 +76,6 @@ func (j *GmapJob) BrowserActions(browser playwright.Browser) scrapemate.Response
 		URL: "*@*",
 	})
 
-	page.WaitForTimeout(100)
-
 	resp.URL = pageResponse.URL()
 	resp.StatusCode = pageResponse.Status()
 	resp.Headers = make(http.Header, len(pageResponse.Headers()))
@@ -99,7 +83,7 @@ func (j *GmapJob) BrowserActions(browser playwright.Browser) scrapemate.Response
 		resp.Headers.Add(k, v)
 	}
 
-	_, err = scroll(page, j.MaxDepth)
+	_, err = scroll(ctx, page, j.MaxDepth)
 	if err != nil {
 		resp.Error = err
 		return resp
@@ -115,7 +99,22 @@ func (j *GmapJob) BrowserActions(browser playwright.Browser) scrapemate.Response
 	return resp
 }
 
-func scroll(page playwright.Page, maxDepth int) (int, error) {
+func clickRejectCookiesIfRequired(page playwright.Page) error {
+	// click the cookie reject button if exists
+	sel := `form[action="https://consent.google.com/save"]:first-of-type button:first-of-type`
+	el, err := page.WaitForSelector(sel, playwright.PageWaitForSelectorOptions{
+		Timeout: playwright.Float(500),
+	})
+	if err != nil {
+		return nil
+	}
+	if el == nil {
+		return nil
+	}
+	return el.Click()
+}
+
+func scroll(ctx context.Context, page playwright.Page, maxDepth int) (int, error) {
 	scrollSelector := `div[role='feed']`
 	expr := `async () => {
 		const el = document.querySelector("` + scrollSelector + `");
@@ -152,6 +151,11 @@ func scroll(page playwright.Page, maxDepth int) (int, error) {
 			break
 		}
 		currentScrollHeight = height
+		select {
+		case <-ctx.Done():
+			return currentScrollHeight, nil
+		default:
+		}
 
 		waitTime = waitTime * 1.5
 		if waitTime > 2000 {

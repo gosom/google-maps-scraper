@@ -14,13 +14,14 @@ type PlaceJob struct {
 	scrapemate.Job
 }
 
-func NewPlaceJob(u string) *PlaceJob {
+func NewPlaceJob(langCode, u string) *PlaceJob {
 	job := PlaceJob{
 		Job: scrapemate.Job{
 			Method:     "GET",
 			URL:        u,
+			UrlParams:  map[string]string{"hl": langCode},
 			MaxRetries: 3,
-			Priority:   1,
+			Priority:   0,
 		},
 	}
 	return &job
@@ -38,44 +39,25 @@ func (j *PlaceJob) Process(ctx context.Context, resp scrapemate.Response) (any, 
 	return entry, nil, err
 }
 
-func (j *PlaceJob) BrowserActions(browser playwright.Browser) scrapemate.Response {
+func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scrapemate.Response {
 	var resp scrapemate.Response
-	bctx, err := browser.NewContext(playwright.BrowserNewContextOptions{})
-	if err != nil {
-		resp.Error = err
-		return resp
-	}
-	defer bctx.Close()
-
-	page, err := bctx.NewPage()
-	if err != nil {
-		resp.Error = err
-		return resp
-	}
-	defer page.Close()
-	if err := page.SetViewportSize(1920, 1080); err != nil {
-		resp.Error = err
-		return resp
-	}
 	pageResponse, err := page.Goto(j.GetURL(), playwright.PageGotoOptions{
-		WaitUntil: playwright.WaitUntilStateNetworkidle,
+		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
 	})
 	if err != nil {
 		resp.Error = err
 		return resp
 	}
 
-	// Now we need to click that we do not accept cookies.
-	if err := page.Click(`button[aria-label='Reject all']`); err != nil {
+	if err := clickRejectCookiesIfRequired(page); err != nil {
 		resp.Error = err
 		return resp
 	}
 
 	page.WaitForNavigation(playwright.PageWaitForNavigationOptions{
-		URL: "*@*",
+		URL:     "*@*",
+		Timeout: playwright.Float(5000),
 	})
-
-	page.WaitForTimeout(100)
 
 	resp.URL = pageResponse.URL()
 	resp.StatusCode = pageResponse.Status()

@@ -42,12 +42,16 @@ func run() error {
 		maxDepth    int
 		inputFile   string
 		resultsFile string
+		langCode    string
+		debug       bool
 	)
 	flag.IntVar(&concurrency, "c", runtime.NumCPU()/2, "concurrency")
 	flag.StringVar(&cacheDir, "cache", "cache", "cache directory")
 	flag.IntVar(&maxDepth, "depth", 10, "max depth")
 	flag.StringVar(&resultsFile, "results", "stdout", "results file")
 	flag.StringVar(&inputFile, "input", "stdin", "input file")
+	flag.StringVar(&langCode, "lang", "en", "language code")
+	flag.BoolVar(&debug, "debug", false, "debug")
 	flag.Parse()
 
 	var input io.Reader
@@ -64,6 +68,7 @@ func run() error {
 	}
 
 	var resultsWriter io.Writer
+
 	switch resultsFile {
 	case "stdout":
 		resultsWriter = os.Stdout
@@ -82,35 +87,46 @@ func run() error {
 		csvWriter,
 	}
 
+	opts := []func(*scrapemateapp.Config) error{
+		//scrapemateapp.WithCache("leveldb", "cache"),
+		scrapemateapp.WithConcurrency(concurrency),
+	}
+
+	if debug {
+		opts = append(opts, scrapemateapp.WithJS(scrapemateapp.Headfull()))
+	} else {
+		opts = append(opts, scrapemateapp.WithJS())
+	}
+
 	cfg, err := scrapemateapp.NewConfig(
 		writers,
-		scrapemateapp.WithCache("leveldb", "cache"),
-		scrapemateapp.WithConcurrency(concurrency),
-		scrapemateapp.WithJS(),
+		opts...,
 	)
 	if err != nil {
 		return err
 	}
+
 	app, err := scrapemateapp.NewScrapeMateApp(cfg)
 	if err != nil {
 		return err
 	}
 
-	seedJobs, err := createSeedJobs(input, maxDepth)
+	seedJobs, err := createSeedJobs(langCode, input, maxDepth)
 	if err != nil {
 		return err
 	}
+
 	return app.Start(context.Background(), seedJobs...)
 }
 
-func createSeedJobs(r io.Reader, maxDepth int) (jobs []scrapemate.IJob, err error) {
+func createSeedJobs(langCode string, r io.Reader, maxDepth int) (jobs []scrapemate.IJob, err error) {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		query := strings.TrimSpace(scanner.Text())
 		if query == "" {
 			continue
 		}
-		jobs = append(jobs, gmaps.NewGmapJob(query, maxDepth))
+		jobs = append(jobs, gmaps.NewGmapJob(langCode, query, maxDepth))
 	}
 	return jobs, scanner.Err()
 }

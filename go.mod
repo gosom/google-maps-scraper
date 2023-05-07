@@ -5,7 +5,7 @@ go 1.20
 require (
 	github.com/PuerkitoBio/goquery v1.8.1
 	github.com/gosom/kit v0.0.0-20230309082109-543b32ac686a
-	github.com/gosom/scrapemate v0.2.1
+	github.com/gosom/scrapemate v0.3.0
 	github.com/playwright-community/playwright-go v0.2000.1
 	github.com/stretchr/testify v1.8.1
 )
