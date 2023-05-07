@@ -51,16 +51,33 @@ try `./google-maps-scraper -h` to see the command line options available:
         concurrency (default 4)
   -cache string
         cache directory (default "cache")
+  -debug
+        debug
   -depth int
         max depth (default 10)
   -input string
         input file (default "stdin")
+  -lang string
+        language code (default "en")
   -results string
         results file (default "stdout")
 ```
 
-`depth` is how much you allow the scraper to scroll in the search results. 
+`-c`: sets the concurrency. By default it uses half of the number of the CPUs detected
+
+
+`-cache`: sets the cache directory (no effect for the moment)
+
+`-debug`: Uses this to perform a headfull crawl (it will open a browser in your host)
+
+`-depth`: is how much you allow the scraper to scroll in the search results. 
 Experiment with that value a bit
+
+`-input`: the input file with the keywords to search (see example-queries.txt)
+
+`-lang`: is the language code to use for google (the `hl` urlparam). Default is `en`. For example use `de` for German or `el` for Greek.
+
+`-results`: is the path to write the results
 
 
 ## Extracted Data
