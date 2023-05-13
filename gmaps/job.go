@@ -7,7 +7,6 @@ import (
 	"net/url"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/gosom/kit/logging"
 	"github.com/gosom/scrapemate"
 	"github.com/playwright-community/playwright-go"
 )
@@ -21,13 +20,19 @@ type GmapJob struct {
 
 func NewGmapJob(langCode, query string, maxDepth int) *GmapJob {
 	query = url.QueryEscape(query)
+
+	const (
+		maxRetries = 3
+		prio       = 1
+	)
+
 	job := GmapJob{
 		Job: scrapemate.Job{
 			Method:     "GET",
 			URL:        "https://www.google.com/maps/search/" + query,
-			UrlParams:  map[string]string{"hl": langCode},
-			MaxRetries: 3,
-			Priority:   1,
+			URLParams:  map[string]string{"hl": langCode},
+			MaxRetries: maxRetries,
+			Priority:   prio,
 		},
 		MaxDepth: maxDepth,
 		LangCode: langCode,
@@ -40,45 +45,60 @@ func (j *GmapJob) UseInResults() bool {
 	return false
 }
 
-func (j *GmapJob) Process(ctx context.Context, resp scrapemate.Response) (any, []scrapemate.IJob, error) {
-	log := ctx.Value("log").(logging.Logger)
+func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, []scrapemate.IJob, error) {
+	log := scrapemate.GetLoggerFromContext(ctx)
+
 	doc, ok := resp.Document.(*goquery.Document)
 	if !ok {
 		return nil, nil, fmt.Errorf("could not convert to goquery document")
 	}
+
 	var next []scrapemate.IJob
+
 	doc.Find(`div[role='article']>a`).Each(func(i int, s *goquery.Selection) {
 		if href := s.AttrOr("href", ""); href != "" {
 			nextJob := NewPlaceJob(j.LangCode, href)
 			next = append(next, nextJob)
 		}
 	})
+
 	log.Info(fmt.Sprintf("%d places found", len(next)))
+
 	return nil, next, nil
 }
 
 func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scrapemate.Response {
 	var resp scrapemate.Response
+
 	pageResponse, err := page.Goto(j.GetFullURL(), playwright.PageGotoOptions{
 		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
 	})
+
 	if err != nil {
 		resp.Error = err
+
 		return resp
 	}
 
-	if err := clickRejectCookiesIfRequired(page); err != nil {
+	if err = clickRejectCookiesIfRequired(page); err != nil {
 		resp.Error = err
+
 		return resp
 	}
 
-	page.WaitForNavigation(playwright.PageWaitForNavigationOptions{
+	_, err = page.WaitForNavigation(playwright.PageWaitForNavigationOptions{
 		URL: "*@*",
 	})
+	if err != nil {
+		resp.Error = err
+
+		return resp
+	}
 
 	resp.URL = pageResponse.URL()
 	resp.StatusCode = pageResponse.Status()
 	resp.Headers = make(http.Header, len(pageResponse.Headers()))
+
 	for k, v := range pageResponse.Headers() {
 		resp.Headers.Add(k, v)
 	}
@@ -86,6 +106,7 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 	_, err = scroll(ctx, page, j.MaxDepth)
 	if err != nil {
 		resp.Error = err
+
 		return resp
 	}
 
@@ -94,6 +115,7 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 		resp.Error = err
 		return resp
 	}
+
 	resp.Body = []byte(body)
 
 	return resp
@@ -102,15 +124,20 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 func clickRejectCookiesIfRequired(page playwright.Page) error {
 	// click the cookie reject button if exists
 	sel := `form[action="https://consent.google.com/save"]:first-of-type button:first-of-type`
+
+	const timeout = 500
 	el, err := page.WaitForSelector(sel, playwright.PageWaitForSelectorOptions{
-		Timeout: playwright.Float(500),
+		Timeout: playwright.Float(timeout),
 	})
+
 	if err != nil {
 		return nil
 	}
+
 	if el == nil {
 		return nil
 	}
+
 	return el.Click()
 }
 
@@ -126,16 +153,25 @@ func scroll(ctx context.Context, page playwright.Page, maxDepth int) (int, error
   			}, %d);
 		});
 	}`
+
 	var currentScrollHeight int
 	// Scroll to the bottom of the page.
 	waitTime := 100.
 	cnt := 0
+
+	const (
+		timeout  = 500
+		maxWait2 = 2000
+	)
+
 	for i := 0; i < maxDepth; i++ {
 		cnt++
-		waitTime2 := 500 * cnt
-		if waitTime2 > 2000 {
-			waitTime2 = 2000
+		waitTime2 := timeout * cnt
+
+		if waitTime2 > timeout {
+			waitTime2 = maxWait2
 		}
+
 		// Scroll to the bottom of the page.
 		scrollHeight, err := page.Evaluate(fmt.Sprintf(expr, waitTime2))
 		if err != nil {
@@ -150,18 +186,23 @@ func scroll(ctx context.Context, page playwright.Page, maxDepth int) (int, error
 		if height == currentScrollHeight {
 			break
 		}
+
 		currentScrollHeight = height
+
 		select {
 		case <-ctx.Done():
 			return currentScrollHeight, nil
 		default:
 		}
 
-		waitTime = waitTime * 1.5
-		if waitTime > 2000 {
-			waitTime = 2000
+		waitTime *= 1.5
+
+		if waitTime > maxWait2 {
+			waitTime = maxWait2
 		}
-		page.WaitForTimeout(float64(waitTime))
+
+		page.WaitForTimeout(waitTime)
 	}
+
 	return cnt, nil
 }

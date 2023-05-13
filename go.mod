@@ -4,8 +4,7 @@ go 1.20
 
 require (
 	github.com/PuerkitoBio/goquery v1.8.1
-	github.com/gosom/kit v0.0.0-20230309082109-543b32ac686a
-	github.com/gosom/scrapemate v0.3.0
+	github.com/gosom/scrapemate v0.4.2
 	github.com/playwright-community/playwright-go v0.2000.1
 	github.com/stretchr/testify v1.8.1
 )
@@ -19,6 +18,7 @@ require (
 	github.com/go-playground/validator/v10 v10.11.1 // indirect
 	github.com/go-stack/stack v1.8.1 // indirect
 	github.com/golang/snappy v0.0.0-20180518054509-2e65f85255db // indirect
+	github.com/gosom/kit v0.0.0-20230309082109-543b32ac686a // indirect
 	github.com/leodido/go-urn v1.2.1 // indirect
 	github.com/mattn/go-colorable v0.1.12 // indirect
 	github.com/mattn/go-isatty v0.0.14 // indirect
@@ -33,3 +33,5 @@ require (
 	gopkg.in/square/go-jose.v2 v2.6.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+//replace github.com/gosom/scrapemate v0.4.1 => ../scrapemate

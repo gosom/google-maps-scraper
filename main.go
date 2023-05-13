@@ -19,23 +19,32 @@ import (
 )
 
 func main() {
-	// just install playwrighy
+	// just install playwright
 	if os.Getenv("PLAYWRIGHT_INSTALL_ONLY") == "1" {
 		if err := installPlaywright(); err != nil {
 			os.Exit(1)
 		}
+
 		os.Exit(0)
 	}
 
 	if err := run(); err != nil {
 		os.Stderr.WriteString(err.Error() + "\n")
+
 		os.Exit(1)
+
 		return
 	}
+
 	os.Exit(0)
 }
 
 func run() error {
+	const (
+		defaultDepth      = 10
+		defaultCPUDivider = 2
+	)
+
 	var (
 		concurrency int
 		cacheDir    string
@@ -45,16 +54,19 @@ func run() error {
 		langCode    string
 		debug       bool
 	)
-	flag.IntVar(&concurrency, "c", runtime.NumCPU()/2, "concurrency")
+
+	flag.IntVar(&concurrency, "c", runtime.NumCPU()/defaultCPUDivider, "concurrency")
 	flag.StringVar(&cacheDir, "cache", "cache", "cache directory")
-	flag.IntVar(&maxDepth, "depth", 10, "max depth")
+	flag.IntVar(&maxDepth, "depth", defaultDepth, "max depth")
 	flag.StringVar(&resultsFile, "results", "stdout", "results file")
 	flag.StringVar(&inputFile, "input", "stdin", "input file")
 	flag.StringVar(&langCode, "lang", "en", "language code")
 	flag.BoolVar(&debug, "debug", false, "debug")
+
 	flag.Parse()
 
 	var input io.Reader
+
 	switch inputFile {
 	case "stdin":
 		input = os.Stdin
@@ -63,7 +75,9 @@ func run() error {
 		if err != nil {
 			return err
 		}
+
 		defer f.Close()
+
 		input = f
 	}
 
@@ -77,7 +91,9 @@ func run() error {
 		if err != nil {
 			return err
 		}
+
 		defer f.Close()
+
 		resultsWriter = f
 	}
 
@@ -88,7 +104,7 @@ func run() error {
 	}
 
 	opts := []func(*scrapemateapp.Config) error{
-		//scrapemateapp.WithCache("leveldb", "cache"),
+		// scrapemateapp.WithCache("leveldb", "cache"),
 		scrapemateapp.WithConcurrency(concurrency),
 	}
 
@@ -121,13 +137,16 @@ func run() error {
 
 func createSeedJobs(langCode string, r io.Reader, maxDepth int) (jobs []scrapemate.IJob, err error) {
 	scanner := bufio.NewScanner(r)
+
 	for scanner.Scan() {
 		query := strings.TrimSpace(scanner.Text())
 		if query == "" {
 			continue
 		}
+
 		jobs = append(jobs, gmaps.NewGmapJob(langCode, query, maxDepth))
 	}
+
 	return jobs, scanner.Err()
 }
 

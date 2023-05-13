@@ -1,0 +1,24 @@
+repos:
+-   repo: local
+    hooks:
+    - id: gobuild
+      name: gobuild
+      entry: go build -v -o /dev/null ./...
+      language: golang
+      types: [go]
+      require_serial: true
+      pass_filenames: false
+    - id: golangci-lint
+      name: golangci-lint
+      entry: golangci-lint -v run
+      language: golang
+      types: [go]
+      require_serial: true
+      pass_filenames: false
+    - id: gotest
+      name: gotest
+      entry: go test -v -race ./...
+      language: golang
+      types: [go]
+      require_serial: true
+      pass_filenames: false

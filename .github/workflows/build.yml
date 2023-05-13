@@ -28,8 +28,16 @@ jobs:
           go-version: ${{ matrix.go }}
           check-latest: true
 
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: v1.52
+
       - name: Go Format
         run: gofmt -s -w . && git diff --exit-code
+
+      - name: Lint
+        run: make lint
 
       - name: Go Vet
         run: go vet ./...
