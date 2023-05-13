@@ -35,11 +35,6 @@ go build
 
 Be a little bit patient. In the first run it downloads required libraries.
 
-In general perfomance can be better. Right, now it requires between 5-15 seconds to fetch and parse 
-a place page.
-
-For the initial searches it requires between 15-30 seconds. 
-
 The results are written when they arrive in the `results` file you specified
 
 ### Command line options
@@ -91,6 +86,25 @@ Experiment with that value a bit
 - PlusCode: the plus code of the business
 - ReviewCount: the number of reviews
 - ReviewRating: the rating of the results
+
+## Perfomance
+
+At the moment when you run it with concurrency 4 and with depth 10 it takes around:
+
+around 30 seconds to scrape each search
+
+and around 8 seconds to scrape each business listing
+
+So assuming that depth 10 contains 100 listings then for each search keyword 
+we expect: 30 + 100*8 = 330 seconds. 
+
+If we have 1000 keywords to search we expect in total: 1000 *330 = 330000 seconds ~ 92 hours ~ 4 days
+
+One way to speedup is to split your keywords and deploy this in multiple machines for each keyword set. 
+
+It is planned that scrapemate can autoscale at some point in the future. 
+If you like to help here please create an issue so we work together on this
+
 
 ## Licence
 
