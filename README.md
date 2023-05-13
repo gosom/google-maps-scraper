@@ -35,10 +35,10 @@ go build
 
 Be a little bit patient. In the first run it downloads required libraries.
 
-In general perfomance can be better. Right, now it requires between 8-20 seconds to fetch and parse 
+In general perfomance can be better. Right, now it requires between 5-15 seconds to fetch and parse 
 a place page.
 
-For the initial searches it requires between 20-70 seconds. 
+For the initial searches it requires between 15-30 seconds. 
 
 The results are written when they arrive in the `results` file you specified
 
