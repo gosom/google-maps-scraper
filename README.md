@@ -176,6 +176,13 @@ If we have 1000 keywords to search we expect in total: 1000 *330 = 330000 second
 If you want to scrape multiple keywords then it's better to use the Database Provider in
 combination with Kubernetes for convenience
 
+## References
+
+For more instruction you may also read the following links
+
+- https://blog.gkomninos.com/how-to-extract-data-from-google-maps-using-golang
+- https://blog.gkomninos.com/distributed-google-maps-scraping
+
 
 ## Licence
 
