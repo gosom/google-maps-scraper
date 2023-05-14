@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/google/uuid"
 	"github.com/gosom/scrapemate"
 	"github.com/playwright-community/playwright-go"
 )
@@ -16,12 +17,13 @@ type PlaceJob struct {
 
 func NewPlaceJob(langCode, u string) *PlaceJob {
 	const (
-		defaultPrio       = 1
+		defaultPrio       = scrapemate.PriorityHigh
 		defaultMaxRetries = 3
 	)
 
 	job := PlaceJob{
 		Job: scrapemate.Job{
+			ID:         uuid.New().String(),
 			Method:     "GET",
 			URL:        u,
 			URLParams:  map[string]string{"hl": langCode},

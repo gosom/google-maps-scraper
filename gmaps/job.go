@@ -7,6 +7,7 @@ import (
 	"net/url"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/google/uuid"
 	"github.com/gosom/scrapemate"
 	"github.com/playwright-community/playwright-go"
 )
@@ -23,12 +24,13 @@ func NewGmapJob(langCode, query string, maxDepth int) *GmapJob {
 
 	const (
 		maxRetries = 3
-		prio       = 1
+		prio       = scrapemate.PriorityLow
 	)
 
 	job := GmapJob{
 		Job: scrapemate.Job{
-			Method:     "GET",
+			ID:         uuid.New().String(),
+			Method:     http.MethodGet,
 			URL:        "https://www.google.com/maps/search/" + query,
 			URLParams:  map[string]string{"hl": langCode},
 			MaxRetries: maxRetries,
