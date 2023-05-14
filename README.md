@@ -87,6 +87,79 @@ Experiment with that value a bit
 - ReviewCount: the number of reviews
 - ReviewRating: the rating of the results
 
+## Using Database Provider (postgreSQL)
+
+For running in your local machine:
+
+```
+docker-compose -f docker-compose.dev.yaml
+```
+
+The above starts a PostgreSQL contains and creates the required tables
+
+to access db:
+
+```
+psql -h localost -U postgres -d postgres
+```
+
+Password is `postgres`
+
+Then from your host run:
+
+```
+go run main.go -dsn "postgres://postgres:postgres@localhost:5432/postgres" -produce -input example-queries.txt --lang el
+```
+
+(configure your queries and the desired language)
+
+This will populate the table `gmaps_jobs` . 
+
+you may run the scraper using:
+
+```
+go run main.go -c 2 -depth 1 -dsn "postgres://postgres:postgres@localhost:5432/postgres"
+```
+
+If you have a database server and several machines you can start multiple instances of the scraper as above.
+
+### Kubernetes
+
+You may run the scraper in a kubernetes cluster. This helps to scale it easier.
+
+Assuming you have a kubernetes cluster and a database that is accessible from the cluster:
+
+1. First populate the database as shown above
+2. Create a deployment file `scraper.deployment`
+
+```
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: google-maps-scraper
+spec:
+  selector:
+    matchLabels:
+      app: google-maps-scraper
+  replicas: {NUM_OF_REPLICAS}
+  template:
+    metadata:
+      labels:
+        app: google-maps-scraper
+    spec:
+      containers:
+      - name: google-maps-scraper
+        image: gosom/google-maps-scraper:v0.9.3
+        imagePullPolicy: IfNotPresent
+        args: ["-c", "1", "-depth", "10", "-dsn", "postgres://{DBUSER}:{DBPASSWD@DBHOST}:{DBPORT}/{DBNAME}", "-lang", "{LANGUAGE_CODE}"]
+```
+
+Please replace the values or the command args accordingly 
+
+Note: Keep in mind that because the application starts a headless browser it requires CPU and memory. 
+Use an appropriate kubernetes cluster
+
+
 ## Perfomance
 
 At the moment when you run it with concurrency 4 and with depth 10 it takes around:
@@ -100,10 +173,8 @@ we expect: 30 + 100*8 = 330 seconds.
 
 If we have 1000 keywords to search we expect in total: 1000 *330 = 330000 seconds ~ 92 hours ~ 4 days
 
-One way to speedup is to split your keywords and deploy this in multiple machines for each keyword set. 
-
-It is planned that scrapemate can autoscale at some point in the future. 
-If you like to help here please create an issue so we work together on this
+If you want to scrape multiple keywords then it's better to use the Database Provider in
+combination with Kubernetes for convenience
 
 
 ## Licence
