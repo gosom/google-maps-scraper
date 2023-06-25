@@ -92,7 +92,7 @@ Experiment with that value a bit
 For running in your local machine:
 
 ```
-docker-compose -f docker-compose.dev.yaml
+docker-compose -f docker-compose.dev.yaml up -d
 ```
 
 The above starts a PostgreSQL contains and creates the required tables
