@@ -100,7 +100,7 @@ The above starts a PostgreSQL contains and creates the required tables
 to access db:
 
 ```
-psql -h localost -U postgres -d postgres
+psql -h localhost -U postgres -d postgres
 ```
 
 Password is `postgres`
