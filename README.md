@@ -9,6 +9,15 @@ A command line google maps parser build using
 You can use this repository either as is, or you can use it's code as a base and
 customize it to your needs
 
+## **Maintainers wanted**
+
+Google frequentyl changes the layout of the pages and the CSS selectors needs to be adjusted and I would like some help. 
+
+Please report if the tool is broken or even better make a Pull Request with the fix.
+
+Thanks
+
+
 ## Quickstart
 
 ### Using docker:
