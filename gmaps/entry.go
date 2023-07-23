@@ -43,7 +43,7 @@ func (e *Entry) CsvRow() []string {
 func EntryFromGoQuery(doc *goquery.Document) (Entry, error) {
 	var entry Entry
 
-	entry.Title = doc.Find("h1.fontHeadlineLarge").Text()
+	entry.Title = doc.Find("h1>span").First().Parent().Text()
 	entry.Category = doc.Find("button[jsaction='pane.rating.category']").Text()
 
 	el := doc.Find(`button[data-item-id="address"]`).First()
