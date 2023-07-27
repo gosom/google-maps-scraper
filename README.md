@@ -15,6 +15,8 @@ Google frequentyl changes the layout of the pages and the CSS selectors needs to
 
 Please report if the tool is broken or even better make a Pull Request with the fix.
 
+A small request please. If you use or like the program please ⭐ the repository, it may help to find some maintainers. 
+
 Thanks
 
 
