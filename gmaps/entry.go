@@ -2,6 +2,8 @@ package gmaps
 
 import (
 	"fmt"
+	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -18,6 +20,8 @@ type Entry struct {
 	PlusCode     string
 	ReviewCount  int
 	ReviewRating float64
+	Latitude     float64
+	Longtitude   float64
 }
 
 func (e *Entry) Validate() error {
@@ -33,11 +37,12 @@ func (e *Entry) Validate() error {
 }
 
 func (e *Entry) CsvHeaders() []string {
-	return []string{"title", "category", "address", "open_hours", "website", "phone", "plus_code", "review_count", "review_rating"}
+	return []string{"title", "category", "address", "open_hours", "website", "phone", "plus_code", "review_count", "review_rating", "latitude", "longitude"}
 }
 
 func (e *Entry) CsvRow() []string {
-	return []string{e.Title, e.Category, e.Address, e.OpenHours, e.WebSite, e.Phone, e.PlusCode, strconv.Itoa(e.ReviewCount), strconv.FormatFloat(e.ReviewRating, 'f', 2, 64)}
+	return []string{e.Title, e.Category, e.Address, e.OpenHours, e.WebSite, e.Phone, e.PlusCode, strconv.Itoa(e.ReviewCount), strconv.FormatFloat(e.ReviewRating, 'f', 2, 64),
+		fmt.Sprintf("%f", e.Latitude), fmt.Sprintf("%f", e.Longtitude)}
 }
 
 func EntryFromGoQuery(doc *goquery.Document) (Entry, error) {
@@ -88,11 +93,43 @@ func EntryFromGoQuery(doc *goquery.Document) (Entry, error) {
 
 	entry.ReviewCount = parseInt(el2.Text())
 
+	entry.Latitude, entry.Longtitude = extractLatLng(doc)
+
 	if err := entry.Validate(); err != nil {
 		return entry, err
 	}
 
 	return entry, nil
+}
+
+var coordsRegex = regexp.MustCompile(`@(-?\d+\.\d+),(-?\d+\.\d+)`)
+
+func extractLatLng(doc *goquery.Document) (float64, float64) {
+	sel := `div[guidedhelpid=gbsib]>a`
+	el := doc.Find(sel).First()
+
+	txt := el.AttrOr("href", "")
+	if txt == "" {
+		return 0, 0
+	}
+
+	u, err := url.Parse(txt)
+	if err != nil {
+		return 0, 0
+	}
+
+	con := u.Query().Get("continue")
+	if con == "" {
+		return 0, 0
+	}
+
+	matches := coordsRegex.FindStringSubmatch(con)
+
+	if len(matches) > 2 {
+		return parseFloat(matches[1]), parseFloat(matches[2])
+	}
+
+	return 0, 0
 }
 
 func parseInt(s string) int {

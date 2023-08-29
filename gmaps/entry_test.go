@@ -22,7 +22,10 @@ func Test_EntryFromGoQuery(t *testing.T) {
 		PlusCode:     "5987+WC Nicosia",
 		ReviewCount:  20,
 		ReviewRating: 4.7,
+		Latitude:     35.1585396,
+		Longtitude:   33.3653799,
 	}
+
 	entry, err := gmaps.EntryFromGoQuery(doc)
 	require.NoError(t, err)
 	require.Equal(t, expected.Title, entry.Title)
@@ -34,6 +37,8 @@ func Test_EntryFromGoQuery(t *testing.T) {
 	require.Equal(t, expected.PlusCode, entry.PlusCode)
 	require.Equal(t, expected.ReviewCount, entry.ReviewCount)
 	require.Equal(t, expected.ReviewRating, entry.ReviewRating)
+	require.Equal(t, expected.Latitude, entry.Latitude)
+	require.Equal(t, expected.Longtitude, entry.Longtitude)
 }
 
 func createGoQueryFromFile(t *testing.T, path string) *goquery.Document {

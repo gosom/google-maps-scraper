@@ -37,15 +37,17 @@ func (r *resultWriter) Run(ctx context.Context, in <-chan scrapemate.Result) err
 
 func (r *resultWriter) saveEntry(ctx context.Context, entry *gmaps.Entry) error {
 	q := `INSERT INTO results
-		(title, category, address, openhours, website, phone, pluscode, review_count, rating)
+		(title, category, address, openhours, website, phone, pluscode, review_count, rating,
+		latitude, longitude)
 		VALUES
-		($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT DO NOTHING
+		($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT DO NOTHING
 		`
 
 	rating := decimal.NewFromFloat(entry.ReviewRating)
 
 	_, err := r.db.ExecContext(ctx, q,
-		entry.Title, entry.Category, entry.Address, entry.OpenHours, entry.WebSite, entry.Phone, entry.PlusCode, entry.ReviewCount, rating,
+		entry.Title, entry.Category, entry.Address, entry.OpenHours, entry.WebSite,
+		entry.Phone, entry.PlusCode, entry.ReviewCount, rating, entry.Latitude, entry.Longtitude,
 	)
 
 	return err

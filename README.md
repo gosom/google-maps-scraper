@@ -95,8 +95,10 @@ Experiment with that value a bit
 - WebSite: the website of the business
 - Phone: the phone number of the business
 - PlusCode: the plus code of the business
-- ReviewCount: the number of reviews
-- ReviewRating: the rating of the results
+- ReviewCount: the number of reviews for the business
+- ReviewRating: the rating of the business
+- Latitude: the latitude of the business
+- Longtitude: the longitude of the business
 
 ## Using Database Provider (postgreSQL)
 
