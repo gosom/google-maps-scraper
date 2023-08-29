@@ -104,7 +104,7 @@ func EntryFromGoQuery(doc *goquery.Document) (Entry, error) {
 
 var coordsRegex = regexp.MustCompile(`@(-?\d+\.\d+),(-?\d+\.\d+)`)
 
-func extractLatLng(doc *goquery.Document) (float64, float64) {
+func extractLatLng(doc *goquery.Document) (lat, lon float64) {
 	sel := `div[guidedhelpid=gbsib]>a`
 	el := doc.Find(sel).First()
 
@@ -125,7 +125,8 @@ func extractLatLng(doc *goquery.Document) (float64, float64) {
 
 	matches := coordsRegex.FindStringSubmatch(con)
 
-	if len(matches) > 2 {
+	const expectedMatches = 2
+	if len(matches) > expectedMatches {
 		return parseFloat(matches[1]), parseFloat(matches[2])
 	}
 
