@@ -30,8 +30,6 @@ github.com/google/uuid v1.3.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+
 github.com/gorilla/websocket v1.4.2/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
 github.com/gosom/kit v0.0.0-20230309082109-543b32ac686a h1:5tcB33GTXm0pFUiEFpmE91tMsHQj+I+W7zubT8J/ugI=
 github.com/gosom/kit v0.0.0-20230309082109-543b32ac686a/go.mod h1:ngnWSsuBEpCA5Y43kZRa3x8RBYZZ4LDtvZHO4N5dHZ0=
-github.com/gosom/scrapemate v0.4.3 h1:aNLP1Hnm7on/CdlGfWn0SqtfTgaArr95bOqxDdb4P4I=
-github.com/gosom/scrapemate v0.4.3/go.mod h1:GMka6KvSZlOiY+9f21cwNgvgawMHjVANZ2uGsGtz2Ak=
 github.com/gosom/scrapemate v0.5.0 h1:PkFt1luxu7hvsMV4xq+rsx8W325tq5pVCDvrUrYC/fQ=
 github.com/gosom/scrapemate v0.5.0/go.mod h1:GMka6KvSZlOiY+9f21cwNgvgawMHjVANZ2uGsGtz2Ak=
 github.com/h2non/filetype v1.1.1/go.mod h1:319b3zT68BvV+WRj7cwy856M2ehB3HqNOt6sy1HndBY=
