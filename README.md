@@ -41,7 +41,7 @@ git clone https://github.com/gosom/google-maps-scraper.git
 cd google-maps-scraper
 go mod download
 go build
-./google-maps-scraper -input example-queries.txt -results restaurants-in-cyprus.csv
+./google-maps-scraper -input example-queries.txt -results restaurants-in-cyprus.csv -exit-on-inactivity 3m
 ```
 
 Be a little bit patient. In the first run it downloads required libraries.
