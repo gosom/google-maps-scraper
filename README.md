@@ -164,19 +164,14 @@ Use an appropriate kubernetes cluster
 
 ## Perfomance
 
-At the moment when you run it with concurrency 4 and with depth 10 it takes around:
+Expected speed with concurrency of 8 and depth 1 is 45 jobs/per minute.
+Each search is 1 job + the number or results it contains.
+Based on the above: 
+if we have 1000 keywords to search with each contains 10 results => 1000 * 10 = 10000 jobs.
+We expect this to take about 10000/45 ~ 222 minutes ~ 4 hours 
 
-around 30 seconds to scrape each search
-
-and around 8 seconds to scrape each business listing
-
-So assuming that depth 10 contains 100 listings then for each search keyword 
-we expect: 30 + 100*8 = 330 seconds. 
-
-If we have 1000 keywords to search we expect in total: 1000 *330 = 330000 seconds ~ 92 hours ~ 4 days
-
-If you want to scrape multiple keywords then it's better to use the Database Provider in
-combination with Kubernetes for convenience
+If you want to scrape many keywords then it's better to use the Database Provider in
+combination with Kubernetes for convenience and start multipe scrapers in more than 1 machines.
 
 ## References
 
