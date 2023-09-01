@@ -10,6 +10,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"time"
 
 	// postgres driver
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -97,6 +98,7 @@ func runFromLocalFile(ctx context.Context, args *arguments) error {
 	opts := []func(*scrapemateapp.Config) error{
 		// scrapemateapp.WithCache("leveldb", "cache"),
 		scrapemateapp.WithConcurrency(args.concurrency),
+		scrapemateapp.WithExitOnInactivity(args.exitOnInactivityDuration),
 	}
 
 	if args.debug {
@@ -148,6 +150,7 @@ func runFromDatabase(ctx context.Context, args *arguments) error {
 		// scrapemateapp.WithCache("leveldb", "cache"),
 		scrapemateapp.WithConcurrency(args.concurrency),
 		scrapemateapp.WithProvider(provider),
+		scrapemateapp.WithExitOnInactivity(args.exitOnInactivityDuration),
 	}
 
 	if args.debug {
@@ -223,15 +226,16 @@ func installPlaywright() error {
 }
 
 type arguments struct {
-	concurrency int
-	cacheDir    string
-	maxDepth    int
-	inputFile   string
-	resultsFile string
-	langCode    string
-	debug       bool
-	dsn         string
-	produceOnly bool
+	concurrency              int
+	cacheDir                 string
+	maxDepth                 int
+	inputFile                string
+	resultsFile              string
+	langCode                 string
+	debug                    bool
+	dsn                      string
+	produceOnly              bool
+	exitOnInactivityDuration time.Duration
 }
 
 func parseArgs() (args arguments) {
@@ -245,15 +249,16 @@ func parseArgs() (args arguments) {
 		defaultConcurency = 1
 	}
 
-	flag.IntVar(&args.concurrency, "c", defaultConcurency, "concurrency")
-	flag.StringVar(&args.cacheDir, "cache", "cache", "cache directory")
-	flag.IntVar(&args.maxDepth, "depth", defaultDepth, "max depth")
-	flag.StringVar(&args.resultsFile, "results", "stdout", "results file")
-	flag.StringVar(&args.inputFile, "input", "stdin", "input file")
-	flag.StringVar(&args.langCode, "lang", "en", "language code")
-	flag.BoolVar(&args.debug, "debug", false, "debug")
+	flag.IntVar(&args.concurrency, "c", defaultConcurency, "sets the concurrency. By default it is set to half of the number of CPUs")
+	flag.StringVar(&args.cacheDir, "cache", "cache", "sets the cache directory (no effect at the moment)")
+	flag.IntVar(&args.maxDepth, "depth", defaultDepth, "is how much you allow the scraper to scroll in the search results. Experiment with that value")
+	flag.StringVar(&args.resultsFile, "results", "stdout", "is the path to the file where the results will be written")
+	flag.StringVar(&args.inputFile, "input", "stdin", "is the path to the file where the queries are stored (one query per line). By default it reads from stdin")
+	flag.StringVar(&args.langCode, "lang", "en", "is the languate code to use for google (the hl urlparam).Default is en . For example use de for German or el for Greek")
+	flag.BoolVar(&args.debug, "debug", false, "Use this to perform a headfull crawl (it will open a browser window) [only when using without docker]")
 	flag.StringVar(&args.dsn, "dsn", "", "Use this if you want to use a database provider")
 	flag.BoolVar(&args.produceOnly, "produce", false, "produce seed jobs only (only valid with dsn)")
+	flag.DurationVar(&args.exitOnInactivityDuration, "exit-on-inactivity", 0, "program exits after this duration of inactivity(example value '5m')")
 
 	flag.Parse()
 

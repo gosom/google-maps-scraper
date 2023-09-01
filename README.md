@@ -25,7 +25,7 @@ Thanks
 ### Using docker:
 
 ```
-touch results.csv && docker run -v $PWD/example-queries.txt:/example-queries -v $PWD/results.csv:/results.csv gosom/google-maps-scraper -depth 1 -input /example-queries -results /results.csv
+touch results.csv && docker run -v $PWD/example-queries.txt:/example-queries -v $PWD/results.csv:/results.csv gosom/google-maps-scraper -depth 1 -input /example-queries -results /results.csv -exit-on-inactivity 3m
 ```
 
 file `results.csv` will contain the parsed results.
@@ -54,37 +54,26 @@ try `./google-maps-scraper -h` to see the command line options available:
 
 ```
   -c int
-        concurrency (default 4)
+        sets the concurrency. By default it is set to half of the number of CPUs (default 8)
   -cache string
-        cache directory (default "cache")
+        sets the cache directory (no effect at the moment) (default "cache")
   -debug
-        debug
+        Use this to perform a headfull crawl (it will open a browser window) [only when using without docker]
   -depth int
-        max depth (default 10)
+        is how much you allow the scraper to scroll in the search results. Experiment with that value (default 10)
+  -dsn string
+        Use this if you want to use a database provider
+  -exit-on-inactivity duration
+        program exits after this duration of inactivity
   -input string
-        input file (default "stdin")
+        is the path to the file where the queries are stored (one query per line). By default it reads from stdin (default "stdin")
   -lang string
-        language code (default "en")
+        is the languate code to use for google (the hl urlparam).Default is en . For example use de for German or el for Greek (default "en")
+  -produce
+        produce seed jobs only (only valid with dsn)
   -results string
-        results file (default "stdout")
+        is the path to the file where the results will be written (default "stdout")
 ```
-
-`-c`: sets the concurrency. By default it uses half of the number of the CPUs detected
-
-
-`-cache`: sets the cache directory (no effect for the moment)
-
-`-debug`: Uses this to perform a headfull crawl (it will open a browser in your host)
-
-`-depth`: is how much you allow the scraper to scroll in the search results. 
-Experiment with that value a bit
-
-`-input`: the input file with the keywords to search (see example-queries.txt)
-
-`-lang`: is the language code to use for google (the `hl` urlparam). Default is `en`. For example use `de` for German or `el` for Greek.
-
-`-results`: is the path to write the results
-
 
 ## Extracted Data
 
