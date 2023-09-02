@@ -59,7 +59,7 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 
 	doc.Find(`div[role=feed] div[jsaction]>a`).Each(func(i int, s *goquery.Selection) {
 		if href := s.AttrOr("href", ""); href != "" {
-			nextJob := NewPlaceJob(j.LangCode, href)
+			nextJob := NewPlaceJob(j.ID, j.LangCode, href)
 			next = append(next, nextJob)
 		}
 	})

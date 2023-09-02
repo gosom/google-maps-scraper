@@ -15,7 +15,7 @@ type PlaceJob struct {
 	scrapemate.Job
 }
 
-func NewPlaceJob(langCode, u string) *PlaceJob {
+func NewPlaceJob(parentID, langCode, u string) *PlaceJob {
 	const (
 		defaultPrio       = scrapemate.PriorityHigh
 		defaultMaxRetries = 3
@@ -24,6 +24,7 @@ func NewPlaceJob(langCode, u string) *PlaceJob {
 	job := PlaceJob{
 		Job: scrapemate.Job{
 			ID:         uuid.New().String(),
+			ParentID:   parentID,
 			Method:     "GET",
 			URL:        u,
 			URLParams:  map[string]string{"hl": langCode},
