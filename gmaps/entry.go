@@ -1,20 +1,19 @@
 package gmaps
 
 import (
+	"encoding/json"
 	"fmt"
-	"net/url"
-	"regexp"
-	"strconv"
-	"strings"
-
-	"github.com/PuerkitoBio/goquery"
+	"runtime/debug"
 )
 
 type Entry struct {
+	Link         string
+	Cid          string
 	Title        string
+	Categories   []string
 	Category     string
 	Address      string
-	OpenHours    string
+	OpenHours    map[string][]string
 	WebSite      string
 	Phone        string
 	PlusCode     string
@@ -22,6 +21,13 @@ type Entry struct {
 	ReviewRating float64
 	Latitude     float64
 	Longtitude   float64
+	Status       string
+	Description  string
+	ReviewsLink  string
+	Thumbnail    string
+	Timezone     string
+	PriceRange   string
+	DataID       string
 }
 
 func (e *Entry) Validate() error {
@@ -37,120 +43,183 @@ func (e *Entry) Validate() error {
 }
 
 func (e *Entry) CsvHeaders() []string {
-	return []string{"title", "category", "address", "open_hours", "website", "phone", "plus_code", "review_count", "review_rating", "latitude", "longitude"}
+	return []string{
+		"link",
+		"title",
+		"category",
+		"address",
+		"open_hours",
+		"website",
+		"phone",
+		"plus_code",
+		"review_count",
+		"review_rating",
+		"latitude",
+		"longitude",
+		"cid",
+		"status",
+		"descriptions",
+		"reviews_link",
+		"thumbnail",
+		"timezone",
+		"price_range",
+		"data_id",
+	}
 }
 
 func (e *Entry) CsvRow() []string {
-	return []string{e.Title, e.Category, e.Address, e.OpenHours, e.WebSite, e.Phone, e.PlusCode, strconv.Itoa(e.ReviewCount), strconv.FormatFloat(e.ReviewRating, 'f', 2, 64),
-		fmt.Sprintf("%f", e.Latitude), fmt.Sprintf("%f", e.Longtitude)}
+	return []string{
+		e.Link,
+		e.Title,
+		e.Category,
+		e.Address,
+		stringify(e.OpenHours),
+		e.WebSite,
+		e.Phone,
+		e.PlusCode,
+		stringify(e.ReviewCount),
+		stringify(e.ReviewRating),
+		stringify(e.Latitude),
+		stringify(e.Longtitude),
+		e.Cid,
+		e.Status,
+		e.Description,
+		e.ReviewsLink,
+		e.Thumbnail,
+		e.Timezone,
+		e.PriceRange,
+		e.DataID,
+	}
 }
 
-func EntryFromGoQuery(doc *goquery.Document) (Entry, error) {
-	var entry Entry
+//nolint:gomnd // it's ok, I need the indexes
+func EntryFromJSON(raw []byte) (entry Entry, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("recovered from panic: %v stack: %s", r, debug.Stack())
 
-	entry.Title = doc.Find("h1>span").First().Parent().Text()
-	entry.Category = doc.Find("button[jsaction='pane.rating.category']").Text()
+			return
+		}
+	}()
 
-	el := doc.Find(`button[data-item-id="address"]`).First()
-	txt := el.AttrOr("aria-label", "")
-	_, addr, ok := strings.Cut(txt, ":")
-
-	if ok {
-		entry.Address = strings.TrimSpace(addr)
-	}
-
-	sel := `div[jsaction^='pane.openhours']+div`
-	el = doc.Find(sel).First()
-	entry.OpenHours = el.AttrOr("aria-label", "")
-
-	sel = `a[aria-label^="Website:"]`
-	el = doc.Find(sel).First()
-	entry.WebSite = el.AttrOr("href", "")
-
-	sel = `button[aria-label^="Phone:"]`
-	el = doc.Find(sel).First()
-	txt = el.AttrOr("aria-label", "")
-	_, phone, ok := strings.Cut(txt, ":")
-
-	if ok {
-		entry.Phone = strings.ReplaceAll(phone, " ", "")
-	}
-
-	sel = `button[aria-label^="Plus code:"]`
-	el = doc.Find(sel).First()
-	txt = el.AttrOr("aria-label", "")
-	_, code, ok := strings.Cut(txt, ":")
-
-	if ok {
-		entry.PlusCode = strings.TrimSpace(code)
-	}
-
-	sel = `div[jsaction="pane.reviewChart.moreReviews"]>div:nth-child(2)`
-	el = doc.Find(sel).First()
-	el2 := el.Find(`div.fontDisplayLarge`).First()
-	entry.ReviewRating = parseFloat(el2.Text())
-	el2 = el.Find("button[jsaction='pane.reviewChart.moreReviews']>span").First()
-
-	entry.ReviewCount = parseInt(el2.Text())
-
-	entry.Latitude, entry.Longtitude = extractLatLng(doc)
-
-	if err := entry.Validate(); err != nil {
+	var jd []any
+	if err := json.Unmarshal(raw, &jd); err != nil {
 		return entry, err
 	}
+
+	if len(jd) < 7 {
+		return entry, fmt.Errorf("invalid json")
+	}
+
+	darray, ok := jd[6].([]any)
+	if !ok {
+		return entry, fmt.Errorf("invalid json")
+	}
+
+	entry.Link = getNthElementAndCast[string](darray, 27)
+	entry.Title = getNthElementAndCast[string](darray, 11)
+
+	categoriesI := getNthElementAndCast[[]any](darray, 13)
+
+	entry.Categories = make([]string, len(categoriesI))
+	for i := range categoriesI {
+		entry.Categories[i], _ = categoriesI[i].(string)
+	}
+
+	if len(entry.Categories) > 0 {
+		entry.Category = entry.Categories[0]
+	}
+
+	entry.Address = getNthElementAndCast[string](darray, 18)
+	entry.OpenHours = getHours(darray)
+	entry.WebSite = getNthElementAndCast[string](darray, 7, 0)
+	entry.Phone = getNthElementAndCast[string](darray, 178, 0, 0)
+	entry.PlusCode = getNthElementAndCast[string](darray, 183, 2, 2, 0)
+	entry.ReviewCount = int(getNthElementAndCast[float64](darray, 4, 8))
+	entry.ReviewRating = getNthElementAndCast[float64](darray, 4, 7)
+	entry.Latitude = getNthElementAndCast[float64](darray, 9, 2)
+	entry.Longtitude = getNthElementAndCast[float64](darray, 9, 3)
+	entry.Cid = getNthElementAndCast[string](jd, 25, 3, 0, 13, 0, 0, 1)
+	entry.Status = getNthElementAndCast[string](darray, 34, 4, 4)
+	entry.Description = getNthElementAndCast[string](darray, 32, 1, 1)
+	entry.ReviewsLink = getNthElementAndCast[string](darray, 4, 3, 0)
+	entry.Thumbnail = getNthElementAndCast[string](darray, 72, 0, 1, 6, 0)
+	entry.Timezone = getNthElementAndCast[string](darray, 30)
+	entry.PriceRange = getNthElementAndCast[string](darray, 4, 2)
+	entry.DataID = getNthElementAndCast[string](darray, 10)
 
 	return entry, nil
 }
 
-var coordsRegex = regexp.MustCompile(`@(-?\d+\.\d+),(-?\d+\.\d+)`)
+//nolint:gomnd // it's ok, I need the indexes
+func getHours(darray []any) map[string][]string {
+	items := getNthElementAndCast[[]any](darray, 34, 1)
+	hours := make(map[string][]string, len(items))
 
-func extractLatLng(doc *goquery.Document) (lat, lon float64) {
-	sel := `div[guidedhelpid=gbsib]>a`
-	el := doc.Find(sel).First()
+	for _, item := range items {
+		day := getNthElementAndCast[string](item.([]any), 0)
+		timesI := getNthElementAndCast[[]any](item.([]any), 1)
+		times := make([]string, len(timesI))
 
-	txt := el.AttrOr("href", "")
-	if txt == "" {
-		return 0, 0
+		for i := range timesI {
+			times[i], _ = timesI[i].(string)
+		}
+
+		hours[day] = times
 	}
 
-	u, err := url.Parse(txt)
-	if err != nil {
-		return 0, 0
-	}
-
-	con := u.Query().Get("continue")
-	if con == "" {
-		return 0, 0
-	}
-
-	matches := coordsRegex.FindStringSubmatch(con)
-
-	const expectedMatches = 2
-	if len(matches) > expectedMatches {
-		return parseFloat(matches[1]), parseFloat(matches[2])
-	}
-
-	return 0, 0
+	return hours
 }
 
-func parseInt(s string) int {
-	var i int
+func getNthElementAndCast[T any](arr []any, indexes ...int) T {
+	var (
+		defaultVal T
+		idx        int
+	)
 
-	_, err := fmt.Sscanf(s, "%d", &i)
-	if err != nil {
-		return 0
+	if len(indexes) == 0 {
+		return defaultVal
 	}
 
-	return i
+	for len(indexes) > 1 {
+		idx, indexes = indexes[0], indexes[1:]
+
+		if idx >= len(arr) {
+			return defaultVal
+		}
+
+		next := arr[idx]
+
+		if next == nil {
+			return defaultVal
+		}
+
+		var ok bool
+
+		arr, ok = next.([]any)
+		if !ok {
+			return defaultVal
+		}
+	}
+
+	ans, ok := arr[indexes[0]].(T)
+	if !ok {
+		return defaultVal
+	}
+
+	return ans
 }
 
-func parseFloat(s string) float64 {
-	var f float64
-
-	_, err := fmt.Sscanf(s, "%f", &f)
-	if err != nil {
-		return 0
+func stringify(v any) string {
+	switch val := v.(type) {
+	case string:
+		return val
+	case float64:
+		return fmt.Sprintf("%f", val)
+	case nil:
+		return ""
+	default:
+		d, _ := json.Marshal(v)
+		return string(d)
 	}
-
-	return f
 }

@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
-	"github.com/PuerkitoBio/goquery"
 	"github.com/google/uuid"
 	"github.com/gosom/scrapemate"
 	"github.com/playwright-community/playwright-go"
@@ -37,12 +37,12 @@ func NewPlaceJob(parentID, langCode, u string) *PlaceJob {
 }
 
 func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, []scrapemate.IJob, error) {
-	doc, ok := resp.Document.(*goquery.Document)
+	raw, ok := resp.Meta["json"].([]byte)
 	if !ok {
-		return nil, nil, fmt.Errorf("could not convert to goquery document")
+		return nil, nil, fmt.Errorf("could not convert to []byte")
 	}
 
-	entry, err := EntryFromGoQuery(doc)
+	entry, err := EntryFromJSON(raw)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -98,5 +98,36 @@ func (j *PlaceJob) BrowserActions(_ context.Context, page playwright.Page) scrap
 
 	resp.Body = []byte(body)
 
+	rawI, err := page.Evaluate(js)
+	if err != nil {
+		resp.Error = err
+
+		return resp
+	}
+
+	raw, ok := rawI.(string)
+	if !ok {
+		resp.Error = fmt.Errorf("could not convert to string")
+
+		return resp
+	}
+
+	const prefix = ")]}'"
+
+	raw = strings.TrimSpace(strings.TrimPrefix(raw, prefix))
+
+	if resp.Meta == nil {
+		resp.Meta = make(map[string]any)
+	}
+
+	resp.Meta["json"] = []byte(raw)
+
 	return resp
 }
+
+const js = `
+function parse() {
+  const inputString = window.APP_INITIALIZATION_STATE[3][6]
+  return inputString
+}
+`

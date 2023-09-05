@@ -10,37 +10,6 @@ import (
 	"github.com/gosom/google-maps-scraper/gmaps"
 )
 
-func Test_EntryFromGoQuery(t *testing.T) {
-	doc := createGoQueryFromFile(t, "../testdata/entry1.html")
-	expected := gmaps.Entry{
-		Title:        "Tipsy Sticks",
-		Category:     "Restaurant",
-		Address:      "Stasandrou 10, Nicosia 1060",
-		OpenHours:    `Saturday, 10 am to 1 am; Sunday, 10 am to 5 pm; Monday, Closed; Tuesday, 5 pm to 1 am; Wednesday, 5 pm to 1 am; Thursday, 5 pm to 1 am; Friday, 5 pm to 1 am. Hide open hours for the week`,
-		WebSite:      "https://www.thetipsysticks.com/",
-		Phone:        "22783333",
-		PlusCode:     "5987+WC Nicosia",
-		ReviewCount:  20,
-		ReviewRating: 4.7,
-		Latitude:     35.1585396,
-		Longtitude:   33.3653799,
-	}
-
-	entry, err := gmaps.EntryFromGoQuery(doc)
-	require.NoError(t, err)
-	require.Equal(t, expected.Title, entry.Title)
-	require.Equal(t, expected.Category, entry.Category)
-	require.Equal(t, expected.Address, entry.Address)
-	require.Equal(t, expected.OpenHours, entry.OpenHours)
-	require.Equal(t, expected.WebSite, entry.WebSite)
-	require.Equal(t, expected.Phone, entry.Phone)
-	require.Equal(t, expected.PlusCode, entry.PlusCode)
-	require.Equal(t, expected.ReviewCount, entry.ReviewCount)
-	require.Equal(t, expected.ReviewRating, entry.ReviewRating)
-	require.Equal(t, expected.Latitude, entry.Latitude)
-	require.Equal(t, expected.Longtitude, entry.Longtitude)
-}
-
 func createGoQueryFromFile(t *testing.T, path string) *goquery.Document {
 	t.Helper()
 
@@ -53,4 +22,61 @@ func createGoQueryFromFile(t *testing.T, path string) *goquery.Document {
 	require.NoError(t, err)
 
 	return doc
+}
+
+func Test_EntryFromJSON(t *testing.T) {
+	expected := gmaps.Entry{
+		Link:       "https://www.google.com/maps/place/Kipriakon/data=!4m2!3m1!1s0x14e732fd76f0d90d:0xe5415928d6702b47!10m1!1e1",
+		Title:      "Kipriakon",
+		Category:   "Restaurant",
+		Categories: []string{"Restaurant"},
+		Address:    "Kipriakon, Old port, Limassol 3042",
+		OpenHours: map[string][]string{
+			"Monday":    {"12:30–10 pm"},
+			"Tuesday":   {"12:30–10 pm"},
+			"Wednesday": {"12:30–10 pm"},
+			"Thursday":  {"12:30–10 pm"},
+			"Friday":    {"12:30–10 pm"},
+			"Saturday":  {"12:30–10 pm"},
+			"Sunday":    {"12:30–10 pm"},
+		},
+		WebSite:      "",
+		Phone:        "25 101555",
+		PlusCode:     "M2CR+6X Limassol",
+		ReviewCount:  396,
+		ReviewRating: 4.2,
+		Latitude:     34.670595399999996,
+		Longtitude:   33.042456699999995,
+		Cid:          "16519582940102929223",
+		Status:       "Closed ⋅ Opens 12:30\u202fpm Tue",
+		ReviewsLink:  "https://search.google.com/local/reviews?placeid=ChIJDdnwdv0y5xQRRytw1ihZQeU&q=Kipriakon&authuser=0&hl=en&gl=CY",
+		Thumbnail:    "https://lh5.googleusercontent.com/p/AF1QipP4Y7A8nYL3KKXznSl69pXSq9p2IXCYUjVvOh0F=w408-h408-k-no",
+		Timezone:     "Asia/Nicosia",
+		PriceRange:   "€€",
+		DataID:       "0x14e732fd76f0d90d:0xe5415928d6702b47",
+	}
+
+	raw, err := os.ReadFile("../testdata/raw.json")
+	require.NoError(t, err)
+	require.NotEmpty(t, raw)
+
+	entry, err := gmaps.EntryFromJSON(raw)
+	require.NoError(t, err)
+
+	require.Equal(t, expected, entry)
+}
+
+func Test_EntryFromJSON2(t *testing.T) {
+	fnames := []string{
+		"../testdata/panic.json",
+		"../testdata/panic2.json",
+	}
+	for _, fname := range fnames {
+		raw, err := os.ReadFile(fname)
+		require.NoError(t, err)
+		require.NotEmpty(t, raw)
+
+		_, err = gmaps.EntryFromJSON(raw)
+		require.NoError(t, err)
+	}
 }
