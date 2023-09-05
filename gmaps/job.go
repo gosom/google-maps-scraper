@@ -48,6 +48,11 @@ func (j *GmapJob) UseInResults() bool {
 }
 
 func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, []scrapemate.IJob, error) {
+	defer func() {
+		resp.Document = nil
+		resp.Body = nil
+	}()
+
 	log := scrapemate.GetLoggerFromContext(ctx)
 
 	doc, ok := resp.Document.(*goquery.Document)

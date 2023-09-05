@@ -37,6 +37,12 @@ func NewPlaceJob(parentID, langCode, u string) *PlaceJob {
 }
 
 func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, []scrapemate.IJob, error) {
+	defer func() {
+		resp.Document = nil
+		resp.Body = nil
+		resp.Meta = nil
+	}()
+
 	raw, ok := resp.Meta["json"].([]byte)
 	if !ok {
 		return nil, nil, fmt.Errorf("could not convert to []byte")
@@ -88,15 +94,6 @@ func (j *PlaceJob) BrowserActions(_ context.Context, page playwright.Page) scrap
 	for k, v := range pageResponse.Headers() {
 		resp.Headers.Add(k, v)
 	}
-
-	body, err := page.Content()
-	if err != nil {
-		resp.Error = err
-
-		return resp
-	}
-
-	resp.Body = []byte(body)
 
 	rawI, err := page.Evaluate(js)
 	if err != nil {
