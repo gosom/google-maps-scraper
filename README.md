@@ -2,23 +2,55 @@
 ![build](https://github.com/gosom/google-maps-scraper/actions/workflows/build.yml/badge.svg)
 [![Go Report Card](https://goreportcard.com/badge/github.com/gosom/google-maps-scraper)](https://goreportcard.com/report/github.com/gosom/google-maps-scraper)
 
-A command line google maps parser build using 
+A command line google maps scraper build using 
 
 [scrapemate](https://github.com/gosom/scrapemate) web crawling framework.
 
 You can use this repository either as is, or you can use it's code as a base and
 customize it to your needs
 
-## **Maintainers wanted**
+## Features
 
-Google frequentyl changes the layout of the pages and the CSS selectors needs to be adjusted and I would like some help. 
+- Extracts many data points from google maps
+- Exports the data to CSV, JSON or PostgreSQL 
+- Perfomance about 55 urls per minute (-depth 1 -c 8)
+- Extendable to write your own exporter
+- Dockerized for easy run in multiple platforms
+- Scalable in multiple machines
 
-Please report if the tool is broken or even better make a Pull Request with the fix.
+## Extracted Data Points
 
-A small request please. If you use or like the program please ⭐ the repository, it may help to find some maintainers. 
-
-Thanks
-
+```
+link
+title
+category
+address
+open_hours
+website
+phone
+plus_code
+review_count
+review_rating
+reviews_per_rating
+latitude
+longitude
+cid
+status
+descriptions
+reviews_link
+thumbnail
+timezone
+price_range
+data_id
+images
+reservations
+order_online
+menu
+owner
+complete_address
+about
+user_reviews
+```
 
 ## Quickstart
 
@@ -54,7 +86,7 @@ try `./google-maps-scraper -h` to see the command line options available:
 
 ```
   -c int
-        sets the concurrency. By default it is set to half of the number of CPUs (default 8)
+        sets the concurrency. By default it is set to half of the number of CPUs (default NUM_CPU)
   -cache string
         sets the cache directory (no effect at the moment) (default "cache")
   -debug
@@ -64,9 +96,11 @@ try `./google-maps-scraper -h` to see the command line options available:
   -dsn string
         Use this if you want to use a database provider
   -exit-on-inactivity duration
-        program exits after this duration of inactivity
+        program exits after this duration of inactivity(example value '5m')
   -input string
         is the path to the file where the queries are stored (one query per line). By default it reads from stdin (default "stdin")
+  -json
+        Use this to produce a json file instead of csv (not avalaible when using db)
   -lang string
         is the languate code to use for google (the hl urlparam).Default is en . For example use de for German or el for Greek (default "en")
   -produce
@@ -75,19 +109,6 @@ try `./google-maps-scraper -h` to see the command line options available:
         is the path to the file where the results will be written (default "stdout")
 ```
 
-## Extracted Data
-
-- Title: the title of the business
-- Category: the category of the business
-- Address: the address of the business
-- OpenHours: the opening hours of the business
-- WebSite: the website of the business
-- Phone: the phone number of the business
-- PlusCode: the plus code of the business
-- ReviewCount: the number of reviews for the business
-- ReviewRating: the rating of the business
-- Latitude: the latitude of the business
-- Longtitude: the longitude of the business
 
 ## Using Database Provider (postgreSQL)
 
@@ -164,11 +185,13 @@ Use an appropriate kubernetes cluster
 
 ## Perfomance
 
-Expected speed with concurrency of 8 and depth 1 is 45 jobs/per minute.
+Expected speed with concurrency of 8 and depth 1 is 55 jobs/per minute.
 Each search is 1 job + the number or results it contains.
+
 Based on the above: 
-if we have 1000 keywords to search with each contains 10 results => 1000 * 10 = 10000 jobs.
-We expect this to take about 10000/45 ~ 222 minutes ~ 4 hours 
+if we have 1000 keywords to search with each contains 16 results => 1000 * 10 = 16000 jobs.
+
+We expect this to take about 10000/55 ~ 291 minutes ~ 5 hours
 
 If you want to scrape many keywords then it's better to use the Database Provider in
 combination with Kubernetes for convenience and start multipe scrapers in more than 1 machines.
@@ -179,6 +202,7 @@ For more instruction you may also read the following links
 
 - https://blog.gkomninos.com/how-to-extract-data-from-google-maps-using-golang
 - https://blog.gkomninos.com/distributed-google-maps-scraping
+- https://github.com/omkarcloud/google-maps-scraper/tree/master (also a nice project) [many thanks for the idea to extract the data by utilizing the JS objects]
 
 
 ## Licence

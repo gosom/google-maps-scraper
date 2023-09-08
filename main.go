@@ -17,6 +17,7 @@ import (
 
 	"github.com/gosom/scrapemate"
 	"github.com/gosom/scrapemate/adapters/writers/csvwriter"
+	"github.com/gosom/scrapemate/adapters/writers/jsonwriter"
 	"github.com/gosom/scrapemate/scrapemateapp"
 	"github.com/playwright-community/playwright-go"
 
@@ -91,8 +92,12 @@ func runFromLocalFile(ctx context.Context, args *arguments) error {
 
 	csvWriter := csvwriter.NewCsvWriter(csv.NewWriter(resultsWriter))
 
-	writers := []scrapemate.ResultWriter{
-		csvWriter,
+	writers := []scrapemate.ResultWriter{}
+
+	if args.json {
+		writers = append(writers, jsonwriter.NewJSONWriter(resultsWriter))
+	} else {
+		writers = append(writers, csvWriter)
 	}
 
 	opts := []func(*scrapemateapp.Config) error{
@@ -231,6 +236,7 @@ type arguments struct {
 	maxDepth                 int
 	inputFile                string
 	resultsFile              string
+	json                     bool
 	langCode                 string
 	debug                    bool
 	dsn                      string
@@ -259,6 +265,7 @@ func parseArgs() (args arguments) {
 	flag.StringVar(&args.dsn, "dsn", "", "Use this if you want to use a database provider")
 	flag.BoolVar(&args.produceOnly, "produce", false, "produce seed jobs only (only valid with dsn)")
 	flag.DurationVar(&args.exitOnInactivityDuration, "exit-on-inactivity", 0, "program exits after this duration of inactivity(example value '5m')")
+	flag.BoolVar(&args.json, "json", false, "Use this to produce a json file instead of csv (not available when using db)")
 
 	flag.Parse()
 

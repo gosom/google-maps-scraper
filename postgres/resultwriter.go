@@ -3,10 +3,10 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 
 	"github.com/gosom/scrapemate"
-	"github.com/shopspring/decimal"
 
 	"github.com/gosom/google-maps-scraper/gmaps"
 )
@@ -37,18 +37,17 @@ func (r *resultWriter) Run(ctx context.Context, in <-chan scrapemate.Result) err
 
 func (r *resultWriter) saveEntry(ctx context.Context, entry *gmaps.Entry) error {
 	q := `INSERT INTO results
-		(title, category, address, openhours, website, phone, pluscode, review_count, rating,
-		latitude, longitude)
+		(data)
 		VALUES
-		($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT DO NOTHING
+		($1) ON CONFLICT DO NOTHING
 		`
 
-	rating := decimal.NewFromFloat(entry.ReviewRating)
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return err
+	}
 
-	_, err := r.db.ExecContext(ctx, q,
-		entry.Title, entry.Category, entry.Address, entry.OpenHours, entry.WebSite,
-		entry.Phone, entry.PlusCode, entry.ReviewCount, rating, entry.Latitude, entry.Longtitude,
-	)
+	_, err = r.db.ExecContext(ctx, q, data)
 
 	return err
 }

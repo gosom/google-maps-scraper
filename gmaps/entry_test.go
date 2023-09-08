@@ -30,7 +30,7 @@ func Test_EntryFromJSON(t *testing.T) {
 		Title:      "Kipriakon",
 		Category:   "Restaurant",
 		Categories: []string{"Restaurant"},
-		Address:    "Kipriakon, Old port, Limassol 3042",
+		Address:    "Old port, Limassol 3042",
 		OpenHours: map[string][]string{
 			"Monday":    {"12:30–10 pm"},
 			"Tuesday":   {"12:30–10 pm"},
@@ -54,6 +54,78 @@ func Test_EntryFromJSON(t *testing.T) {
 		Timezone:     "Asia/Nicosia",
 		PriceRange:   "€€",
 		DataID:       "0x14e732fd76f0d90d:0xe5415928d6702b47",
+		Images: []gmaps.Image{
+			{
+				Title: "All",
+				Image: "https://lh5.googleusercontent.com/p/AF1QipP4Y7A8nYL3KKXznSl69pXSq9p2IXCYUjVvOh0F=w298-h298-k-no",
+			},
+			{
+				Title: "Latest",
+				Image: "https://lh5.googleusercontent.com/p/AF1QipNgMqyaQs2MqH1oiGC44eDcvudurxQfNb2RuDsd=w224-h298-k-no",
+			},
+			{
+				Title: "Videos",
+				Image: "https://lh5.googleusercontent.com/p/AF1QipPZbq8v8K8RZfvL6gZ_4Dw6qwNJ_MUxxOOfBo7h=w224-h398-k-no",
+			},
+			{
+				Title: "Menu",
+				Image: "https://lh5.googleusercontent.com/p/AF1QipNhoFtPcaLCIhdN3GhlJ6sQIvdhaESnRG8nyeC8=w397-h298-k-no",
+			},
+			{
+				Title: "Food & drink",
+				Image: "https://lh5.googleusercontent.com/p/AF1QipMbu-iiWkE4DsXx3aI7nGaqyXJKbBYCrBXvzOnu=w298-h298-k-no",
+			},
+			{
+				Title: "Vibe",
+				Image: "https://lh5.googleusercontent.com/p/AF1QipOGg_vrD4bzkOre5Ly6CFXuO3YCOGfFxQ-EiEkW=w224-h398-k-no",
+			},
+			{
+				Title: "Fried green tomatoes",
+				Image: "https://lh5.googleusercontent.com/p/AF1QipOziHd2hqM1jnK9KfCGf1zVhcOrx8Bj7VdJXj0=w397-h298-k-no",
+			},
+			{
+				Title: "French fries",
+				Image: "https://lh5.googleusercontent.com/p/AF1QipNJyq7nAlKtsxxbNy4PHUZOhJ0k7HPP8tTAlwcV=w397-h298-k-no",
+			},
+			{
+				Title: "By owner",
+				Image: "https://lh5.googleusercontent.com/p/AF1QipNRE2R5k13zT-0WG4b6XOD_BES9-nMK04hlCMVV=w298-h298-k-no",
+			},
+			{
+				Title: "Street View & 360°",
+				Image: "https://lh5.googleusercontent.com/p/AF1QipMwkHP8GmDCSuwnWS7pYVQvtDWdsdk-CUwxtsXL=w224-h298-k-no-pi-23.425545-ya289.20517-ro-8.658787-fo100",
+			},
+		},
+		OrderOnline: []gmaps.LinkSource{
+			{
+				Link:   "https://foody.com.cy/delivery/lemesos/to-kypriakon?utm_source=google&utm_medium=organic&utm_campaign=google_reserve_place_order_action",
+				Source: "foody.com.cy",
+			},
+			{
+				Link:   "https://wolt.com/en/cyp/limassol/restaurant/kypriakon?utm_source=googlemapreserved&utm_campaign=kypriakon",
+				Source: "wolt.com",
+			},
+		},
+		Owner: gmaps.Owner{
+			ID:   "102769814432182832009",
+			Name: "Kipriakon (Owner)",
+			Link: "https://www.google.com/maps/contrib/102769814432182832009",
+		},
+		CompleteAddress: gmaps.Address{
+			Borough:    "",
+			Street:     "Old port",
+			City:       "Limassol",
+			PostalCode: "3042",
+			State:      "",
+			Country:    "CY",
+		},
+		ReviewsPerRating: map[int]int{
+			1: 37,
+			2: 16,
+			3: 27,
+			4: 60,
+			5: 256,
+		},
 	}
 
 	raw, err := os.ReadFile("../testdata/raw.json")
@@ -62,6 +134,20 @@ func Test_EntryFromJSON(t *testing.T) {
 
 	entry, err := gmaps.EntryFromJSON(raw)
 	require.NoError(t, err)
+
+	require.Len(t, entry.About, 10)
+
+	for _, about := range entry.About {
+		require.NotEmpty(t, about.ID)
+		require.NotEmpty(t, about.Name)
+		require.NotEmpty(t, about.Options)
+	}
+
+	entry.About = nil
+
+	require.Len(t, entry.UserReviews, 8)
+
+	entry.UserReviews = nil
 
 	require.Equal(t, expected, entry)
 }
