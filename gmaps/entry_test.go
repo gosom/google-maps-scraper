@@ -40,6 +40,50 @@ func Test_EntryFromJSON(t *testing.T) {
 			"Saturday":  {"12:30–10 pm"},
 			"Sunday":    {"12:30–10 pm"},
 		},
+		PopularTimes: map[string][]map[string]int{
+			"Monday": {
+				{
+					"hour":  0,
+					"value": 0,
+				},
+			},
+			"Tuesday": {
+				{
+					"hour":  0,
+					"value": 0,
+				},
+			},
+			"Wednesday": {
+				{
+					"hour":  0,
+					"value": 0,
+				},
+			},
+			"Thursday": {
+				{
+					"hour":  0,
+					"value": 0,
+				},
+			},
+			"Friday": {
+				{
+					"hour":  0,
+					"value": 0,
+				},
+			},
+			"Saturday": {
+				{
+					"hour":  0,
+					"value": 0,
+				},
+			},
+			"Sunday": {
+				{
+					"hour":  0,
+					"value": 0,
+				},
+			},
+		},
 		WebSite:      "",
 		Phone:        "25 101555",
 		PlusCode:     "M2CR+6X Limassol",
