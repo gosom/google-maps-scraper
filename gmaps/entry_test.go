@@ -40,50 +40,6 @@ func Test_EntryFromJSON(t *testing.T) {
 			"Saturday":  {"12:30–10 pm"},
 			"Sunday":    {"12:30–10 pm"},
 		},
-		PopularTimes: map[string][]map[string]int{
-			"Monday": {
-				{
-					"hour":  0,
-					"value": 0,
-				},
-			},
-			"Tuesday": {
-				{
-					"hour":  0,
-					"value": 0,
-				},
-			},
-			"Wednesday": {
-				{
-					"hour":  0,
-					"value": 0,
-				},
-			},
-			"Thursday": {
-				{
-					"hour":  0,
-					"value": 0,
-				},
-			},
-			"Friday": {
-				{
-					"hour":  0,
-					"value": 0,
-				},
-			},
-			"Saturday": {
-				{
-					"hour":  0,
-					"value": 0,
-				},
-			},
-			"Sunday": {
-				{
-					"hour":  0,
-					"value": 0,
-				},
-			},
-		},
 		WebSite:      "",
 		Phone:        "25 101555",
 		PlusCode:     "M2CR+6X Limassol",
@@ -191,6 +147,30 @@ func Test_EntryFromJSON(t *testing.T) {
 
 	require.Len(t, entry.UserReviews, 8)
 
+	require.Len(t, entry.PopularTimes, 7)
+
+	for k, v := range entry.PopularTimes {
+		require.Contains(t,
+			[]string{
+				"Monday",
+				"Tuesday",
+				"Wednesday",
+				"Thursday",
+				"Friday",
+				"Saturday",
+				"Sunday",
+			}, k)
+
+		for _, traffic := range v {
+			require.GreaterOrEqual(t, traffic, 0)
+			require.LessOrEqual(t, traffic, 100)
+		}
+	}
+
+	monday := entry.PopularTimes["Monday"]
+	require.Equal(t, 100, monday[20])
+
+	entry.PopularTimes = nil
 	entry.UserReviews = nil
 
 	require.Equal(t, expected, entry)
