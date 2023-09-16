@@ -26,6 +26,7 @@ title
 category
 address
 open_hours
+popular_times
 website
 phone
 plus_code
