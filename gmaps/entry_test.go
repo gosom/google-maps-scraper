@@ -147,6 +147,30 @@ func Test_EntryFromJSON(t *testing.T) {
 
 	require.Len(t, entry.UserReviews, 8)
 
+	require.Len(t, entry.PopularTimes, 7)
+
+	for k, v := range entry.PopularTimes {
+		require.Contains(t,
+			[]string{
+				"Monday",
+				"Tuesday",
+				"Wednesday",
+				"Thursday",
+				"Friday",
+				"Saturday",
+				"Sunday",
+			}, k)
+
+		for _, traffic := range v {
+			require.GreaterOrEqual(t, traffic, 0)
+			require.LessOrEqual(t, traffic, 100)
+		}
+	}
+
+	monday := entry.PopularTimes["Monday"]
+	require.Equal(t, 100, monday[20])
+
+	entry.PopularTimes = nil
 	entry.UserReviews = nil
 
 	require.Equal(t, expected, entry)

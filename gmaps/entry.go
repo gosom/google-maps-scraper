@@ -53,36 +53,39 @@ type Review struct {
 }
 
 type Entry struct {
-	Link             string              `json:"link"`
-	Cid              string              `json:"cid"`
-	Title            string              `json:"title"`
-	Categories       []string            `json:"categories"`
-	Category         string              `json:"category"`
-	Address          string              `json:"address"`
-	OpenHours        map[string][]string `json:"open_hours"`
-	WebSite          string              `json:"web_site"`
-	Phone            string              `json:"phone"`
-	PlusCode         string              `json:"plus_code"`
-	ReviewCount      int                 `json:"review_count"`
-	ReviewRating     float64             `json:"review_rating"`
-	ReviewsPerRating map[int]int         `json:"reviews_per_rating"`
-	Latitude         float64             `json:"latitude"`
-	Longtitude       float64             `json:"longtitude"`
-	Status           string              `json:"status"`
-	Description      string              `json:"description"`
-	ReviewsLink      string              `json:"reviews_link"`
-	Thumbnail        string              `json:"thumbnail"`
-	Timezone         string              `json:"timezone"`
-	PriceRange       string              `json:"price_range"`
-	DataID           string              `json:"data_id"`
-	Images           []Image             `json:"images"`
-	Reservations     []LinkSource        `json:"reservations"`
-	OrderOnline      []LinkSource        `json:"order_online"`
-	Menu             LinkSource          `json:"menu"`
-	Owner            Owner               `json:"owner"`
-	CompleteAddress  Address             `json:"complete_address"`
-	About            []About             `json:"about"`
-	UserReviews      []Review            `json:"user_reviews"`
+	Link       string              `json:"link"`
+	Cid        string              `json:"cid"`
+	Title      string              `json:"title"`
+	Categories []string            `json:"categories"`
+	Category   string              `json:"category"`
+	Address    string              `json:"address"`
+	OpenHours  map[string][]string `json:"open_hours"`
+	// PopularTImes is a map with keys the days of the week
+	// and value is a map with key the hour and value the traffic in that time
+	PopularTimes     map[string]map[int]int `json:"popular_times"`
+	WebSite          string                 `json:"web_site"`
+	Phone            string                 `json:"phone"`
+	PlusCode         string                 `json:"plus_code"`
+	ReviewCount      int                    `json:"review_count"`
+	ReviewRating     float64                `json:"review_rating"`
+	ReviewsPerRating map[int]int            `json:"reviews_per_rating"`
+	Latitude         float64                `json:"latitude"`
+	Longtitude       float64                `json:"longtitude"`
+	Status           string                 `json:"status"`
+	Description      string                 `json:"description"`
+	ReviewsLink      string                 `json:"reviews_link"`
+	Thumbnail        string                 `json:"thumbnail"`
+	Timezone         string                 `json:"timezone"`
+	PriceRange       string                 `json:"price_range"`
+	DataID           string                 `json:"data_id"`
+	Images           []Image                `json:"images"`
+	Reservations     []LinkSource           `json:"reservations"`
+	OrderOnline      []LinkSource           `json:"order_online"`
+	Menu             LinkSource             `json:"menu"`
+	Owner            Owner                  `json:"owner"`
+	CompleteAddress  Address                `json:"complete_address"`
+	About            []About                `json:"about"`
+	UserReviews      []Review               `json:"user_reviews"`
 }
 
 func (e *Entry) Validate() error {
@@ -104,6 +107,7 @@ func (e *Entry) CsvHeaders() []string {
 		"category",
 		"address",
 		"open_hours",
+		"popular_times",
 		"website",
 		"phone",
 		"plus_code",
@@ -138,6 +142,7 @@ func (e *Entry) CsvRow() []string {
 		e.Category,
 		e.Address,
 		stringify(e.OpenHours),
+		stringify(e.PopularTimes),
 		e.WebSite,
 		e.Phone,
 		e.PlusCode,
@@ -207,6 +212,7 @@ func EntryFromJSON(raw []byte) (entry Entry, err error) {
 		strings.TrimPrefix(getNthElementAndCast[string](darray, 18), entry.Title+","),
 	)
 	entry.OpenHours = getHours(darray)
+	entry.PopularTimes = getPopularTimes(darray)
 	entry.WebSite = getNthElementAndCast[string](darray, 7, 0)
 	entry.Phone = getNthElementAndCast[string](darray, 178, 0, 0)
 	entry.PlusCode = getNthElementAndCast[string](darray, 183, 2, 2, 0)
@@ -384,6 +390,57 @@ func getHours(darray []any) map[string][]string {
 	}
 
 	return hours
+}
+
+func getPopularTimes(darray []any) map[string]map[int]int {
+	items := getNthElementAndCast[[]any](darray, 84, 0) //nolint:gomnd // it's ok, I need the indexes
+	popularTimes := make(map[string]map[int]int, len(items))
+
+	dayOfWeek := map[int]string{
+		1: "Monday",
+		2: "Tuesday",
+		3: "Wednesday",
+		4: "Thursday",
+		5: "Friday",
+		6: "Saturday",
+		7: "Sunday",
+	}
+
+	for ii := range items {
+		item, ok := items[ii].([]any)
+		if !ok {
+			return nil
+		}
+
+		day := int(getNthElementAndCast[float64](item, 0))
+
+		timesI := getNthElementAndCast[[]any](item, 1)
+
+		times := make(map[int]int, len(timesI))
+
+		for i := range timesI {
+			t, ok := timesI[i].([]any)
+			if !ok {
+				return nil
+			}
+
+			v, ok := t[1].(float64)
+			if !ok {
+				return nil
+			}
+
+			h, ok := t[0].(float64)
+			if !ok {
+				return nil
+			}
+
+			times[int(h)] = int(v)
+		}
+
+		popularTimes[dayOfWeek[day]] = times
+	}
+
+	return popularTimes
 }
 
 func getNthElementAndCast[T any](arr []any, indexes ...int) T {
