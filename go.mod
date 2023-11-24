@@ -5,8 +5,9 @@ go 1.20
 require (
 	github.com/PuerkitoBio/goquery v1.8.1
 	github.com/google/uuid v1.3.0
-	github.com/gosom/scrapemate v0.5.2
+	github.com/gosom/scrapemate v0.5.3
 	github.com/jackc/pgx/v5 v5.3.1
+	github.com/mcnijman/go-emailaddress v1.1.1
 	github.com/playwright-community/playwright-go v0.2000.1
 	github.com/stretchr/testify v1.8.1
 )
@@ -38,4 +39,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-//replace github.com/gosom/scrapemate v0.5.2 => ../scrapemate
+//replace github.com/gosom/scrapemate v0.5.3 => ../scrapemate

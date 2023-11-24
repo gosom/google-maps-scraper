@@ -15,11 +15,12 @@ import (
 type GmapJob struct {
 	scrapemate.Job
 
-	MaxDepth int
-	LangCode string
+	MaxDepth     int
+	LangCode     string
+	ExtractEmail bool
 }
 
-func NewGmapJob(langCode, query string, maxDepth int) *GmapJob {
+func NewGmapJob(langCode, query string, maxDepth int, extractEmail bool) *GmapJob {
 	query = url.QueryEscape(query)
 
 	const (
@@ -36,8 +37,9 @@ func NewGmapJob(langCode, query string, maxDepth int) *GmapJob {
 			MaxRetries: maxRetries,
 			Priority:   prio,
 		},
-		MaxDepth: maxDepth,
-		LangCode: langCode,
+		MaxDepth:     maxDepth,
+		LangCode:     langCode,
+		ExtractEmail: extractEmail,
 	}
 
 	return &job
@@ -64,7 +66,7 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 
 	doc.Find(`div[role=feed] div[jsaction]>a`).Each(func(i int, s *goquery.Selection) {
 		if href := s.AttrOr("href", ""); href != "" {
-			nextJob := NewPlaceJob(j.ID, j.LangCode, href)
+			nextJob := NewPlaceJob(j.ID, j.LangCode, href, j.ExtractEmail)
 			next = append(next, nextJob)
 		}
 	})
