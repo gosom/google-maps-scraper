@@ -13,11 +13,14 @@ import (
 
 type PlaceJob struct {
 	scrapemate.Job
+
+	useInResults bool
+	extractEmail bool
 }
 
-func NewPlaceJob(parentID, langCode, u string) *PlaceJob {
+func NewPlaceJob(parentID, langCode, u string, extractEmail bool) *PlaceJob {
 	const (
-		defaultPrio       = scrapemate.PriorityHigh
+		defaultPrio       = scrapemate.PriorityMedium
 		defaultMaxRetries = 3
 	)
 
@@ -32,6 +35,9 @@ func NewPlaceJob(parentID, langCode, u string) *PlaceJob {
 			Priority:   defaultPrio,
 		},
 	}
+
+	job.useInResults = true
+	job.extractEmail = extractEmail
 
 	return &job
 }
@@ -51,6 +57,14 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 	entry, err := EntryFromJSON(raw)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	if j.extractEmail && entry.IsWebsiteValidForEmail() {
+		emailJob := NewEmailJob(j.ID, &entry)
+
+		j.useInResults = false
+
+		return nil, []scrapemate.IJob{emailJob}, nil
 	}
 
 	return &entry, nil, err
@@ -120,6 +134,10 @@ func (j *PlaceJob) BrowserActions(_ context.Context, page playwright.Page) scrap
 	resp.Meta["json"] = []byte(raw)
 
 	return resp
+}
+
+func (j *PlaceJob) UseInResults() bool {
+	return j.useInResults
 }
 
 const js = `

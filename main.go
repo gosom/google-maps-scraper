@@ -125,7 +125,7 @@ func runFromLocalFile(ctx context.Context, args *arguments) error {
 		return err
 	}
 
-	seedJobs, err := createSeedJobs(args.langCode, input, args.maxDepth)
+	seedJobs, err := createSeedJobs(args.langCode, input, args.maxDepth, args.email)
 	if err != nil {
 		return err
 	}
@@ -197,7 +197,7 @@ func produceSeedJobs(ctx context.Context, args *arguments, provider scrapemate.J
 		input = f
 	}
 
-	jobs, err := createSeedJobs(args.langCode, input, args.maxDepth)
+	jobs, err := createSeedJobs(args.langCode, input, args.maxDepth, args.email)
 	if err != nil {
 		return err
 	}
@@ -211,7 +211,7 @@ func produceSeedJobs(ctx context.Context, args *arguments, provider scrapemate.J
 	return nil
 }
 
-func createSeedJobs(langCode string, r io.Reader, maxDepth int) (jobs []scrapemate.IJob, err error) {
+func createSeedJobs(langCode string, r io.Reader, maxDepth int, email bool) (jobs []scrapemate.IJob, err error) {
 	scanner := bufio.NewScanner(r)
 
 	for scanner.Scan() {
@@ -220,7 +220,7 @@ func createSeedJobs(langCode string, r io.Reader, maxDepth int) (jobs []scrapema
 			continue
 		}
 
-		jobs = append(jobs, gmaps.NewGmapJob(langCode, query, maxDepth))
+		jobs = append(jobs, gmaps.NewGmapJob(langCode, query, maxDepth, email))
 	}
 
 	return jobs, scanner.Err()
@@ -242,6 +242,7 @@ type arguments struct {
 	dsn                      string
 	produceOnly              bool
 	exitOnInactivityDuration time.Duration
+	email                    bool
 }
 
 func parseArgs() (args arguments) {
@@ -266,6 +267,7 @@ func parseArgs() (args arguments) {
 	flag.BoolVar(&args.produceOnly, "produce", false, "produce seed jobs only (only valid with dsn)")
 	flag.DurationVar(&args.exitOnInactivityDuration, "exit-on-inactivity", 0, "program exits after this duration of inactivity(example value '5m')")
 	flag.BoolVar(&args.json, "json", false, "Use this to produce a json file instead of csv (not available when using db)")
+	flag.BoolVar(&args.email, "email", false, "Use this to extract emails from the websites")
 
 	flag.Parse()
 

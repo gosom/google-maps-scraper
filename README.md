@@ -9,6 +9,8 @@ A command line google maps scraper build using
 You can use this repository either as is, or you can use it's code as a base and
 customize it to your needs
 
+**Update** Added email extraction from business website support
+
 ## Features
 
 - Extracts many data points from google maps
@@ -17,6 +19,22 @@ customize it to your needs
 - Extendable to write your own exporter
 - Dockerized for easy run in multiple platforms
 - Scalable in multiple machines
+- Optionally extracts emails from the website of the business
+
+## Notes on email extraction
+
+By defaul email extraction is disabled. 
+
+If you enable email extraction (see quickstart) then the scraper will visit the 
+website of the business (if exists) and it will try to extract the emails from the
+page.
+
+For the moment it only checks only one page of the website (the one that is registered in Gmaps). At some point, it will be added support to try to extract from other pages like about, contact, impressum etc. 
+
+
+Keep in mind that enabling email extraction results to larger processing time, since more
+pages are scraped. 
+
 
 ## Extracted Data Points
 
@@ -51,7 +69,10 @@ owner
 complete_address
 about
 user_reviews
+emails
 ```
+
+**Note**: email is empty by default (see Usage)
 
 ## Quickstart
 
@@ -62,6 +83,8 @@ touch results.csv && docker run -v $PWD/example-queries.txt:/example-queries -v 
 ```
 
 file `results.csv` will contain the parsed results.
+
+**If you want emails use additionally the `-email` parameter**
 
 
 ### On your host
@@ -81,13 +104,15 @@ Be a little bit patient. In the first run it downloads required libraries.
 
 The results are written when they arrive in the `results` file you specified
 
+**If you want emails use additionally the `-email` parameter**
+
 ### Command line options
 
 try `./google-maps-scraper -h` to see the command line options available:
 
 ```
   -c int
-        sets the concurrency. By default it is set to half of the number of CPUs (default NUM_CPU)
+        sets the concurrency. By default it is set to half of the number of CPUs (default 8)
   -cache string
         sets the cache directory (no effect at the moment) (default "cache")
   -debug
@@ -96,12 +121,14 @@ try `./google-maps-scraper -h` to see the command line options available:
         is how much you allow the scraper to scroll in the search results. Experiment with that value (default 10)
   -dsn string
         Use this if you want to use a database provider
+  -email
+        Use this to extract emails from the websites
   -exit-on-inactivity duration
         program exits after this duration of inactivity(example value '5m')
   -input string
         is the path to the file where the queries are stored (one query per line). By default it reads from stdin (default "stdin")
   -json
-        Use this to produce a json file instead of csv (not avalaible when using db)
+        Use this to produce a json file instead of csv (not available when using db)
   -lang string
         is the languate code to use for google (the hl urlparam).Default is en . For example use de for German or el for Greek (default "en")
   -produce

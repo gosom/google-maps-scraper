@@ -86,6 +86,27 @@ type Entry struct {
 	CompleteAddress  Address                `json:"complete_address"`
 	About            []About                `json:"about"`
 	UserReviews      []Review               `json:"user_reviews"`
+	Emails           []string               `json:"emails"`
+}
+
+func (e *Entry) IsWebsiteValidForEmail() bool {
+	if e.WebSite == "" {
+		return false
+	}
+
+	needles := []string{
+		"facebook",
+		"instragram",
+		"twitter",
+	}
+
+	for i := range needles {
+		if strings.Contains(e.WebSite, needles[i]) {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (e *Entry) Validate() error {
@@ -132,6 +153,7 @@ func (e *Entry) CsvHeaders() []string {
 		"complete_address",
 		"about",
 		"user_reviews",
+		"emails",
 	}
 }
 
@@ -167,6 +189,7 @@ func (e *Entry) CsvRow() []string {
 		stringify(e.CompleteAddress),
 		stringify(e.About),
 		stringify(e.UserReviews),
+		stringSliceToString(e.Emails),
 	}
 }
 
@@ -484,6 +507,10 @@ func getNthElementAndCast[T any](arr []any, indexes ...int) T {
 	}
 
 	return ans
+}
+
+func stringSliceToString(s []string) string {
+	return strings.Join(s, ", ")
 }
 
 func stringify(v any) string {
