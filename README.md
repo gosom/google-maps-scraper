@@ -2,6 +2,8 @@
 ![build](https://github.com/gosom/google-maps-scraper/actions/workflows/build.yml/badge.svg)
 [![Go Report Card](https://goreportcard.com/badge/github.com/gosom/google-maps-scraper)](https://goreportcard.com/report/github.com/gosom/google-maps-scraper)
 
+![Google maps scraper](https://github.com/gosom/google-maps-scraper/blob/main/banner.png)
+
 A command line google maps scraper build using 
 
 [scrapemate](https://github.com/gosom/scrapemate) web crawling framework.
@@ -246,4 +248,6 @@ Please open an ISSUE or make a Pull Request
 ## Notes
 
 Please use this scraper responsibly
+
+banner is generated using OpenAI's DALE
 
