@@ -6,8 +6,10 @@ import (
 	"database/sql"
 	"encoding/csv"
 	"flag"
+	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"runtime"
 	"strings"
 	"time"
@@ -23,6 +25,8 @@ import (
 
 	"github.com/gosom/google-maps-scraper/gmaps"
 	"github.com/gosom/google-maps-scraper/postgres"
+	"github.com/gosom/google-maps-scraper/sqlite"
+	"github.com/gosom/google-maps-scraper/web"
 )
 
 func main() {
@@ -50,11 +54,57 @@ func run() error {
 	ctx := context.Background()
 	args := parseArgs()
 
+	if args.web {
+		return runWeb(ctx, &args)
+	}
+
 	if args.dsn == "" {
 		return runFromLocalFile(ctx, &args)
 	}
 
 	return runFromDatabase(ctx, &args)
+}
+
+func runWeb(ctx context.Context, args *arguments) error {
+	if args.webdb == "" {
+		return fmt.Errorf("webdb is required")
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	store, err := sqlite.New(args.webdb)
+	if err != nil {
+		return err
+	}
+
+	if err := store.AutoMigrate(ctx); err != nil {
+		return err
+	}
+
+	cfg := web.Config{
+		Addr:  ":5000",
+		Debug: args.debug,
+		Store: store,
+	}
+
+	if err := store.CleanUpIncompleteJobs(ctx); err != nil {
+		return err
+	}
+
+	go func() {
+		quit := make(chan os.Signal, 1)
+		signal.Notify(quit, os.Interrupt)
+		<-quit
+		cancel()
+	}()
+
+	err = web.Start(ctx, cfg)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func runFromLocalFile(ctx context.Context, args *arguments) error {
@@ -220,7 +270,7 @@ func createSeedJobs(langCode string, r io.Reader, maxDepth int, email bool) (job
 			continue
 		}
 
-		jobs = append(jobs, gmaps.NewGmapJob(langCode, query, maxDepth, email))
+		jobs = append(jobs, gmaps.NewGmapJob(langCode, query, maxDepth, email, ""))
 	}
 
 	return jobs, scanner.Err()
@@ -243,6 +293,8 @@ type arguments struct {
 	produceOnly              bool
 	exitOnInactivityDuration time.Duration
 	email                    bool
+	web                      bool
+	webdb                    string
 }
 
 func parseArgs() (args arguments) {
@@ -268,6 +320,8 @@ func parseArgs() (args arguments) {
 	flag.DurationVar(&args.exitOnInactivityDuration, "exit-on-inactivity", 0, "program exits after this duration of inactivity(example value '5m')")
 	flag.BoolVar(&args.json, "json", false, "Use this to produce a json file instead of csv (not available when using db)")
 	flag.BoolVar(&args.email, "email", false, "Use this to extract emails from the websites")
+	flag.BoolVar(&args.web, "web", false, "Use this to run the web interface")
+	flag.StringVar(&args.webdb, "webdb", "", "Specify a path for the database (only valid with web)")
 
 	flag.Parse()
 

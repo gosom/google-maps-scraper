@@ -1,0 +1,40 @@
+{{ define "jobs" }}
+<div id="jobsList" class="mt-5">
+    <h3 class="text-center mb-4">Jobs</h3>
+    <div class="list-group list-group-flush">
+
+        <!-- Header Row -->
+        <div class="list-group-item bg-light">
+            <div class="row">
+                <div class="col-md-2 font-weight-bold">Name</div>
+                <div class="col-md-2 font-weight-bold">Created At</div>
+                <div class="col-md-2 font-weight-bold">Finished At</div>
+                <div class="col-md-1 font-weight-bold">#Results</div>
+                <div class="col-md-2 font-weight-bold">Status</div>
+                <div class="col-md-3 font-weight-bold text-end">Actions</div>
+            </div>
+        </div>
+
+        <!-- Job Rows -->
+        {{range .}}
+        <div class="list-group-item">
+            <div class="row align-items-center">
+                <div class="col-md-2">{{.ID}}</div>
+                <div class="col-md-2">{{.CreatedAt}}</div>
+                <div class="col-md-2">{{.FinishedAt}}</div>
+                <div class="col-md-1">{{.Count}}</div>
+                <div class="col-md-2">{{.Status}}</div>
+                {{ if .DownloadLink }}
+                <div class="col-md-3 text-end">
+                    <a href="/downloads/{{.ID}}?format=json" class="btn btn-sm btn-outline-primary me-1">JSON</a>
+                    <a href="/downloads/{{.ID}}?format=csv" class="btn btn-sm btn-outline-primary">CSV</a>
+                </div>
+                {{ end }}
+            </div>
+        </div>
+        {{end}}
+
+    </div>
+</div>
+{{ end }}
+

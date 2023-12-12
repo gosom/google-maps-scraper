@@ -1,0 +1,42 @@
+{{ define "content" }}
+<div class="container my-4">
+    <h2 class="mb-4 text-center">Google Maps Scraper</h2>
+    <form id="scraperForm" action="/submit" method="POST" enctype="multipart/form-data" class="shadow-sm p-4 rounded bg-light">
+        <div class="row g-3 mb-3">
+            <div class="col-md-4">
+                <label for="jobId" class="form-label">ID:</label>
+                <input type="text" name="jobId" class="form-control" id="jobId" placeholder="Job ID" required>
+            </div>
+            <div class="col-md-4">
+                <label for="langCode" class="form-label">LangCode:</label>
+                <input type="text" name="langCode" class="form-control" id="langCode" value="en" required>
+            </div>
+            <div class="col-md-4">
+                <label for="maxDepth" class="form-label">Max Depth:</label>
+                <input type="number" name="maxDepth" class="form-control" id="maxDepth" value="1" required>
+            </div>
+        </div>
+        <div class="mb-3">
+            <div class="form-check">
+                <input type="checkbox" name="debugMode" class="form-check-input" id="debugMode">
+                <label class="form-check-label" for="debugMode">Debug Mode</label>
+            </div>
+        </div>
+        <div class="mb-3">
+            <label for="queries" class="form-label">Queries:</label>
+            <textarea class="form-control" name="queries" id="queries" rows="3"></textarea>
+        </div>
+        <div class="mb-3">
+            <label for="fileUpload" class="form-label">File Upload:</label>
+            <input class="form-control" name="fileUpload" type="file" id="fileUpload">
+        </div>
+        <div class="text-center">
+            <button type="submit" class="btn btn-primary">Submit</button>
+        </div>
+    </form>
+
+    <hr/>
+
+    {{ block "jobs" .Jobs }}{{ end }}
+</div>
+{{ end }}
