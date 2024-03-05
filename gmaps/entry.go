@@ -333,11 +333,11 @@ func EntryFromJSON(raw []byte) (entry Entry, err error) {
 	}
 
 	entry.ReviewsPerRating = map[int]int{
-		1: int(getNthElementAndCast[float64](darray, 52, 3, 0)),
-		2: int(getNthElementAndCast[float64](darray, 52, 3, 1)),
-		3: int(getNthElementAndCast[float64](darray, 52, 3, 2)),
-		4: int(getNthElementAndCast[float64](darray, 52, 3, 3)),
-		5: int(getNthElementAndCast[float64](darray, 52, 3, 4)),
+		1: int(getNthElementAndCast[float64](darray, 175, 3, 0)),
+		2: int(getNthElementAndCast[float64](darray, 175, 3, 1)),
+		3: int(getNthElementAndCast[float64](darray, 175, 3, 2)),
+		4: int(getNthElementAndCast[float64](darray, 175, 3, 3)),
+		5: int(getNthElementAndCast[float64](darray, 175, 3, 4)),
 	}
 
 	reviewsI := getNthElementAndCast[[]any](darray, 52, 0)
