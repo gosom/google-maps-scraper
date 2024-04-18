@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/google/uuid"
@@ -64,12 +65,17 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 
 	var next []scrapemate.IJob
 
-	doc.Find(`div[role=feed] div[jsaction]>a`).Each(func(i int, s *goquery.Selection) {
-		if href := s.AttrOr("href", ""); href != "" {
-			nextJob := NewPlaceJob(j.ID, j.LangCode, href, j.ExtractEmail)
-			next = append(next, nextJob)
-		}
-	})
+	if strings.Contains(resp.URL, "/maps/place/") {
+		placeJob := NewPlaceJob(j.ID, j.LangCode, resp.URL, j.ExtractEmail)
+		next = append(next, placeJob)
+	} else {
+		doc.Find(`div[role=feed] div[jsaction]>a`).Each(func(i int, s *goquery.Selection) {
+			if href := s.AttrOr("href", ""); href != "" {
+				nextJob := NewPlaceJob(j.ID, j.LangCode, href, j.ExtractEmail)
+				next = append(next, nextJob)
+			}
+		})
+	}
 
 	log.Info(fmt.Sprintf("%d places found", len(next)))
 
@@ -110,6 +116,22 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 
 	for k, v := range pageResponse.Headers() {
 		resp.Headers.Add(k, v)
+	}
+
+	if strings.Contains(page.URL(), "/maps/place/") {
+		resp.URL = page.URL()
+
+		var body string
+
+		body, err = page.Content()
+		if err != nil {
+			resp.Error = err
+			return resp
+		}
+
+		resp.Body = []byte(body)
+
+		return resp
 	}
 
 	_, err = scroll(ctx, page, j.MaxDepth)

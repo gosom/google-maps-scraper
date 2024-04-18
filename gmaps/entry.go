@@ -318,9 +318,10 @@ func EntryFromJSON(raw []byte) (entry Entry, err error) {
 		}
 
 		optsI := getNthElementAndCast[[]any](el, 2)
+
 		for j := range optsI {
 			opt := Option{
-				Enabled: getNthElementAndCast[int](optsI, j, 2, 1, 0, 0) == 1,
+				Enabled: (getNthElementAndCast[float64](optsI, j, 2, 1, 0, 0)) == 1,
 				Name:    getNthElementAndCast[string](optsI, j, 1),
 			}
 
