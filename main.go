@@ -220,7 +220,14 @@ func createSeedJobs(langCode string, r io.Reader, maxDepth int, email bool) (job
 			continue
 		}
 
-		jobs = append(jobs, gmaps.NewGmapJob(langCode, query, maxDepth, email))
+		var id string
+
+		if before, after, ok := strings.Cut(query, "#!#"); ok {
+			query = strings.TrimSpace(before)
+			id = strings.TrimSpace(after)
+		}
+
+		jobs = append(jobs, gmaps.NewGmapJob(id, langCode, query, maxDepth, email))
 	}
 
 	return jobs, scanner.Err()

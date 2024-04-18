@@ -53,6 +53,7 @@ type Review struct {
 }
 
 type Entry struct {
+	ID         string              `json:"input_id"`
 	Link       string              `json:"link"`
 	Cid        string              `json:"cid"`
 	Title      string              `json:"title"`
@@ -123,6 +124,7 @@ func (e *Entry) Validate() error {
 
 func (e *Entry) CsvHeaders() []string {
 	return []string{
+		"input_id",
 		"link",
 		"title",
 		"category",
@@ -159,6 +161,7 @@ func (e *Entry) CsvHeaders() []string {
 
 func (e *Entry) CsvRow() []string {
 	return []string{
+		e.ID,
 		e.Link,
 		e.Title,
 		e.Category,
@@ -344,18 +347,21 @@ func EntryFromJSON(raw []byte) (entry Entry, err error) {
 	reviewsI := getNthElementAndCast[[]any](darray, 175, 9, 0, 0)
 	for i := range reviewsI {
 		el := getNthElementAndCast[[]any](reviewsI, i, 0)
-		price := getNthElementAndCast[any](el, 2, 6, 2, 2, 0, 0, 1)
-		if price != nil {
-			entry.PriceRange = price.(string)
-		}
 
 		time := getNthElementAndCast[[]any](el, 2, 2, 0, 1, 21, 6, 7)
+
 		review := Review{
 			Name:           getNthElementAndCast[string](el, 1, 4, 0, 4),
 			ProfilePicture: getNthElementAndCast[string](el, 1, 4, 0, 3),
-			When:           fmt.Sprintf("%v-%v-%v", time[0], time[1], time[2]),
-			Rating:         int(getNthElementAndCast[float64](el, 2, 0, 0)),
-			Description:    getNthElementAndCast[string](el, 2, 15, 0, 0),
+			When: func() string {
+				if len(time) < 3 {
+					return ""
+				}
+
+				return fmt.Sprintf("%v-%v-%v", time[0], time[1], time[2])
+			}(),
+			Rating:      int(getNthElementAndCast[float64](el, 2, 0, 0)),
+			Description: getNthElementAndCast[string](el, 2, 15, 0, 0),
 		}
 
 		if review.Name == "" {

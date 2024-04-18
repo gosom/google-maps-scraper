@@ -41,6 +41,7 @@ pages are scraped.
 ## Extracted Data Points
 
 ```
+input_id
 link
 title
 category
@@ -75,6 +76,13 @@ emails
 ```
 
 **Note**: email is empty by default (see Usage)
+
+**Note**: Input id is an ID that you can define per query. By default its a UUID
+In order to define it you can have an input file like:
+
+```
+Matsuhisa Athens #!#MyIDentifier
+```
 
 ## Quickstart
 

@@ -59,6 +59,8 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 		return nil, nil, err
 	}
 
+	entry.ID = j.ParentID
+
 	if j.ExtractEmail && entry.IsWebsiteValidForEmail() {
 		emailJob := NewEmailJob(j.ID, &entry)
 
