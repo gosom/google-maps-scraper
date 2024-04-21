@@ -13,6 +13,24 @@ customize it to your needs
 
 **Update** Added email extraction from business website support
 
+## Try it
+
+```
+touch results.csv && docker run -v $PWD/example-queries.txt:/example-queries -v $PWD/results.csv:/results.csv gosom/google-maps-scraper -depth 1 -input /example-queries -results /results.csv -exit-on-inactivity 3m
+```
+
+file `results.csv` will contain the parsed results.
+
+**If you want emails use additionally the `-email` parameter**
+
+
+## 🌟 Support the Project!
+
+If you find this tool useful, consider giving it a **star** on GitHub. 
+Feel free to check out the **Sponsor** button on this repository to see how you can further support the development of this project. 
+Your support helps ensure continued improvement and maintenance.
+
+
 ## Features
 
 - Extracts many data points from google maps
@@ -253,9 +271,15 @@ This code is licenced under the MIT Licence
 Please open an ISSUE or make a Pull Request
 
 
+Thank you for considering support for the project. Every bit of assistance helps maintain momentum and enhances the scraper’s capabilities!
+
+
+
 ## Notes
 
 Please use this scraper responsibly
 
 banner is generated using OpenAI's DALE
+
+## Sponsors
 
