@@ -2,7 +2,7 @@
 ![build](https://github.com/gosom/google-maps-scraper/actions/workflows/build.yml/badge.svg)
 [![Go Report Card](https://goreportcard.com/badge/github.com/gosom/google-maps-scraper)](https://goreportcard.com/report/github.com/gosom/google-maps-scraper)
 
-> A command line google maps scraper build using 
+> A command line google maps scraper
 
 ---
 
@@ -16,9 +16,9 @@
 		<sup>Special thanks to:</sup>
 		<br>
 		<br>
-		<a href="https://www.searchapi.io/google-maps?via=gosom">
+		<a href="https://www.searchapi.io/google-maps?via=gosom" rel="nofollow">
             <div>
-              <img src="https://www.searchapi.io/press/v1/svg/searchapi_logo_black_h.svg" width="180"/>
+              <img src="https://www.searchapi.io/press/v1/svg/searchapi_logo_black_h.svg" width="180" alt="Google Maps API for easy SERP scraping"/>
             </div>
             <b>Google Maps API for easy SERP scraping</b>
 		</a>
