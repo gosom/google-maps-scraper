@@ -157,9 +157,13 @@ func runFromLocalFile(ctx context.Context, args *arguments) error {
 	}
 
 	if args.debug {
-		opts = append(opts, scrapemateapp.WithJS(scrapemateapp.Headfull()))
+		opts = append(opts, scrapemateapp.WithJS(
+			scrapemateapp.Headfull(),
+			scrapemateapp.DisableImages(),
+		),
+		)
 	} else {
-		opts = append(opts, scrapemateapp.WithJS())
+		opts = append(opts, scrapemateapp.WithJS(scrapemateapp.DisableImages()))
 	}
 
 	cfg, err := scrapemateapp.NewConfig(
@@ -270,7 +274,14 @@ func createSeedJobs(langCode string, r io.Reader, maxDepth int, email bool) (job
 			continue
 		}
 
-		jobs = append(jobs, gmaps.NewGmapJob(langCode, query, maxDepth, email, ""))
+		var id string
+
+		if before, after, ok := strings.Cut(query, "#!#"); ok {
+			query = strings.TrimSpace(before)
+			id = strings.TrimSpace(after)
+		}
+
+		jobs = append(jobs, gmaps.NewGmapJob(id, langCode, query, maxDepth, email))
 	}
 
 	return jobs, scanner.Err()

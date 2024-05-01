@@ -82,9 +82,13 @@ func (w *worker) ProcessJob(ctx context.Context, job entities.Job) (err error) {
 	}
 
 	if job.Debug {
-		opts = append(opts, scrapemateapp.WithJS(scrapemateapp.Headfull()))
+		opts = append(opts, scrapemateapp.WithJS(
+			scrapemateapp.Headfull(),
+			scrapemateapp.DisableImages(),
+		),
+		)
 	} else {
-		opts = append(opts, scrapemateapp.WithJS())
+		opts = append(opts, scrapemateapp.WithJS(scrapemateapp.DisableImages()))
 	}
 
 	cfg, err := scrapemateapp.NewConfig(
@@ -120,7 +124,7 @@ func (w *worker) updateJobStatus(ctx context.Context, job entities.Job, status s
 
 func (w *worker) createSeedJobs(job entities.Job) (jobs []scrapemate.IJob, err error) {
 	for i := range job.Queries {
-		jobs = append(jobs, gmaps.NewGmapJob("en", job.Queries[i], 10, false, job.ID))
+		jobs = append(jobs, gmaps.NewGmapJob(job.ID, "en", job.Queries[i], 10, false))
 	}
 
 	return jobs, nil

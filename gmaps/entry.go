@@ -53,6 +53,7 @@ type Review struct {
 }
 
 type Entry struct {
+	ID         string              `json:"input_id"`
 	Link       string              `json:"link"`
 	Cid        string              `json:"cid"`
 	Title      string              `json:"title"`
@@ -123,6 +124,7 @@ func (e *Entry) Validate() error {
 
 func (e *Entry) CsvHeaders() []string {
 	return []string{
+		"input_id",
 		"link",
 		"title",
 		"category",
@@ -159,6 +161,7 @@ func (e *Entry) CsvHeaders() []string {
 
 func (e *Entry) CsvRow() []string {
 	return []string{
+		e.ID,
 		e.Link,
 		e.Title,
 		e.Category,
@@ -318,9 +321,10 @@ func EntryFromJSON(raw []byte) (entry Entry, err error) {
 		}
 
 		optsI := getNthElementAndCast[[]any](el, 2)
+
 		for j := range optsI {
 			opt := Option{
-				Enabled: getNthElementAndCast[int](optsI, j, 2, 1, 0, 0) == 1,
+				Enabled: (getNthElementAndCast[float64](optsI, j, 2, 1, 0, 0)) == 1,
 				Name:    getNthElementAndCast[string](optsI, j, 1),
 			}
 
@@ -333,35 +337,43 @@ func EntryFromJSON(raw []byte) (entry Entry, err error) {
 	}
 
 	entry.ReviewsPerRating = map[int]int{
-		1: int(getNthElementAndCast[float64](darray, 52, 3, 0)),
-		2: int(getNthElementAndCast[float64](darray, 52, 3, 1)),
-		3: int(getNthElementAndCast[float64](darray, 52, 3, 2)),
-		4: int(getNthElementAndCast[float64](darray, 52, 3, 3)),
-		5: int(getNthElementAndCast[float64](darray, 52, 3, 4)),
+		1: int(getNthElementAndCast[float64](darray, 175, 3, 0)),
+		2: int(getNthElementAndCast[float64](darray, 175, 3, 1)),
+		3: int(getNthElementAndCast[float64](darray, 175, 3, 2)),
+		4: int(getNthElementAndCast[float64](darray, 175, 3, 3)),
+		5: int(getNthElementAndCast[float64](darray, 175, 3, 4)),
 	}
 
-	reviewsI := getNthElementAndCast[[]any](darray, 52, 0)
-
+	reviewsI := getNthElementAndCast[[]any](darray, 175, 9, 0, 0)
 	for i := range reviewsI {
-		el := getNthElementAndCast[[]any](reviewsI, i)
+		el := getNthElementAndCast[[]any](reviewsI, i, 0)
+
+		time := getNthElementAndCast[[]any](el, 2, 2, 0, 1, 21, 6, 7)
+
 		review := Review{
-			Name:           getNthElementAndCast[string](el, 0, 1),
-			ProfilePicture: getNthElementAndCast[string](el, 0, 2),
-			When:           getNthElementAndCast[string](el, 1),
-			Rating:         int(getNthElementAndCast[float64](el, 4)),
-			Description:    getNthElementAndCast[string](el, 3),
+			Name:           getNthElementAndCast[string](el, 1, 4, 0, 4),
+			ProfilePicture: getNthElementAndCast[string](el, 1, 4, 0, 3),
+			When: func() string {
+				if len(time) < 3 {
+					return ""
+				}
+
+				return fmt.Sprintf("%v-%v-%v", time[0], time[1], time[2])
+			}(),
+			Rating:      int(getNthElementAndCast[float64](el, 2, 0, 0)),
+			Description: getNthElementAndCast[string](el, 2, 15, 0, 0),
 		}
 
 		if review.Name == "" {
 			continue
 		}
 
-		optsI := getNthElementAndCast[[]any](el, 14)
+		optsI := getNthElementAndCast[[]any](el, 2, 2, 0, 1, 21, 7)
 
 		for j := range optsI {
-			val := getNthElementAndCast[string](optsI, j, 6, 0)
+			val := getNthElementAndCast[string](optsI, j)
 			if val != "" {
-				review.Images = append(review.Images, val)
+				review.Images = append(review.Images, val[2:])
 			}
 		}
 

@@ -14,8 +14,8 @@ import (
 type PlaceJob struct {
 	scrapemate.Job
 
-	useInResults bool
-	extractEmail bool
+	UsageInResultststs bool
+	ExtractEmail       bool
 }
 
 func NewPlaceJob(parentID, langCode, u string, extractEmail bool) *PlaceJob {
@@ -36,8 +36,8 @@ func NewPlaceJob(parentID, langCode, u string, extractEmail bool) *PlaceJob {
 		},
 	}
 
-	job.useInResults = true
-	job.extractEmail = extractEmail
+	job.UsageInResultststs = true
+	job.ExtractEmail = extractEmail
 
 	return &job
 }
@@ -59,10 +59,12 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 		return nil, nil, err
 	}
 
-	if j.extractEmail && entry.IsWebsiteValidForEmail() {
+	entry.ID = j.ParentID
+
+	if j.ExtractEmail && entry.IsWebsiteValidForEmail() {
 		emailJob := NewEmailJob(j.ID, &entry)
 
-		j.useInResults = false
+		j.UsageInResultststs = false
 
 		return nil, []scrapemate.IJob{emailJob}, nil
 	}
@@ -91,9 +93,9 @@ func (j *PlaceJob) BrowserActions(_ context.Context, page playwright.Page) scrap
 
 	const defaultTimeout = 5000
 
-	_, err = page.WaitForNavigation(playwright.PageWaitForNavigationOptions{
-		URL:     "*@*",
-		Timeout: playwright.Float(defaultTimeout),
+	err = page.WaitForURL(page.URL(), playwright.PageWaitForURLOptions{
+		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
+		Timeout:   playwright.Float(defaultTimeout),
 	})
 	if err != nil {
 		resp.Error = err
@@ -137,7 +139,7 @@ func (j *PlaceJob) BrowserActions(_ context.Context, page playwright.Page) scrap
 }
 
 func (j *PlaceJob) UseInResults() bool {
-	return j.useInResults
+	return j.UsageInResultststs
 }
 
 const js = `

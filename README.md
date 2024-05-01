@@ -2,6 +2,31 @@
 ![build](https://github.com/gosom/google-maps-scraper/actions/workflows/build.yml/badge.svg)
 [![Go Report Card](https://goreportcard.com/badge/github.com/gosom/google-maps-scraper)](https://goreportcard.com/report/github.com/gosom/google-maps-scraper)
 
+> A command line google maps scraper
+
+---
+
+<div align="center">
+	<p>
+		<p>
+			<sup>
+				<a href="https://github.com/sponsors/gosom">supported by the community</a>
+			</sup>
+		</p>
+		<sup>Special thanks to:</sup>
+		<br>
+		<br>
+		<a href="https://www.searchapi.io/google-maps?via=gosom" rel="nofollow">
+            <div>
+              <img src="https://www.searchapi.io/press/v1/svg/searchapi_logo_black_h.svg" width="180" alt="Google Maps API for easy SERP scraping"/>
+            </div>
+            <b>Google Maps API for easy SERP scraping</b>
+		</a>
+	</p>
+</div>
+
+---
+
 ![Google maps scraper](https://github.com/gosom/google-maps-scraper/blob/main/banner.png)
 
 A command line google maps scraper build using 
@@ -13,11 +38,29 @@ customize it to your needs
 
 **Update** Added email extraction from business website support
 
+## Try it
+
+```
+touch results.csv && docker run -v $PWD/example-queries.txt:/example-queries -v $PWD/results.csv:/results.csv gosom/google-maps-scraper -depth 1 -input /example-queries -results /results.csv -exit-on-inactivity 3m
+```
+
+file `results.csv` will contain the parsed results.
+
+**If you want emails use additionally the `-email` parameter**
+
+
+## 🌟 Support the Project!
+
+If you find this tool useful, consider giving it a **star** on GitHub. 
+Feel free to check out the **Sponsor** button on this repository to see how you can further support the development of this project. 
+Your support helps ensure continued improvement and maintenance.
+
+
 ## Features
 
 - Extracts many data points from google maps
 - Exports the data to CSV, JSON or PostgreSQL 
-- Perfomance about 55 urls per minute (-depth 1 -c 8)
+- Perfomance about 120 urls per minute (-depth 1 -c 8)
 - Extendable to write your own exporter
 - Dockerized for easy run in multiple platforms
 - Scalable in multiple machines
@@ -41,6 +84,7 @@ pages are scraped.
 ## Extracted Data Points
 
 ```
+input_id
 link
 title
 category
@@ -75,6 +119,13 @@ emails
 ```
 
 **Note**: email is empty by default (see Usage)
+
+**Note**: Input id is an ID that you can define per query. By default its a UUID
+In order to define it you can have an input file like:
+
+```
+Matsuhisa Athens #!#MyIDentifier
+```
 
 ## Quickstart
 
@@ -215,13 +266,13 @@ Use an appropriate kubernetes cluster
 
 ## Perfomance
 
-Expected speed with concurrency of 8 and depth 1 is 55 jobs/per minute.
+Expected speed with concurrency of 8 and depth 1 is 120 jobs/per minute.
 Each search is 1 job + the number or results it contains.
 
 Based on the above: 
-if we have 1000 keywords to search with each contains 16 results => 1000 * 10 = 16000 jobs.
+if we have 1000 keywords to search with each contains 16 results => 1000 * 16 = 16000 jobs.
 
-We expect this to take about 10000/55 ~ 291 minutes ~ 5 hours
+We expect this to take about 16000/120 ~ 133 minutes ~ 2.5 hours
 
 If you want to scrape many keywords then it's better to use the Database Provider in
 combination with Kubernetes for convenience and start multipe scrapers in more than 1 machines.
@@ -245,9 +296,19 @@ This code is licenced under the MIT Licence
 Please open an ISSUE or make a Pull Request
 
 
+Thank you for considering support for the project. Every bit of assistance helps maintain momentum and enhances the scraper’s capabilities!
+
+
+
 ## Notes
 
 Please use this scraper responsibly
 
 banner is generated using OpenAI's DALE
+
+## Sponsors
+
+<a href="https://www.searchapi.io/?via=gosom" rel="nofollow"> searchapi.com</a> sponsors this project via Github sponsors.
+
+If you register via the links on my page I get a commission. This is another way to support my work
 

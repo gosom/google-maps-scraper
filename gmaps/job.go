@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/google/uuid"
@@ -20,7 +21,7 @@ type GmapJob struct {
 	ExtractEmail bool
 }
 
-func NewGmapJob(langCode, query string, maxDepth int, extractEmail bool, id string) *GmapJob {
+func NewGmapJob(id, langCode, query string, maxDepth int, extractEmail bool) *GmapJob {
 	query = url.QueryEscape(query)
 
 	const (
@@ -28,14 +29,13 @@ func NewGmapJob(langCode, query string, maxDepth int, extractEmail bool, id stri
 		prio       = scrapemate.PriorityLow
 	)
 
+	if id == "" {
+		id = uuid.New().String()
+	}
+
 	job := GmapJob{
 		Job: scrapemate.Job{
-			ID: func() string {
-				if id == "" {
-					return uuid.New().String()
-				}
-				return id
-			}(),
+			ID:         id,
 			Method:     http.MethodGet,
 			URL:        "https://www.google.com/maps/search/" + query,
 			URLParams:  map[string]string{"hl": langCode},
@@ -69,12 +69,17 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 
 	var next []scrapemate.IJob
 
-	doc.Find(`div[role=feed] div[jsaction]>a`).Each(func(i int, s *goquery.Selection) {
-		if href := s.AttrOr("href", ""); href != "" {
-			nextJob := NewPlaceJob(j.ID, j.LangCode, href, j.ExtractEmail)
-			next = append(next, nextJob)
-		}
-	})
+	if strings.Contains(resp.URL, "/maps/place/") {
+		placeJob := NewPlaceJob(j.ID, j.LangCode, resp.URL, j.ExtractEmail)
+		next = append(next, placeJob)
+	} else {
+		doc.Find(`div[role=feed] div[jsaction]>a`).Each(func(i int, s *goquery.Selection) {
+			if href := s.AttrOr("href", ""); href != "" {
+				nextJob := NewPlaceJob(j.ID, j.LangCode, href, j.ExtractEmail)
+				next = append(next, nextJob)
+			}
+		})
+	}
 
 	log.Info(fmt.Sprintf("%d places found", len(next)))
 
@@ -100,9 +105,13 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 		return resp
 	}
 
-	_, err = page.WaitForNavigation(playwright.PageWaitForNavigationOptions{
-		URL: "*@*",
+	const defaultTimeout = 5000
+
+	err = page.WaitForURL(page.URL(), playwright.PageWaitForURLOptions{
+		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
+		Timeout:   playwright.Float(defaultTimeout),
 	})
+
 	if err != nil {
 		resp.Error = err
 
@@ -115,6 +124,22 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 
 	for k, v := range pageResponse.Headers() {
 		resp.Headers.Add(k, v)
+	}
+
+	if strings.Contains(page.URL(), "/maps/place/") {
+		resp.URL = page.URL()
+
+		var body string
+
+		body, err = page.Content()
+		if err != nil {
+			resp.Error = err
+			return resp
+		}
+
+		resp.Body = []byte(body)
+
+		return resp
 	}
 
 	_, err = scroll(ctx, page, j.MaxDepth)
@@ -140,6 +165,8 @@ func clickRejectCookiesIfRequired(page playwright.Page) error {
 	sel := `form[action="https://consent.google.com/save"]:first-of-type button:first-of-type`
 
 	const timeout = 500
+
+	//nolint:staticcheck // TODO replace with the new playwright API
 	el, err := page.WaitForSelector(sel, playwright.PageWaitForSelectorOptions{
 		Timeout: playwright.Float(timeout),
 	})
@@ -152,6 +179,7 @@ func clickRejectCookiesIfRequired(page playwright.Page) error {
 		return nil
 	}
 
+	//nolint:staticcheck // TODO replace with the new playwright API
 	return el.Click()
 }
 
@@ -215,6 +243,7 @@ func scroll(ctx context.Context, page playwright.Page, maxDepth int) (int, error
 			waitTime = maxWait2
 		}
 
+		//nolint:staticcheck // TODO replace with the new playwright API
 		page.WaitForTimeout(waitTime)
 	}
 
