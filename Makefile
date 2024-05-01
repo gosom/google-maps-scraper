@@ -1,3 +1,6 @@
+APP_NAME := google_maps_scraper
+VERSION := 1.2.1
+
 default: help
 
 # generate help info from comments: thanks to https://marmelab.com/blog/2016/02/29/auto-documented-makefile.html
@@ -25,3 +28,8 @@ test-cover-report: ## an html report of the coverage statistics
 
 lint: ## runs the linter
 	golangci-lint -v run ./...
+
+cross-compile: ## cross compiles the application
+	GOOS=linux GOARCH=amd64 go build -o bin/$(APP_NAME)-${VERSION}-linux-amd64
+	GOOS=darwin GOARCH=amd64 go build -o bin/$(APP_NAME)-${VERSION}-darwin-amd64
+	GOOS=windows GOARCH=amd64 go build -o bin/$(APP_NAME)-${VERSION}-windows-amd64
