@@ -105,9 +105,13 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 		return resp
 	}
 
-	_, err = page.WaitForNavigation(playwright.PageWaitForNavigationOptions{
-		URL: "*@*",
+	const defaultTimeout = 5000
+
+	err = page.WaitForURL(page.URL(), playwright.PageWaitForURLOptions{
+		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
+		Timeout:   playwright.Float(defaultTimeout),
 	})
+
 	if err != nil {
 		resp.Error = err
 
@@ -161,6 +165,8 @@ func clickRejectCookiesIfRequired(page playwright.Page) error {
 	sel := `form[action="https://consent.google.com/save"]:first-of-type button:first-of-type`
 
 	const timeout = 500
+
+	//nolint:staticcheck // TODO replace with the new playwright API
 	el, err := page.WaitForSelector(sel, playwright.PageWaitForSelectorOptions{
 		Timeout: playwright.Float(timeout),
 	})
@@ -173,6 +179,7 @@ func clickRejectCookiesIfRequired(page playwright.Page) error {
 		return nil
 	}
 
+	//nolint:staticcheck // TODO replace with the new playwright API
 	return el.Click()
 }
 
@@ -236,6 +243,7 @@ func scroll(ctx context.Context, page playwright.Page, maxDepth int) (int, error
 			waitTime = maxWait2
 		}
 
+		//nolint:staticcheck // TODO replace with the new playwright API
 		page.WaitForTimeout(waitTime)
 	}
 

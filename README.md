@@ -60,7 +60,7 @@ Your support helps ensure continued improvement and maintenance.
 
 - Extracts many data points from google maps
 - Exports the data to CSV, JSON or PostgreSQL 
-- Perfomance about 55 urls per minute (-depth 1 -c 8)
+- Perfomance about 120 urls per minute (-depth 1 -c 8)
 - Extendable to write your own exporter
 - Dockerized for easy run in multiple platforms
 - Scalable in multiple machines
@@ -266,13 +266,13 @@ Use an appropriate kubernetes cluster
 
 ## Perfomance
 
-Expected speed with concurrency of 8 and depth 1 is 55 jobs/per minute.
+Expected speed with concurrency of 8 and depth 1 is 120 jobs/per minute.
 Each search is 1 job + the number or results it contains.
 
 Based on the above: 
-if we have 1000 keywords to search with each contains 16 results => 1000 * 10 = 16000 jobs.
+if we have 1000 keywords to search with each contains 16 results => 1000 * 16 = 16000 jobs.
 
-We expect this to take about 10000/55 ~ 291 minutes ~ 5 hours
+We expect this to take about 16000/120 ~ 133 minutes ~ 2.5 hours
 
 If you want to scrape many keywords then it's better to use the Database Provider in
 combination with Kubernetes for convenience and start multipe scrapers in more than 1 machines.
@@ -307,4 +307,8 @@ Please use this scraper responsibly
 banner is generated using OpenAI's DALE
 
 ## Sponsors
+
+<a href="https://www.searchapi.io/?via=gosom" rel="nofollow"> searchapi.com</a> sponsors this project via Github sponsors.
+
+If you register via the links on my page I get a commission. This is another way to support my work
 

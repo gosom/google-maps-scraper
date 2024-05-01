@@ -107,9 +107,13 @@ func runFromLocalFile(ctx context.Context, args *arguments) error {
 	}
 
 	if args.debug {
-		opts = append(opts, scrapemateapp.WithJS(scrapemateapp.Headfull()))
+		opts = append(opts, scrapemateapp.WithJS(
+			scrapemateapp.Headfull(),
+			scrapemateapp.DisableImages(),
+		),
+		)
 	} else {
-		opts = append(opts, scrapemateapp.WithJS())
+		opts = append(opts, scrapemateapp.WithJS(scrapemateapp.DisableImages()))
 	}
 
 	cfg, err := scrapemateapp.NewConfig(

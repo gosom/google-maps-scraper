@@ -93,9 +93,9 @@ func (j *PlaceJob) BrowserActions(_ context.Context, page playwright.Page) scrap
 
 	const defaultTimeout = 5000
 
-	_, err = page.WaitForNavigation(playwright.PageWaitForNavigationOptions{
-		URL:     "*@*",
-		Timeout: playwright.Float(defaultTimeout),
+	err = page.WaitForURL(page.URL(), playwright.PageWaitForURLOptions{
+		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
+		Timeout:   playwright.Float(defaultTimeout),
 	})
 	if err != nil {
 		resp.Error = err
