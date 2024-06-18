@@ -27,9 +27,9 @@
 
 ---
 
-### 🚀 Please [vote](https://github.com/gosom/google-maps-scraper/discussions/61) for the next features
-
 ![Google maps scraper](https://github.com/gosom/google-maps-scraper/blob/main/banner.png)
+
+## 🚀 Please [vote](https://github.com/gosom/google-maps-scraper/discussions/61) for the next features
 
 A command line google maps scraper build using 
 
