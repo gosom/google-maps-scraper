@@ -75,7 +75,7 @@ func docEmailExtractor(doc *goquery.Document) []string {
 
 	var emails []string
 
-	doc.Find("a[href^='mailto:']").Each(func(i int, s *goquery.Selection) {
+	doc.Find("a[href^='mailto:']").Each(func(_ int, s *goquery.Selection) {
 		mailto, exists := s.Attr("href")
 		if exists {
 			value := strings.TrimPrefix(mailto, "mailto:")

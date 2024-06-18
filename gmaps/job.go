@@ -73,7 +73,7 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 		placeJob := NewPlaceJob(j.ID, j.LangCode, resp.URL, j.ExtractEmail)
 		next = append(next, placeJob)
 	} else {
-		doc.Find(`div[role=feed] div[jsaction]>a`).Each(func(i int, s *goquery.Selection) {
+		doc.Find(`div[role=feed] div[jsaction]>a`).Each(func(_ int, s *goquery.Selection) {
 			if href := s.AttrOr("href", ""); href != "" {
 				nextJob := NewPlaceJob(j.ID, j.LangCode, href, j.ExtractEmail)
 				next = append(next, nextJob)
