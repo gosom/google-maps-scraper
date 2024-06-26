@@ -1,3 +1,6 @@
 cache/
 vendor
 bin
+proxies.txt
+google-maps-scraper
+results/*.csv

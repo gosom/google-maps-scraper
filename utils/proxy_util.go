@@ -14,20 +14,45 @@ func ToPWProxy(u string) *playwright.Proxy {
 	if len(u) <= 0 {
 		return nil
 	}
-
+	//host:port:user:pass
+	// TODO: parse proxyurl to playwright.Proxy,
+	proxyUrl := strings.Split(u, ":")
+	if len(proxyUrl) != 4 {
+		return nil
+	}
 	return &playwright.Proxy{
-		Server: u,
+		Server:   proxyUrl[0] + ":" + proxyUrl[1],
+		Username: &proxyUrl[2],
+		Password: &proxyUrl[3],
 	}
 }
 
+// ToUrlProxy converts a proxy URL string in the format "host:port:user:pass" to a *url.URL object.
 func ToUrlProxy(proxyUrl string) *url.URL {
 	if len(proxyUrl) <= 0 {
 		return nil
 	}
-	return &url.URL{
-		Scheme: "http",
-		Host:   proxyUrl,
+	// TODO: parse proxyurl (host:port:user:pass) to url.URL
+	// Split the proxy URL string by colon (':').
+	parts := strings.Split(proxyUrl, ":")
+
+	// Check if there are at least 2 parts (host and port).
+	if len(parts) < 2 {
+		return nil
 	}
+
+	// Create a new URL object.
+	u := &url.URL{
+		Scheme: "http",                    // Default to HTTP scheme.
+		Host:   parts[0] + ":" + parts[1], // Combine host and port.
+	}
+
+	// If there are more than 2 parts, assume they are username and password.
+	if len(parts) > 2 {
+		u.User = url.UserPassword(parts[2], parts[3])
+	}
+
+	return u
 }
 
 var (
