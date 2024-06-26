@@ -7,6 +7,7 @@ import (
 	"encoding/csv"
 	"flag"
 	"io"
+	"log"
 	"os"
 	"runtime"
 	"strings"
@@ -129,7 +130,7 @@ func runFromLocalFile(ctx context.Context, args *arguments) error {
 		return err
 	}
 
-	seedJobs, err := createSeedJobs(args.langCode, input, args.maxDepth, args.email)
+	seedJobs, err := createSeedJobs(args.langCode, input, args.maxDepth, args.email, args.isNotQueryEscape)
 	if err != nil {
 		return err
 	}
@@ -160,6 +161,7 @@ func runFromDatabase(ctx context.Context, args *arguments) error {
 		scrapemateapp.WithConcurrency(args.concurrency),
 		scrapemateapp.WithProvider(provider),
 		scrapemateapp.WithExitOnInactivity(args.exitOnInactivityDuration),
+		
 	}
 
 	if args.debug {
@@ -201,7 +203,7 @@ func produceSeedJobs(ctx context.Context, args *arguments, provider scrapemate.J
 		input = f
 	}
 
-	jobs, err := createSeedJobs(args.langCode, input, args.maxDepth, args.email)
+	jobs, err := createSeedJobs(args.langCode, input, args.maxDepth, args.email, args.isNotQueryEscape)
 	if err != nil {
 		return err
 	}
@@ -215,7 +217,7 @@ func produceSeedJobs(ctx context.Context, args *arguments, provider scrapemate.J
 	return nil
 }
 
-func createSeedJobs(langCode string, r io.Reader, maxDepth int, email bool) (jobs []scrapemate.IJob, err error) {
+func createSeedJobs(langCode string, r io.Reader, maxDepth int, email bool, isNotQueryEscape bool) (jobs []scrapemate.IJob, err error) {
 	scanner := bufio.NewScanner(r)
 
 	for scanner.Scan() {
@@ -231,7 +233,7 @@ func createSeedJobs(langCode string, r io.Reader, maxDepth int, email bool) (job
 			id = strings.TrimSpace(after)
 		}
 
-		jobs = append(jobs, gmaps.NewGmapJob(id, langCode, query, maxDepth, email))
+		jobs = append(jobs, gmaps.NewGmapJob(id, langCode, query, maxDepth, email, isNotQueryEscape))
 	}
 
 	return jobs, scanner.Err()
@@ -254,6 +256,7 @@ type arguments struct {
 	produceOnly              bool
 	exitOnInactivityDuration time.Duration
 	email                    bool
+	isNotQueryEscape         bool
 }
 
 func parseArgs() (args arguments) {
@@ -279,9 +282,10 @@ func parseArgs() (args arguments) {
 	flag.DurationVar(&args.exitOnInactivityDuration, "exit-on-inactivity", 0, "program exits after this duration of inactivity(example value '5m')")
 	flag.BoolVar(&args.json, "json", false, "Use this to produce a json file instead of csv (not available when using db)")
 	flag.BoolVar(&args.email, "email", false, "Use this to extract emails from the websites")
+	flag.BoolVar(&args.isNotQueryEscape, "isNotQueryEscape", false, "Not UrlEscape input")
 
 	flag.Parse()
-
+	log.Printf("Load flags: %v", args)
 	return args
 }
 

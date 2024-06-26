@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/google/uuid"
@@ -21,23 +22,29 @@ type GmapJob struct {
 	ExtractEmail bool
 }
 
-func NewGmapJob(id, langCode, query string, maxDepth int, extractEmail bool) *GmapJob {
-	query = url.QueryEscape(query)
+func NewGmapJob(id, langCode, query string, maxDepth int, extractEmail bool, isNotQueryEscape bool) *GmapJob {
+	if !isNotQueryEscape {
+		if strings.Contains(query, "/") {
+			queries := strings.Split(query, "/")
+			query = fmt.Sprintf("%s/%s", url.QueryEscape(queries[0]), queries[1])
+		} else {
+			query = url.QueryEscape(query)
+		}
+	}
 
 	const (
 		maxRetries = 3
 		prio       = scrapemate.PriorityLow
 	)
-
 	if id == "" {
 		id = uuid.New().String()
 	}
-
+	url := "https://www.google.com/maps/search/" + query
 	job := GmapJob{
 		Job: scrapemate.Job{
 			ID:         id,
 			Method:     http.MethodGet,
-			URL:        "https://www.google.com/maps/search/" + query,
+			URL:        url,
 			URLParams:  map[string]string{"hl": langCode},
 			MaxRetries: maxRetries,
 			Priority:   prio,
@@ -88,6 +95,7 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 
 func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scrapemate.Response {
 	var resp scrapemate.Response
+	log := scrapemate.GetLoggerFromContext(ctx)
 
 	pageResponse, err := page.Goto(j.GetFullURL(), playwright.PageGotoOptions{
 		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
@@ -104,6 +112,17 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 
 		return resp
 	}
+
+	//click RejectFindHome
+	go func() {
+		for i := 0; true; i++ {
+			if err = clickRejectFindHome(ctx, page); err != nil {
+				log.Info(fmt.Sprintf("clickRejectFindHome: %d", i))
+				resp.Error = err
+			}
+			time.Sleep(time.Second * 1)
+		}
+	}()
 
 	const defaultTimeout = 5000
 
@@ -248,4 +267,19 @@ func scroll(ctx context.Context, page playwright.Page, maxDepth int) (int, error
 	}
 
 	return cnt, nil
+}
+func clickRejectFindHome(ctx context.Context, page playwright.Page) error {
+	log := scrapemate.GetLoggerFromContext(ctx)
+
+	// Locate the element with jsaction="modal.backgroundClick"
+	err := page.Locator(`[jsaction="modal.backgroundClick"] .google-symbols`).WaitFor()
+	if err != nil {
+		return err
+	}
+	err = page.Locator(`[jsaction="modal.backgroundClick"] .google-symbols`).Click()
+	if err != nil {
+		return err
+	}
+	log.Info("clickRejectFindHome")
+	return nil
 }
