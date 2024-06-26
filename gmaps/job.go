@@ -20,6 +20,7 @@ type GmapJob struct {
 	MaxDepth     int
 	LangCode     string
 	ExtractEmail bool
+	Proxy        playwright.Proxy
 }
 
 func NewGmapJob(id, langCode, query string, maxDepth int, extractEmail bool, isNotQueryEscape bool) *GmapJob {

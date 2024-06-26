@@ -23,7 +23,10 @@ import (
 	"github.com/playwright-community/playwright-go"
 
 	"github.com/gosom/google-maps-scraper/gmaps"
+	"github.com/gosom/google-maps-scraper/scrape_app"
+
 	"github.com/gosom/google-maps-scraper/postgres"
+	"github.com/gosom/google-maps-scraper/utils"
 )
 
 func main() {
@@ -125,7 +128,7 @@ func runFromLocalFile(ctx context.Context, args *arguments) error {
 		return err
 	}
 
-	app, err := scrapemateapp.NewScrapeMateApp(cfg)
+	app, err := scrape_app.NewGoogleMapScrapApp(cfg, utils.GetProxiesFromTxtFile(args.proxyTxtFile)...)
 	if err != nil {
 		return err
 	}
@@ -178,7 +181,7 @@ func runFromDatabase(ctx context.Context, args *arguments) error {
 		return err
 	}
 
-	app, err := scrapemateapp.NewScrapeMateApp(cfg)
+	app, err := scrape_app.NewGoogleMapScrapApp(cfg, utils.GetProxiesFromTxtFile(args.proxyTxtFile)...)
 	if err != nil {
 		return err
 	}
@@ -256,6 +259,8 @@ type arguments struct {
 	produceOnly              bool
 	exitOnInactivityDuration time.Duration
 	email                    bool
+
+	proxyTxtFile string
 	isNotQueryEscape         bool
 }
 
@@ -282,6 +287,7 @@ func parseArgs() (args arguments) {
 	flag.DurationVar(&args.exitOnInactivityDuration, "exit-on-inactivity", 0, "program exits after this duration of inactivity(example value '5m')")
 	flag.BoolVar(&args.json, "json", false, "Use this to produce a json file instead of csv (not available when using db)")
 	flag.BoolVar(&args.email, "email", false, "Use this to extract emails from the websites")
+	flag.StringVar(&args.proxyTxtFile, "proxyfile", "", "Txt file containing the proxies to use (one proxy per line)")
 	flag.BoolVar(&args.isNotQueryEscape, "isNotQueryEscape", false, "Not UrlEscape input")
 
 	flag.Parse()
