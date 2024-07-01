@@ -7,3 +7,4 @@ results/*.csv
 .vscode/launch.json
 .idea/
 .idea/sonarlint/
+.env
