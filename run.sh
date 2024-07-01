@@ -1,1 +1,1 @@
-./google-maps-scraper -input queries_latlong.txt -results results/place-latlong.csv -exit-on-inactivity 3m -lang vi -depth 9999 -c 2 -isNotQueryEscape -debug
+./google-maps-scraper -input input.json -results results/place-latlong.csv -exit-on-inactivity 3m -lang vi -depth 9999 -c 2 -debug

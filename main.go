@@ -1,17 +1,11 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"database/sql"
 	"encoding/csv"
-	"flag"
 	"io"
-	"log"
 	"os"
-	"runtime"
-	"strings"
-	"time"
 
 	// postgres driver
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -22,9 +16,10 @@ import (
 	"github.com/gosom/scrapemate/scrapemateapp"
 	"github.com/playwright-community/playwright-go"
 
-	"github.com/gosom/google-maps-scraper/gmaps"
 	"github.com/gosom/google-maps-scraper/scrape_app"
 
+	"github.com/gosom/google-maps-scraper/jobs"
+	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/utils"
 )
@@ -52,23 +47,23 @@ func main() {
 
 func run() error {
 	ctx := context.Background()
-	args := parseArgs()
+	args := models.ParseArgs()
 
-	if args.dsn == "" {
+	if args.Dsn == "" {
 		return runFromLocalFile(ctx, &args)
 	}
 
 	return runFromDatabase(ctx, &args)
 }
 
-func runFromLocalFile(ctx context.Context, args *arguments) error {
+func runFromLocalFile(ctx context.Context, args *models.Arguments) error {
 	var input io.Reader
 
-	switch args.inputFile {
+	switch args.InputFile {
 	case "stdin":
 		input = os.Stdin
 	default:
-		f, err := os.Open(args.inputFile)
+		f, err := os.Open(args.InputFile)
 		if err != nil {
 			return err
 		}
@@ -80,11 +75,11 @@ func runFromLocalFile(ctx context.Context, args *arguments) error {
 
 	var resultsWriter io.Writer
 
-	switch args.resultsFile {
+	switch args.ResultsFile {
 	case "stdout":
 		resultsWriter = os.Stdout
 	default:
-		f, err := os.Create(args.resultsFile)
+		f, err := os.Create(args.ResultsFile)
 		if err != nil {
 			return err
 		}
@@ -98,7 +93,7 @@ func runFromLocalFile(ctx context.Context, args *arguments) error {
 
 	writers := []scrapemate.ResultWriter{}
 
-	if args.json {
+	if args.Json {
 		writers = append(writers, jsonwriter.NewJSONWriter(resultsWriter))
 	} else {
 		writers = append(writers, csvWriter)
@@ -106,11 +101,11 @@ func runFromLocalFile(ctx context.Context, args *arguments) error {
 
 	opts := []func(*scrapemateapp.Config) error{
 		// scrapemateapp.WithCache("leveldb", "cache"),
-		scrapemateapp.WithConcurrency(args.concurrency),
-		scrapemateapp.WithExitOnInactivity(args.exitOnInactivityDuration),
+		scrapemateapp.WithConcurrency(args.Concurrency),
+		scrapemateapp.WithExitOnInactivity(args.ExitOnInactivityDuration),
 	}
 
-	if args.debug {
+	if args.Debug {
 		opts = append(opts, scrapemateapp.WithJS(
 			scrapemateapp.Headfull(),
 			scrapemateapp.DisableImages(),
@@ -128,12 +123,12 @@ func runFromLocalFile(ctx context.Context, args *arguments) error {
 		return err
 	}
 
-	app, err := scrape_app.NewGoogleMapScrapApp(cfg, utils.GetProxiesFromTxtFile(args.proxyTxtFile)...)
+	app, err := scrape_app.NewGoogleMapScrapApp(cfg, utils.GetProxiesFromTxtFile(args.ProxyTxtFile)...)
 	if err != nil {
 		return err
 	}
 
-	seedJobs, err := createSeedJobs(args.langCode, input, args.maxDepth, args.email, args.isNotQueryEscape)
+	seedJobs, err := jobs.CreateSeedJobs(args.LangCode, input, args.MaxDepth, args.Email, args.UseLatLong)
 	if err != nil {
 		return err
 	}
@@ -141,16 +136,16 @@ func runFromLocalFile(ctx context.Context, args *arguments) error {
 	return app.Start(ctx, seedJobs...)
 }
 
-func runFromDatabase(ctx context.Context, args *arguments) error {
-	db, err := openPsqlConn(args.dsn)
+func runFromDatabase(ctx context.Context, args *models.Arguments) error {
+	db, err := openPsqlConn(args.Dsn)
 	if err != nil {
 		return err
 	}
 
 	provider := postgres.NewProvider(db)
 
-	if args.produceOnly {
-		return produceSeedJobs(ctx, args, provider)
+	if args.ProduceOnly {
+		return jobs.ProduceSeedJobs(ctx, args, provider)
 	}
 
 	psqlWriter := postgres.NewResultWriter(db)
@@ -161,13 +156,12 @@ func runFromDatabase(ctx context.Context, args *arguments) error {
 
 	opts := []func(*scrapemateapp.Config) error{
 		// scrapemateapp.WithCache("leveldb", "cache"),
-		scrapemateapp.WithConcurrency(args.concurrency),
+		scrapemateapp.WithConcurrency(args.Concurrency),
 		scrapemateapp.WithProvider(provider),
-		scrapemateapp.WithExitOnInactivity(args.exitOnInactivityDuration),
-		
+		scrapemateapp.WithExitOnInactivity(args.ExitOnInactivityDuration),
 	}
 
-	if args.debug {
+	if args.Debug {
 		opts = append(opts, scrapemateapp.WithJS(scrapemateapp.Headfull()))
 	} else {
 		opts = append(opts, scrapemateapp.WithJS())
@@ -181,7 +175,7 @@ func runFromDatabase(ctx context.Context, args *arguments) error {
 		return err
 	}
 
-	app, err := scrape_app.NewGoogleMapScrapApp(cfg, utils.GetProxiesFromTxtFile(args.proxyTxtFile)...)
+	app, err := scrape_app.NewGoogleMapScrapApp(cfg, utils.GetProxiesFromTxtFile(args.ProxyTxtFile)...)
 	if err != nil {
 		return err
 	}
@@ -189,110 +183,8 @@ func runFromDatabase(ctx context.Context, args *arguments) error {
 	return app.Start(ctx)
 }
 
-func produceSeedJobs(ctx context.Context, args *arguments, provider scrapemate.JobProvider) error {
-	var input io.Reader
-
-	switch args.inputFile {
-	case "stdin":
-		input = os.Stdin
-	default:
-		f, err := os.Open(args.inputFile)
-		if err != nil {
-			return err
-		}
-
-		defer f.Close()
-
-		input = f
-	}
-
-	jobs, err := createSeedJobs(args.langCode, input, args.maxDepth, args.email, args.isNotQueryEscape)
-	if err != nil {
-		return err
-	}
-
-	for i := range jobs {
-		if err := provider.Push(ctx, jobs[i]); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func createSeedJobs(langCode string, r io.Reader, maxDepth int, email bool, isNotQueryEscape bool) (jobs []scrapemate.IJob, err error) {
-	scanner := bufio.NewScanner(r)
-
-	for scanner.Scan() {
-		query := strings.TrimSpace(scanner.Text())
-		if query == "" {
-			continue
-		}
-
-		var id string
-
-		if before, after, ok := strings.Cut(query, "#!#"); ok {
-			query = strings.TrimSpace(before)
-			id = strings.TrimSpace(after)
-		}
-
-		jobs = append(jobs, gmaps.NewGmapJob(id, langCode, query, maxDepth, email, isNotQueryEscape))
-	}
-
-	return jobs, scanner.Err()
-}
-
 func installPlaywright() error {
 	return playwright.Install()
-}
-
-type arguments struct {
-	concurrency              int
-	cacheDir                 string
-	maxDepth                 int
-	inputFile                string
-	resultsFile              string
-	json                     bool
-	langCode                 string
-	debug                    bool
-	dsn                      string
-	produceOnly              bool
-	exitOnInactivityDuration time.Duration
-	email                    bool
-
-	proxyTxtFile string
-	isNotQueryEscape         bool
-}
-
-func parseArgs() (args arguments) {
-	const (
-		defaultDepth      = 10
-		defaultCPUDivider = 2
-	)
-
-	defaultConcurency := runtime.NumCPU() / defaultCPUDivider
-	if defaultConcurency < 1 {
-		defaultConcurency = 1
-	}
-
-	flag.IntVar(&args.concurrency, "c", defaultConcurency, "sets the concurrency. By default it is set to half of the number of CPUs")
-	flag.StringVar(&args.cacheDir, "cache", "cache", "sets the cache directory (no effect at the moment)")
-	flag.IntVar(&args.maxDepth, "depth", defaultDepth, "is how much you allow the scraper to scroll in the search results. Experiment with that value")
-	flag.StringVar(&args.resultsFile, "results", "stdout", "is the path to the file where the results will be written")
-	flag.StringVar(&args.inputFile, "input", "stdin", "is the path to the file where the queries are stored (one query per line). By default it reads from stdin")
-	flag.StringVar(&args.langCode, "lang", "en", "is the languate code to use for google (the hl urlparam).Default is en . For example use de for German or el for Greek")
-	flag.BoolVar(&args.debug, "debug", false, "Use this to perform a headfull crawl (it will open a browser window) [only when using without docker]")
-	flag.StringVar(&args.dsn, "dsn", "", "Use this if you want to use a database provider")
-	flag.BoolVar(&args.produceOnly, "produce", false, "produce seed jobs only (only valid with dsn)")
-	flag.DurationVar(&args.exitOnInactivityDuration, "exit-on-inactivity", 0, "program exits after this duration of inactivity(example value '5m')")
-	flag.BoolVar(&args.json, "json", false, "Use this to produce a json file instead of csv (not available when using db)")
-	flag.BoolVar(&args.email, "email", false, "Use this to extract emails from the websites")
-	flag.StringVar(&args.proxyTxtFile, "proxyfile", "", "Txt file containing the proxies to use (one proxy per line)")
-	flag.BoolVar(&args.isNotQueryEscape, "isNotQueryEscape", false, "Not UrlEscape input")
-
-	flag.Parse()
-	log.Printf("Load flags: %v", args)
-	return args
 }
 
 func openPsqlConn(dsn string) (conn *sql.DB, err error) {

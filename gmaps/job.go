@@ -23,8 +23,9 @@ type GmapJob struct {
 	Proxy        playwright.Proxy
 }
 
-func NewGmapJob(id, langCode, query string, maxDepth int, extractEmail bool, isNotQueryEscape bool) *GmapJob {
-	if !isNotQueryEscape {
+func NewGmapJob(id, langCode, query string, maxDepth int, extractEmail bool, useLatLong bool) *GmapJob {
+	if !useLatLong {
+		//case Phở/@10.7773285,106.6864011,18z
 		if strings.Contains(query, "/") {
 			queries := strings.Split(query, "/")
 			query = fmt.Sprintf("%s/%s", url.QueryEscape(queries[0]), queries[1])
@@ -54,7 +55,7 @@ func NewGmapJob(id, langCode, query string, maxDepth int, extractEmail bool, isN
 		LangCode:     langCode,
 		ExtractEmail: extractEmail,
 	}
-
+	fmt.Printf("NewGmapJob %v", job)
 	return &job
 }
 
