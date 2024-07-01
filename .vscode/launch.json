@@ -12,11 +12,12 @@
             "program": "${workspaceFolder}",
             "args": [
                 "-input", "input.json",
-                "-results", "results/place-latlong.csv", 
+                //"-results", "results/place-latlong.csv", 
                 "-exit-on-inactivity", "3m", 
                 "-lang", "vi", 
-                "-c", "6", 
+                "-c", "4", 
                 //"-debug",
+                "-produce",
                 "-proxyfile","proxies.txt"
             ]
         }

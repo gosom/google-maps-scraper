@@ -10,6 +10,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/google/uuid"
+	"github.com/gosom/kit/logging"
 	"github.com/gosom/scrapemate"
 	"github.com/playwright-community/playwright-go"
 )
@@ -39,7 +40,7 @@ func NewGmapJob(id, langCode, query string, maxDepth int, extractEmail bool, use
 		prio       = scrapemate.PriorityLow
 	)
 	if id == "" {
-		id = uuid.New().String()
+		id = uuid.NewString()
 	}
 	url := "https://www.google.com/maps/search/" + query
 	job := GmapJob{
@@ -55,7 +56,7 @@ func NewGmapJob(id, langCode, query string, maxDepth int, extractEmail bool, use
 		LangCode:     langCode,
 		ExtractEmail: extractEmail,
 	}
-	fmt.Printf("NewGmapJob %v", job)
+	logging.Debug("NewGmapJob %v", job)
 	return &job
 }
 
@@ -97,7 +98,7 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 
 func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scrapemate.Response {
 	var resp scrapemate.Response
-	log := scrapemate.GetLoggerFromContext(ctx)
+	//log := scrapemate.GetLoggerFromContext(ctx)
 
 	pageResponse, err := page.Goto(j.GetFullURL(), playwright.PageGotoOptions{
 		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
@@ -119,10 +120,10 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 	go func() {
 		for i := 0; true; i++ {
 			if err = clickRejectFindHome(ctx, page); err != nil {
-				log.Info(fmt.Sprintf("clickRejectFindHome: %d", i))
+				//log.Info(fmt.Sprintf("clickRejectFindHome: %d", i))
 				resp.Error = err
 			}
-			time.Sleep(time.Second * 1)
+			time.Sleep(time.Second * 5)
 		}
 	}()
 
@@ -271,7 +272,7 @@ func scroll(ctx context.Context, page playwright.Page, maxDepth int) (int, error
 	return cnt, nil
 }
 func clickRejectFindHome(ctx context.Context, page playwright.Page) error {
-	log := scrapemate.GetLoggerFromContext(ctx)
+	//log := scrapemate.GetLoggerFromContext(ctx)
 
 	// Locate the element with jsaction="modal.backgroundClick"
 	err := page.Locator(`[jsaction="modal.backgroundClick"] .google-symbols`).WaitFor()
@@ -282,6 +283,6 @@ func clickRejectFindHome(ctx context.Context, page playwright.Page) error {
 	if err != nil {
 		return err
 	}
-	log.Info("clickRejectFindHome")
+	//log.Info("clickRejectFindHome")
 	return nil
 }

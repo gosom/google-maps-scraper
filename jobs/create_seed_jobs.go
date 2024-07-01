@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/gosom/google-maps-scraper/gmaps"
 	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/utils"
@@ -28,7 +29,7 @@ func CreateSeedJobs(langCode string, r io.Reader, maxDepth int, email bool, useL
 			continue
 		}
 
-		var id string
+		var id string //= uuid.NewString()
 
 		if before, after, ok := strings.Cut(query, "#!#"); ok {
 			query = strings.TrimSpace(before)
@@ -58,7 +59,7 @@ func CreateSeedJobsByJson(langCode string, r io.Reader, maxDepth int, email bool
 			for _, location := range locations {
 				//Phở/@10.7773285,106.6864011,18z
 				query := fmt.Sprintf("%s/@%f,%f,%dz", url.QueryEscape(k), location[0], location[1], jsonInput.ZoomLevel)
-				jobs = append(jobs, gmaps.NewGmapJob(utils.GenerateGUID(), langCode, query, maxDepth, email, true))
+				jobs = append(jobs, gmaps.NewGmapJob(uuid.NewString(), langCode, query, maxDepth, email, true))
 			}
 		}
 	}

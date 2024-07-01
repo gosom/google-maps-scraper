@@ -3,6 +3,8 @@ package utils
 import (
 	"errors"
 	"fmt"
+
+	"github.com/gosom/kit/logging"
 	"github.com/uber/h3-go/v4"
 )
 
@@ -18,7 +20,7 @@ func GenerateH3Listing(req [][]float64, resolution int) ([][]float64, error) {
 		GeoLoop: make(h3.GeoLoop, len(req)),
 	}
 	for i, point := range req {
-		geoPolygon.GeoLoop[i] = h3.NewLatLng(point[1], point[0])
+		geoPolygon.GeoLoop[i] = h3.NewLatLng(point[0], point[1])
 	}
 
 	//Generate geoPolygon to Cells
@@ -28,9 +30,9 @@ func GenerateH3Listing(req [][]float64, resolution int) ([][]float64, error) {
 	h3Listing := make([][]float64, len(cells))
 	for i, cell := range cells {
 		latLng := cell.LatLng()
-		h3Listing[i] = []float64{latLng.Lng, latLng.Lat}
+		h3Listing[i] = []float64{latLng.Lat, latLng.Lng}
 	}
-
+	logging.Info("GenerateH3Listing %v", len(h3Listing))
 	return h3Listing, nil
 }
 

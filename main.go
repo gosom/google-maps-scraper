@@ -5,10 +5,12 @@ import (
 	"database/sql"
 	"encoding/csv"
 	"io"
+	"log"
 	"os"
 
 	// postgres driver
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/joho/godotenv"
 
 	"github.com/gosom/scrapemate"
 	"github.com/gosom/scrapemate/adapters/writers/csvwriter"
@@ -16,6 +18,7 @@ import (
 	"github.com/gosom/scrapemate/scrapemateapp"
 	"github.com/playwright-community/playwright-go"
 
+	"github.com/gosom/google-maps-scraper/constants"
 	"github.com/gosom/google-maps-scraper/scrape_app"
 
 	"github.com/gosom/google-maps-scraper/jobs"
@@ -48,8 +51,11 @@ func main() {
 func run() error {
 	ctx := context.Background()
 	args := models.ParseArgs()
-
-	if args.Dsn == "" {
+	err := godotenv.Load()
+	if err != nil {
+		log.Println("[WARN] Error loading .env file")
+	}
+	if args.Dsn == "" && len(os.Getenv(constants.POSTGREST_CONN)) <= 0 {
 		return runFromLocalFile(ctx, &args)
 	}
 
@@ -137,7 +143,13 @@ func runFromLocalFile(ctx context.Context, args *models.Arguments) error {
 }
 
 func runFromDatabase(ctx context.Context, args *models.Arguments) error {
-	db, err := openPsqlConn(args.Dsn)
+
+	dbConn := args.Dsn
+	if len(os.Getenv(constants.POSTGREST_CONN)) > 0 {
+		dbConn = os.Getenv(constants.POSTGREST_CONN)
+	}
+
+	db, err := openPsqlConn(dbConn)
 	if err != nil {
 		return err
 	}

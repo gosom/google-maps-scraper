@@ -1,0 +1,1 @@
+./google-maps-scraper -input input.json -exit-on-inactivity 10m -lang vi -c 2 -proxyfile proxies.txt -produce
