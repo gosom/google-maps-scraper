@@ -20,7 +20,7 @@ func GenerateH3Listing(req [][]float64, resolution int) ([][]float64, error) {
 		GeoLoop: make(h3.GeoLoop, len(req)),
 	}
 	for i, point := range req {
-		geoPolygon.GeoLoop[i] = h3.NewLatLng(point[0], point[1])
+		geoPolygon.GeoLoop[i] = h3.NewLatLng(point[1], point[0])
 	}
 
 	//Generate geoPolygon to Cells
@@ -32,7 +32,7 @@ func GenerateH3Listing(req [][]float64, resolution int) ([][]float64, error) {
 		latLng := cell.LatLng()
 		h3Listing[i] = []float64{latLng.Lat, latLng.Lng}
 	}
-	logging.Info("GenerateH3Listing %v", len(h3Listing))
+	logging.Info("GenerateH3Listing %+v", h3Listing)
 	return h3Listing, nil
 }
 
