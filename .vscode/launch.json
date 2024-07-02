@@ -17,8 +17,9 @@
                 "-lang", "vi", 
                 "-c", "4", 
                 //"-debug",
-                "-produce",
-                "-proxyfile","proxies.txt"
+                //"-produce",
+                "-proxyfile","proxies.txt",
+                "-api"
             ]
         }
     ]

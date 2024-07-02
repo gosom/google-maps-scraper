@@ -23,6 +23,7 @@ type Arguments struct {
 
 	ProxyTxtFile string
 	UseLatLong   bool
+	Api          bool
 }
 
 func ParseArgs() (args Arguments) {
@@ -50,6 +51,7 @@ func ParseArgs() (args Arguments) {
 	flag.BoolVar(&args.Email, "email", false, "Use this to extract emails from the websites")
 	flag.StringVar(&args.ProxyTxtFile, "proxyfile", "", "Txt file containing the proxies to use (one proxy per line)")
 	flag.BoolVar(&args.UseLatLong, "uselatlong", false, "Use Latlong in input file")
+	flag.BoolVar(&args.Api, "api", false, "use Api")
 
 	flag.Parse()
 	log.Printf("Load flags: %v", args)

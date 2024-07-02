@@ -18,6 +18,17 @@ const (
 	statusQueued = "queued"
 )
 
+func OpenPsqlConn(dsn string) (conn *sql.DB, err error) {
+	conn, err = sql.Open("pgx", dsn)
+	if err != nil {
+		return
+	}
+
+	err = conn.Ping()
+
+	return
+}
+
 var _ scrapemate.JobProvider = (*provider)(nil)
 
 type provider struct {
