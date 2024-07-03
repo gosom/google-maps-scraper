@@ -17,7 +17,7 @@ import (
 	"github.com/gosom/scrapemate/scrapemateapp"
 )
 
-func RunFromDatabase(ctx context.Context, args *models.Arguments) error {
+func RunFromDatabase(ctx context.Context, args *models.Arguments, jsonInput *models.JsonInput) error {
 
 	dbConn := args.Dsn
 	if len(os.Getenv(constants.POSTGREST_CONN)) > 0 {
@@ -32,7 +32,7 @@ func RunFromDatabase(ctx context.Context, args *models.Arguments) error {
 	provider := postgres.NewProvider(db)
 
 	if args.ProduceOnly {
-		return ProduceSeedJobs(ctx, args, provider)
+		return ProduceSeedJobs(ctx, args, provider, jsonInput)
 	}
 
 	psqlWriter := postgres.NewResultWriter(db)

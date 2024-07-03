@@ -14,7 +14,8 @@ func SeedDatabase(c *gin.Context, args models.Arguments) {
 		return
 	}
 	args.ProduceOnly = true
-	err := jobs.RunFromDatabase(c.Request.Context(), &args)
+	args.InputFile = "json"
+	err := jobs.RunFromDatabase(c.Request.Context(), &args, &jsonInput)
 	if err != nil {
 		c.AbortWithError(500, err)
 		return

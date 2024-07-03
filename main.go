@@ -47,14 +47,14 @@ func run() error {
 		log.Println("[WARN] Error loading .env file")
 	}
 	if args.Api {
-		go jobs.RunFromDatabase(ctx, &args)
+		go jobs.RunFromDatabase(ctx, &args, nil)
 		return router.RouterRegister(args)
 	}
 	if args.Dsn == "" && len(os.Getenv(constants.POSTGREST_CONN)) <= 0 {
 		return jobs.RunFromLocalFile(ctx, &args)
 	}
 
-	return jobs.RunFromDatabase(ctx, &args)
+	return jobs.RunFromDatabase(ctx, &args, nil)
 }
 
 func installPlaywright() error {

@@ -8,3 +8,4 @@ results/*.csv
 .idea/
 .idea/sonarlint/
 .env
+build/results.csv
