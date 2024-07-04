@@ -20,23 +20,26 @@ A powerful command-line Google Maps scraper built upon the original [gosom/googl
 
 ### Clone the Repository
 
-`
+```
 git clone https://github.com/ptncafe/google-maps-scraper.git cd google-maps-scraper
-`
+```
 
 ### Build and Run
 
 Ensure Go is installed on your system. Then, build and run the scraper:
 
-`
-go build ./google-maps-scraper -input example-queries.json -results results.csv
-`
+``` 
+go build ./google-maps-scraper -input input.json -results results.csv
+```
 
 
 ## 📁 Example Queries
 
-Create a file named `example-queries.json` with the following content to test the polygon to H3 conversion feature:
+Create a file named `input.json` with the following content to test the polygon to H3 conversion feature:
+
+```
 json [ { "query": "Phở", "polygon": [ [-122.4194, 37.7749], [-122.4194, 37.7799], [-122.4294, 37.7799], [-122.4294, 37.7749] ] } ]
+```
 
 This example demonstrates how to search for "Phở" within a specific area defined by a polygon.
 
