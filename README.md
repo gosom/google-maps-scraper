@@ -18,7 +18,7 @@
 		<br>
 		<a href="https://www.searchapi.io/google-maps?via=gosom" rel="nofollow">
                   <div>
-                    <img src="https://www.searchapi.io/press/v1/svg/searchapi_logo_black_h.svg" width="250" alt="Google Maps API for easy SERP scraping"/>
+                    <img src="https://www.searchapi.io/press/v1/svg/searchapi_logo_black_h.svg" width="300" alt="Google Maps API for easy SERP scraping"/>
                   </div>
                   <b>Google Maps API for easy SERP scraping</b>
 		</a>
