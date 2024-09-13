@@ -26,7 +26,7 @@
                 <br>
                 <a href="https://www.capsolver.com/?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos" rel="nofollow">
                   <div>
-                    <img src="https://raw.githubusercontent.com/gosom/google-maps-scraper/new-sponsor/img/capsolver-banner.png" alt="Capsolver banner"/>
+                    <img src="https://raw.githubusercontent.com/gosom/google-maps-scraper/new-sponsor/img/capsolver-banner.jpeg" alt="Capsolver banner"/>
                   </div>
                   <b><a href="" rel="nofollow">CapSolver</a> automates CAPTCHA solving for efficient web scraping. It supports <a href="https://docs.capsolver.com/guide/captcha/ReCaptchaV2.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos" rel="nofolow">reCAPTCHA V2</a>, <a href="https://docs.capsolver.com/guide/captcha/ReCaptchaV3.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos" rel="nofollow">reCAPTCHA V3</a>, <a href="https://docs.capsolver.com/guide/captcha/HCaptcha.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos" rel="nofollow">hCaptcha</a>, and more. With API and extension options, it’s perfect for any web scraping project. </b>
 		</a>
