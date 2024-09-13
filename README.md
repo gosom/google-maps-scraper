@@ -17,10 +17,18 @@
 		<br>
 		<br>
 		<a href="https://www.searchapi.io/google-maps?via=gosom" rel="nofollow">
-            <div>
-              <img src="https://www.searchapi.io/press/v1/svg/searchapi_logo_black_h.svg" width="180" alt="Google Maps API for easy SERP scraping"/>
-            </div>
-            <b>Google Maps API for easy SERP scraping</b>
+                  <div>
+                    <img src="https://www.searchapi.io/press/v1/svg/searchapi_logo_black_h.svg" width="180" alt="Google Maps API for easy SERP scraping"/>
+                  </div>
+                  <b>Google Maps API for easy SERP scraping</b>
+		</a>
+                <br>
+                <br>
+                <a href="https://www.capsolver.com/?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos" rel="nofollow">
+                  <div>
+                    <img src=".img/capsolver-banner.png" width="180" alt="Capsolver Sponsor Banner"/>
+                  </div>
+                  <b><a href="" rel="nofollow">CapSolver</a> automates CAPTCHA solving for efficient web scraping. It supports <a href="https://docs.capsolver.com/guide/captcha/ReCaptchaV2.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos" rel="nofolow">reCAPTCHA V2</a>, <a href="https://docs.capsolver.com/guide/captcha/ReCaptchaV3.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos" rel="nofollow">reCAPTCHA V3</a>, <a href="https://docs.capsolver.com/guide/captcha/HCaptcha.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos" rel="nofollow">hCaptcha</a>, and more. With API and extension options, it’s perfect for any web scraping project. </b>
 		</a>
 	</p>
 </div>
