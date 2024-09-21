@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        go: ['1.22.7']
+        go: ['1.23.1']
 
     steps:
       - name: Check out code
@@ -31,7 +31,7 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v3
         with:
-          version: v1.54.2
+          version: v1.61.0
 
       - name: Go Format
         run: gofmt -s -w . && git diff --exit-code

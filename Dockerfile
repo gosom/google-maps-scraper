@@ -1,11 +1,11 @@
-FROM golang:1.22.2-bullseye as withnode
+FROM golang:1.23.1-bullseye as withnode
 
 RUN apt-get update && \ 
 apt-get install -y ca-certificates net-tools && \
 curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs
 
-RUN npm init -y && npm install && npx playwright@v1.43.1 install-deps
+RUN npm init -y && npm install && npx playwright@latest install-deps
 
 ENV GO111MODULE=on
 #ENV CGO_ENABLED=1
