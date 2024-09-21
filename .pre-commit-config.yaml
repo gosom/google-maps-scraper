@@ -10,7 +10,7 @@ repos:
       pass_filenames: false
     - id: golangci-lint
       name: golangci-lint
-      entry: golangci-lint -v run
+      entry: make lint
       language: golang
       types: [go]
       require_serial: true

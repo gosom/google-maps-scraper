@@ -19,7 +19,7 @@ linters-settings:
       - performance
       - style
   govet:
-    check-shadowing: true
+    shadow: true
   nolintlint:
     require-explanation: true
     require-specific: true
@@ -30,13 +30,12 @@ linters:
     - dogsled
     - dupl
     - errcheck
-    - exportloopref
+    - copyloopvar
     - exhaustive
     - goconst
     - gocritic
     - gofmt
     - goimports
-    - gomnd
     - gocyclo
     - gosec
     - gosimple
