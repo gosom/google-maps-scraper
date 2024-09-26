@@ -129,7 +129,7 @@ func runFromLocalFile(ctx context.Context, args *arguments) error {
 		return err
 	}
 
-	seedJobs, err := createSeedJobs(args.langCode, input, args.maxDepth, args.email)
+	seedJobs, err := createSeedJobs(args.langCode, input, args.maxDepth, args.email, args.geoCoordinates, args.zoom)
 	if err != nil {
 		return err
 	}
@@ -201,7 +201,7 @@ func produceSeedJobs(ctx context.Context, args *arguments, provider scrapemate.J
 		input = f
 	}
 
-	jobs, err := createSeedJobs(args.langCode, input, args.maxDepth, args.email)
+	jobs, err := createSeedJobs(args.langCode, input, args.maxDepth, args.email, args.geoCoordinates, args.zoom)
 	if err != nil {
 		return err
 	}
@@ -215,7 +215,7 @@ func produceSeedJobs(ctx context.Context, args *arguments, provider scrapemate.J
 	return nil
 }
 
-func createSeedJobs(langCode string, r io.Reader, maxDepth int, email bool) (jobs []scrapemate.IJob, err error) {
+func createSeedJobs(langCode string, r io.Reader, maxDepth int, email bool, geoCoordinates string, zoom int) (jobs []scrapemate.IJob, err error) {
 	scanner := bufio.NewScanner(r)
 
 	for scanner.Scan() {
@@ -231,7 +231,7 @@ func createSeedJobs(langCode string, r io.Reader, maxDepth int, email bool) (job
 			id = strings.TrimSpace(after)
 		}
 
-		jobs = append(jobs, gmaps.NewGmapJob(id, langCode, query, maxDepth, email))
+		jobs = append(jobs, gmaps.NewGmapJob(id, langCode, query, maxDepth, email, geoCoordinates, zoom))
 	}
 
 	return jobs, scanner.Err()
@@ -254,6 +254,8 @@ type arguments struct {
 	produceOnly              bool
 	exitOnInactivityDuration time.Duration
 	email                    bool
+	geoCoordinates           string
+	zoom                     int
 }
 
 func parseArgs() (args arguments) {
@@ -279,6 +281,8 @@ func parseArgs() (args arguments) {
 	flag.DurationVar(&args.exitOnInactivityDuration, "exit-on-inactivity", 0, "program exits after this duration of inactivity(example value '5m')")
 	flag.BoolVar(&args.json, "json", false, "Use this to produce a json file instead of csv (not available when using db)")
 	flag.BoolVar(&args.email, "email", false, "Use this to extract emails from the websites")
+  flag.StringVar(&args.geoCoordinates, "geo", "21.039174,105.764184", "Use this to set the geo coordinates for the search, default is (21.039174,105.764184)")
+  flag.IntVar(&args.zoom, "zoom", 18, "Use this to set the zoom level for the search, default is 18")
 
 	flag.Parse()
 
