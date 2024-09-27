@@ -33,19 +33,19 @@ func NewGmapJob(id, langCode, query string, maxDepth int, extractEmail bool, geo
 		id = uuid.New().String()
 	}
 
-	map_url := fmt.Sprintf("https://www.google.com/maps/search/%s", query)
+	mapUrl := fmt.Sprintf("https://www.google.com/maps/search/%s", query)
 	if geoCoordinates != "" {
-		map_url = fmt.Sprintf("https://www.google.com/maps/search/%s/@%s", query, strings.ReplaceAll(geoCoordinates, " ", ""))
+		mapUrl = fmt.Sprintf("https://www.google.com/maps/search/%s/@%s", query, strings.ReplaceAll(geoCoordinates, " ", ""))
 	}
 	if zoom > 0 {
-		map_url = fmt.Sprintf("%s,%dz", map_url, zoom)
+		mapUrl = fmt.Sprintf("%s,%dz", mapUrl, zoom)
 	}
 
 	job := GmapJob{
 		Job: scrapemate.Job{
 			ID:         id,
 			Method:     http.MethodGet,
-			URL:        map_url,
+			URL:        mapUrl,
 			URLParams:  map[string]string{"hl": langCode},
 			MaxRetries: maxRetries,
 			Priority:   prio,
