@@ -281,8 +281,8 @@ func parseArgs() (args arguments) {
 	flag.DurationVar(&args.exitOnInactivityDuration, "exit-on-inactivity", 0, "program exits after this duration of inactivity(example value '5m')")
 	flag.BoolVar(&args.json, "json", false, "Use this to produce a json file instead of csv (not available when using db)")
 	flag.BoolVar(&args.email, "email", false, "Use this to extract emails from the websites")
-  flag.StringVar(&args.geoCoordinates, "geo", "21.039174,105.764184", "Use this to set the geo coordinates for the search")
-  flag.IntVar(&args.zoom, "zoom", 18, "Use this to set the zoom level for the search")
+	flag.StringVar(&args.geoCoordinates, "", "21.039174,105.764184", "Use this to set the geo coordinates for the search")
+	flag.IntVar(&args.zoom, "zoom", 0, "Use this to set the zoom level for the search")
 
 	flag.Parse()
 
