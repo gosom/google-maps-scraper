@@ -175,33 +175,71 @@ try `./google-maps-scraper -h` to see the command line options available:
 
 ```
   -c int
-    	sets the concurrency. By default it is set to half of the number of CPUs (default 6)
+        sets the concurrency. By default it is set to half of the number of CPUs (default 8)
   -cache string
-    	sets the cache directory (no effect at the moment) (default "cache")
+        sets the cache directory (no effect at the moment) (default "cache")
   -debug
-    	Use this to perform a headfull crawl (it will open a browser window) [only when using without docker]
+        Use this to perform a headfull crawl (it will open a browser window) [only when using without docker]
   -depth int
-    	is how much you allow the scraper to scroll in the search results. Experiment with that value (default 10)
+        is how much you allow the scraper to scroll in the search results. Experiment with that value (default 10)
   -dsn string
-    	Use this if you want to use a database provider
+        Use this if you want to use a database provider
   -email
-    	Use this to extract emails from the websites
+        Use this to extract emails from the websites
   -exit-on-inactivity duration
-    	program exits after this duration of inactivity(example value '5m')
-  -geo string
-    	Use this to set the geo coordinates for the search
+        program exits after this duration of inactivity(example value '5m')
   -input string
-    	is the path to the file where the queries are stored (one query per line). By default it reads from stdin (default "stdin")
+        is the path to the file where the queries are stored (one query per line). By default it reads from stdin (default "stdin")
   -json
-    	Use this to produce a json file instead of csv (not available when using db)
+        Use this to produce a json file instead of csv (not available when using db)
   -lang string
-    	is the languate code to use for google (the hl urlparam).Default is en . For example use de for German or el for Greek (default "en")
+        is the languate code to use for google (the hl urlparam).Default is en . For example use de for German or el for Greek (default "en")
   -produce
-    	produce seed jobs only (only valid with dsn)
+        produce seed jobs only (only valid with dsn)
   -results string
-    	is the path to the file where the results will be written (default "stdout")
+        is the path to the file where the results will be written (default "stdout")
+  -writer string
+        Use a custom writer utilizing the go plugin system.
+        The plugin must implement the scrapemate.ResultWriter interface.
+        The plugin must be a shared library (a file with .so or .dll extension).
+        The plugin must be compiled with the following build tags: go build -buildmode=plugin plugins/example.go.
+        Example: If you have your shared library in a folder /home/user/myplugins and it exposesa DummyPrinter symbol the -writer /home/user/myplugins:DummyPrinter
   -zoom int
     	Use this to set the zoom level(0-21) for the search
+  -geo string
+    	Use this to set the geo coordinates for the search
+```
+
+## Using a custom writer
+
+In cases the results need to be written in a custom format or in another system like a db a message queue or basically anything the Go plugin system can be utilized.
+
+Write a Go plugin (see an example in examples/plugins/example_writeR.go) 
+
+compile it using (for linux:
+
+```
+go build -buildmode=plugin -tags=plugin -o ~/mytest/plugins/example_writer.so examples/plugins/example_writer.go
+```
+
+and then run the program using the `-writer` argument. 
+
+See an example:
+
+1. Write your plugin (use the examples/plugins/example_writer.go as a reference)
+2. Build your plugin `go build -buildmode=plugin -tags=plugin -o ~/myplugins/example_writer.so plugins/example_writer.go`
+3. Download the lastes [release](https://github.com/gosom/google-maps-scraper/releases/) or build the program
+4. Run the program like `./google-maps-scraper -writer ~/myplugins:DummyPrinter -input example-queries.txt`
+
+
+### Plugins and Docker
+
+It is possible to use the docker image and use tha plugins.
+In such case make sure that the shared library is build using a compatible GLIB version with the docker image.
+otherwise you will encounter an error like:
+
+```
+/lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.32' not found (required by /plugins/example_writer.so)
 ```
 
 
@@ -325,4 +363,3 @@ banner is generated using OpenAI's DALE
 <a href="https://www.searchapi.io/?via=gosom" rel="nofollow"> searchapi.com</a> sponsors this project via Github sponsors.
 
 If you register via the links on my page I get a commission. This is another way to support my work
-
