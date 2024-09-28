@@ -207,7 +207,7 @@ try `./google-maps-scraper -h` to see the command line options available:
   -zoom int
     	Use this to set the zoom level(0-21) for the search
   -geo string
-    	Use this to set the geo coordinates for the search
+    	Use this to set the geo coordinates for the search (default "")
 ```
 
 ## Using a custom writer
