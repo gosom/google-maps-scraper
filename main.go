@@ -6,8 +6,11 @@ import (
 	"database/sql"
 	"encoding/csv"
 	"flag"
+	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"plugin"
 	"runtime"
 	"strings"
 	"time"
@@ -74,30 +77,46 @@ func runFromLocalFile(ctx context.Context, args *arguments) error {
 		input = f
 	}
 
-	var resultsWriter io.Writer
+	writers := []scrapemate.ResultWriter{}
 
-	switch args.resultsFile {
-	case "stdout":
-		resultsWriter = os.Stdout
-	default:
-		f, err := os.Create(args.resultsFile)
+	if args.customWriter != "" {
+		parts := strings.Split(args.customWriter, ":")
+		if len(parts) != 2 {
+			return fmt.Errorf("invalid custom writer format: %s", args.customWriter)
+		}
+
+		dir, pluginName := parts[0], parts[1]
+
+		customWriter, err := loadCustomWriter(dir, pluginName)
 		if err != nil {
 			return err
 		}
 
-		defer f.Close()
-
-		resultsWriter = f
-	}
-
-	csvWriter := csvwriter.NewCsvWriter(csv.NewWriter(resultsWriter))
-
-	writers := []scrapemate.ResultWriter{}
-
-	if args.json {
-		writers = append(writers, jsonwriter.NewJSONWriter(resultsWriter))
+		writers = append(writers, customWriter)
 	} else {
-		writers = append(writers, csvWriter)
+		var resultsWriter io.Writer
+
+		switch args.resultsFile {
+		case "stdout":
+			resultsWriter = os.Stdout
+		default:
+			f, err := os.Create(args.resultsFile)
+			if err != nil {
+				return err
+			}
+
+			defer f.Close()
+
+			resultsWriter = f
+		}
+
+		csvWriter := csvwriter.NewCsvWriter(csv.NewWriter(resultsWriter))
+
+		if args.json {
+			writers = append(writers, jsonwriter.NewJSONWriter(resultsWriter))
+		} else {
+			writers = append(writers, csvWriter)
+		}
 	}
 
 	opts := []func(*scrapemateapp.Config) error{
@@ -254,6 +273,7 @@ type arguments struct {
 	produceOnly              bool
 	exitOnInactivityDuration time.Duration
 	email                    bool
+	customWriter             string
 	geoCoordinates           string
 	zoom                     int
 }
@@ -281,6 +301,12 @@ func parseArgs() (args arguments) {
 	flag.DurationVar(&args.exitOnInactivityDuration, "exit-on-inactivity", 0, "program exits after this duration of inactivity(example value '5m')")
 	flag.BoolVar(&args.json, "json", false, "Use this to produce a json file instead of csv (not available when using db)")
 	flag.BoolVar(&args.email, "email", false, "Use this to extract emails from the websites")
+	flag.StringVar(&args.customWriter, "writer", "",
+		`Use a custom writer utilizing the go plugin system.
+The plugin must implement the scrapemate.ResultWriter interface.
+The plugin must be a shared library (a file with .so extension).
+The plugin must be compiled with the following build tags: go build -buildmode=plugin plugins/example.go.
+The plugins must be placed in the same directory as the binary in a directory called plugins.`)
 	flag.StringVar(&args.geoCoordinates, "geo", "", "Use this to set the geo coordinates for the search")
 	flag.IntVar(&args.zoom, "zoom", 0, "Use this to set the zoom level(0-21) for the search")
 
@@ -298,4 +324,42 @@ func openPsqlConn(dsn string) (conn *sql.DB, err error) {
 	err = conn.Ping()
 
 	return
+}
+
+func loadCustomWriter(pluginDir, pluginName string) (scrapemate.ResultWriter, error) {
+	files, err := os.ReadDir(pluginDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read plugin directory: %w", err)
+	}
+
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+
+		if filepath.Ext(file.Name()) != ".so" && filepath.Ext(file.Name()) != ".dll" {
+			continue
+		}
+
+		pluginPath := filepath.Join(pluginDir, file.Name())
+
+		p, err := plugin.Open(pluginPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open plugin %s: %w", file.Name(), err)
+		}
+
+		symWriter, err := p.Lookup(pluginName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to lookup symbol %s: %w", pluginName, err)
+		}
+
+		writer, ok := symWriter.(*scrapemate.ResultWriter)
+		if !ok {
+			return nil, fmt.Errorf("unexpected type %T from writer symbol in plugin %s", symWriter, file.Name())
+		}
+
+		return *writer, nil
+	}
+
+	return nil, fmt.Errorf("no plugin found in %s", pluginDir)
 }
