@@ -37,6 +37,7 @@ func NewGmapJob(id, langCode, query string, maxDepth int, extractEmail bool, geo
 	if geoCoordinates != "" {
 		mapURL = fmt.Sprintf("https://www.google.com/maps/search/%s/@%s", query, strings.ReplaceAll(geoCoordinates, " ", ""))
 	}
+
 	if zoom > 0 {
 		mapURL = fmt.Sprintf("%s,%dz", mapURL, zoom)
 	}
