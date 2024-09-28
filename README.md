@@ -175,29 +175,33 @@ try `./google-maps-scraper -h` to see the command line options available:
 
 ```
   -c int
-        sets the concurrency. By default it is set to half of the number of CPUs (default 8)
+    	sets the concurrency. By default it is set to half of the number of CPUs (default 6)
   -cache string
-        sets the cache directory (no effect at the moment) (default "cache")
+    	sets the cache directory (no effect at the moment) (default "cache")
   -debug
-        Use this to perform a headfull crawl (it will open a browser window) [only when using without docker]
+    	Use this to perform a headfull crawl (it will open a browser window) [only when using without docker]
   -depth int
-        is how much you allow the scraper to scroll in the search results. Experiment with that value (default 10)
+    	is how much you allow the scraper to scroll in the search results. Experiment with that value (default 10)
   -dsn string
-        Use this if you want to use a database provider
+    	Use this if you want to use a database provider
   -email
-        Use this to extract emails from the websites
+    	Use this to extract emails from the websites
   -exit-on-inactivity duration
-        program exits after this duration of inactivity(example value '5m')
+    	program exits after this duration of inactivity(example value '5m')
+  -geo string
+    	Use this to set the geo coordinates for the search
   -input string
-        is the path to the file where the queries are stored (one query per line). By default it reads from stdin (default "stdin")
+    	is the path to the file where the queries are stored (one query per line). By default it reads from stdin (default "stdin")
   -json
-        Use this to produce a json file instead of csv (not available when using db)
+    	Use this to produce a json file instead of csv (not available when using db)
   -lang string
-        is the languate code to use for google (the hl urlparam).Default is en . For example use de for German or el for Greek (default "en")
+    	is the languate code to use for google (the hl urlparam).Default is en . For example use de for German or el for Greek (default "en")
   -produce
-        produce seed jobs only (only valid with dsn)
+    	produce seed jobs only (only valid with dsn)
   -results string
-        is the path to the file where the results will be written (default "stdout")
+    	is the path to the file where the results will be written (default "stdout")
+  -zoom int
+    	Use this to set the zoom level(0-21) for the search
 ```
 
 

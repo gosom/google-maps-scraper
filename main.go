@@ -282,7 +282,7 @@ func parseArgs() (args arguments) {
 	flag.BoolVar(&args.json, "json", false, "Use this to produce a json file instead of csv (not available when using db)")
 	flag.BoolVar(&args.email, "email", false, "Use this to extract emails from the websites")
 	flag.StringVar(&args.geoCoordinates, "geo", "", "Use this to set the geo coordinates for the search")
-	flag.IntVar(&args.zoom, "zoom", 0, "Use this to set the zoom level for the search")
+	flag.IntVar(&args.zoom, "zoom", 0, "Use this to set the zoom level(0-21) for the search")
 
 	flag.Parse()
 
