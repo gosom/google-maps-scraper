@@ -198,6 +198,44 @@ try `./google-maps-scraper -h` to see the command line options available:
         produce seed jobs only (only valid with dsn)
   -results string
         is the path to the file where the results will be written (default "stdout")
+  -writer string
+        Use a custom writer utilizing the go plugin system.
+        The plugin must implement the scrapemate.ResultWriter interface.
+        The plugin must be a shared library (a file with .so or .dll extension).
+        The plugin must be compiled with the following build tags: go build -buildmode=plugin plugins/example.go.
+        Example: If you have your shared library in a folder /home/user/myplugins and it exposesa DummyPrinter symbol the -writer /home/user/myplugins:DummyPrinter
+```
+
+## Using a custom writer
+
+In cases the results need to be written in a custom format or in another system like a db a message queue or basically anything the Go plugin system can be utilized.
+
+Write a Go plugin (see an example in examples/plugins/example_writeR.go) 
+
+compile it using (for linux:
+
+```
+go build -buildmode=plugin -tags=plugin -o ~/mytest/plugins/example_writer.so examples/plugins/example_writer.go
+```
+
+and then run the program using the `-writer` argument. 
+
+See an example:
+
+1. Write your plugin (use the examples/plugins/example_writer.go as a reference)
+2. Build your plugin `go build -buildmode=plugin -tags=plugin -o ~/myplugins/example_writer.so plugins/example_writer.go`
+3. Download the lastes [release](https://github.com/gosom/google-maps-scraper/releases/) or build the program
+4. Run the program like `./google-maps-scraper -writer ~/myplugins:DummyPrinter -input example-queries.txt`
+
+
+### Plugins and Docker
+
+It is possible to use the docker image and use tha plugins.
+In such case make sure that the shared library is build using a compatible GLIB version with the docker image.
+otherwise you will encounter an error like:
+
+```
+/lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.32' not found (required by /plugins/example_writer.so)
 ```
 
 
