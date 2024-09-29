@@ -204,6 +204,11 @@ try `./google-maps-scraper -h` to see the command line options available:
         The plugin must be a shared library (a file with .so or .dll extension).
         The plugin must be compiled with the following build tags: go build -buildmode=plugin plugins/example.go.
         Example: If you have your shared library in a folder /home/user/myplugins and it exposesa DummyPrinter symbol the -writer /home/user/myplugins:DummyPrinter
+  -zoom int
+    	Use this to set the zoom level(0-21) for the search and MUST be use with geo parameter
+  -geo string
+    	Use this to set the geo coordinates for the search and MUST be use with zoom parameter(example value '37.7749,-122.4194')
+
 ```
 
 ## Using a custom writer
@@ -359,4 +364,3 @@ banner is generated using OpenAI's DALE
 <a href="https://www.searchapi.io/?via=gosom" rel="nofollow"> searchapi.com</a> sponsors this project via Github sponsors.
 
 If you register via the links on my page I get a commission. This is another way to support my work
-

@@ -148,7 +148,7 @@ func runFromLocalFile(ctx context.Context, args *arguments) error {
 		return err
 	}
 
-	seedJobs, err := createSeedJobs(args.langCode, input, args.maxDepth, args.email)
+	seedJobs, err := createSeedJobs(args.langCode, input, args.maxDepth, args.email, args.geoCoordinates, args.zoom)
 	if err != nil {
 		return err
 	}
@@ -220,7 +220,7 @@ func produceSeedJobs(ctx context.Context, args *arguments, provider scrapemate.J
 		input = f
 	}
 
-	jobs, err := createSeedJobs(args.langCode, input, args.maxDepth, args.email)
+	jobs, err := createSeedJobs(args.langCode, input, args.maxDepth, args.email, args.geoCoordinates, args.zoom)
 	if err != nil {
 		return err
 	}
@@ -234,7 +234,7 @@ func produceSeedJobs(ctx context.Context, args *arguments, provider scrapemate.J
 	return nil
 }
 
-func createSeedJobs(langCode string, r io.Reader, maxDepth int, email bool) (jobs []scrapemate.IJob, err error) {
+func createSeedJobs(langCode string, r io.Reader, maxDepth int, email bool, geoCoordinates string, zoom int) (jobs []scrapemate.IJob, err error) {
 	scanner := bufio.NewScanner(r)
 
 	for scanner.Scan() {
@@ -250,7 +250,7 @@ func createSeedJobs(langCode string, r io.Reader, maxDepth int, email bool) (job
 			id = strings.TrimSpace(after)
 		}
 
-		jobs = append(jobs, gmaps.NewGmapJob(id, langCode, query, maxDepth, email))
+		jobs = append(jobs, gmaps.NewGmapJob(id, langCode, query, maxDepth, email, geoCoordinates, zoom))
 	}
 
 	return jobs, scanner.Err()
@@ -274,6 +274,8 @@ type arguments struct {
 	exitOnInactivityDuration time.Duration
 	email                    bool
 	customWriter             string
+	geoCoordinates           string
+	zoom                     int
 }
 
 func parseArgs() (args arguments) {
@@ -305,6 +307,8 @@ The plugin must implement the scrapemate.ResultWriter interface.
 The plugin must be a shared library (a file with .so extension).
 The plugin must be compiled with the following build tags: go build -buildmode=plugin plugins/example.go.
 The plugins must be placed in the same directory as the binary in a directory called plugins.`)
+	flag.StringVar(&args.geoCoordinates, "geo", "", "Use this to set the geo coordinates for the search and MUST be use with zoom parameter(example value '37.7749,-122.4194')")
+	flag.IntVar(&args.zoom, "zoom", 0, "Use this to set the zoom level(0-21) for the search and MUST be use with geo parameter")
 
 	flag.Parse()
 

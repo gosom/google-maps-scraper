@@ -21,7 +21,7 @@ type GmapJob struct {
 	ExtractEmail bool
 }
 
-func NewGmapJob(id, langCode, query string, maxDepth int, extractEmail bool) *GmapJob {
+func NewGmapJob(id, langCode, query string, maxDepth int, extractEmail bool, geoCoordinates string, zoom int) *GmapJob {
 	query = url.QueryEscape(query)
 
 	const (
@@ -33,11 +33,19 @@ func NewGmapJob(id, langCode, query string, maxDepth int, extractEmail bool) *Gm
 		id = uuid.New().String()
 	}
 
+	mapURL := ""
+	if geoCoordinates != "" && zoom > 0 {
+		mapURL = fmt.Sprintf("https://www.google.com/maps/search/%s/@%s,%dz", query, strings.ReplaceAll(geoCoordinates, " ", ""), zoom)
+	} else {
+		//Warning: geo and zoom MUST be both set or not
+		mapURL = fmt.Sprintf("https://www.google.com/maps/search/%s", query)
+	}
+
 	job := GmapJob{
 		Job: scrapemate.Job{
 			ID:         id,
 			Method:     http.MethodGet,
-			URL:        "https://www.google.com/maps/search/" + query,
+			URL:        mapURL,
 			URLParams:  map[string]string{"hl": langCode},
 			MaxRetries: maxRetries,
 			Priority:   prio,
