@@ -33,13 +33,15 @@ func NewGmapJob(id, langCode, query string, maxDepth int, extractEmail bool, geo
 		id = uuid.New().String()
 	}
 
-	mapURL := fmt.Sprintf("https://www.google.com/maps/search/%s", query)
-	if geoCoordinates != "" {
-		mapURL = fmt.Sprintf("https://www.google.com/maps/search/%s/@%s", query, strings.ReplaceAll(geoCoordinates, " ", ""))
+	mapURL := ""
+	if geoCoordinates != "" && zoom > 0 {
+		mapURL = fmt.Sprintf("https://www.google.com/maps/search/%s/@%s,%dz", query, strings.ReplaceAll(geoCoordinates, " ", ""), zoom)
 	}
 
-	if zoom > 0 {
-		mapURL = fmt.Sprintf("%s,%dz", mapURL, zoom)
+	if geoCoordinates == "" && zoom == 0 {
+		mapURL = fmt.Sprintf("https://www.google.com/maps/search/%s", query)
+	} else {
+		fmt.Println("Warning: geo and zoom must be both set or both empty, using default parameters")
 	}
 
 	job := GmapJob{

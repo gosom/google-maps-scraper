@@ -307,8 +307,8 @@ The plugin must implement the scrapemate.ResultWriter interface.
 The plugin must be a shared library (a file with .so extension).
 The plugin must be compiled with the following build tags: go build -buildmode=plugin plugins/example.go.
 The plugins must be placed in the same directory as the binary in a directory called plugins.`)
-	flag.StringVar(&args.geoCoordinates, "geo", "", "Use this to set the geo coordinates for the search")
-	flag.IntVar(&args.zoom, "zoom", 0, "Use this to set the zoom level(0-21) for the search")
+	flag.StringVar(&args.geoCoordinates, "geo", "", "Use this to set the geo coordinates for the search and MUST be use with zoom parameter(example value '37.7749,-122.4194')")
+	flag.IntVar(&args.zoom, "zoom", 0, "Use this to set the zoom level(0-21) for the search and MUST be use with geo parameter")
 
 	flag.Parse()
 
