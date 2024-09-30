@@ -217,7 +217,7 @@ In cases the results need to be written in a custom format or in another system 
 
 Write a Go plugin (see an example in examples/plugins/example_writeR.go) 
 
-compile it using (for linux:
+Compile it using (for Linux):
 
 ```
 go build -buildmode=plugin -tags=plugin -o ~/mytest/plugins/example_writer.so examples/plugins/example_writer.go
