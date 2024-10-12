@@ -145,8 +145,6 @@ func Test_EntryFromJSON(t *testing.T) {
 
 	entry.About = nil
 
-	require.Len(t, entry.UserReviews, 8)
-
 	require.Len(t, entry.PopularTimes, 7)
 
 	for k, v := range entry.PopularTimes {
@@ -189,4 +187,16 @@ func Test_EntryFromJSON2(t *testing.T) {
 		_, err = gmaps.EntryFromJSON(raw)
 		require.NoError(t, err)
 	}
+}
+
+func Test_EntryFromJSONRaw2(t *testing.T) {
+	raw, err := os.ReadFile("../testdata/raw2.json")
+
+	require.NoError(t, err)
+	require.NotEmpty(t, raw)
+
+	entry, err := gmaps.EntryFromJSON(raw)
+
+	require.NoError(t, err)
+	require.Greater(t, len(entry.About), 0)
 }

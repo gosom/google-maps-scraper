@@ -129,7 +129,7 @@ func (j *PlaceJob) BrowserActions(_ context.Context, page playwright.Page) scrap
 		return resp
 	}
 
-	const prefix = ")]}'"
+	const prefix = `)]}'`
 
 	raw = strings.TrimSpace(strings.TrimPrefix(raw, prefix))
 
