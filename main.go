@@ -19,8 +19,6 @@ func main() {
 	if err != nil {
 		os.Stderr.WriteString(err.Error() + "\n")
 
-		_ = runnerInstance.Close(ctx)
-
 		os.Exit(1)
 	}
 

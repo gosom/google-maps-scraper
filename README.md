@@ -175,40 +175,35 @@ try `./google-maps-scraper -h` to see the command line options available:
 
 ```
   -c int
-        sets the concurrency. By default it is set to half of the number of CPUs (default 8)
+        sets the concurrency [default: half of CPU cores] (default 8)
   -cache string
-        sets the cache directory (no effect at the moment) (default "cache")
+        sets the cache directory [no effect at the moment] (default "cache")
   -debug
-        Use this to perform a headfull crawl (it will open a browser window) [only when using without docker]
+        enable headful crawl (opens browser window) [default: false]
   -depth int
-        is how much you allow the scraper to scroll in the search results. Experiment with that value (default 10)
+        maximum scroll depth in search results [default: 10] (default 10)
   -dsn string
-        Use this if you want to use a database provider
+        database connection string [only valid with database provider]
   -email
-        Use this to extract emails from the websites
+        extract emails from websites
   -exit-on-inactivity duration
-        program exits after this duration of inactivity(example value '5m')
-  -input string
-        is the path to the file where the queries are stored (one query per line). By default it reads from stdin (default "stdin")
-  -json
-        Use this to produce a json file instead of csv (not available when using db)
-  -lang string
-        is the languate code to use for google (the hl urlparam).Default is en . For example use de for German or el for Greek (default "en")
-  -produce
-        produce seed jobs only (only valid with dsn)
-  -results string
-        is the path to the file where the results will be written (default "stdout")
-  -writer string
-        Use a custom writer utilizing the go plugin system.
-        The plugin must implement the scrapemate.ResultWriter interface.
-        The plugin must be a shared library (a file with .so or .dll extension).
-        The plugin must be compiled with the following build tags: go build -buildmode=plugin plugins/example.go.
-        Example: If you have your shared library in a folder /home/user/myplugins and it exposesa DummyPrinter symbol the -writer /home/user/myplugins:DummyPrinter
-  -zoom int
-    	Use this to set the zoom level(0-21) for the search and MUST be use with geo parameter
+        exit after inactivity duration (e.g., '5m')
   -geo string
-    	Use this to set the geo coordinates for the search and MUST be use with zoom parameter(example value '37.7749,-122.4194')
-
+        set geo coordinates for search (e.g., '37.7749,-122.4194')
+  -input string
+        path to the input file with queries (one per line) [default: stdin] (default "stdin")
+  -json
+        produce JSON output instead of CSV
+  -lang string
+        language code for Google (e.g., 'de' for German) [default: en] (default "en")
+  -produce
+        produce seed jobs only (requires dsn)
+  -results string
+        path to the results file [default: stdout] (default "stdout")
+  -writer string
+        use custom writer plugin (format: 'dir:pluginName')
+  -zoom int
+        set zoom level (0-21) for search
 ```
 
 ## Using a custom writer
