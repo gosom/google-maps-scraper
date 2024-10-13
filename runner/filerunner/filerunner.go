@@ -7,8 +7,10 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gosom/google-maps-scraper/runner"
+	"github.com/gosom/google-maps-scraper/tlmt"
 	"github.com/gosom/scrapemate"
 	"github.com/gosom/scrapemate/adapters/writers/csvwriter"
 	"github.com/gosom/scrapemate/adapters/writers/jsonwriter"
@@ -47,8 +49,28 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 	return ans, nil
 }
 
-func (r *fileRunner) Run(ctx context.Context) error {
-	seedJobs, err := runner.CreateSeedJobs(
+func (r *fileRunner) Run(ctx context.Context) (err error) {
+	var seedJobs []scrapemate.IJob
+
+	t0 := time.Now().UTC()
+
+	defer func() {
+		elapsed := time.Now().UTC().Sub(t0)
+		params := map[string]any{
+			"job_count": len(seedJobs),
+			"duration":  elapsed.String(),
+		}
+
+		if err != nil {
+			params["error"] = err.Error()
+		}
+
+		evt := tlmt.NewEvent("file_runner", params)
+
+		_ = runner.Telemetry().Send(ctx, evt)
+	}()
+
+	seedJobs, err = runner.CreateSeedJobs(
 		r.cfg.LangCode,
 		r.input,
 		r.cfg.MaxDepth,
@@ -60,7 +82,9 @@ func (r *fileRunner) Run(ctx context.Context) error {
 		return err
 	}
 
-	return r.app.Start(ctx, seedJobs...)
+	err = r.app.Start(ctx, seedJobs...)
+
+	return err
 }
 
 func (r *fileRunner) Close(context.Context) error {

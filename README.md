@@ -311,6 +311,10 @@ Please replace the values or the command args accordingly
 Note: Keep in mind that because the application starts a headless browser it requires CPU and memory. 
 Use an appropriate kubernetes cluster
 
+## Telemetry
+
+Anonymous usage statistics are collected for debug and improvement reasons. 
+You can opt out by setting the env variable `DISABLE_TELEMETRY=1`
 
 ## Perfomance
 

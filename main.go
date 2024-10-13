@@ -19,6 +19,8 @@ func main() {
 	if err != nil {
 		os.Stderr.WriteString(err.Error() + "\n")
 
+		runner.Telemetry().Close()
+
 		os.Exit(1)
 	}
 
@@ -26,11 +28,13 @@ func main() {
 		os.Stderr.WriteString(err.Error() + "\n")
 
 		_ = runnerInstance.Close(ctx)
+		runner.Telemetry().Close()
 
 		os.Exit(1)
 	}
 
 	_ = runnerInstance.Close(ctx)
+	runner.Telemetry().Close()
 
 	os.Exit(0)
 }

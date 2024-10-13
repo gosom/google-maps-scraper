@@ -6,7 +6,12 @@ import (
 	"flag"
 	"os"
 	"runtime"
+	"sync"
 	"time"
+
+	"github.com/gosom/google-maps-scraper/tlmt"
+	"github.com/gosom/google-maps-scraper/tlmt/gonoop"
+	"github.com/gosom/google-maps-scraper/tlmt/goposthog"
 )
 
 const (
@@ -42,6 +47,7 @@ type Config struct {
 	GeoCoordinates           string
 	Zoom                     int
 	RunMode                  int
+	DisableTelemetry         bool
 }
 
 func ParseConfig() *Config {
@@ -99,4 +105,34 @@ func ParseConfig() *Config {
 	}
 
 	return &cfg
+}
+
+var (
+	telemetryOnce sync.Once
+	telemetry     tlmt.Telemetry
+)
+
+func Telemetry() tlmt.Telemetry {
+	telemetryOnce.Do(func() {
+		disableTel := func() bool {
+			return os.Getenv("DISABLE_TELEMETRY") == "1"
+		}()
+
+		if disableTel {
+			telemetry = gonoop.New()
+
+			return
+		}
+
+		val, err := goposthog.New("phc_CHYBGEd1eJZzDE7ZWhyiSFuXa9KMLRnaYN47aoIAY2A", "https://eu.i.posthog.com")
+		if err != nil || val == nil {
+			telemetry = gonoop.New()
+
+			return
+		}
+
+		telemetry = val
+	})
+
+	return telemetry
 }
