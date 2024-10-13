@@ -142,7 +142,7 @@ func (d *dbrunner) produceSeedJobs(ctx context.Context) error {
 	}
 
 	_ = runner.Telemetry().Send(ctx, tlmt.NewEvent("databaserunner.produceSeedJobs", map[string]any{
-		"jobs": len(jobs),
+		"job_count": len(jobs),
 	}))
 
 	return nil
