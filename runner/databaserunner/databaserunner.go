@@ -155,6 +155,11 @@ func openPsqlConn(dsn string) (conn *sql.DB, err error) {
 	}
 
 	err = conn.Ping()
+	if err != nil {
+		return
+	}
+
+	conn.SetMaxOpenConns(10)
 
 	return
 }
