@@ -39,16 +39,30 @@
 
 ## 🚀 Please [vote](https://github.com/gosom/google-maps-scraper/discussions/61) for the next features
 
-A command line google maps scraper build using 
+A command line and web based google maps scraper build using 
 
 [scrapemate](https://github.com/gosom/scrapemate) web crawling framework.
 
 You can use this repository either as is, or you can use it's code as a base and
 customize it to your needs
 
-**Update** Added email extraction from business website support
+
 
 ## Try it
+
+### Web UI:
+
+![Example GIF](img/example.gif)
+
+
+```
+mkdir -p gmapsdata && docker run -v $PWD/gmapsdata:/gmapsdata -p 8080:8080 gosom/google-maps-scraper -web -data-folder /gmapsdata
+```
+
+Or dowload the [binary](https://github.com/gosom/google-maps-scraper/releases) for your platform and run it with the `-web` command line argument.
+
+
+### Command line:
 
 ```
 touch results.csv && docker run -v $PWD/example-queries.txt:/example-queries -v $PWD/results.csv:/results.csv gosom/google-maps-scraper -depth 1 -input /example-queries -results /results.csv -exit-on-inactivity 3m

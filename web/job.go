@@ -17,6 +17,7 @@ const (
 
 type SelectParams struct {
 	Status string
+	Limit  int
 }
 
 type JobRepository interface {
@@ -28,12 +29,11 @@ type JobRepository interface {
 }
 
 type Job struct {
-	ID      string
-	Name    string
-	MaxTime time.Duration
-	Date    time.Time
-	Status  string
-	Data    JobData
+	ID     string
+	Name   string
+	Date   time.Time
+	Status string
+	Data   JobData
 }
 
 func (j *Job) Validate() error {
@@ -43,10 +43,6 @@ func (j *Job) Validate() error {
 
 	if j.Name == "" {
 		return errors.New("missing name")
-	}
-
-	if j.MaxTime == 0 {
-		return errors.New("missing max time")
 	}
 
 	if j.Status == "" {
@@ -65,14 +61,14 @@ func (j *Job) Validate() error {
 }
 
 type JobData struct {
-	Keywords   []string `json:"keywords"`
-	Lang       string   `json:"lang"`
-	Zoom       int      `json:"zoom"`
-	Lat        string   `json:"lat"`
-	Lon        string   `json:"lon"`
-	Depth      int      `json:"depth"`
-	Email      bool     `json:"email"`
-	MaxSeconds int      `json:"max_seconds"`
+	Keywords []string      `json:"keywords"`
+	Lang     string        `json:"lang"`
+	Zoom     int           `json:"zoom"`
+	Lat      string        `json:"lat"`
+	Lon      string        `json:"lon"`
+	Depth    int           `json:"depth"`
+	Email    bool          `json:"email"`
+	MaxTime  time.Duration `json:"max_time"`
 }
 
 func (d *JobData) Validate() error {
@@ -92,8 +88,8 @@ func (d *JobData) Validate() error {
 		return errors.New("missing depth")
 	}
 
-	if d.MaxSeconds < 0 {
-		return errors.New("invalid max seconds")
+	if d.MaxTime == 0 {
+		return errors.New("missing max time")
 	}
 
 	return nil

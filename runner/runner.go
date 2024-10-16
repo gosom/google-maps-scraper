@@ -4,10 +4,15 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/mattn/go-runewidth"
+	"golang.org/x/term"
 
 	"github.com/gosom/google-maps-scraper/tlmt"
 	"github.com/gosom/google-maps-scraper/tlmt/gonoop"
@@ -142,4 +147,78 @@ func Telemetry() tlmt.Telemetry {
 	})
 
 	return telemetry
+}
+
+func wrapText(text string, width int) []string {
+	var lines []string
+
+	currentLine := ""
+	currentWidth := 0
+
+	for _, r := range text {
+		runeWidth := runewidth.RuneWidth(r)
+		if currentWidth+runeWidth > width {
+			lines = append(lines, currentLine)
+			currentLine = string(r)
+			currentWidth = runeWidth
+		} else {
+			currentLine += string(r)
+			currentWidth += runeWidth
+		}
+	}
+
+	if currentLine != "" {
+		lines = append(lines, currentLine)
+	}
+
+	return lines
+}
+
+func banner(messages []string, width int) string {
+	if width <= 0 {
+		var err error
+
+		width, _, err = term.GetSize(0)
+		if err != nil {
+			width = 80
+		}
+	}
+
+	if width < 20 {
+		width = 20
+	}
+
+	contentWidth := width - 4
+
+	var wrappedLines []string
+	for _, message := range messages {
+		wrappedLines = append(wrappedLines, wrapText(message, contentWidth)...)
+	}
+
+	var builder strings.Builder
+
+	builder.WriteString("╔" + strings.Repeat("═", width-2) + "╗\n")
+
+	for _, line := range wrappedLines {
+		lineWidth := runewidth.StringWidth(line)
+		paddingRight := contentWidth - lineWidth
+
+		if paddingRight < 0 {
+			paddingRight = 0
+		}
+
+		builder.WriteString(fmt.Sprintf("║ %s%s ║\n", line, strings.Repeat(" ", paddingRight)))
+	}
+
+	builder.WriteString("╚" + strings.Repeat("═", width-2) + "╝\n")
+
+	return builder.String()
+}
+
+func Banner() {
+	message1 := "🌍 Google Maps Scraper"
+	message2 := "⭐ If you find this project useful, please star it on GitHub: https://github.com/gosom/google-maps-scraper"
+	message3 := "💖 Consider sponsoring to support development: https://github.com/sponsors/gosom"
+
+	fmt.Fprintln(os.Stderr, banner([]string{message1, message2, message3}, 0))
 }

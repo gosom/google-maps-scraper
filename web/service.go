@@ -46,10 +46,10 @@ func (s *Service) Update(ctx context.Context, job *Job) error {
 }
 
 func (s *Service) SelectPending(ctx context.Context) ([]Job, error) {
-	return s.repo.Select(ctx, SelectParams{Status: StatusPending})
+	return s.repo.Select(ctx, SelectParams{Status: StatusPending, Limit: 1})
 }
 
-func (s *Service) GetCSV(ctx context.Context, id string) (string, error) {
+func (s *Service) GetCSV(_ context.Context, id string) (string, error) {
 	datapath := filepath.Join(s.dataFolder, id+".csv")
 
 	if _, err := os.Stat(datapath); os.IsNotExist(err) {

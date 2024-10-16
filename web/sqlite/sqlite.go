@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // sqlite driver
 
 	"github.com/gosom/google-maps-scraper/web"
 )
@@ -60,9 +60,19 @@ func (repo *repo) Select(ctx context.Context, params web.SelectParams) ([]web.Jo
 	q := `SELECT * from jobs`
 
 	var args []any
+
 	if params.Status != "" {
 		q += ` WHERE status = ?`
+
 		args = append(args, params.Status)
+	}
+
+	q += " ORDER BY created_at DESC"
+
+	if params.Limit > 0 {
+		q += " LIMIT ?"
+
+		args = append(args, params.Limit)
 	}
 
 	rows, err := repo.db.QueryContext(ctx, q, args...)
@@ -109,6 +119,7 @@ type scannable interface {
 
 func rowToJob(row scannable) (web.Job, error) {
 	var j job
+
 	err := row.Scan(&j.ID, &j.Name, &j.Status, &j.Data, &j.CreatedAt, &j.UpdatedAt)
 	if err != nil {
 		return web.Job{}, err

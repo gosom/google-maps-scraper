@@ -62,20 +62,20 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 }
 
 func (w *webrunner) Run(ctx context.Context) error {
-	errgroup, ctx := errgroup.WithContext(ctx)
+	egroup, ctx := errgroup.WithContext(ctx)
 
-	errgroup.Go(func() error {
+	egroup.Go(func() error {
 		return w.work(ctx)
 	})
 
-	errgroup.Go(func() error {
+	egroup.Go(func() error {
 		return w.srv.Start(ctx)
 	})
 
-	return errgroup.Wait()
+	return egroup.Wait()
 }
 
-func (w *webrunner) Close(ctx context.Context) error {
+func (w *webrunner) Close(context.Context) error {
 	return nil
 }
 
@@ -93,16 +93,15 @@ func (w *webrunner) work(ctx context.Context) error {
 				return err
 			}
 
-			for _, job := range jobs {
+			for i := range jobs {
 				select {
 				case <-ctx.Done():
 					return nil
 				default:
-					log.Printf("scraping job %s", job.ID)
-					if err := w.scrapeJob(ctx, job); err != nil {
-						log.Printf("error scraping job %s: %v", job.ID, err)
+					if err := w.scrapeJob(ctx, &jobs[i]); err != nil {
+						log.Printf("error scraping job %s: %v", jobs[i].ID, err)
 					} else {
-						log.Printf("job %s scraped successfully", job.ID)
+						log.Printf("job %s scraped successfully", jobs[i].ID)
 					}
 				}
 			}
@@ -110,10 +109,10 @@ func (w *webrunner) work(ctx context.Context) error {
 	}
 }
 
-func (w *webrunner) scrapeJob(ctx context.Context, job web.Job) error {
+func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	job.Status = web.StatusWorking
 
-	err := w.svc.Update(ctx, &job)
+	err := w.svc.Update(ctx, job)
 	if err != nil {
 		return err
 	}
@@ -121,7 +120,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job web.Job) error {
 	if len(job.Data.Keywords) == 0 {
 		job.Status = web.StatusFailed
 
-		return w.svc.Update(ctx, &job)
+		return w.svc.Update(ctx, job)
 	}
 
 	outpath := filepath.Join(w.cfg.DataFolder, job.ID+".csv")
@@ -135,11 +134,11 @@ func (w *webrunner) scrapeJob(ctx context.Context, job web.Job) error {
 		_ = outfile.Close()
 	}()
 
-	mate, err := w.setupMate(ctx, job, outfile)
+	mate, err := w.setupMate(ctx, outfile)
 	if err != nil {
 		job.Status = web.StatusFailed
 
-		err2 := w.svc.Update(ctx, &job)
+		err2 := w.svc.Update(ctx, job)
 		if err2 != nil {
 			log.Printf("failed to update job status: %v", err2)
 		}
@@ -163,7 +162,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job web.Job) error {
 		job.Data.Zoom,
 	)
 	if err != nil {
-		err2 := w.svc.Update(ctx, &job)
+		err2 := w.svc.Update(ctx, job)
 		if err2 != nil {
 			log.Printf("failed to update job status: %v", err2)
 		}
@@ -172,12 +171,13 @@ func (w *webrunner) scrapeJob(ctx context.Context, job web.Job) error {
 	}
 
 	if len(seedJobs) > 0 {
-		var allowedSeconds int = max(180, len(seedJobs)*10*job.Data.Depth/50+120)
-		if job.Data.MaxSeconds > 0 {
-			if job.Data.MaxSeconds < 180 {
-				allowedSeconds = 180
+		allowedSeconds := max(60, len(seedJobs)*10*job.Data.Depth/50+120)
+
+		if job.Data.MaxTime > 0 {
+			if job.Data.MaxTime.Seconds() < 60 {
+				allowedSeconds = 60
 			} else {
-				allowedSeconds = job.Data.MaxSeconds
+				allowedSeconds = int(job.Data.MaxTime.Seconds())
 			}
 		}
 
@@ -190,7 +190,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job web.Job) error {
 		if err != nil && !errors.Is(err, context.DeadlineExceeded) {
 			cancel()
 
-			err2 := w.svc.Update(ctx, &job)
+			err2 := w.svc.Update(ctx, job)
 			if err2 != nil {
 				log.Printf("failed to update job status: %v", err2)
 			}
@@ -205,13 +205,14 @@ func (w *webrunner) scrapeJob(ctx context.Context, job web.Job) error {
 
 	job.Status = web.StatusOK
 
-	return w.svc.Update(ctx, &job)
+	return w.svc.Update(ctx, job)
 }
 
-func (w *webrunner) setupMate(_ context.Context, _ web.Job, writer io.Writer) (*scrapemateapp.ScrapemateApp, error) {
+func (w *webrunner) setupMate(_ context.Context, writer io.Writer) (*scrapemateapp.ScrapemateApp, error) {
 	opts := []func(*scrapemateapp.Config) error{
 		scrapemateapp.WithConcurrency(w.cfg.Concurrency),
 		scrapemateapp.WithJS(scrapemateapp.DisableImages()),
+		scrapemateapp.WithExitOnInactivity(time.Second * 20),
 	}
 
 	csvWriter := csvwriter.NewCsvWriter(csv.NewWriter(writer))

@@ -32,7 +32,8 @@ func New(svc *Service) (*Server, error) {
 		svc:  svc,
 		tmpl: make(map[string]*template.Template),
 		srv: &http.Server{
-			Addr: ":8080",
+			Addr:              ":8080",
+			ReadHeaderTimeout: 10 * time.Second,
 		},
 	}
 
@@ -85,6 +86,8 @@ func (s *Server) Start(ctx context.Context) error {
 		log.Println("server stopped")
 	}()
 
+	fmt.Fprintf(os.Stderr, "visit http://localhost%s\n", s.srv.Addr)
+
 	err := s.srv.ListenAndServe()
 	if err != nil && err != http.ErrServerClosed {
 		return err
@@ -105,11 +108,18 @@ type formData struct {
 	Email    bool
 }
 
+//nolint:gocritic // this is used in template
 func (f formData) KeywordsString() string {
 	return strings.Join(f.Keywords, "\n")
 }
 
 func (s *Server) index(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+
+		return
+	}
+
 	tmpl, ok := s.tmpl["static/templates/index.html"]
 	if !ok {
 		http.Error(w, "missing tpl", http.StatusInternalServerError)
@@ -129,7 +139,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		Email:    false,
 	}
 
-	tmpl.Execute(w, data)
+	_ = tmpl.Execute(w, data)
 }
 
 func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
@@ -155,6 +165,7 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 	}
 
 	maxTimeStr := r.Form.Get("maxtime")
+
 	maxTime, err := time.ParseDuration(maxTimeStr)
 	if err != nil {
 		http.Error(w, "invalid max time", http.StatusUnprocessableEntity)
@@ -162,7 +173,13 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newJob.MaxTime = maxTime
+	if maxTime < time.Minute {
+		http.Error(w, "max time must be more than 1m", http.StatusUnprocessableEntity)
+
+		return
+	}
+
+	newJob.Data.MaxTime = maxTime
 
 	keywordsStr, ok := r.Form["keywords"]
 	if !ok {
@@ -182,6 +199,7 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 	}
 
 	newJob.Data.Lang = r.Form.Get("lang")
+
 	newJob.Data.Zoom, err = strconv.Atoi(r.Form.Get("zoom"))
 	if err != nil {
 		http.Error(w, "invalid zoom", http.StatusUnprocessableEntity)
@@ -189,14 +207,17 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newJob.Data.Lat = r.Form.Get("lat")
-	newJob.Data.Lon = r.Form.Get("lon")
+	newJob.Data.Lat = r.Form.Get("latitude")
+	newJob.Data.Lon = r.Form.Get("longitude")
+
 	newJob.Data.Depth, err = strconv.Atoi(r.Form.Get("depth"))
 	if err != nil {
 		http.Error(w, "invalid depth", http.StatusUnprocessableEntity)
 
 		return
 	}
+
+	newJob.Data.Email = r.Form.Get("email") == "on"
 
 	err = newJob.Validate()
 	if err != nil {
@@ -219,7 +240,7 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tmpl.Execute(w, newJob)
+	_ = tmpl.Execute(w, newJob)
 }
 
 func (s *Server) getJobs(w http.ResponseWriter, r *http.Request) {
@@ -242,7 +263,7 @@ func (s *Server) getJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tmpl.Execute(w, jobs)
+	_ = tmpl.Execute(w, jobs)
 }
 
 func (s *Server) download(w http.ResponseWriter, r *http.Request) {
