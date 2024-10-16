@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gosom/google-maps-scraper/runner"
+	"github.com/gosom/google-maps-scraper/tlmt"
 	"github.com/gosom/google-maps-scraper/web"
 	"github.com/gosom/google-maps-scraper/web/sqlite"
 	"github.com/gosom/scrapemate"
@@ -98,9 +99,27 @@ func (w *webrunner) work(ctx context.Context) error {
 				case <-ctx.Done():
 					return nil
 				default:
+					t0 := time.Now().UTC()
 					if err := w.scrapeJob(ctx, &jobs[i]); err != nil {
+						params := map[string]any{
+							"job_count": len(jobs[i].Data.Keywords),
+							"duration":  time.Now().UTC().Sub(t0).String(),
+							"error":     err.Error(),
+						}
+
+						evt := tlmt.NewEvent("web_runner", params)
+
+						_ = runner.Telemetry().Send(ctx, evt)
+
 						log.Printf("error scraping job %s: %v", jobs[i].ID, err)
 					} else {
+						params := map[string]any{
+							"job_count": len(jobs[i].Data.Keywords),
+							"duration":  time.Now().UTC().Sub(t0).String(),
+						}
+
+						_ = runner.Telemetry().Send(ctx, tlmt.NewEvent("web_runner", params))
+
 						log.Printf("job %s scraped successfully", jobs[i].ID)
 					}
 				}
