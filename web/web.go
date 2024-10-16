@@ -298,3 +298,7 @@ func (s *Server) delete(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 }
+
+func formatDate(t time.Time) string {
+	return t.Format("Jan 02, 2006 15:04:05")
+}
