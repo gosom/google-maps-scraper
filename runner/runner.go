@@ -19,6 +19,7 @@ const (
 	RunModeDatabase
 	RunModeDatabaseProduce
 	RunModeInstallPlaywright
+	RunModeWeb
 )
 
 var (
@@ -48,6 +49,8 @@ type Config struct {
 	Zoom                     int
 	RunMode                  int
 	DisableTelemetry         bool
+	WebRunner                bool
+	DataFolder               string
 }
 
 func ParseConfig() *Config {
@@ -74,6 +77,8 @@ func ParseConfig() *Config {
 	flag.StringVar(&cfg.CustomWriter, "writer", "", "use custom writer plugin (format: 'dir:pluginName')")
 	flag.StringVar(&cfg.GeoCoordinates, "geo", "", "set geo coordinates for search (e.g., '37.7749,-122.4194')")
 	flag.IntVar(&cfg.Zoom, "zoom", 0, "set zoom level (0-21) for search")
+	flag.BoolVar(&cfg.WebRunner, "web", false, "run web server instead of crawling")
+	flag.StringVar(&cfg.DataFolder, "data-folder", "webdata", "data folder for web runner")
 
 	flag.Parse()
 
@@ -94,6 +99,8 @@ func ParseConfig() *Config {
 	}
 
 	switch {
+	case cfg.WebRunner:
+		cfg.RunMode = RunModeWeb
 	case cfg.Dsn == "":
 		cfg.RunMode = RunModeFile
 	case cfg.ProduceOnly:

@@ -1,0 +1,94 @@
+<!-- templates/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Scraper UI</title>
+    <link rel="stylesheet" href="/static/css/main.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/htmx/1.9.6/htmx.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>Web Scraper</h1>
+
+        <div id="error-container" class="error-message"></div>
+        
+        <form 
+            hx-post="/scrape" 
+            hx-target="#job-table tbody" 
+            hx-swap="beforeend"
+            hx-indicator="#spinner"
+            hx-error-target="#error-container"
+            hx-on::before-request="document.getElementById('error-container').innerHTML = ''"
+            hx-on::after-request="if(!event.detail.successful) document.getElementById('error-container').innerHTML = event.detail.xhr.responseText"
+            >
+
+            <div class="form-group">
+                <label for="name">Job Name:</label>
+                <input type="text" id="name" name="name" value="{{.Name}}">
+            </div>
+
+
+            <div>
+                <label for="keywords">Keywords:</label>
+                <textarea id="keywords" name="keywords" rows="4">{{ .KeywordsString }}</textarea>
+            </div>
+            
+            <div class="form-group">
+                <label for="lang">Language:</label>
+                <input type="text" id="lang" name="lang" value="{{.Language}}">
+            </div>
+            
+            <div class="form-group">
+                <label for="zoom">Zoom:</label>
+                <input type="number" id="zoom" name="zoom" value="{{.Zoom}}">
+            </div>
+            
+            <div class="form-group">
+                <label for="latitude">Latitude:</label>
+                <input type="number" step="0.000001" id="latitude" name="latitude" value="{{.Lat}}">
+            </div>
+            
+            <div class="form-group">
+                <label for="longitude">Longitude:</label>
+                <input type="number" step="0.000001" id="longitude" name="longitude" value="{{.Lon}}">
+            </div>
+            
+            <div class="form-group">
+                <label for="depth">Depth:</label>
+                <input type="number" step="1" id="depth" name="depth" value="{{.Depth}}">
+            </div>
+            
+            <div class="form-group">
+                <label for="email">Email:</label>
+                <input type="checkbox" id="email" name="email" {{if .Email}}checked{{end}}>
+            </div>
+
+            <div class="form-group">
+                <label for="maxtime">Max job time:</label>
+                <input type="text" id="maxtime" name="maxtime" value="{{.MaxTime}}">
+            </div>
+            
+            <button type="submit">Start Scraping</button>
+        </form>
+
+        <div id="spinner" class="spinner"></div>
+        
+        <table id="job-table">
+            <thead>
+                <tr>
+                    <th>Job ID</th>
+                    <th>Job Name</th>
+                    <th>Job Date</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody hx-get="/jobs" hx-trigger="load, every 10s">
+                <!-- Job rows will be inserted here by HTMX -->
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>

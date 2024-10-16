@@ -3,16 +3,33 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/gosom/google-maps-scraper/runner"
 	"github.com/gosom/google-maps-scraper/runner/databaserunner"
 	"github.com/gosom/google-maps-scraper/runner/filerunner"
 	"github.com/gosom/google-maps-scraper/runner/installplaywright"
+	"github.com/gosom/google-maps-scraper/runner/webrunner"
 )
 
 func main() {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-sigChan
+
+		log.Println("Received signal, shutting down...")
+
+		cancel()
+	}()
+
 	cfg := runner.ParseConfig()
 
 	runnerInstance, err := runnerFactory(cfg)
@@ -47,6 +64,8 @@ func runnerFactory(cfg *runner.Config) (runner.Runner, error) {
 		return databaserunner.New(cfg)
 	case runner.RunModeInstallPlaywright:
 		return installplaywright.New(cfg)
+	case runner.RunModeWeb:
+		return webrunner.New(cfg)
 	default:
 		return nil, fmt.Errorf("%w: %d", runner.ErrInvalidRunMode, cfg.RunMode)
 	}
