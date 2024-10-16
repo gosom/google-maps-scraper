@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Google Maps Scraper</title>
+    <link rel="stylesheet" href="/static/css/main.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/htmx/1.9.6/htmx.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <header>
+            <h1>Google Maps Scraper</h1>
+            <div class="github-section">
+                <p>If you find this tool useful, please consider starring our repository: </p>
+                <a href="https://github.com/your-repo" class="github-button">
+                <svg height="16" width="16" viewBox="0 0 16 16">
+                    <path fill="currentColor" d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25z"/>
+                  </svg>
+                  Star on GitHub
+                </a>
+            </div>
+            <div id="sponsor-section" class="sponsor-section">
+    <button class="sponsor-close" onclick="hideSponsor()">
+        ×
+    </button>
+    <p class="sponsor-text">Support the ongoing maintenance and development of this project by becoming a sponsor. Your contribution helps ensure the tool's continued improvement and reliability.</p>
+    <a href="https://github.com/sponsors/gosom" class="sponsor-button" target="_blank" rel="noopener noreferrer">
+        <svg height="16" width="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+            <path fill-rule="evenodd" clip-rule="evenodd" d="M4.25 2.5C4.25 1.83696 4.67143 1.25 5.25 1.25C5.82857 1.25 6.25 1.83696 6.25 2.5C6.25 3.16304 5.82857 3.75 5.25 3.75C4.67143 3.75 4.25 3.16304 4.25 2.5ZM2.5 3.75C1.92143 3.75 1.5 3.16304 1.5 2.5C1.5 1.83696 1.92143 1.25 2.5 1.25C3.07857 1.25 3.5 1.83696 3.5 2.5C3.5 3.16304 3.07857 3.75 2.5 3.75ZM8 1.25C7.42143 1.25 7 1.83696 7 2.5C7 3.16304 7.42143 3.75 8 3.75C8.57857 3.75 9 3.16304 9 2.5C9 1.83696 8.57857 1.25 8 1.25ZM10.75 2.5C10.75 1.83696 11.1714 1.25 11.75 1.25C12.3286 1.25 12.75 1.83696 12.75 2.5C12.75 3.16304 12.3286 3.75 11.75 3.75C11.1714 3.75 10.75 3.16304 10.75 2.5ZM14.5 1.25C13.9214 1.25 13.5 1.83696 13.5 2.5C13.5 3.16304 13.9214 3.75 14.5 3.75C15.0786 3.75 15.5 3.16304 15.5 2.5C15.5 1.83696 15.0786 1.25 14.5 1.25ZM1.25 5.25C1.25 4.67143 1.83696 4.25 2.5 4.25C3.16304 4.25 3.75 4.67143 3.75 5.25C3.75 5.82857 3.16304 6.25 2.5 6.25C1.83696 6.25 1.25 5.82857 1.25 5.25ZM5.25 4.25C4.67143 4.25 4.25 4.67143 4.25 5.25C4.25 5.82857 4.67143 6.25 5.25 6.25C5.82857 6.25 6.25 5.82857 6.25 5.25C6.25 4.67143 5.82857 4.25 5.25 4.25ZM7 5.25C7 4.67143 7.42143 4.25 8 4.25C8.57857 4.25 9 4.67143 9 5.25C9 5.82857 8.57857 6.25 8 6.25C7.42143 6.25 7 5.82857 7 5.25ZM11.75 4.25C11.1714 4.25 10.75 4.67143 10.75 5.25C10.75 5.82857 11.1714 6.25 11.75 6.25C12.3286 6.25 12.75 5.82857 12.75 5.25C12.75 4.67143 12.3286 4.25 11.75 4.25ZM13.5 5.25C13.5 4.67143 13.9214 4.25 14.5 4.25C15.0786 4.25 15.5 4.67143 15.5 5.25C15.5 5.82857 15.0786 6.25 14.5 6.25C13.9214 6.25 13.5 5.82857 13.5 5.25ZM2.5 7.25C1.83696 7.25 1.25 7.67143 1.25 8.25C1.25 8.82857 1.83696 9.25 2.5 9.25C3.16304 9.25 3.75 8.82857 3.75 8.25C3.75 7.67143 3.16304 7.25 2.5 7.25ZM4.25 8.25C4.25 7.67143 4.67143 7.25 5.25 7.25C5.82857 7.25 6.25 7.67143 6.25 8.25C6.25 8.82857 5.82857 9.25 5.25 9.25C4.67143 9.25 4.25 8.82857 4.25 8.25ZM8 7.25C7.42143 7.25 7 7.67143 7 8.25C7 8.82857 7.42143 9.25 8 9.25C8.57857 9.25 9 8.82857 9 8.25C9 7.67143 8.57857 7.25 8 7.25ZM10.75 8.25C10.75 7.67143 11.1714 7.25 11.75 7.25C12.3286 7.25 12.75 7.67143 12.75 8.25C12.75 8.82857 12.3286 9.25 11.75 9.25C11.1714 9.25 10.75 8.82857 10.75 8.25ZM14.5 7.25C13.9214 7.25 13.5 7.67143 13.5 8.25C13.5 8.82857 13.9214 9.25 14.5 9.25C15.0786 9.25 15.5 8.82857 15.5 8.25C15.5 7.67143 15.0786 7.25 14.5 7.25Z" fill="currentColor"/>
+        </svg>
+        Sponsor on GitHub
+    </a>
+</div>
+
+        </header>
+        <main>
+            <div class="sidebar">
+                <div id="error-container" class="error-message"></div>
+                <form 
+                    hx-post="/scrape" 
+                    hx-target="#job-table tbody" 
+                    hx-swap="beforeend"
+                    hx-indicator="#spinner"
+                    hx-on::before-request="document.getElementById('error-container').innerHTML = ''"
+                    hx-on::after-request="if(!event.detail.successful) document.getElementById('error-container').innerHTML = event.detail.xhr.responseText"
+                >
+                    
+                    <fieldset>
+                        <legend>Job Details</legend>
+                        <div class="form-group">
+                            <label for="name">Job Name:</label>
+                            <input type="text" id="name" name="name" value="{{.Name}}">
+                        </div>
+                        <div class="form-group">
+                            <label for="keywords">Keywords:</label>
+                            <textarea id="keywords" name="keywords" rows="10">{{ .KeywordsString }}</textarea>
+                        </div>
+                        <div class="form-group">
+                            <label for="lang">Language:</label>
+                            <input type="text" id="lang" name="lang" value="{{.Language}}">
+                        </div>
+                    </fieldset>
+                    
+                    <details class="expandable-section">
+                        <summary>Location Settings</summary>
+                        <fieldset>
+                            <div class="form-group">
+                                <label for="zoom">Zoom:</label>
+                                <input type="number" id="zoom" name="zoom" value="{{.Zoom}}">
+                            </div>
+                            <div class="form-group">
+                                <label for="latitude">Latitude:</label>
+                                <input type="number" step="0.000001" id="latitude" name="latitude" value="{{.Lat}}">
+                            </div>
+                            <div class="form-group">
+                                <label for="longitude">Longitude:</label>
+                                <input type="number" step="0.000001" id="longitude" name="longitude" value="{{.Lon}}">
+                            </div>
+                        </fieldset>
+                    </details>
+                    
+                    <details class="expandable-section">
+                        <summary>Advanced Options</summary>
+                        <fieldset>
+                            <div class="form-group">
+                                <label for="depth">Depth:</label>
+                                <input type="number" step="1" id="depth" name="depth" value="{{.Depth}}">
+                            </div>
+                            <div class="form-group checkbox">
+                                <input type="checkbox" id="email" name="email" {{if .Email}}checked{{end}}>
+                                <label for="email">Fetch Emails</label>
+                            </div>
+                            <div class="form-group">
+                                <label for="maxtime">Max job time:</label>
+                                <input type="text" id="maxtime" name="maxtime" value="{{.MaxTime}}">
+                            </div>
+                        </fieldset>
+                    </details>
+                    
+                    <button type="submit">Start Scraping</button>
+                </form>
+            </div>
+            <div class="content">
+                <div id="spinner" class="spinner"></div>
+                <table id="job-table">
+                    <thead>
+                        <tr>
+                            <th>Job ID</th>
+                            <th>Job Name</th>
+                            <th>Job Date</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody hx-get="/jobs" hx-trigger="load, every 10s">
+                        <!-- Job rows will be inserted here by HTMX -->
+                    </tbody>
+                </table>
+            </div>
+        </main>
+    </div>
+
+<script>
+function hideSponsor() {
+    const sponsorSection = document.getElementById('sponsor-section');
+    if (sponsorSection) {
+        sponsorSection.style.display = 'none';
+    }
+}
+</script>
+</body>
+</html>

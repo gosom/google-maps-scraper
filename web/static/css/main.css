@@ -1,0 +1,334 @@
+:root {
+    --color-background: #f9f9f9;
+    --color-surface: #ffffff;
+    --color-text: #333333;
+    --color-text-light: #666666;
+    --color-border: #e0e0e0;
+    --color-primary: #4a4a4a;
+    --color-primary-light: #5a5a5a;
+    --color-success: #43a047;
+    --color-warning: #fdd835;
+    --color-error: #e53935;
+    --color-github-star: #f1e05a;
+    --color-sponsor: #ea4aaa;
+    --color-sponsor: #4a4a4a;
+    --color-sponsor-hover: #5a5a5a;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen-Sans, Ubuntu, Cantarell, 'Helvetica Neue', sans-serif;
+    line-height: 1.5;
+    color: var(--color-text);
+    background-color: var(--color-background);
+    margin: 0;
+    padding: 0;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.app-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+header {
+    background-color: var(--color-surface);
+    padding: 24px 32px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+h1 {
+    font-size: 24px;
+    font-weight: 500;
+    color: var(--color-primary);
+    margin: 0 0 16px 0;
+}
+
+.github-section {
+    display: flex;
+    align-items: center;
+    margin-top: 16px;
+}
+
+.github-button {
+    display: inline-flex;
+    align-items: center;
+    background-color: var(--color-sponsor);
+    color: white;
+    border: 1px solid var(--color-border);
+    padding: 10px 16px;
+    margin-left: 16px;
+    border-radius: 4px;
+    font-size: 14px;
+    text-decoration: none;
+    transition: background-color 0.2s, border-color 0.2s;
+}
+
+.github-button:hover {
+    background-color: var(--color-sponsor);
+    border-color: var(--color-primary);
+}
+
+.github-button svg {
+    margin-right: 8px;
+}
+
+.github-button svg path {
+    fill: var(--color-github-star);
+}
+
+main {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+}
+
+.sidebar {
+    width: 320px;
+    background-color: var(--color-surface);
+    padding: 24px;
+    overflow-y: auto;
+    border-right: 1px solid var(--color-border);
+    box-shadow: 2px 0 5px rgba(0, 0, 0, 0.05);
+}
+
+.content {
+    flex: 1;
+    padding: 24px 32px;
+    overflow-y: auto;
+    background-color: var(--color-background);
+}
+
+form {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+fieldset {
+    border: none;
+    padding: 0;
+    margin: 0;
+}
+
+legend {
+    font-weight: 500;
+    margin-bottom: 16px;
+    color: var(--color-primary);
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+label {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--color-text-light);
+}
+
+input[type="text"],
+input[type="number"],
+textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    font-size: 14px;
+    box-sizing: border-box;
+}
+
+button {
+    background-color: var(--color-primary);
+    color: white;
+    border: none;
+    padding: 12px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background-color 0.2s;
+}
+
+button:hover {
+    background-color: var(--color-primary-light);
+}
+
+table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    background-color: var(--color-surface);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+th, td {
+    text-align: left;
+    padding: 16px;
+    border-bottom: 1px solid var(--color-border);
+}
+
+th {
+    font-weight: 500;
+    color: var(--color-primary);
+    background-color: var(--color-surface);
+}
+
+.status-indicator {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.status-ok {
+    background-color: var(--color-success);
+    color: white;
+}
+
+.status-pending {
+    background-color: var(--color-warning);
+    color: var(--color-text);
+}
+
+.status-working {
+    background-color: var(--color-warning);
+    color: var(--color-text);
+}
+
+.status-failed {
+    background-color: var(--color-error);
+    color: var(--color-text);
+}
+
+.status-error {
+    background-color: var(--color-error);
+    color: white;
+}
+
+.download-button, .delete-button {
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    text-decoration: none;
+    color: white;
+}
+
+.download-button {
+    background-color: var(--color-success);
+}
+
+.delete-button {
+    background-color: var(--color-error);
+}
+
+.error-message {
+    display: none;
+    background-color: #ffebee;
+    border: 1px solid var(--color-error);
+    color: var(--color-error);
+    padding: 12px 16px;
+    border-radius: 4px;
+    margin-bottom: 20px;
+    font-size: 14px;
+}
+
+.error-message:not(:empty) {
+    display: block;
+}
+
+.expandable-section summary {
+    cursor: pointer;
+    padding: 12px 16px;
+    background-color: var(--color-background);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    color: var(--color-text);
+}
+
+.expandable-section[open] summary {
+    border-bottom: none;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+@media (max-width: 768px) {
+    main {
+        flex-direction: column;
+    }
+
+    .sidebar {
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid var(--color-border);
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+    }
+
+    .content {
+        padding: 20px;
+    }
+}
+
+.sponsor-section {
+    position: relative;
+    margin-top: 24px;
+    padding: 16px;
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+}
+
+.sponsor-close {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 20px;
+    height: 20px;
+    border: none;
+    background-color: transparent;
+    color: var(--color-text-light);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.2s;
+}
+
+.sponsor-close:hover {
+    color: var(--color-text);
+}
+
+.sponsor-text {
+    margin: 0 0 12px 0;
+    font-size: 14px;
+    color: var(--color-text);
+    padding-right: 20px; /* Make space for the close button */
+}
+
+.sponsor-button {
+    display: inline-flex;
+    align-items: center;
+    background-color: var(--color-sponsor);
+    color: white;
+    border: none;
+    padding: 10px 16px;
+    border-radius: 4px;
+    font-size: 14px;
+    text-decoration: none;
+    transition: background-color 0.2s;
+}
+
+.sponsor-button:hover {
+    background-color: var(--color-sponsor-hover);
+}
+
+.sponsor-button svg {
+    margin-right: 8px;
+}
+
