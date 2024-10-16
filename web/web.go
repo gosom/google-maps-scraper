@@ -276,6 +276,13 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := r.URL.Query().Get("id")
 
+	_, err := uuid.Parse(id)
+	if err != nil {
+		http.Error(w, "Invalid ID", http.StatusUnprocessableEntity)
+
+		return
+	}
+
 	filePath, err := s.svc.GetCSV(ctx, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -309,8 +316,14 @@ func (s *Server) delete(w http.ResponseWriter, r *http.Request) {
 
 	deleteID := r.URL.Query().Get("id")
 
-	err := s.svc.Delete(r.Context(), deleteID)
+	_, err := uuid.Parse(deleteID)
+	if err != nil {
+		http.Error(w, "Invalid ID", http.StatusUnprocessableEntity)
 
+		return
+	}
+
+	err = s.svc.Delete(r.Context(), deleteID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 

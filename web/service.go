@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type Service struct {
@@ -29,8 +30,9 @@ func (s *Service) All(ctx context.Context) ([]Job, error) {
 
 func (s *Service) Delete(ctx context.Context, id string) error {
 	if strings.Contains(id, "/") || strings.Contains(id, "\\") || strings.Contains(id, "..") {
-		return fmt.Errorf("Invalid file name")
+		return fmt.Errorf("invalid file name")
 	}
+
 	datapath := filepath.Join(s.dataFolder, id+".csv")
 
 	if _, err := os.Stat(datapath); err == nil {
@@ -54,12 +56,13 @@ func (s *Service) SelectPending(ctx context.Context) ([]Job, error) {
 
 func (s *Service) GetCSV(_ context.Context, id string) (string, error) {
 	if strings.Contains(id, "/") || strings.Contains(id, "\\") || strings.Contains(id, "..") {
-		return "", fmt.Errorf("Invalid file name")
+		return "", fmt.Errorf("invalid file name")
 	}
+
 	datapath := filepath.Join(s.dataFolder, id+".csv")
 
 	if _, err := os.Stat(datapath); os.IsNotExist(err) {
-		return "", fmt.Errorf("CSV file not found for job %s", id)
+		return "", fmt.Errorf("csv file not found for job %s", id)
 	}
 
 	return datapath, nil
