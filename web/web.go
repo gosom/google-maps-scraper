@@ -173,8 +173,8 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if maxTime < time.Minute {
-		http.Error(w, "max time must be more than 1m", http.StatusUnprocessableEntity)
+	if maxTime < time.Minute*3 {
+		http.Error(w, "max time must be more than 3m", http.StatusUnprocessableEntity)
 
 		return
 	}

@@ -61,6 +61,8 @@ mkdir -p gmapsdata && docker run -v $PWD/gmapsdata:/gmapsdata -p 8080:8080 gosom
 
 Or dowload the [binary](https://github.com/gosom/google-maps-scraper/releases) for your platform and run it with the `-web` command line argument.
 
+Note: Even if you add one keyword the results will come in at least 3 minutes. This is a minimum configured runtime
+
 
 ### Command line:
 

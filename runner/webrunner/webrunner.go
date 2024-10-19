@@ -193,8 +193,8 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		allowedSeconds := max(60, len(seedJobs)*10*job.Data.Depth/50+120)
 
 		if job.Data.MaxTime > 0 {
-			if job.Data.MaxTime.Seconds() < 60 {
-				allowedSeconds = 60
+			if job.Data.MaxTime.Seconds() < 180 {
+				allowedSeconds = 180
 			} else {
 				allowedSeconds = int(job.Data.MaxTime.Seconds())
 			}
@@ -231,7 +231,7 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer) (*scrapematea
 	opts := []func(*scrapemateapp.Config) error{
 		scrapemateapp.WithConcurrency(w.cfg.Concurrency),
 		scrapemateapp.WithJS(scrapemateapp.DisableImages()),
-		scrapemateapp.WithExitOnInactivity(time.Second * 20),
+		scrapemateapp.WithExitOnInactivity(time.Minute * 3),
 	}
 
 	csvWriter := csvwriter.NewCsvWriter(csv.NewWriter(writer))
