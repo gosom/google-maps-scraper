@@ -1,4 +1,4 @@
-FROM golang:1.23.1-bullseye as withnode
+FROM golang:1.23.1-bullseye AS withnode
 
 RUN apt-get update && \ 
 apt-get install -y ca-certificates net-tools && \
