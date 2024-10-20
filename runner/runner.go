@@ -56,6 +56,9 @@ type Config struct {
 	DisableTelemetry         bool
 	WebRunner                bool
 	DataFolder               string
+	Proxies                  []string
+	ProxyUsername            string
+	ProxyPassword            string
 }
 
 func ParseConfig() *Config {
@@ -67,11 +70,13 @@ func ParseConfig() *Config {
 		return &cfg
 	}
 
+	var proxies string
+
 	flag.IntVar(&cfg.Concurrency, "c", runtime.NumCPU()/2, "sets the concurrency [default: half of CPU cores]")
 	flag.StringVar(&cfg.CacheDir, "cache", "cache", "sets the cache directory [no effect at the moment]")
 	flag.IntVar(&cfg.MaxDepth, "depth", 10, "maximum scroll depth in search results [default: 10]")
 	flag.StringVar(&cfg.ResultsFile, "results", "stdout", "path to the results file [default: stdout]")
-	flag.StringVar(&cfg.InputFile, "input", "stdin", "path to the input file with queries (one per line) [default: stdin]")
+	flag.StringVar(&cfg.InputFile, "input", "", "path to the input file with queries (one per line) [default: empty]")
 	flag.StringVar(&cfg.LangCode, "lang", "en", "language code for Google (e.g., 'de' for German) [default: en]")
 	flag.BoolVar(&cfg.Debug, "debug", false, "enable headful crawl (opens browser window) [default: false]")
 	flag.StringVar(&cfg.Dsn, "dsn", "", "database connection string [only valid with database provider]")
@@ -84,6 +89,9 @@ func ParseConfig() *Config {
 	flag.IntVar(&cfg.Zoom, "zoom", 0, "set zoom level (0-21) for search")
 	flag.BoolVar(&cfg.WebRunner, "web", false, "run web server instead of crawling")
 	flag.StringVar(&cfg.DataFolder, "data-folder", "webdata", "data folder for web runner")
+	flag.StringVar(&proxies, "proxies", "", "comma separated list of proxies to use")
+	flag.StringVar(&cfg.ProxyUsername, "proxy-username", "", "username for proxy authentication")
+	flag.StringVar(&cfg.ProxyPassword, "proxy-password", "", "password for proxy authentication")
 
 	flag.Parse()
 
@@ -103,8 +111,12 @@ func ParseConfig() *Config {
 		panic("Dsn must be provided when using ProduceOnly")
 	}
 
+	if proxies != "" {
+		cfg.Proxies = strings.Split(proxies, ",")
+	}
+
 	switch {
-	case cfg.WebRunner:
+	case cfg.WebRunner || (cfg.Dsn == "" && cfg.InputFile == ""):
 		cfg.RunMode = RunModeWeb
 	case cfg.Dsn == "":
 		cfg.RunMode = RunModeFile

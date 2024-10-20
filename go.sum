@@ -312,8 +312,8 @@ github.com/gordonklaus/ineffassign v0.1.0 h1:y2Gd/9I7MdY1oEIt+n+rowjBNDcLQq3RsH5
 github.com/gordonklaus/ineffassign v0.1.0/go.mod h1:Qcp2HIAYhR7mNUVSIxZww3Guk4it82ghYcEXIAk+QT0=
 github.com/gosom/kit v0.0.0-20230309082109-543b32ac686a h1:5tcB33GTXm0pFUiEFpmE91tMsHQj+I+W7zubT8J/ugI=
 github.com/gosom/kit v0.0.0-20230309082109-543b32ac686a/go.mod h1:ngnWSsuBEpCA5Y43kZRa3x8RBYZZ4LDtvZHO4N5dHZ0=
-github.com/gosom/scrapemate v0.6.1 h1:rKjkqq34oM5Bsma42DNBH/k15xzeGvYmfmZJ8i7tjXc=
-github.com/gosom/scrapemate v0.6.1/go.mod h1:Tbhvu9/qGD7HM4VFus63CH+iBkg/NBms/B5Vkf2m7ZA=
+github.com/gosom/scrapemate v0.7.0 h1:MX3eH1N77rBipDCLsZc6yHsS1HKbuorqWeqCq1FRQWE=
+github.com/gosom/scrapemate v0.7.0/go.mod h1:Tbhvu9/qGD7HM4VFus63CH+iBkg/NBms/B5Vkf2m7ZA=
 github.com/gostaticanalysis/analysisutil v0.7.1 h1:ZMCjoue3DtDWQ5WyU16YbjbQEQ3VuzwxALrpYd+HeKk=
 github.com/gostaticanalysis/analysisutil v0.7.1/go.mod h1:v21E3hY37WKMGSnbsw2S/ojApNWb6C1//mXO48CXbVc=
 github.com/gostaticanalysis/comment v1.4.1/go.mod h1:ih6ZxzTHLdadaiSnF5WY3dxUoXfXAlTaRzuaNDlSado=

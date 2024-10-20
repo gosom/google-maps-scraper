@@ -97,6 +97,23 @@
                             </div>
                         </fieldset>
                     </details>
+                    <details class="expandable-section">
+                        <summary>Proxies</summary>
+                        <fieldset>
+                            <div class="form-group">
+                                <label for="proxies">Proxies:(one per line)</label>
+                                <textarea id="proxies" name="proxies" rows="5">{{.ProxiesString}}</textarea>
+                            </div>
+                            <div class="form-group checkbox">
+                                <label for="proxyusername">Username</label>
+                                <input type="text" id="proxyusername" name="proxyusername" value="{{.ProxyUsername}}">
+                            </div>
+                            <div class="form-group">
+                                <label for="proxypassword">Password:</label>
+                                <input type="password" id="proxypassword" name="proxypassword" value="{{.ProxyPassword}}">
+                            </div>
+                        </fieldset>
+                    </details>
                     
                     <button type="submit">Start Scraping</button>
                 </form>

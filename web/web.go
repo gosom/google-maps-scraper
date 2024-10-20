@@ -97,15 +97,23 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 type formData struct {
-	Name     string
-	MaxTime  string
-	Keywords []string
-	Language string
-	Zoom     int
-	Lat      string
-	Lon      string
-	Depth    int
-	Email    bool
+	Name          string
+	MaxTime       string
+	Keywords      []string
+	Language      string
+	Zoom          int
+	Lat           string
+	Lon           string
+	Depth         int
+	Email         bool
+	Proxies       []string
+	ProxyUsername string
+	ProxyPassword string
+}
+
+//nolint:gocritic // this is used in template
+func (f formData) ProxiesString() string {
+	return strings.Join(f.Proxies, "\n")
 }
 
 //nolint:gocritic // this is used in template
@@ -218,6 +226,21 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 	}
 
 	newJob.Data.Email = r.Form.Get("email") == "on"
+
+	proxies := strings.Split(r.Form.Get("proxies"), "\n")
+	if len(proxies) > 0 {
+		for _, p := range proxies {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				continue
+			}
+
+			newJob.Data.Proxies = append(newJob.Data.Proxies, p)
+		}
+	}
+
+	newJob.Data.ProxyUsername = r.Form.Get("proxyusername")
+	newJob.Data.ProxyPassword = r.Form.Get("proxypassword")
 
 	err = newJob.Validate()
 	if err != nil {
