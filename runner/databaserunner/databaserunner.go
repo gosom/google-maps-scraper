@@ -59,6 +59,14 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		scrapemateapp.WithExitOnInactivity(cfg.ExitOnInactivityDuration),
 	}
 
+	if len(cfg.Proxies) > 0 {
+		opts = append(opts,
+			scrapemateapp.WithProxies(cfg.Proxies),
+			scrapemateapp.WithProxyUsername(cfg.ProxyUsername),
+			scrapemateapp.WithProxyPassword(cfg.ProxyPassword),
+		)
+	}
+
 	if cfg.Debug {
 		opts = append(opts, scrapemateapp.WithJS(
 			scrapemateapp.Headfull(),

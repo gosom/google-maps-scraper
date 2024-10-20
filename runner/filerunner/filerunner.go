@@ -172,6 +172,14 @@ func (r *fileRunner) setApp() error {
 		scrapemateapp.WithExitOnInactivity(r.cfg.ExitOnInactivityDuration),
 	}
 
+	if len(r.cfg.Proxies) > 0 {
+		opts = append(opts,
+			scrapemateapp.WithProxies(r.cfg.Proxies),
+			scrapemateapp.WithProxyUsername(r.cfg.ProxyUsername),
+			scrapemateapp.WithProxyPassword(r.cfg.ProxyPassword),
+		)
+	}
+
 	if r.cfg.Debug {
 		opts = append(opts, scrapemateapp.WithJS(
 			scrapemateapp.Headfull(),

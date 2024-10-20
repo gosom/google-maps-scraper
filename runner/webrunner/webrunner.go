@@ -153,7 +153,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		_ = outfile.Close()
 	}()
 
-	mate, err := w.setupMate(ctx, outfile)
+	mate, err := w.setupMate(ctx, outfile, job)
 	if err != nil {
 		job.Status = web.StatusFailed
 
@@ -227,12 +227,31 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	return w.svc.Update(ctx, job)
 }
 
-func (w *webrunner) setupMate(_ context.Context, writer io.Writer) (*scrapemateapp.ScrapemateApp, error) {
+func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job) (*scrapemateapp.ScrapemateApp, error) {
 	opts := []func(*scrapemateapp.Config) error{
 		scrapemateapp.WithConcurrency(w.cfg.Concurrency),
 		scrapemateapp.WithJS(scrapemateapp.DisableImages()),
 		scrapemateapp.WithExitOnInactivity(time.Minute * 3),
 	}
+
+	hasProxy := false
+
+	if len(w.cfg.Proxies) > 0 {
+		opts = append(opts, scrapemateapp.WithProxies(w.cfg.Proxies),
+			scrapemateapp.WithProxyUsername(w.cfg.ProxyUsername),
+			scrapemateapp.WithProxyPassword(w.cfg.ProxyPassword),
+		)
+		hasProxy = true
+	} else if len(job.Data.Proxies) > 0 {
+		opts = append(opts,
+			scrapemateapp.WithProxies(job.Data.Proxies),
+			scrapemateapp.WithProxyUsername(job.Data.ProxyUsername),
+			scrapemateapp.WithProxyPassword(job.Data.ProxyPassword),
+		)
+		hasProxy = true
+	}
+
+	log.Printf("job %s has proxy: %v", job.ID, hasProxy)
 
 	csvWriter := csvwriter.NewCsvWriter(csv.NewWriter(writer))
 

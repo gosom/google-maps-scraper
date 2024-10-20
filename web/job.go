@@ -61,14 +61,17 @@ func (j *Job) Validate() error {
 }
 
 type JobData struct {
-	Keywords []string      `json:"keywords"`
-	Lang     string        `json:"lang"`
-	Zoom     int           `json:"zoom"`
-	Lat      string        `json:"lat"`
-	Lon      string        `json:"lon"`
-	Depth    int           `json:"depth"`
-	Email    bool          `json:"email"`
-	MaxTime  time.Duration `json:"max_time"`
+	Keywords      []string      `json:"keywords"`
+	Lang          string        `json:"lang"`
+	Zoom          int           `json:"zoom"`
+	Lat           string        `json:"lat"`
+	Lon           string        `json:"lon"`
+	Depth         int           `json:"depth"`
+	Email         bool          `json:"email"`
+	MaxTime       time.Duration `json:"max_time"`
+	Proxies       []string      `json:"proxies"`
+	ProxyUsername string        `json:"proxy_username"`
+	ProxyPassword string        `json:"proxy_password"`
 }
 
 func (d *JobData) Validate() error {

@@ -56,10 +56,10 @@ customize it to your needs
 
 
 ```
-mkdir -p gmapsdata && docker run -v $PWD/gmapsdata:/gmapsdata -p 8080:8080 gosom/google-maps-scraper -web -data-folder /gmapsdata
+mkdir -p gmapsdata && docker run -v $PWD/gmapsdata:/gmapsdata -p 8080:8080 gosom/google-maps-scraper -data-folder /gmapsdata
 ```
 
-Or dowload the [binary](https://github.com/gosom/google-maps-scraper/releases) for your platform and run it with the `-web` command line argument.
+Or dowload the [binary](https://github.com/gosom/google-maps-scraper/releases) for your platform and run it.
 
 Note: Even if you add one keyword the results will come in at least 3 minutes. This is a minimum configured runtime
 
@@ -91,6 +91,7 @@ Your support helps ensure continued improvement and maintenance.
 - Dockerized for easy run in multiple platforms
 - Scalable in multiple machines
 - Optionally extracts emails from the website of the business
+- SOCKS5 proxy support
 
 ## Notes on email extraction
 
@@ -194,6 +195,8 @@ try `./google-maps-scraper -h` to see the command line options available:
         sets the concurrency [default: half of CPU cores] (default 8)
   -cache string
         sets the cache directory [no effect at the moment] (default "cache")
+  -data-folder string
+        data folder for web runner (default "webdata")
   -debug
         enable headful crawl (opens browser window) [default: false]
   -depth int
@@ -207,15 +210,23 @@ try `./google-maps-scraper -h` to see the command line options available:
   -geo string
         set geo coordinates for search (e.g., '37.7749,-122.4194')
   -input string
-        path to the input file with queries (one per line) [default: stdin] (default "stdin")
+        path to the input file with queries (one per line) [default: empty]
   -json
         produce JSON output instead of CSV
   -lang string
         language code for Google (e.g., 'de' for German) [default: en] (default "en")
   -produce
         produce seed jobs only (requires dsn)
+  -proxies string
+        comma separated list of proxies to use
+  -proxy-password string
+        password for proxy authentication
+  -proxy-username string
+        username for proxy authentication
   -results string
         path to the results file [default: stdout] (default "stdout")
+  -web
+        run web server instead of crawling
   -writer string
         use custom writer plugin (format: 'dir:pluginName')
   -zoom int
