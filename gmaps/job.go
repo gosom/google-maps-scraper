@@ -9,9 +9,12 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/google/uuid"
+	"github.com/gosom/google-maps-scraper/deduper"
 	"github.com/gosom/scrapemate"
 	"github.com/playwright-community/playwright-go"
 )
+
+type GmapJobOptions func(*GmapJob)
 
 type GmapJob struct {
 	scrapemate.Job
@@ -19,9 +22,18 @@ type GmapJob struct {
 	MaxDepth     int
 	LangCode     string
 	ExtractEmail bool
+
+	Deduper deduper.Deduper
 }
 
-func NewGmapJob(id, langCode, query string, maxDepth int, extractEmail bool, geoCoordinates string, zoom int) *GmapJob {
+func NewGmapJob(
+	id, langCode, query string,
+	maxDepth int,
+	extractEmail bool,
+	geoCoordinates string,
+	zoom int,
+	opts ...GmapJobOptions,
+) *GmapJob {
 	query = url.QueryEscape(query)
 
 	const (
@@ -55,7 +67,17 @@ func NewGmapJob(id, langCode, query string, maxDepth int, extractEmail bool, geo
 		ExtractEmail: extractEmail,
 	}
 
+	for _, opt := range opts {
+		opt(&job)
+	}
+
 	return &job
+}
+
+func WithDeduper(d deduper.Deduper) GmapJobOptions {
+	return func(j *GmapJob) {
+		j.Deduper = d
+	}
 }
 
 func (j *GmapJob) UseInResults() bool {
@@ -84,7 +106,10 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 		doc.Find(`div[role=feed] div[jsaction]>a`).Each(func(_ int, s *goquery.Selection) {
 			if href := s.AttrOr("href", ""); href != "" {
 				nextJob := NewPlaceJob(j.ID, j.LangCode, href, j.ExtractEmail)
-				next = append(next, nextJob)
+
+				if j.Deduper == nil || j.Deduper.AddIfNotExists(ctx, href) {
+					next = append(next, nextJob)
+				}
 			}
 		})
 	}

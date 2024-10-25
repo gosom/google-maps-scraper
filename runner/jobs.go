@@ -9,11 +9,20 @@ import (
 	"plugin"
 	"strings"
 
+	"github.com/gosom/google-maps-scraper/deduper"
 	"github.com/gosom/google-maps-scraper/gmaps"
 	"github.com/gosom/scrapemate"
 )
 
-func CreateSeedJobs(langCode string, r io.Reader, maxDepth int, email bool, geoCoordinates string, zoom int) (jobs []scrapemate.IJob, err error) {
+func CreateSeedJobs(
+	langCode string,
+	r io.Reader,
+	maxDepth int,
+	email bool,
+	geoCoordinates string,
+	zoom int,
+	dedup deduper.Deduper,
+) (jobs []scrapemate.IJob, err error) {
 	scanner := bufio.NewScanner(r)
 
 	for scanner.Scan() {
@@ -29,7 +38,14 @@ func CreateSeedJobs(langCode string, r io.Reader, maxDepth int, email bool, geoC
 			id = strings.TrimSpace(after)
 		}
 
-		jobs = append(jobs, gmaps.NewGmapJob(id, langCode, query, maxDepth, email, geoCoordinates, zoom))
+		opts := []gmaps.GmapJobOptions{}
+		if dedup != nil {
+			opts = append(opts, gmaps.WithDeduper(dedup))
+		}
+
+		job := gmaps.NewGmapJob(id, langCode, query, maxDepth, email, geoCoordinates, zoom, opts...)
+
+		jobs = append(jobs, job)
 	}
 
 	return jobs, scanner.Err()
