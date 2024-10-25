@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gosom/google-maps-scraper/deduper"
+	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/google-maps-scraper/runner"
 	"github.com/gosom/google-maps-scraper/tlmt"
 	"github.com/gosom/scrapemate"
@@ -72,6 +73,7 @@ func (r *fileRunner) Run(ctx context.Context) (err error) {
 	}()
 
 	dedup := deduper.New()
+	exitMonitor := exiter.New()
 
 	seedJobs, err = runner.CreateSeedJobs(
 		r.cfg.LangCode,
@@ -81,10 +83,20 @@ func (r *fileRunner) Run(ctx context.Context) (err error) {
 		r.cfg.GeoCoordinates,
 		r.cfg.Zoom,
 		dedup,
+		exitMonitor,
 	)
 	if err != nil {
 		return err
 	}
+
+	exitMonitor.SetSeedCount(len(seedJobs))
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	exitMonitor.SetCancelFunc(cancel)
+
+	go exitMonitor.Run(ctx)
 
 	err = r.app.Start(ctx, seedJobs...)
 

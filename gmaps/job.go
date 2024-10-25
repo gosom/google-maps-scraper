@@ -10,6 +10,7 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"github.com/google/uuid"
 	"github.com/gosom/google-maps-scraper/deduper"
+	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/scrapemate"
 	"github.com/playwright-community/playwright-go"
 )
@@ -23,7 +24,8 @@ type GmapJob struct {
 	LangCode     string
 	ExtractEmail bool
 
-	Deduper deduper.Deduper
+	Deduper     deduper.Deduper
+	ExitMonitor exiter.Exiter
 }
 
 func NewGmapJob(
@@ -80,6 +82,12 @@ func WithDeduper(d deduper.Deduper) GmapJobOptions {
 	}
 }
 
+func WithExitMonitor(e exiter.Exiter) GmapJobOptions {
+	return func(j *GmapJob) {
+		j.ExitMonitor = e
+	}
+}
+
 func (j *GmapJob) UseInResults() bool {
 	return false
 }
@@ -105,13 +113,23 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 	} else {
 		doc.Find(`div[role=feed] div[jsaction]>a`).Each(func(_ int, s *goquery.Selection) {
 			if href := s.AttrOr("href", ""); href != "" {
-				nextJob := NewPlaceJob(j.ID, j.LangCode, href, j.ExtractEmail)
+				jopts := []PlaceJobOptions{}
+				if j.ExitMonitor != nil {
+					jopts = append(jopts, WithPlaceJobExitMonitor(j.ExitMonitor))
+				}
+
+				nextJob := NewPlaceJob(j.ID, j.LangCode, href, j.ExtractEmail, jopts...)
 
 				if j.Deduper == nil || j.Deduper.AddIfNotExists(ctx, href) {
 					next = append(next, nextJob)
 				}
 			}
 		})
+	}
+
+	if j.ExitMonitor != nil {
+		j.ExitMonitor.IncrPlacesFound(len(next))
+		j.ExitMonitor.IncrSeedCompleted(1)
 	}
 
 	log.Info(fmt.Sprintf("%d places found", len(next)))
