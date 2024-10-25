@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gosom/google-maps-scraper/deduper"
 	"github.com/gosom/google-maps-scraper/runner"
 	"github.com/gosom/google-maps-scraper/tlmt"
 	"github.com/gosom/google-maps-scraper/web"
@@ -172,6 +173,8 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		coords = job.Data.Lat + "," + job.Data.Lon
 	}
 
+	dedup := deduper.New()
+
 	seedJobs, err := runner.CreateSeedJobs(
 		job.Data.Lang,
 		strings.NewReader(strings.Join(job.Data.Keywords, "\n")),
@@ -179,6 +182,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		job.Data.Email,
 		coords,
 		job.Data.Zoom,
+		dedup,
 	)
 	if err != nil {
 		err2 := w.svc.Update(ctx, job)
