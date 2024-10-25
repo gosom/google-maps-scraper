@@ -2,7 +2,6 @@ package exiter
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 )
@@ -88,11 +87,6 @@ func (e *exiter) Run(ctx context.Context) {
 func (e *exiter) isDone() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-
-	fmt.Println("seedCount:", e.seedCount)
-	fmt.Println("seedCompleted:", e.seedCompleted)
-	fmt.Println("placesFound:", e.placesFound)
-	fmt.Println("placesCompleted:", e.placesCompleted)
 
 	if e.seedCompleted != e.seedCount {
 		return false
