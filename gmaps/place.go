@@ -7,18 +7,22 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/scrapemate"
 	"github.com/playwright-community/playwright-go"
 )
+
+type PlaceJobOptions func(*PlaceJob)
 
 type PlaceJob struct {
 	scrapemate.Job
 
 	UsageInResultststs bool
 	ExtractEmail       bool
+	ExitMonitor        exiter.Exiter
 }
 
-func NewPlaceJob(parentID, langCode, u string, extractEmail bool) *PlaceJob {
+func NewPlaceJob(parentID, langCode, u string, extractEmail bool, opts ...PlaceJobOptions) *PlaceJob {
 	const (
 		defaultPrio       = scrapemate.PriorityMedium
 		defaultMaxRetries = 3
@@ -39,7 +43,17 @@ func NewPlaceJob(parentID, langCode, u string, extractEmail bool) *PlaceJob {
 	job.UsageInResultststs = true
 	job.ExtractEmail = extractEmail
 
+	for _, opt := range opts {
+		opt(&job)
+	}
+
 	return &job
+}
+
+func WithPlaceJobExitMonitor(exitMonitor exiter.Exiter) PlaceJobOptions {
+	return func(j *PlaceJob) {
+		j.ExitMonitor = exitMonitor
+	}
 }
 
 func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, []scrapemate.IJob, error) {
@@ -66,11 +80,18 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 	}
 
 	if j.ExtractEmail && entry.IsWebsiteValidForEmail() {
-		emailJob := NewEmailJob(j.ID, &entry)
+		opts := []EmailExtractJobOptions{}
+		if j.ExitMonitor != nil {
+			opts = append(opts, WithEmailJobExitMonitor(j.ExitMonitor))
+		}
+
+		emailJob := NewEmailJob(j.ID, &entry, opts...)
 
 		j.UsageInResultststs = false
 
 		return nil, []scrapemate.IJob{emailJob}, nil
+	} else if j.ExitMonitor != nil {
+		j.ExitMonitor.IncrPlacesCompleted(1)
 	}
 
 	return &entry, nil, err
