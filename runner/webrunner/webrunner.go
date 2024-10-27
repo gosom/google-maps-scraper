@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gosom/google-maps-scraper/deduper"
+	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/google-maps-scraper/runner"
 	"github.com/gosom/google-maps-scraper/tlmt"
 	"github.com/gosom/google-maps-scraper/web"
@@ -172,6 +174,9 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		coords = job.Data.Lat + "," + job.Data.Lon
 	}
 
+	dedup := deduper.New()
+	exitMonitor := exiter.New()
+
 	seedJobs, err := runner.CreateSeedJobs(
 		job.Data.Lang,
 		strings.NewReader(strings.Join(job.Data.Keywords, "\n")),
@@ -179,6 +184,8 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		job.Data.Email,
 		coords,
 		job.Data.Zoom,
+		dedup,
+		exitMonitor,
 	)
 	if err != nil {
 		err2 := w.svc.Update(ctx, job)
@@ -190,6 +197,8 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	}
 
 	if len(seedJobs) > 0 {
+		exitMonitor.SetSeedCount(len(seedJobs))
+
 		allowedSeconds := max(60, len(seedJobs)*10*job.Data.Depth/50+120)
 
 		if job.Data.MaxTime > 0 {
@@ -205,8 +214,12 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		mateCtx, cancel := context.WithTimeout(ctx, time.Duration(allowedSeconds)*time.Second)
 		defer cancel()
 
+		exitMonitor.SetCancelFunc(cancel)
+
+		go exitMonitor.Run(mateCtx)
+
 		err = mate.Start(mateCtx, seedJobs...)
-		if err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
 			cancel()
 
 			err2 := w.svc.Update(ctx, job)

@@ -138,6 +138,8 @@ func (d *dbrunner) produceSeedJobs(ctx context.Context) error {
 		d.cfg.Email,
 		d.cfg.GeoCoordinates,
 		d.cfg.Zoom,
+		nil,
+		nil,
 	)
 	if err != nil {
 		return err
