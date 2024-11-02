@@ -37,15 +37,12 @@
 
 ![Google maps scraper](https://github.com/gosom/google-maps-scraper/blob/main/banner.png)
 
-## 🚀 Please [vote](https://github.com/gosom/google-maps-scraper/discussions/61) for the next features
-
 A command line and web based google maps scraper build using 
 
 [scrapemate](https://github.com/gosom/scrapemate) web crawling framework.
 
 You can use this repository either as is, or you can use it's code as a base and
 customize it to your needs
-
 
 
 ## Try it
@@ -91,7 +88,7 @@ Your support helps ensure continued improvement and maintenance.
 - Dockerized for easy run in multiple platforms
 - Scalable in multiple machines
 - Optionally extracts emails from the website of the business
-- SOCKS5 proxy support
+- SOCKS5/HTTP/HTTPS proxy support
 
 ## Notes on email extraction
 
@@ -192,7 +189,7 @@ try `./google-maps-scraper -h` to see the command line options available:
 
 ```
   -c int
-        sets the concurrency [default: half of CPU cores] (default 8)
+        sets the concurrency [default: half of CPU cores] (default 11)
   -cache string
         sets the cache directory [no effect at the moment] (default "cache")
   -data-folder string
@@ -218,11 +215,7 @@ try `./google-maps-scraper -h` to see the command line options available:
   -produce
         produce seed jobs only (requires dsn)
   -proxies string
-        comma separated list of proxies to use
-  -proxy-password string
-        password for proxy authentication
-  -proxy-username string
-        username for proxy authentication
+        comma separated list of proxies to use in the format protocol://user:pass@host:port example: socks5://localhost:9050 or http://user:pass@localhost:9050
   -results string
         path to the results file [default: stdout] (default "stdout")
   -web

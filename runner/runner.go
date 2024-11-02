@@ -57,8 +57,6 @@ type Config struct {
 	WebRunner                bool
 	DataFolder               string
 	Proxies                  []string
-	ProxyUsername            string
-	ProxyPassword            string
 }
 
 func ParseConfig() *Config {
@@ -89,9 +87,7 @@ func ParseConfig() *Config {
 	flag.IntVar(&cfg.Zoom, "zoom", 0, "set zoom level (0-21) for search")
 	flag.BoolVar(&cfg.WebRunner, "web", false, "run web server instead of crawling")
 	flag.StringVar(&cfg.DataFolder, "data-folder", "webdata", "data folder for web runner")
-	flag.StringVar(&proxies, "proxies", "", "comma separated list of proxies to use")
-	flag.StringVar(&cfg.ProxyUsername, "proxy-username", "", "username for proxy authentication")
-	flag.StringVar(&cfg.ProxyPassword, "proxy-password", "", "password for proxy authentication")
+	flag.StringVar(&proxies, "proxies", "", "comma separated list of proxies to use in the format protocol://user:pass@host:port example: socks5://localhost:9050 or http://user:pass@localhost:9050")
 
 	flag.Parse()
 

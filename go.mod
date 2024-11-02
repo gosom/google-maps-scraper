@@ -6,7 +6,7 @@ require (
 	github.com/PuerkitoBio/goquery v1.10.0
 	github.com/golangci/golangci-lint v1.61.0
 	github.com/google/uuid v1.6.0
-	github.com/gosom/scrapemate v0.7.1
+	github.com/gosom/scrapemate v0.8.0
 	github.com/jackc/pgx/v5 v5.7.1
 	github.com/mattn/go-runewidth v0.0.16
 	github.com/mcnijman/go-emailaddress v1.1.1
@@ -234,4 +234,4 @@ require (
 	mvdan.cc/unparam v0.0.0-20240528143540-8a5130ca722f // indirect
 )
 
-//replace github.com/gosom/scrapemate v0.6.0 => ../scrapemate
+// replace github.com/gosom/scrapemate v0.7.1 => ../scrapemate
