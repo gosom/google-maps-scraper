@@ -250,16 +250,11 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job)
 	hasProxy := false
 
 	if len(w.cfg.Proxies) > 0 {
-		opts = append(opts, scrapemateapp.WithProxies(w.cfg.Proxies),
-			scrapemateapp.WithProxyUsername(w.cfg.ProxyUsername),
-			scrapemateapp.WithProxyPassword(w.cfg.ProxyPassword),
-		)
+		opts = append(opts, scrapemateapp.WithProxies(w.cfg.Proxies))
 		hasProxy = true
 	} else if len(job.Data.Proxies) > 0 {
 		opts = append(opts,
 			scrapemateapp.WithProxies(job.Data.Proxies),
-			scrapemateapp.WithProxyUsername(job.Data.ProxyUsername),
-			scrapemateapp.WithProxyPassword(job.Data.ProxyPassword),
 		)
 		hasProxy = true
 	}

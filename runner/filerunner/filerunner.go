@@ -191,8 +191,6 @@ func (r *fileRunner) setApp() error {
 	if len(r.cfg.Proxies) > 0 {
 		opts = append(opts,
 			scrapemateapp.WithProxies(r.cfg.Proxies),
-			scrapemateapp.WithProxyUsername(r.cfg.ProxyUsername),
-			scrapemateapp.WithProxyPassword(r.cfg.ProxyPassword),
 		)
 	}
 

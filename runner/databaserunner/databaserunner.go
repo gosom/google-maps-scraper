@@ -62,8 +62,6 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 	if len(cfg.Proxies) > 0 {
 		opts = append(opts,
 			scrapemateapp.WithProxies(cfg.Proxies),
-			scrapemateapp.WithProxyUsername(cfg.ProxyUsername),
-			scrapemateapp.WithProxyPassword(cfg.ProxyPassword),
 		)
 	}
 

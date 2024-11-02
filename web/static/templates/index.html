@@ -102,15 +102,13 @@
                         <fieldset>
                             <div class="form-group">
                                 <label for="proxies">Proxies:(one per line)</label>
+                                <p class="text-muted"><small>Examples:<br>
+                                        <p>HTTPS proxy with username/password: https://username:password@myproxy.local:443<p>
+                                        <p>HTTP proxy with username/password: http://username:password@myproxy.local:443<p>
+                                        <p>SOCKS5 proxy without auth: socks5://127.0.0.1:8000</p>
+                                </p>
+
                                 <textarea id="proxies" name="proxies" rows="5">{{.ProxiesString}}</textarea>
-                            </div>
-                            <div class="form-group checkbox">
-                                <label for="proxyusername">Username</label>
-                                <input type="text" id="proxyusername" name="proxyusername" value="{{.ProxyUsername}}">
-                            </div>
-                            <div class="form-group">
-                                <label for="proxypassword">Password:</label>
-                                <input type="password" id="proxypassword" name="proxypassword" value="{{.ProxyPassword}}">
                             </div>
                         </fieldset>
                     </details>
