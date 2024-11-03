@@ -60,6 +60,8 @@ Or dowload the [binary](https://github.com/gosom/google-maps-scraper/releases) f
 
 Note: Even if you add one keyword the results will come in at least 3 minutes. This is a minimum configured runtime
 
+Note: for MacOS the docker command should not work. **HELP REQUIRED**
+
 
 ### Command line:
 
@@ -89,6 +91,7 @@ Your support helps ensure continued improvement and maintenance.
 - Scalable in multiple machines
 - Optionally extracts emails from the website of the business
 - SOCKS5/HTTP/HTTPS proxy support
+- Serverless execution via AWS Lambda functions (experimental & no documentation yet)
 
 ## Notes on email extraction
 
@@ -188,6 +191,18 @@ The results are written when they arrive in the `results` file you specified
 try `./google-maps-scraper -h` to see the command line options available:
 
 ```
+  -aws-access-key string
+        AWS access key
+  -aws-lambda
+        run as AWS Lambda function
+  -aws-lambda-chunk-size int
+        AWS Lambda chunk size (default 100)
+  -aws-lambda-invoker
+        run as AWS Lambda invoker
+  -aws-region string
+        AWS region
+  -aws-secret-key string
+        AWS secret key
   -c int
         sets the concurrency [default: half of CPU cores] (default 11)
   -cache string
@@ -204,6 +219,8 @@ try `./google-maps-scraper -h` to see the command line options available:
         extract emails from websites
   -exit-on-inactivity duration
         exit after inactivity duration (e.g., '5m')
+  -function-name string
+        AWS Lambda function name
   -geo string
         set geo coordinates for search (e.g., '37.7749,-122.4194')
   -input string
@@ -218,6 +235,8 @@ try `./google-maps-scraper -h` to see the command line options available:
         comma separated list of proxies to use in the format protocol://user:pass@host:port example: socks5://localhost:9050 or http://user:pass@localhost:9050
   -results string
         path to the results file [default: stdout] (default "stdout")
+  -s3-bucket string
+        S3 bucket name
   -web
         run web server instead of crawling
   -writer string

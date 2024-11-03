@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"golang.org/x/term"
 
+	"github.com/gosom/google-maps-scraper/s3uploader"
 	"github.com/gosom/google-maps-scraper/tlmt"
 	"github.com/gosom/google-maps-scraper/tlmt/gonoop"
 	"github.com/gosom/google-maps-scraper/tlmt/goposthog"
@@ -25,6 +27,8 @@ const (
 	RunModeDatabaseProduce
 	RunModeInstallPlaywright
 	RunModeWeb
+	RunModeAwsLambda
+	RunModeAwsLambdaInvoker
 )
 
 var (
@@ -34,6 +38,10 @@ var (
 type Runner interface {
 	Run(context.Context) error
 	Close(context.Context) error
+}
+
+type S3Uploader interface {
+	Upload(ctx context.Context, bucketName, key string, body io.Reader) error
 }
 
 type Config struct {
@@ -55,8 +63,17 @@ type Config struct {
 	RunMode                  int
 	DisableTelemetry         bool
 	WebRunner                bool
+	AwsLamdbaRunner          bool
 	DataFolder               string
 	Proxies                  []string
+	AwsAccessKey             string
+	AwsSecretKey             string
+	AwsRegion                string
+	S3Uploader               S3Uploader
+	S3Bucket                 string
+	AwsLambdaInvoker         bool
+	FunctionName             string
+	AwsLambdaChunkSize       int
 }
 
 func ParseConfig() *Config {
@@ -68,7 +85,9 @@ func ParseConfig() *Config {
 		return &cfg
 	}
 
-	var proxies string
+	var (
+		proxies string
+	)
 
 	flag.IntVar(&cfg.Concurrency, "c", runtime.NumCPU()/2, "sets the concurrency [default: half of CPU cores]")
 	flag.StringVar(&cfg.CacheDir, "cache", "cache", "sets the cache directory [no effect at the moment]")
@@ -88,8 +107,40 @@ func ParseConfig() *Config {
 	flag.BoolVar(&cfg.WebRunner, "web", false, "run web server instead of crawling")
 	flag.StringVar(&cfg.DataFolder, "data-folder", "webdata", "data folder for web runner")
 	flag.StringVar(&proxies, "proxies", "", "comma separated list of proxies to use in the format protocol://user:pass@host:port example: socks5://localhost:9050 or http://user:pass@localhost:9050")
+	flag.BoolVar(&cfg.AwsLamdbaRunner, "aws-lambda", false, "run as AWS Lambda function")
+	flag.BoolVar(&cfg.AwsLambdaInvoker, "aws-lambda-invoker", false, "run as AWS Lambda invoker")
+	flag.StringVar(&cfg.FunctionName, "function-name", "", "AWS Lambda function name")
+	flag.StringVar(&cfg.AwsAccessKey, "aws-access-key", "", "AWS access key")
+	flag.StringVar(&cfg.AwsSecretKey, "aws-secret-key", "", "AWS secret key")
+	flag.StringVar(&cfg.AwsRegion, "aws-region", "", "AWS region")
+	flag.StringVar(&cfg.S3Bucket, "s3-bucket", "", "S3 bucket name")
+	flag.IntVar(&cfg.AwsLambdaChunkSize, "aws-lambda-chunk-size", 100, "AWS Lambda chunk size")
 
 	flag.Parse()
+
+	if cfg.AwsAccessKey == "" {
+		cfg.AwsAccessKey = os.Getenv("MY_AWS_ACCESS_KEY")
+	}
+
+	if cfg.AwsSecretKey == "" {
+		cfg.AwsSecretKey = os.Getenv("MY_AWS_SECRET_KEY")
+	}
+
+	if cfg.AwsRegion == "" {
+		cfg.AwsRegion = os.Getenv("MY_AWS_REGION")
+	}
+
+	if cfg.AwsLambdaInvoker && cfg.FunctionName == "" {
+		panic("FunctionName must be provided when using AwsLambdaInvoker")
+	}
+
+	if cfg.AwsLambdaInvoker && cfg.S3Bucket == "" {
+		panic("S3Bucket must be provided when using AwsLambdaInvoker")
+	}
+
+	if cfg.AwsLambdaInvoker && cfg.InputFile == "" {
+		panic("InputFile must be provided when using AwsLambdaInvoker")
+	}
 
 	if cfg.Concurrency < 1 {
 		panic("Concurrency must be greater than 0")
@@ -111,7 +162,15 @@ func ParseConfig() *Config {
 		cfg.Proxies = strings.Split(proxies, ",")
 	}
 
+	if cfg.AwsAccessKey != "" && cfg.AwsSecretKey != "" && cfg.AwsRegion != "" {
+		cfg.S3Uploader = s3uploader.New(cfg.AwsAccessKey, cfg.AwsSecretKey, cfg.AwsRegion)
+	}
+
 	switch {
+	case cfg.AwsLambdaInvoker:
+		cfg.RunMode = RunModeAwsLambdaInvoker
+	case cfg.AwsLamdbaRunner:
+		cfg.RunMode = RunModeAwsLambda
 	case cfg.WebRunner || (cfg.Dsn == "" && cfg.InputFile == ""):
 		cfg.RunMode = RunModeWeb
 	case cfg.Dsn == "":

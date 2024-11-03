@@ -12,6 +12,7 @@ import (
 	"github.com/gosom/google-maps-scraper/runner/databaserunner"
 	"github.com/gosom/google-maps-scraper/runner/filerunner"
 	"github.com/gosom/google-maps-scraper/runner/installplaywright"
+	"github.com/gosom/google-maps-scraper/runner/lambdaaws"
 	"github.com/gosom/google-maps-scraper/runner/webrunner"
 )
 
@@ -72,6 +73,10 @@ func runnerFactory(cfg *runner.Config) (runner.Runner, error) {
 		return installplaywright.New(cfg)
 	case runner.RunModeWeb:
 		return webrunner.New(cfg)
+	case runner.RunModeAwsLambda:
+		return lambdaaws.New(cfg)
+	case runner.RunModeAwsLambdaInvoker:
+		return lambdaaws.NewInvoker(cfg)
 	default:
 		return nil, fmt.Errorf("%w: %d", runner.ErrInvalidRunMode, cfg.RunMode)
 	}
