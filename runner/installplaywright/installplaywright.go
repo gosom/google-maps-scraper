@@ -20,7 +20,13 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 }
 
 func (i *installer) Run(context.Context) error {
-	return playwright.Install()
+	opts := []*playwright.RunOptions{
+		{
+			Browsers: []string{"chromium"},
+		},
+	}
+
+	return playwright.Install(opts...)
 }
 
 func (i *installer) Close(context.Context) error {
