@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/google/uuid"
@@ -108,7 +109,11 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 	var next []scrapemate.IJob
 
 	if strings.Contains(resp.URL, "/maps/place/") {
-		placeJob := NewPlaceJob(j.ID, j.LangCode, resp.URL, j.ExtractEmail)
+		jopts := []PlaceJobOptions{}
+		if j.ExitMonitor != nil {
+			jopts = append(jopts, WithPlaceJobExitMonitor(j.ExitMonitor))
+		}
+		placeJob := NewPlaceJob(j.ID, j.LangCode, resp.URL, j.ExtractEmail, jopts...)
 		next = append(next, placeJob)
 	} else {
 		doc.Find(`div[role=feed] div[jsaction]>a`).Each(func(_ int, s *goquery.Selection) {
@@ -175,6 +180,19 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 
 	for k, v := range pageResponse.Headers() {
 		resp.Headers.Add(k, v)
+	}
+
+	// When Google Maps finds only 1 place, it slowly redirects to that place's URL
+	// check element scroll
+	sel := `div[role='feed']`
+
+	//nolint:staticcheck // TODO replace with the new playwright API
+	_, err = page.WaitForSelector(sel, playwright.PageWaitForSelectorOptions{
+		Timeout: playwright.Float(500),
+	})
+
+	if err != nil {
+		time.Sleep(3 * time.Second)
 	}
 
 	if strings.Contains(page.URL(), "/maps/place/") {
