@@ -102,6 +102,8 @@ type formData struct {
 	Keywords []string
 	Language string
 	Zoom     int
+	FastMode bool
+	Radius   int
 	Lat      string
 	Lon      string
 	Depth    int
@@ -138,7 +140,9 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		MaxTime:  "10m",
 		Keywords: []string{},
 		Language: "en",
-		Zoom:     0,
+		Zoom:     15,
+		FastMode: false,
+		Radius:   10000,
 		Lat:      "0",
 		Lon:      "0",
 		Depth:    10,
@@ -209,6 +213,17 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 	newJob.Data.Zoom, err = strconv.Atoi(r.Form.Get("zoom"))
 	if err != nil {
 		http.Error(w, "invalid zoom", http.StatusUnprocessableEntity)
+
+		return
+	}
+
+	if r.Form.Get("fastmode") == "on" {
+		newJob.Data.FastMode = true
+	}
+
+	newJob.Data.Radius, err = strconv.Atoi(r.Form.Get("radius"))
+	if err != nil {
+		http.Error(w, "invalid radius", http.StatusUnprocessableEntity)
 
 		return
 	}

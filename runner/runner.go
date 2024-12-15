@@ -74,6 +74,8 @@ type Config struct {
 	AwsLambdaInvoker         bool
 	FunctionName             string
 	AwsLambdaChunkSize       int
+	FastMode                 bool
+	Radius                   float64
 }
 
 func ParseConfig() *Config {
@@ -103,7 +105,7 @@ func ParseConfig() *Config {
 	flag.BoolVar(&cfg.Email, "email", false, "extract emails from websites")
 	flag.StringVar(&cfg.CustomWriter, "writer", "", "use custom writer plugin (format: 'dir:pluginName')")
 	flag.StringVar(&cfg.GeoCoordinates, "geo", "", "set geo coordinates for search (e.g., '37.7749,-122.4194')")
-	flag.IntVar(&cfg.Zoom, "zoom", 0, "set zoom level (0-21) for search")
+	flag.IntVar(&cfg.Zoom, "zoom", 15, "set zoom level (0-21) for search")
 	flag.BoolVar(&cfg.WebRunner, "web", false, "run web server instead of crawling")
 	flag.StringVar(&cfg.DataFolder, "data-folder", "webdata", "data folder for web runner")
 	flag.StringVar(&proxies, "proxies", "", "comma separated list of proxies to use in the format protocol://user:pass@host:port example: socks5://localhost:9050 or http://user:pass@localhost:9050")
@@ -115,6 +117,8 @@ func ParseConfig() *Config {
 	flag.StringVar(&cfg.AwsRegion, "aws-region", "", "AWS region")
 	flag.StringVar(&cfg.S3Bucket, "s3-bucket", "", "S3 bucket name")
 	flag.IntVar(&cfg.AwsLambdaChunkSize, "aws-lambda-chunk-size", 100, "AWS Lambda chunk size")
+	flag.BoolVar(&cfg.FastMode, "fast-mode", false, "fast mode (reduced data collection)")
+	flag.Float64Var(&cfg.Radius, "radius", 10000, "search radius in meters. Default is 10000 meters")
 
 	flag.Parse()
 

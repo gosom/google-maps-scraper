@@ -65,13 +65,17 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		)
 	}
 
-	if cfg.Debug {
-		opts = append(opts, scrapemateapp.WithJS(
-			scrapemateapp.Headfull(),
-			scrapemateapp.DisableImages(),
-		))
+	if !cfg.FastMode {
+		if cfg.Debug {
+			opts = append(opts, scrapemateapp.WithJS(
+				scrapemateapp.Headfull(),
+				scrapemateapp.DisableImages(),
+			))
+		} else {
+			opts = append(opts, scrapemateapp.WithJS(scrapemateapp.DisableImages()))
+		}
 	} else {
-		opts = append(opts, scrapemateapp.WithJS(scrapemateapp.DisableImages()))
+		opts = append(opts, scrapemateapp.WithStealth())
 	}
 
 	matecfg, err := scrapemateapp.NewConfig(
@@ -130,12 +134,14 @@ func (d *dbrunner) produceSeedJobs(ctx context.Context) error {
 	}
 
 	jobs, err := runner.CreateSeedJobs(
+		d.cfg.FastMode,
 		d.cfg.LangCode,
 		input,
 		d.cfg.MaxDepth,
 		d.cfg.Email,
 		d.cfg.GeoCoordinates,
 		d.cfg.Zoom,
+		d.cfg.Radius,
 		nil,
 		nil,
 	)

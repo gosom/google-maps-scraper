@@ -1,6 +1,7 @@
 package gmaps_test
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -199,4 +200,19 @@ func Test_EntryFromJSONRaw2(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Greater(t, len(entry.About), 0)
+}
+
+func Test_EntryFromJsonC(t *testing.T) {
+	raw, err := os.ReadFile("../testdata/output.json")
+
+	require.NoError(t, err)
+	require.NotEmpty(t, raw)
+
+	entries, err := gmaps.ParseSearchResults(raw)
+
+	require.NoError(t, err)
+
+	for _, entry := range entries {
+		fmt.Printf("%+v\n", entry)
+	}
 }

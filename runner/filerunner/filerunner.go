@@ -76,12 +76,14 @@ func (r *fileRunner) Run(ctx context.Context) (err error) {
 	exitMonitor := exiter.New()
 
 	seedJobs, err = runner.CreateSeedJobs(
+		r.cfg.FastMode,
 		r.cfg.LangCode,
 		r.input,
 		r.cfg.MaxDepth,
 		r.cfg.Email,
 		r.cfg.GeoCoordinates,
 		r.cfg.Zoom,
+		r.cfg.Radius,
 		dedup,
 		exitMonitor,
 	)
@@ -194,14 +196,18 @@ func (r *fileRunner) setApp() error {
 		)
 	}
 
-	if r.cfg.Debug {
-		opts = append(opts, scrapemateapp.WithJS(
-			scrapemateapp.Headfull(),
-			scrapemateapp.DisableImages(),
-		),
-		)
+	if !r.cfg.FastMode {
+		if r.cfg.Debug {
+			opts = append(opts, scrapemateapp.WithJS(
+				scrapemateapp.Headfull(),
+				scrapemateapp.DisableImages(),
+			),
+			)
+		} else {
+			opts = append(opts, scrapemateapp.WithJS(scrapemateapp.DisableImages()))
+		}
 	} else {
-		opts = append(opts, scrapemateapp.WithJS(scrapemateapp.DisableImages()))
+		opts = append(opts, scrapemateapp.WithStealth())
 	}
 
 	matecfg, err := scrapemateapp.NewConfig(
