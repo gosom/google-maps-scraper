@@ -3,7 +3,10 @@ package gmaps
 import (
 	"encoding/json"
 	"fmt"
+	"iter"
+	"math"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -89,6 +92,33 @@ type Entry struct {
 	About            []About                `json:"about"`
 	UserReviews      []Review               `json:"user_reviews"`
 	Emails           []string               `json:"emails"`
+}
+
+func (e *Entry) haversineDistance(lat, lon float64) float64 {
+	const R = 6371e3 // earth radius in meters
+
+	clat := lat * math.Pi / 180
+	clon := lon * math.Pi / 180
+
+	elat := e.Latitude * math.Pi / 180
+	elon := e.Longtitude * math.Pi / 180
+
+	dlat := elat - clat
+	dlon := elon - clon
+
+	a := math.Sin(dlat/2)*math.Sin(dlat/2) +
+		math.Cos(clat)*math.Cos(elat)*
+			math.Sin(dlon/2)*math.Sin(dlon/2)
+
+	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+
+	return R * c
+}
+
+func (e *Entry) isWithinRadius(lat, lon, radius float64) bool {
+	distance := e.haversineDistance(lat, lon)
+
+	return distance <= radius
 }
 
 func (e *Entry) IsWebsiteValidForEmail() bool {
@@ -554,4 +584,45 @@ func decodeURL(url string) (string, error) {
 	}
 
 	return unquoted, nil
+}
+
+type EntryWithDistance struct {
+	Entry    *Entry
+	Distance float64
+}
+
+func filterAndSortEntriesWithinRadius(entries []*Entry, lat, lon, radius float64) []*Entry {
+	withinRadiusIterator := func(yield func(EntryWithDistance) bool) {
+		for _, entry := range entries {
+			distance := entry.haversineDistance(lat, lon)
+			if distance <= radius {
+				if !yield(EntryWithDistance{Entry: entry, Distance: distance}) {
+					return
+				}
+			}
+		}
+	}
+
+	entriesWithDistance := slices.Collect(iter.Seq[EntryWithDistance](withinRadiusIterator))
+
+	slices.SortFunc(entriesWithDistance, func(a, b EntryWithDistance) int {
+		switch {
+		case a.Distance < b.Distance:
+			return -1
+		case a.Distance > b.Distance:
+			return 1
+		default:
+			return 0
+		}
+	})
+
+	resultIterator := func(yield func(*Entry) bool) {
+		for _, e := range entriesWithDistance {
+			if !yield(e.Entry) {
+				return
+			}
+		}
+	}
+
+	return slices.Collect(iter.Seq[*Entry](resultIterator))
 }

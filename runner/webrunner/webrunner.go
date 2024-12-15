@@ -178,12 +178,20 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	exitMonitor := exiter.New()
 
 	seedJobs, err := runner.CreateSeedJobs(
+		job.Data.FastMode,
 		job.Data.Lang,
 		strings.NewReader(strings.Join(job.Data.Keywords, "\n")),
 		job.Data.Depth,
 		job.Data.Email,
 		coords,
 		job.Data.Zoom,
+		func() float64 {
+			if job.Data.Radius <= 0 {
+				return 10000 // 10 km
+			}
+
+			return float64(job.Data.Radius)
+		}(),
 		dedup,
 		exitMonitor,
 	)
@@ -243,8 +251,17 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job) (*scrapemateapp.ScrapemateApp, error) {
 	opts := []func(*scrapemateapp.Config) error{
 		scrapemateapp.WithConcurrency(w.cfg.Concurrency),
-		scrapemateapp.WithJS(scrapemateapp.DisableImages()),
 		scrapemateapp.WithExitOnInactivity(time.Minute * 3),
+	}
+
+	if !job.Data.FastMode {
+		opts = append(opts,
+			scrapemateapp.WithJS(scrapemateapp.DisableImages()),
+		)
+	} else {
+		opts = append(opts,
+			scrapemateapp.WithStealth(),
+		)
 	}
 
 	hasProxy := false

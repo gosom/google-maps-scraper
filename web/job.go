@@ -66,6 +66,8 @@ type JobData struct {
 	Zoom     int           `json:"zoom"`
 	Lat      string        `json:"lat"`
 	Lon      string        `json:"lon"`
+	FastMode bool          `json:"fast_mode"`
+	Radius   int           `json:"radius"`
 	Depth    int           `json:"depth"`
 	Email    bool          `json:"email"`
 	MaxTime  time.Duration `json:"max_time"`
@@ -91,6 +93,10 @@ func (d *JobData) Validate() error {
 
 	if d.MaxTime == 0 {
 		return errors.New("missing max time")
+	}
+
+	if d.FastMode && (d.Lat == "" || d.Lon == "") {
+		return errors.New("missing geo coordinates")
 	}
 
 	return nil

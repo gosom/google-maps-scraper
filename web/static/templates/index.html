@@ -71,11 +71,11 @@
                             </div>
                             <div class="form-group">
                                 <label for="latitude">Latitude:</label>
-                                <input type="number" step="0.000001" id="latitude" name="latitude" value="{{.Lat}}">
+                                <input type="number" step="0.000000000000001" id="latitude" name="latitude" value="{{.Lat}}">
                             </div>
                             <div class="form-group">
                                 <label for="longitude">Longitude:</label>
-                                <input type="number" step="0.000001" id="longitude" name="longitude" value="{{.Lon}}">
+                                <input type="number" step="0.000000000000001" id="longitude" name="longitude" value="{{.Lon}}">
                             </div>
                         </fieldset>
                     </details>
@@ -83,6 +83,14 @@
                     <details class="expandable-section">
                         <summary>Advanced Options</summary>
                         <fieldset>
+                            <div class="form-group">
+                                <label for="fastmode">Fast Mode (BETA):</label>
+                                <input type="checkbox" id="fastmode" name="fastmode" {{if .FastMode}}checked{{end}}>
+                            </div>
+                            <div class="form-group">
+                                    <label for="radius">Radius (BETA):</label>
+                                    <input type="number" id="radius" name="radius" value="{{.Radius}}">
+                            </div>
                             <div class="form-group">
                                 <label for="depth">Depth:</label>
                                 <input type="number" step="1" id="depth" name="depth" value="{{.Depth}}">

@@ -42,8 +42,6 @@
 ---
 ## Try it
 
-
-
 A command line and web based google maps scraper build using 
 
 [scrapemate](https://github.com/gosom/scrapemate) web crawling framework.
@@ -53,10 +51,7 @@ customize it to your needs
 
 ![Example GIF](img/example.gif)
 
-
 ### Web UI:
-
-
 
 ```
 mkdir -p gmapsdata && docker run -v $PWD/gmapsdata:/gmapsdata -p 8080:8080 gosom/google-maps-scraper -data-folder /gmapsdata
@@ -98,6 +93,7 @@ Your support helps ensure continued improvement and maintenance.
 - Optionally extracts emails from the website of the business
 - SOCKS5/HTTP/HTTPS proxy support
 - Serverless execution via AWS Lambda functions (experimental & no documentation yet)
+- Fast Mode (BETA)
 
 ## Notes on email extraction
 
@@ -113,6 +109,22 @@ For the moment it only checks only one page of the website (the one that is regi
 Keep in mind that enabling email extraction results to larger processing time, since more
 pages are scraped. 
 
+## Fast Mode
+
+Fast mode returns you at most 21 search results per query ordered by distance from the **latitude** and **longitude** provided.
+All the results are within the specificied **radius**
+
+It does not contain all the data points but basic ones. 
+However it provides the ability to extract data really fast. 
+
+When you use the fast mode ensure that you have provided:
+- zoom
+- radius (in meters)
+- latitude
+- longitude
+
+
+**Fast mode is Beta, you may experience blocking**
 
 ## Extracted Data Points
 
@@ -195,7 +207,6 @@ The results are written when they arrive in the `results` file you specified
 ### Command line options
 
 try `./google-maps-scraper -h` to see the command line options available:
-
 ```
   -aws-access-key string
         AWS access key
@@ -225,6 +236,8 @@ try `./google-maps-scraper -h` to see the command line options available:
         extract emails from websites
   -exit-on-inactivity duration
         exit after inactivity duration (e.g., '5m')
+  -fast-mode
+        fast mode (reduced data collection)
   -function-name string
         AWS Lambda function name
   -geo string
@@ -239,6 +252,8 @@ try `./google-maps-scraper -h` to see the command line options available:
         produce seed jobs only (requires dsn)
   -proxies string
         comma separated list of proxies to use in the format protocol://user:pass@host:port example: socks5://localhost:9050 or http://user:pass@localhost:9050
+  -radius float
+        search radius in meters. Default is 10000 meters (default 10000)
   -results string
         path to the results file [default: stdout] (default "stdout")
   -s3-bucket string
@@ -248,7 +263,7 @@ try `./google-maps-scraper -h` to see the command line options available:
   -writer string
         use custom writer plugin (format: 'dir:pluginName')
   -zoom int
-        set zoom level (0-21) for search
+        set zoom level (0-21) for search (default 15)
 ```
 
 ## Using a custom writer
@@ -445,3 +460,4 @@ banner is generated using OpenAI's DALE
 
 
 If you register via the links on my page I may get a commission. This is another way to support my work
+
