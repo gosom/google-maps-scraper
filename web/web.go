@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io"
@@ -27,13 +28,17 @@ type Server struct {
 	svc  *Service
 }
 
-func New(svc *Service) (*Server, error) {
+func New(svc *Service, addr string) (*Server, error) {
 	ans := Server{
 		svc:  svc,
 		tmpl: make(map[string]*template.Template),
 		srv: &http.Server{
-			Addr:              ":8080",
+			Addr:              addr,
 			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       60 * time.Second,
+			WriteTimeout:      60 * time.Second,
+			IdleTimeout:       120 * time.Second,
+			MaxHeaderBytes:    1 << 20,
 		},
 	}
 
@@ -47,17 +52,80 @@ func New(svc *Service) (*Server, error) {
 
 	mux.Handle("/static/", http.StripPrefix("/static/", fileServer))
 	mux.HandleFunc("/scrape", ans.scrape)
-	mux.HandleFunc("/download", ans.download)
-	mux.HandleFunc("/delete", ans.delete)
+	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
+		r = requestWithID(r)
+
+		ans.download(w, r)
+	})
+	mux.HandleFunc("/delete", func(w http.ResponseWriter, r *http.Request) {
+		r = requestWithID(r)
+
+		ans.delete(w, r)
+	})
 	mux.HandleFunc("/jobs", ans.getJobs)
 	mux.HandleFunc("/", ans.index)
 
-	ans.srv.Handler = mux
+	// api routes
+	mux.HandleFunc("/api/docs", ans.redocHandler)
+	mux.HandleFunc("/api/v1/jobs", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			ans.apiScrape(w, r)
+		case http.MethodGet:
+			ans.apiGetJobs(w, r)
+		default:
+			ans := apiError{
+				Code:    http.StatusMethodNotAllowed,
+				Message: "Method not allowed",
+			}
+
+			renderJSON(w, http.StatusMethodNotAllowed, ans)
+		}
+	})
+
+	mux.HandleFunc("/api/v1/jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
+		r = requestWithID(r)
+
+		switch r.Method {
+		case http.MethodGet:
+			ans.apiGetJob(w, r)
+		case http.MethodDelete:
+			ans.apiDeleteJob(w, r)
+		default:
+			ans := apiError{
+				Code:    http.StatusMethodNotAllowed,
+				Message: "Method not allowed",
+			}
+
+			renderJSON(w, http.StatusMethodNotAllowed, ans)
+		}
+	})
+
+	mux.HandleFunc("/api/v1/jobs/{id}/download", func(w http.ResponseWriter, r *http.Request) {
+		r = requestWithID(r)
+
+		if r.Method != http.MethodGet {
+			ans := apiError{
+				Code:    http.StatusMethodNotAllowed,
+				Message: "Method not allowed",
+			}
+
+			renderJSON(w, http.StatusMethodNotAllowed, ans)
+
+			return
+		}
+
+		ans.download(w, r)
+	})
+
+	handler := securityHeaders(mux)
+	ans.srv.Handler = handler
 
 	tmplsKeys := []string{
 		"static/templates/index.html",
 		"static/templates/job_rows.html",
 		"static/templates/job_row.html",
+		"static/templates/redoc.html",
 	}
 
 	for _, key := range tmplsKeys {
@@ -109,6 +177,30 @@ type formData struct {
 	Depth    int
 	Email    bool
 	Proxies  []string
+}
+
+type ctxKey string
+
+const idCtxKey ctxKey = "id"
+
+func requestWithID(r *http.Request) *http.Request {
+	id := r.PathValue("id")
+	if id == "" {
+		id = r.URL.Query().Get("id")
+	}
+
+	parsed, err := uuid.Parse(id)
+	if err == nil {
+		r = r.WithContext(context.WithValue(r.Context(), idCtxKey, parsed))
+	}
+
+	return r
+}
+
+func getIDFromRequest(r *http.Request) (uuid.UUID, bool) {
+	id, ok := r.Context().Value(idCtxKey).(uuid.UUID)
+
+	return id, ok
 }
 
 //nolint:gocritic // this is used in template
@@ -307,16 +399,15 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	id := r.URL.Query().Get("id")
 
-	_, err := uuid.Parse(id)
-	if err != nil {
+	id, ok := getIDFromRequest(r)
+	if !ok {
 		http.Error(w, "Invalid ID", http.StatusUnprocessableEntity)
 
 		return
 	}
 
-	filePath, err := s.svc.GetCSV(ctx, id)
+	filePath, err := s.svc.GetCSV(ctx, id.String())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
@@ -347,16 +438,14 @@ func (s *Server) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	deleteID := r.URL.Query().Get("id")
-
-	_, err := uuid.Parse(deleteID)
-	if err != nil {
+	deleteID, ok := getIDFromRequest(r)
+	if !ok {
 		http.Error(w, "Invalid ID", http.StatusUnprocessableEntity)
 
 		return
 	}
 
-	err = s.svc.Delete(r.Context(), deleteID)
+	err := s.svc.Delete(r.Context(), deleteID.String())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 
@@ -366,6 +455,185 @@ func (s *Server) delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+type apiError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+type apiScrapeRequest struct {
+	Name string
+	JobData
+}
+
+type apiScrapeResponse struct {
+	ID string `json:"id"`
+}
+
+func (s *Server) redocHandler(w http.ResponseWriter, _ *http.Request) {
+	tmpl, ok := s.tmpl["static/templates/redoc.html"]
+	if !ok {
+		http.Error(w, "missing tpl", http.StatusInternalServerError)
+
+		return
+	}
+
+	_ = tmpl.Execute(w, nil)
+}
+
+func (s *Server) apiScrape(w http.ResponseWriter, r *http.Request) {
+	var req apiScrapeRequest
+
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		ans := apiError{
+			Code:    http.StatusUnprocessableEntity,
+			Message: err.Error(),
+		}
+
+		renderJSON(w, http.StatusUnprocessableEntity, ans)
+
+		return
+	}
+
+	newJob := Job{
+		ID:     uuid.New().String(),
+		Name:   req.Name,
+		Date:   time.Now().UTC(),
+		Status: StatusPending,
+		Data:   req.JobData,
+	}
+
+	// convert to seconds
+	newJob.Data.MaxTime *= time.Second
+
+	err = newJob.Validate()
+	if err != nil {
+		ans := apiError{
+			Code:    http.StatusUnprocessableEntity,
+			Message: err.Error(),
+		}
+
+		renderJSON(w, http.StatusUnprocessableEntity, ans)
+
+		return
+	}
+
+	err = s.svc.Create(r.Context(), &newJob)
+	if err != nil {
+		ans := apiError{
+			Code:    http.StatusInternalServerError,
+			Message: err.Error(),
+		}
+
+		renderJSON(w, http.StatusInternalServerError, ans)
+
+		return
+	}
+
+	ans := apiScrapeResponse{
+		ID: newJob.ID,
+	}
+
+	renderJSON(w, http.StatusCreated, ans)
+}
+
+func (s *Server) apiGetJobs(w http.ResponseWriter, r *http.Request) {
+	jobs, err := s.svc.All(r.Context())
+	if err != nil {
+		apiError := apiError{
+			Code:    http.StatusInternalServerError,
+			Message: err.Error(),
+		}
+
+		renderJSON(w, http.StatusInternalServerError, apiError)
+
+		return
+	}
+
+	renderJSON(w, http.StatusOK, jobs)
+}
+
+func (s *Server) apiGetJob(w http.ResponseWriter, r *http.Request) {
+	id, ok := getIDFromRequest(r)
+	if !ok {
+		apiError := apiError{
+			Code:    http.StatusUnprocessableEntity,
+			Message: "Invalid ID",
+		}
+
+		renderJSON(w, http.StatusUnprocessableEntity, apiError)
+
+		return
+	}
+
+	job, err := s.svc.Get(r.Context(), id.String())
+	if err != nil {
+		apiError := apiError{
+			Code:    http.StatusNotFound,
+			Message: http.StatusText(http.StatusNotFound),
+		}
+
+		renderJSON(w, http.StatusNotFound, apiError)
+
+		return
+	}
+
+	renderJSON(w, http.StatusOK, job)
+}
+
+func (s *Server) apiDeleteJob(w http.ResponseWriter, r *http.Request) {
+	id, ok := getIDFromRequest(r)
+	if !ok {
+		apiError := apiError{
+			Code:    http.StatusUnprocessableEntity,
+			Message: "Invalid ID",
+		}
+
+		renderJSON(w, http.StatusUnprocessableEntity, apiError)
+
+		return
+	}
+
+	err := s.svc.Delete(r.Context(), id.String())
+	if err != nil {
+		apiError := apiError{
+			Code:    http.StatusInternalServerError,
+			Message: err.Error(),
+		}
+
+		renderJSON(w, http.StatusInternalServerError, apiError)
+
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func renderJSON(w http.ResponseWriter, code int, data any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+
+	_ = json.NewEncoder(w).Encode(data)
+}
+
 func formatDate(t time.Time) string {
 	return t.Format("Jan 02, 2006 15:04:05")
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-XSS-Protection", "1; mode=block")
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'self'; "+
+				"script-src 'self' cdn.redoc.ly cdnjs.cloudflare.com 'unsafe-inline' 'unsafe-eval'; "+
+				"worker-src 'self' blob:; "+
+				"style-src 'self' 'unsafe-inline' fonts.googleapis.com; "+
+				"img-src 'self' data: cdn.redoc.ly; "+
+				"font-src 'self' fonts.gstatic.com; "+
+				"connect-src 'self'")
+
+		next.ServeHTTP(w, r)
+	})
 }

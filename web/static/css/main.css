@@ -332,3 +332,26 @@ th {
     margin-right: 8px;
 }
 
+nav {
+    margin-bottom: 16px;
+    padding: 8px 0;
+}
+
+nav a {
+    color: white;
+    text-decoration: none;
+    font-size: 16px;
+    font-weight: 500;
+    padding: 8px 16px;
+    background-color: var(--color-primary);
+    border: 1px solid var(--color-primary);
+    border-radius: 4px;
+    transition: all 0.2s ease;
+    display: inline-block;
+}
+
+nav a:hover {
+    background-color: var(--color-primary-light);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}

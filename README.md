@@ -72,7 +72,20 @@ touch results.csv && docker run -v $PWD/example-queries.txt:/example-queries -v 
 
 file `results.csv` will contain the parsed results.
 
-**If you want emails use additionally the `-email` parameter**
+**If you want emails use additionally the `-email` parameter*
+
+### REST API
+The Google Maps Scraper provides a RESTful API for programmatic management of scraping tasks.
+
+### Key Endpoints
+
+- POST /api/v1/jobs: Create a new scraping job
+- GET /api/v1/jobs: List all jobs
+- GET /api/v1/jobs/{id}: Get details of a specific job
+- DELETE /api/v1/jobs/{id}: Delete a job
+- GET /api/v1/jobs/{id}/download: Download job results as CSV
+
+For detailed API documentation, refer to the OpenAPI 3.0.3 specification available through Swagger UI or Redoc when running the app https://localhost:8080/api/docs
 
 
 ## 🌟 Support the Project!
@@ -208,6 +221,8 @@ The results are written when they arrive in the `results` file you specified
 
 try `./google-maps-scraper -h` to see the command line options available:
 ```
+  -addr string
+        address to listen on for web server (default ":8080")
   -aws-access-key string
         AWS access key
   -aws-lambda
@@ -460,4 +475,3 @@ banner is generated using OpenAI's DALE
 
 
 If you register via the links on my page I may get a commission. This is another way to support my work
-

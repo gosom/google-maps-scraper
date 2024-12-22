@@ -28,6 +28,10 @@ func (s *Service) All(ctx context.Context) ([]Job, error) {
 	return s.repo.Select(ctx, SelectParams{})
 }
 
+func (s *Service) Get(ctx context.Context, id string) (Job, error) {
+	return s.repo.Get(ctx, id)
+}
+
 func (s *Service) Delete(ctx context.Context, id string) error {
 	if strings.Contains(id, "/") || strings.Contains(id, "\\") || strings.Contains(id, "..") {
 		return fmt.Errorf("invalid file name")
