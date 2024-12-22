@@ -1,0 +1,252 @@
+openapi: 3.0.3
+info:
+  title: Google Maps Scraper API
+  version: 1.0.0
+  description: API for managing job google maps scraping tasks
+
+paths:
+  /api/v1/jobs:
+    post:
+      summary: Create a new job scraping task
+      x-code-samples:
+        - lang: curl
+          source: |
+            curl -X POST "http://localhost:8080/api/v1/jobs" \
+              -H "Content-Type: application/json" \
+              -d '{
+                "name": "Coffee shops Ilion",
+                "keywords": ["coffee in ilion"],
+                "lang": "el",
+                "zoom": 15,
+                "depth": 1,
+                "max_time": 3600
+              }'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApiScrapeRequest'
+      responses:
+        '201':
+          description: Job created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiScrapeResponse'
+        '422':
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+    get:
+      summary: Get all jobs
+      x-code-samples:
+        - lang: curl
+          source: |
+            curl -X GET "http://localhost:8080/api/v1/jobs"
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Job'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+  /api/v1/jobs/{id}:
+    get:
+      summary: Get a specific job
+      x-code-samples:
+        - lang: curl
+          source: |
+            curl -X GET "http://localhost:8080/api/v1/jobs/6f0c1af8-3c4e-4742-84bb-590938ae8930"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '422':
+          description: Invalid ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+    delete:
+      summary: Delete a specific job
+      x-code-samples:
+        - lang: curl
+          source: |
+            curl -X DELETE "http://localhost:8080/api/v1/jobs/455a6a00-cefb-4a9d-9e7d-791f01873700"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Job deleted successfully
+        '422':
+          description: Invalid ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+  /api/v1/jobs/{id}/download:
+    get:
+      summary: Download job results as CSV
+      x-code-samples:
+          source: |
+            curl -X GET "http://localhost:8080/api/v1/jobs/18eafda3-53a9-4970-ac96-8f8dfc7011c3/download" --output results.csv
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: File not found
+        '422':
+          description: Invalid ID
+        '500':
+          description: Internal server error
+
+components:
+  schemas:
+    ApiError:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+
+    ApiScrapeRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        keywords:
+          type: array
+          items:
+            type: string
+        lang:
+          type: string
+        zoom:
+          type: integer
+        lat:
+          type: string
+        lon:
+          type: string
+        fast_mode:
+          type: boolean
+        radius:
+          type: integer
+        depth:
+          type: integer
+        email:
+          type: boolean
+        max_time:
+          type: integer
+        proxies:
+          type: array
+          items:
+            type: string
+
+    ApiScrapeResponse:
+      type: object
+      properties:
+        id:
+          type: string
+
+    Job:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        date:
+          type: string
+          format: date-time
+        status:
+          type: string
+        data:
+          $ref: '#/components/schemas/JobData'
+
+    JobData:
+      type: object
+      properties:
+        keywords:
+          type: array
+          items:
+            type: string
+        lang:
+          type: string
+        zoom:
+          type: integer
+        lat:
+          type: string
+        lon:
+          type: string
+        fast_mode:
+          type: boolean
+        radius:
+          type: integer
+        depth:
+          type: integer
+        email:
+          type: boolean
+        max_time:
+          type: integer
+        proxies:
+          type: array
+          items:
+            type: string
+
