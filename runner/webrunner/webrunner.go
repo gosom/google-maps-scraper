@@ -183,6 +183,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		strings.NewReader(strings.Join(job.Data.Keywords, "\n")),
 		job.Data.Depth,
 		job.Data.Email,
+		false,
 		coords,
 		job.Data.Zoom,
 		func() float64 {

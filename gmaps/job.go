@@ -26,12 +26,16 @@ type GmapJob struct {
 
 	Deduper     deduper.Deduper
 	ExitMonitor exiter.Exiter
+
+	// Limits the search using the Search on This Area
+	LimitSearch bool
 }
 
 func NewGmapJob(
 	id, langCode, query string,
 	maxDepth int,
 	extractEmail bool,
+	limitSearch bool,
 	geoCoordinates string,
 	zoom int,
 	opts ...GmapJobOptions,
@@ -67,6 +71,7 @@ func NewGmapJob(
 		MaxDepth:     maxDepth,
 		LangCode:     langCode,
 		ExtractEmail: extractEmail,
+		LimitSearch:  limitSearch,
 	}
 
 	for _, opt := range opts {
@@ -193,6 +198,15 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 		return resp
 	}
 
+	if j.LimitSearch {
+		if err = limitSearchArea(page); err != nil{
+			resp.Error = err
+
+		return resp
+		}
+	}
+
+
 	_, err = scroll(ctx, page, j.MaxDepth)
 	if err != nil {
 		resp.Error = err
@@ -232,6 +246,34 @@ func clickRejectCookiesIfRequired(page playwright.Page) error {
 
 	//nolint:staticcheck // TODO replace with the new playwright API
 	return el.Click()
+}
+
+// limitSearchArea limits the search using the Search on This Area
+// zoomin, zoomout is a trick to show the `Search this area` button
+func limitSearchArea(page playwright.Page) error{
+	err := page.Locator("#widget-zoom-in").Click()
+	if err != nil {
+		return err
+	}
+
+	searchThisAreaLocator := page.Locator(`text="Search this area"`)
+	err = searchThisAreaLocator.WaitFor(playwright.LocatorWaitForOptions{
+		State: playwright.WaitForSelectorStateVisible,
+	})
+	if err != nil {
+		return err
+	}
+
+	err = page.Locator("#widget-zoom-out").Click()
+	if err != nil {
+		return err
+	}
+
+	err = searchThisAreaLocator.Click()
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func scroll(ctx context.Context, page playwright.Page, maxDepth int) (int, error) {

@@ -84,6 +84,7 @@ func (l *lambdaAwsRunner) handler(ctx context.Context, input lInput) error {
 		in,
 		input.Depth,
 		false,
+		false,
 		"",
 		0,
 		10000, // TODO support radius

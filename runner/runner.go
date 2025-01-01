@@ -77,6 +77,7 @@ type Config struct {
 	FastMode                 bool
 	Radius                   float64
 	Addr                     string
+	LimitSearch              bool
 }
 
 func ParseConfig() *Config {
@@ -121,6 +122,7 @@ func ParseConfig() *Config {
 	flag.BoolVar(&cfg.FastMode, "fast-mode", false, "fast mode (reduced data collection)")
 	flag.Float64Var(&cfg.Radius, "radius", 10000, "search radius in meters. Default is 10000 meters")
 	flag.StringVar(&cfg.Addr, "addr", ":8080", "address to listen on for web server")
+	flag.BoolVar(&cfg.LimitSearch, "limit", false, "limit the search to the region")
 
 	flag.Parse()
 
@@ -170,6 +172,10 @@ func ParseConfig() *Config {
 
 	if cfg.AwsAccessKey != "" && cfg.AwsSecretKey != "" && cfg.AwsRegion != "" {
 		cfg.S3Uploader = s3uploader.New(cfg.AwsAccessKey, cfg.AwsSecretKey, cfg.AwsRegion)
+	}
+
+	if cfg.FastMode && cfg.LimitSearch {
+		panic("Limit search is only available in JS mode")
 	}
 
 	switch {
