@@ -72,7 +72,12 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 				scrapemateapp.DisableImages(),
 			))
 		} else {
-			opts = append(opts, scrapemateapp.WithJS(scrapemateapp.DisableImages()))
+			// images are required for the limit search
+			if cfg.LimitSearch {
+				opts = append(opts, scrapemateapp.WithJS())
+			} else {
+				opts = append(opts, scrapemateapp.WithJS(scrapemateapp.DisableImages()))
+			}
 		}
 	} else {
 		opts = append(opts, scrapemateapp.WithStealth("firefox"))
@@ -139,6 +144,7 @@ func (d *dbrunner) produceSeedJobs(ctx context.Context) error {
 		input,
 		d.cfg.MaxDepth,
 		d.cfg.Email,
+		d.cfg.LimitSearch,
 		d.cfg.GeoCoordinates,
 		d.cfg.Zoom,
 		d.cfg.Radius,

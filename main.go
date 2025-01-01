@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/gosom/google-maps-scraper/runner"
 	"github.com/gosom/google-maps-scraper/runner/databaserunner"
@@ -17,6 +18,11 @@ import (
 )
 
 func main() {
+	started := time.Now()
+	defer func() {
+		fmt.Printf("Took %v seconds\n", time.Since(started).Seconds())
+	}()
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	runner.Banner()

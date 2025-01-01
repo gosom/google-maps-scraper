@@ -81,6 +81,7 @@ func (r *fileRunner) Run(ctx context.Context) (err error) {
 		r.input,
 		r.cfg.MaxDepth,
 		r.cfg.Email,
+		r.cfg.LimitSearch,
 		r.cfg.GeoCoordinates,
 		r.cfg.Zoom,
 		r.cfg.Radius,
@@ -204,7 +205,12 @@ func (r *fileRunner) setApp() error {
 			),
 			)
 		} else {
-			opts = append(opts, scrapemateapp.WithJS(scrapemateapp.DisableImages()))
+			// images are required for the limit search
+			if r.cfg.LimitSearch {
+				opts = append(opts, scrapemateapp.WithJS())
+			} else {
+				opts = append(opts, scrapemateapp.WithJS(scrapemateapp.DisableImages()))
+			}
 		}
 	} else {
 		opts = append(opts, scrapemateapp.WithStealth("firefox"))
