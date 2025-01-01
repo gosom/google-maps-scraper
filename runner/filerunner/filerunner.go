@@ -207,7 +207,7 @@ func (r *fileRunner) setApp() error {
 			opts = append(opts, scrapemateapp.WithJS(scrapemateapp.DisableImages()))
 		}
 	} else {
-		opts = append(opts, scrapemateapp.WithStealth())
+		opts = append(opts, scrapemateapp.WithStealth("firefox"))
 	}
 
 	matecfg, err := scrapemateapp.NewConfig(
