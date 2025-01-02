@@ -276,7 +276,7 @@ func limitSearchArea(page playwright.Page) error {
 		return err
 	}
 
-	page.WaitForTimeout(1000)
+	page.WaitForTimeout(2000)
 	return nil
 }
 
