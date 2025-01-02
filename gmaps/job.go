@@ -199,13 +199,12 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 	}
 
 	if j.LimitSearch {
-		if err = limitSearchArea(page); err != nil{
+		if err = limitSearchArea(page); err != nil {
 			resp.Error = err
 
-		return resp
+			return resp
 		}
 	}
-
 
 	_, err = scroll(ctx, page, j.MaxDepth)
 	if err != nil {
@@ -250,7 +249,7 @@ func clickRejectCookiesIfRequired(page playwright.Page) error {
 
 // limitSearchArea limits the search using the Search on This Area
 // zoomin, zoomout is a trick to show the `Search this area` button
-func limitSearchArea(page playwright.Page) error{
+func limitSearchArea(page playwright.Page) error {
 	err := page.Locator("#widget-zoom-in").Click()
 	if err != nil {
 		return err
@@ -269,10 +268,15 @@ func limitSearchArea(page playwright.Page) error{
 		return err
 	}
 
-	err = searchThisAreaLocator.Click()
+	wait := float64(500)
+	err = searchThisAreaLocator.Click(playwright.LocatorClickOptions{
+		Delay: &wait,
+	})
 	if err != nil {
 		return err
 	}
+
+	page.WaitForTimeout(1000)
 	return nil
 }
 
