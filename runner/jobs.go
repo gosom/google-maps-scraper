@@ -31,41 +31,43 @@ func CreateSeedJobs(
 ) (jobs []scrapemate.IJob, err error) {
 	var lat, lon float64
 
+	// make this reusable
+	// this will break if geo is not sent
 	if fastmode {
 		if geoCoordinates == "" {
 			return nil, fmt.Errorf("geo coordinates are required in fast mode")
 		}
+	}
 
-		parts := strings.Split(geoCoordinates, ",")
-		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid geo coordinates: %s", geoCoordinates)
-		}
+	parts := strings.Split(geoCoordinates, ",")
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid geo coordinates: %s", geoCoordinates)
+	}
 
-		lat, err = strconv.ParseFloat(parts[0], 64)
-		if err != nil {
-			return nil, fmt.Errorf("invalid latitude: %w", err)
-		}
+	lat, err = strconv.ParseFloat(parts[0], 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid latitude: %w", err)
+	}
 
-		lon, err = strconv.ParseFloat(parts[1], 64)
-		if err != nil {
-			return nil, fmt.Errorf("invalid longitude: %w", err)
-		}
+	lon, err = strconv.ParseFloat(parts[1], 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid longitude: %w", err)
+	}
 
-		if lat < -90 || lat > 90 {
-			return nil, fmt.Errorf("invalid latitude: %f", lat)
-		}
+	if lat < -90 || lat > 90 {
+		return nil, fmt.Errorf("invalid latitude: %f", lat)
+	}
 
-		if lon < -180 || lon > 180 {
-			return nil, fmt.Errorf("invalid longitude: %f", lon)
-		}
+	if lon < -180 || lon > 180 {
+		return nil, fmt.Errorf("invalid longitude: %f", lon)
+	}
 
-		if zoom < 1 || zoom > 21 {
-			return nil, fmt.Errorf("invalid zoom level: %d", zoom)
-		}
+	if zoom < 1 || zoom > 21 {
+		return nil, fmt.Errorf("invalid zoom level: %d", zoom)
+	}
 
-		if radius < 0 {
-			return nil, fmt.Errorf("invalid radius: %f", radius)
-		}
+	if radius < 0 {
+		return nil, fmt.Errorf("invalid radius: %f", radius)
 	}
 
 	scanner := bufio.NewScanner(r)
@@ -96,7 +98,16 @@ func CreateSeedJobs(
 				opts = append(opts, gmaps.WithExitMonitor(exitMonitor))
 			}
 
-			job = gmaps.NewGmapJob(id, langCode, query, maxDepth, email, limitSearch, geoCoordinates, zoom, opts...)
+			var limitRadius *gmaps.Radius
+			if radius > 0 {
+				limitRadius = &gmaps.Radius{
+					Lat:    lat,
+					Lon:    lon,
+					Radius: radius,
+				}
+			}
+
+			job = gmaps.NewGmapJob(id, langCode, query, maxDepth, email, limitSearch, geoCoordinates, zoom, limitRadius, opts...)
 		} else {
 			jparams := gmaps.MapSearchParams{
 				Location: gmaps.MapLocation{

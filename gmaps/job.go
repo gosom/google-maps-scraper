@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/google/uuid"
@@ -29,6 +31,7 @@ type GmapJob struct {
 
 	// Limits the search using the Search on This Area
 	LimitSearch bool
+	Radius      *Radius
 }
 
 func NewGmapJob(
@@ -38,6 +41,7 @@ func NewGmapJob(
 	limitSearch bool,
 	geoCoordinates string,
 	zoom int,
+	radius *Radius,
 	opts ...GmapJobOptions,
 ) *GmapJob {
 	query = url.QueryEscape(query)
@@ -72,6 +76,7 @@ func NewGmapJob(
 		LangCode:     langCode,
 		ExtractEmail: extractEmail,
 		LimitSearch:  limitSearch,
+		Radius:       radius,
 	}
 
 	for _, opt := range opts {
@@ -112,13 +117,20 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 
 	var next []scrapemate.IJob
 
+	jopts := []PlaceJobOptions{}
 	if strings.Contains(resp.URL, "/maps/place/") {
-		placeJob := NewPlaceJob(j.ID, j.LangCode, resp.URL, j.ExtractEmail)
+		if j.Radius != nil {
+			jopts = append(jopts, WithRadius(j.Radius))
+		}
+		placeJob := NewPlaceJob(j.ID, j.LangCode, resp.URL, j.ExtractEmail, jopts...)
 		next = append(next, placeJob)
 	} else {
 		doc.Find(`div[role=feed] div[jsaction]>a`).Each(func(_ int, s *goquery.Selection) {
 			if href := s.AttrOr("href", ""); href != "" {
-				jopts := []PlaceJobOptions{}
+				if j.Radius != nil {
+					jopts = append(jopts, WithRadius(j.Radius))
+				}
+
 				if j.ExitMonitor != nil {
 					jopts = append(jopts, WithPlaceJobExitMonitor(j.ExitMonitor))
 				}
@@ -268,15 +280,22 @@ func limitSearchArea(page playwright.Page) error {
 		return err
 	}
 
-	wait := float64(500)
-	err = searchThisAreaLocator.Click(playwright.LocatorClickOptions{
-		Delay: &wait,
+	// wait for Search to complete when click searchThisAreaLocator
+	_, err = page.ExpectResponse(regexp.MustCompile(`.*\/search\?.*`), func() error {
+		wait := float64(500)
+		err = searchThisAreaLocator.Click(playwright.LocatorClickOptions{
+			Delay: &wait,
+		})
+		if err != nil {
+			return err
+		}
+		return nil
 	})
 	if err != nil {
 		return err
 	}
 
-	page.WaitForTimeout(2000)
+	time.Sleep(500)
 	return nil
 }
 

@@ -14,11 +14,16 @@ import (
 
 type PlaceJobOptions func(*PlaceJob)
 
+type Radius struct {
+	Radius, Lat, Lon float64
+}
+
 type PlaceJob struct {
 	scrapemate.Job
 
 	UsageInResultststs bool
 	ExtractEmail       bool
+	Radius             *Radius
 	ExitMonitor        exiter.Exiter
 }
 
@@ -56,6 +61,12 @@ func WithPlaceJobExitMonitor(exitMonitor exiter.Exiter) PlaceJobOptions {
 	}
 }
 
+func WithRadius(radius *Radius) PlaceJobOptions {
+	return func(j *PlaceJob) {
+		j.Radius = radius
+	}
+}
+
 func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, []scrapemate.IJob, error) {
 	defer func() {
 		resp.Document = nil
@@ -77,6 +88,10 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 
 	if entry.Link == "" {
 		entry.Link = j.GetURL()
+	}
+
+	if j.Radius != nil && !entry.isWithinRadius(j.Radius.Lat, j.Radius.Lon, j.Radius.Radius) {
+		return nil, nil, fmt.Errorf("skipping not in radius")
 	}
 
 	if j.ExtractEmail && entry.IsWebsiteValidForEmail() {
