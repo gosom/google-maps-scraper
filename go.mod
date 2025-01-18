@@ -13,7 +13,7 @@ require (
 	github.com/golangci/golangci-lint v1.61.0
 	github.com/google/open-location-code/go v0.0.0-20241213145606-bf601ad90a45
 	github.com/google/uuid v1.6.0
-	github.com/gosom/scrapemate v0.8.4
+	github.com/gosom/scrapemate v0.8.5
 	github.com/jackc/pgx/v5 v5.7.1
 	github.com/mattn/go-runewidth v0.0.16
 	github.com/mcnijman/go-emailaddress v1.1.1
@@ -164,7 +164,7 @@ require (
 	github.com/maratori/testableexamples v1.0.0 // indirect
 	github.com/maratori/testpackage v1.1.1 // indirect
 	github.com/matoous/godox v0.0.0-20230222163458-006bad1f9d26 // indirect
-	github.com/mattn/go-colorable v0.1.13 // indirect
+	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
 	github.com/mgechev/revive v1.3.9 // indirect
@@ -245,7 +245,7 @@ require (
 	golang.org/x/exp/typeparams v0.0.0-20240314144324-c7f7c6466f7f // indirect
 	golang.org/x/mod v0.22.0 // indirect
 	golang.org/x/net v0.32.0 // indirect
-	golang.org/x/sys v0.28.0 // indirect
+	golang.org/x/sys v0.29.0 // indirect
 	golang.org/x/text v0.21.0 // indirect
 	golang.org/x/tools v0.28.0 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
