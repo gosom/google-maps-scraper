@@ -113,7 +113,9 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 		if j.ExitMonitor != nil {
 			jopts = append(jopts, WithPlaceJobExitMonitor(j.ExitMonitor))
 		}
+
 		placeJob := NewPlaceJob(j.ID, j.LangCode, resp.URL, j.ExtractEmail, jopts...)
+
 		next = append(next, placeJob)
 	} else {
 		doc.Find(`div[role=feed] div[jsaction]>a`).Each(func(_ int, s *goquery.Selection) {
@@ -192,7 +194,13 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 	})
 
 	if err != nil {
-		time.Sleep(3 * time.Second)
+		select {
+		case <-ctx.Done():
+			resp.Error = ctx.Err()
+
+			return resp
+		case <-time.After(3 * time.Second):
+		}
 	}
 
 	if strings.Contains(page.URL(), "/maps/place/") {
