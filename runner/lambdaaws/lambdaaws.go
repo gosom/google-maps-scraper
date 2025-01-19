@@ -143,6 +143,11 @@ func (l *lambdaAwsRunner) getApp(_ context.Context, input lInput, out io.Writer)
 		),
 	}
 
+	if !input.DisablePageReuse {
+		opts = append(opts, scrapemateapp.WithPageReuseLimit(2))
+		opts = append(opts, scrapemateapp.WithBrowserReuseLimit(200))
+	}
+
 	mateCfg, err := scrapemateapp.NewConfig(writers, opts...)
 	if err != nil {
 		return nil, err

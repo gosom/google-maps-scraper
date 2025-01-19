@@ -13,7 +13,7 @@ require (
 	github.com/golangci/golangci-lint v1.61.0
 	github.com/google/open-location-code/go v0.0.0-20241213145606-bf601ad90a45
 	github.com/google/uuid v1.6.0
-	github.com/gosom/scrapemate v0.8.5
+	github.com/gosom/scrapemate v0.9.0
 	github.com/jackc/pgx/v5 v5.7.1
 	github.com/mattn/go-runewidth v0.0.16
 	github.com/mcnijman/go-emailaddress v1.1.1

@@ -276,6 +276,13 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job)
 		hasProxy = true
 	}
 
+	if !w.cfg.DisablePageReuse {
+		opts = append(opts,
+			scrapemateapp.WithPageReuseLimit(2),
+			scrapemateapp.WithPageReuseLimit(200),
+		)
+	}
+
 	log.Printf("job %s has proxy: %v", job.ID, hasProxy)
 
 	csvWriter := csvwriter.NewCsvWriter(csv.NewWriter(writer))

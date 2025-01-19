@@ -210,6 +210,13 @@ func (r *fileRunner) setApp() error {
 		opts = append(opts, scrapemateapp.WithStealth("firefox"))
 	}
 
+	if !r.cfg.DisablePageReuse {
+		opts = append(opts,
+			scrapemateapp.WithPageReuseLimit(2),
+			scrapemateapp.WithPageReuseLimit(200),
+		)
+	}
+
 	matecfg, err := scrapemateapp.NewConfig(
 		r.writers,
 		opts...,
