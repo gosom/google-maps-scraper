@@ -46,6 +46,45 @@ permissions:
   packages: write
 
 jobs:
+  run:
+    name: Build Leads Scraper Executable
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    strategy:
+      fail-fast: true
+      matrix:
+        go: ['1.23.1']
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Install Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ matrix.go }}
+          check-latest: true
+
+      - name: Go Format
+        run: gofmt -s -w . && git diff --exit-code
+
+      - name: Lint
+        run: make lint
+
+      - name: Go Vet
+        run: go vet ./...
+
+      - name: Go Tidy
+        run: go mod tidy && git diff --exit-code
+
+      - name: Go Mod
+        run: go mod download
+
+      - name: Go Mod Verify
+        run: go mod verify
+
+      - name: Go Build
+        run: go build -o /dev/null ./...
   build-leads-scraper:
     name: Build leads scraper images for ${{ inputs.environment }}
     uses: ./.github/workflows/reusable-deploy-docker-artifacts.yml
