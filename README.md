@@ -391,6 +391,220 @@ Use an appropriate kubernetes cluster
 Anonymous usage statistics are collected for debug and improvement reasons. 
 You can opt out by setting the env variable `DISABLE_TELEMETRY=1`
 
+## Deployment
+
+You can deploy the scraper using the helm chart in the `charts` folder.
+
+```mermaid
+graph TB
+    subgraph "Kubernetes Cluster"
+        ing[Ingress] --> svc[Service<br>ClusterIP]
+        svc --> pod1[Pod: Leads Scraper<br>Port: 8080<br>Resources: 100m-500m CPU<br>128Mi-512Mi Memory]
+        svc --> pod2[Pod: Leads Scraper<br>Port: 8080<br>Resources: 100m-500m CPU<br>128Mi-512Mi Memory]
+        
+        subgraph "Pod Details"
+            direction TB
+            hc[Health Check<br>/health]
+            web[Web Server Mode<br>-web flag]
+            scraper[Scraper Engine<br>Concurrency: 11<br>Depth: 5]
+        end
+        
+        subgraph "AWS Integration"
+            s3[S3 Bucket<br>leads-scraper-service]
+        end
+    end
+    
+    pod1 --> neon[("Neon Postgres DB<br>us-east-2.aws")]
+    pod2 --> neon
+    pod1 --> s3
+    pod2 --> s3
+```
+
+```mermaid
+flowchart TB
+    subgraph "Application Layer"
+        direction TB
+        client[Client Requests] --> ing[Ingress]
+        ing --> svc[K8s Service]
+        svc --> pods[Leads Scraper Pods]
+        
+        subgraph "Scraper Components"
+            direction LR
+            web[Web Server] --> engine[Scraper Engine]
+            engine --> cache[In-Memory Cache]
+            engine --> queue[Job Queue]
+        end
+    end
+    
+    subgraph "Data Storage"
+        direction TB
+        neon[("Neon Postgres DB<br>Serverless PostgreSQL")] 
+        s3[("AWS S3<br>leads-scraper-service")]
+    end
+    
+    subgraph "External Services"
+        gmaps[Google Maps API]
+    end
+    
+    pods --> neon
+    pods --> s3
+    engine --> gmaps
+    
+    classDef db fill:#f9f,stroke:#333,stroke-width:2px
+    classDef cloud fill:#bbf,stroke:#333,stroke-width:2px
+    class neon db
+    class s3,gmaps cloud
+```
+
+## Job Generation
+
+```mermaid
+graph TB
+    subgraph "Input Processing"
+        tags[Search Tags/Keywords<br>1000 keywords] --> jobs[Job Generation]
+        jobs --> total[Total Jobs:<br>1000 keywords × 16 results<br>= 17,000 jobs]
+    end
+
+    subgraph "Job Breakdown per Keyword"
+        direction LR
+        kw[1 Keyword Search] --> initial[Initial Search Job<br>+1 job]
+        initial --> results[Results Processing<br>+16 result jobs]
+        results --> total_per_kw[Total per Keyword:<br>17 jobs]
+    end
+
+    subgraph "Processing Metrics"
+        speed[Processing Speed<br>120 jobs/minute<br>with c=8, depth=1]
+        total --> time[Processing Time<br>~17,000/120 = ~142 minutes<br>≈ 2.4 hours]
+        speed --> time
+    end
+
+    classDef metrics fill:#f9f,stroke:#333,stroke-width:2px
+    classDef process fill:#bbf,stroke:#333,stroke-width:2px
+    class speed,time metrics
+    class jobs,results process
+```
+
+## Job Processing Architecture
+
+```mermaid
+flowchart TB
+    subgraph "Job Generation Layer"
+        input[Input Keywords] --> parser[Tag Parser]
+        parser --> jobgen[Job Generator]
+        jobgen --> queue[Job Queue]
+        
+        subgraph "Job Types"
+            direction LR
+            search[Search Jobs<br>1 per keyword] 
+            detail[Detail Jobs<br>~16 per keyword]
+        end
+    end
+
+    subgraph "Processing Layer"
+        queue --> distributor[Job Distributor]
+        distributor --> worker1[Worker 1<br>Concurrency: 11]
+        distributor --> worker2[Worker 2<br>Concurrency: 11]
+        distributor --> worker3[Worker 3<br>Concurrency: 11]
+        
+        subgraph "Processing Stats"
+            stats[Performance Metrics]
+            stats --> rate[120 jobs/minute]
+            stats --> depth[Depth: 1-10]
+            stats --> conc[Concurrency: 8]
+        end
+    end
+
+    subgraph "Storage Layer"
+        worker1 --> db[("Neon Postgres DB")]
+        worker2 --> db
+        worker3 --> db
+        worker1 --> s3[("AWS S3")]
+        worker2 --> s3
+        worker3 --> s3
+    end
+
+    classDef storage fill:#f9f,stroke:#333,stroke-width:2px
+    classDef metrics fill:#bbf,stroke:#333,stroke-width:2px
+    class db,s3 storage
+    class stats,rate,depth,conc metrics
+```
+
+## Data Flow
+
+```mermaid
+flowchart TB
+    subgraph "Data Extraction Flow"
+        direction TB
+        gmaps[Google Maps Page] --> parser[Parser Engine]
+        
+        subgraph "Extracted Data Points"
+            direction LR
+            basic[Basic Info<br>- Title<br>- Category<br>- Address<br>- Phone<br>- Website] 
+            geo[Geo Data<br>- Latitude<br>- Longitude<br>- Plus Code]
+            reviews[Review Data<br>- Review Count<br>- Rating<br>- Reviews per Rating]
+            meta[Business Meta<br>- Open Hours<br>- Popular Times<br>- Price Range<br>- Timezone]
+            media[Media Data<br>- Thumbnail<br>- Images<br>- Menu]
+            extra[Extra Info<br>- Descriptions<br>- About<br>- Owner Info<br>- Reservations]
+        end
+
+        parser --> |Extracts| basic
+        parser --> |Extracts| geo
+        parser --> |Extracts| reviews
+        parser --> |Extracts| meta
+        parser --> |Extracts| media
+        parser --> |Extracts| extra
+
+        subgraph "Optional Extraction"
+            website[Business Website] --> email[Email Extraction<br>-email flag required]
+        end
+    end
+
+    classDef data fill:#f9f,stroke:#333,stroke-width:2px
+    classDef source fill:#bbf,stroke:#333,stroke-width:2px
+    class basic,geo,reviews,meta,media,extra data
+    class gmaps,website source
+```
+
+## Deployment Modes
+
+```mermaid
+flowchart TB
+    subgraph "Deployment Modes"
+        direction TB
+        cli[CLI Mode] --> single[Single Machine<br>Local Execution]
+        web[Web Server Mode<br>-web flag] --> k8s[Kubernetes Deployment]
+        
+        subgraph "Configuration Options"
+            direction LR
+            basic_conf[Basic Config<br>- Concurrency<br>- Depth<br>- Language] 
+            geo_conf[Geo Config<br>- Radius<br>- Zoom Level<br>- Coordinates]
+            output[Output Options<br>- CSV<br>- JSON<br>- PostgreSQL<br>- Custom Plugin]
+            perf[Performance<br>- Fast Mode<br>- Exit on Inactivity<br>- Debug Mode]
+        end
+
+        subgraph "Storage Options"
+            direction LR
+            files[File Storage<br>- CSV/JSON Files] 
+            db[Database<br>- PostgreSQL<br>- Neon Serverless]
+            cloud[Cloud Storage<br>- AWS S3]
+        end
+    end
+
+    subgraph "Integration Points"
+        direction TB
+        proxy[Proxy Support<br>- SOCKS5<br>- HTTP/HTTPS] --> scraper
+        aws[AWS Integration<br>- Lambda Functions<br>- S3 Storage] --> scraper
+        scraper[Scraper Engine] --> output_handlers[Output Handlers]
+    end
+
+    classDef config fill:#f9f,stroke:#333,stroke-width:2px
+    classDef mode fill:#bbf,stroke:#333,stroke-width:2px
+    classDef storage fill:#e6e6fa,stroke:#333,stroke-width:2px
+    class basic_conf,geo_conf,output,perf config
+    class cli,web mode
+    class files,db,cloud storage
+```
+
 ## Perfomance
 
 Expected speed with concurrency of 8 and depth 1 is 120 jobs/per minute.
@@ -470,8 +684,3 @@ banner is generated using OpenAI's DALE
 		<br>
 	</p>
 </div>
-
-
-
-
-If you register via the links on my page I may get a commission. This is another way to support my work

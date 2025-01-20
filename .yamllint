@@ -1,0 +1,53 @@
+---
+extends: default
+
+ignore: |
+  charts/leads-scraper-service/templates/
+  charts/leads-scraper-service/templates/**/*.yaml
+
+rules:
+  # Allow longer lines
+  line-length:
+    max: 200
+    level: warning
+    allow-non-breakable-words: true
+    allow-non-breakable-inline-mappings: true
+
+  # Disable document start marker requirement
+  document-start:
+    present: false
+    level: warning
+
+  # Relax braces spacing
+  braces:
+    min-spaces-inside: 0
+    max-spaces-inside: 1
+    level: warning
+
+  # Very flexible indentation rules
+  indentation:
+    spaces: 2
+    indent-sequences: whatever
+    check-multi-line-strings: false
+    level: warning
+
+  # More flexible comments configuration
+  comments:
+    require-starting-space: true
+    min-spaces-from-content: 1
+    level: warning
+  
+  comments-indentation: disable
+
+  # Other rules
+  trailing-spaces: enable
+  truthy:
+    level: warning
+    allowed-values: ['true', 'false', 'yes', 'no']
+
+  empty-lines:
+    max: 2
+    max-start: 1
+    max-end: 1
+
+  new-line-at-end-of-file: enable 

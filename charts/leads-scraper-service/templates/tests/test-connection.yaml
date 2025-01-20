@@ -1,0 +1,58 @@
+{{- if and .Values.tests.enabled .Values.tests.healthCheck.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "leads-scraper-service.fullname" . }}-test-connection"
+  labels:
+    {{- include "leads-scraper-service.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": hook-succeeded,before-hook-creation
+spec:
+  containers:
+    - name: wget
+      image: busybox
+      imagePullPolicy: IfNotPresent
+      command: ['/bin/sh', '-c']
+      args:
+        - |
+          set -e
+          echo "Starting connectivity tests..."
+          
+          # Test 1: DNS Resolution
+          echo "Testing DNS resolution..."
+          SERVICE_DNS="{{ include "leads-scraper-service.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local"
+          echo "Service DNS: $SERVICE_DNS"
+          if ! nslookup $SERVICE_DNS; then
+            echo "DNS resolution failed"
+            exit 1
+          fi
+          echo "DNS resolution successful"
+          
+          # Test 2: Service Port
+          echo "Testing service port..."
+          SERVICE_URL="http://{{ include "leads-scraper-service.fullname" . }}:{{ .Values.service.port }}{{ .Values.tests.healthCheck.path }}"
+          echo "Service URL: $SERVICE_URL"
+          
+          # Test with retries and backoff
+          MAX_ATTEMPTS=5
+          for i in $(seq 1 $MAX_ATTEMPTS); do
+            echo "Attempt $i/$MAX_ATTEMPTS..."
+            if wget -q --timeout=5 --tries=1 -O- "$SERVICE_URL"; then
+              echo "Service connectivity test successful"
+              exit 0
+            fi
+            
+            # Don't sleep after the last attempt
+            if [ $i -lt $MAX_ATTEMPTS ]; then
+              SLEEP_TIME=$((i * 3))
+              echo "Attempt $i failed, waiting ${SLEEP_TIME}s before retry..."
+              sleep $SLEEP_TIME
+            fi
+          done
+          
+          echo "All connection attempts failed after $MAX_ATTEMPTS tries"
+          exit 1
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 60
+{{- end }}

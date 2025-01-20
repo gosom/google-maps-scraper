@@ -1,0 +1,114 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "leads-scraper-service.fullname" . }}
+  labels:
+    {{- include "leads-scraper-service.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "leads-scraper-service.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "leads-scraper-service.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "leads-scraper-service.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            # Required flags for web server mode
+            - "-web"
+            - "-dsn={{ include "leads-scraper-service.postgresql.dsn" . }}"
+            # Core scraper settings
+            - "-c={{ .Values.config.scraper.concurrency }}"
+            - "-depth={{ .Values.config.scraper.depth }}"
+            - "-lang={{ .Values.config.scraper.language }}"
+            - "-radius={{ .Values.config.scraper.searchRadius }}"
+            - "-zoom={{ .Values.config.scraper.zoomLevel }}"
+            # Optional features
+            {{- if .Values.config.scraper.emailExtraction }}
+            - "-email"
+            {{- end }}
+            {{- if .Values.config.scraper.fastMode }}
+            - "-fast-mode"
+            {{- end }}
+            {{- if .Values.config.scraper.exitOnInactivity }}
+            - "-exit-on-inactivity={{ .Values.config.scraper.exitOnInactivity }}"
+            {{- end }}
+            {{- if .Values.config.scraper.proxies }}
+            - "-proxies={{ .Values.config.scraper.proxies }}"
+            {{- end }}
+            # AWS Configuration (if provided)
+            {{- if .Values.config.aws.accessKey }}
+            - "-aws-access-key={{ .Values.config.aws.accessKey }}"
+            {{- end }}
+            {{- if .Values.config.aws.secretKey }}
+            - "-aws-secret-key={{ .Values.config.aws.secretKey }}"
+            {{- end }}
+            {{- if .Values.config.aws.region }}
+            - "-aws-region={{ .Values.config.aws.region }}"
+            {{- end }}
+            {{- if .Values.config.aws.lambda.enabled }}
+            - "-aws-lambda"
+            {{- end }}
+            {{- if .Values.config.aws.lambda.invoker }}
+            - "-aws-lambda-invoker"
+            {{- end }}
+            - "-aws-lambda-chunk-size={{ .Values.config.aws.lambda.chunkSize }}"
+            {{- if .Values.config.aws.lambda.functionName }}
+            - "-function-name={{ .Values.config.aws.lambda.functionName }}"
+            {{- end }}
+            {{- if .Values.config.aws.s3.bucket }}
+            - "-s3-bucket={{ .Values.config.aws.s3.bucket }}"
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- with .Values.volumeMounts }}
+          volumeMounts:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.volumes }}
+      volumes:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
