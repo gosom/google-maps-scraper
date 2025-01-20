@@ -209,3 +209,4 @@ clean-local: ## Clean up local deployment
 .PHONY: port-forward
 port-forward: ## Port forward the service to localhost (only if needed)
 	kubectl port-forward -n $(NAMESPACE) svc/$(RELEASE_NAME) 8080:8080
+	open http://localhost:8080/api/docs
