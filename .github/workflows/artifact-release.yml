@@ -1,0 +1,80 @@
+name: Deploy Vector Workspace To Environment
+on:
+  push:
+    branches:
+      - main
+      - staging
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      namespace:
+        required: false
+        type: string
+        default: "vector"
+      release_name:
+        required: false
+        type: string
+        default: "vector"
+      deployment_name:
+        required: false
+        type: string
+        default: "vector-workspace"
+    secrets:
+      CLUSTER_ID:
+        required: true
+      DIGITALOCEAN_TOKEN:
+        required: true
+      DATABASE_DSN:
+        required: false
+        description: "Database connection string override"
+      AWS_ACCESS_KEY:
+        required: false
+        description: "AWS Access Key override"
+      AWS_SECRET_KEY:
+        required: false
+        description: "AWS Secret Key override"
+      AWS_REGION:
+        required: false
+        description: "AWS Region override"
+
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+
+jobs:
+  build-leads-scraper:
+    name: Build leads scraper images for ${{ inputs.environment }}
+    uses: ./.github/workflows/reusable-deploy-docker-artifacts.yml
+    with:
+      dockerfile: Dockerfile
+      image-name: feelguuds/leads-scraper-service
+      context: services/leads-scraper-service
+      platform: linux/amd64
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
+  deploy-leads-scraper:
+    if: github.event_name != 'pull_request'
+    name: Deploy Lead Scraper Service To DigitalOcean Kubernetes cluster ${{ inputs.environment }}
+    uses: ./.github/workflows/reusable-k8s-deployment.yml
+    needs:
+      - build-leads-scraper
+    with:
+      environment: ${{ github.ref == 'refs/heads/staging' && 'staging' || 'production' }}
+      namespace: vector
+      release_name: leads-scraper-service
+      app_root: services/leads-scraper-service
+      chart_name: leads-scraper-service
+      helm_timeout: "2m" # optional
+      kubeconfig_expiry: "600" # optional
+    secrets:
+      DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+      CLUSTER_ID: ${{ secrets.CLUSTER_ID }}
+      DATABASE_DSN: ${{ github.ref == 'refs/heads/staging' && secrets.DATABASE_DSN_STAGING || secrets.DATABASE_DSN }}
+      AWS_ACCESS_KEY: ${{ secrets.AWS_ACCESS_KEY }}
+      AWS_SECRET_KEY: ${{ secrets.AWS_SECRET_KEY }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}

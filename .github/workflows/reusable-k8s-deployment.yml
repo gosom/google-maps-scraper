@@ -1,0 +1,152 @@
+name: Reusable Kubernetes Deployment
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+        description: "Target environment for deployment (e.g., staging, production)"
+      namespace:
+        required: true
+        type: string
+        description: "Kubernetes namespace for deployment"
+      release_name:
+        required: true
+        type: string
+        description: "Helm release name"
+      app_root:
+        required: true
+        type: string
+        description: "Root directory of the application"
+      chart_name:
+        required: true
+        type: string
+        description: "Name of the Helm chart"
+      helm_timeout:
+        required: false
+        type: string
+        default: "10m"
+        description: "Timeout for Helm operations"
+      kubeconfig_expiry:
+        required: false
+        type: string
+        default: "600"
+        description: "Expiry time in seconds for kubeconfig"
+      helm_values:
+        required: false
+        type: string
+        description: "Additional Helm values to set during deployment"
+    secrets:
+      DIGITALOCEAN_TOKEN:
+        required: true
+      CLUSTER_ID:
+        required: true
+      DATABASE_DSN:
+        required: false
+      AWS_ACCESS_KEY:
+        required: false
+      AWS_SECRET_KEY:
+        required: false
+      AWS_REGION:
+        required: false
+
+jobs:
+  deploy:
+    name: Deploy to DigitalOcean Kubernetes cluster ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      HELM_VERSION: 3.8.1
+      APP_ROOT: ${{ inputs.app_root }}
+      CHART_NAME: ${{ inputs.chart_name }}
+      HELM_TIMEOUT: ${{ inputs.helm_timeout }}
+      KUBECONFIG_EXPIRY: ${{ inputs.kubeconfig_expiry }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure deployment variables
+        id: config
+        run: |
+          CHARTS_DIR="${APP_ROOT}/charts/${CHART_NAME}"
+          echo "CHARTS_DIR=${CHARTS_DIR}" >> $GITHUB_OUTPUT
+          echo "VALUES_FILE=${APP_ROOT}/charts/${CHART_NAME}/values.${{ inputs.environment }}.yaml" >> $GITHUB_OUTPUT
+          echo "BASE_VALUES=${APP_ROOT}/charts/${CHART_NAME}/values.yaml" >> $GITHUB_OUTPUT
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Configure Helm
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm repo update
+          helm dependency build ${{ steps.config.outputs.CHARTS_DIR }}
+
+      - name: Setup DigitalOcean access
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_TOKEN }}
+
+      - name: Configure Kubernetes context
+        run: |
+          doctl kubernetes cluster kubeconfig save --expiry-seconds ${{ env.KUBECONFIG_EXPIRY }} ${{ secrets.CLUSTER_ID }}
+          kubectl create namespace ${{ inputs.namespace }} --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy to cluster
+        run: |
+          HELM_CMD="helm"
+          RELEASE_STATUS=$(helm status ${{ inputs.release_name }} -n ${{ inputs.namespace }} 2>&1 || true)
+
+          if echo "$RELEASE_STATUS" | grep -q "not found"; then
+            echo "🚀 Performing fresh installation..."
+            HELM_CMD="$HELM_CMD install ${{ inputs.release_name }}"
+          else
+            echo "🔄 Performing upgrade..."
+            HELM_CMD="$HELM_CMD upgrade ${{ inputs.release_name }}"
+          fi
+
+          # Build helm set arguments for secrets
+          HELM_SET_ARGS=""
+          if [ ! -z "${{ secrets.DATABASE_DSN }}" ]; then
+            HELM_SET_ARGS="$HELM_SET_ARGS --set config.database.dsn='${{ secrets.DATABASE_DSN }}'"
+          fi
+          if [ ! -z "${{ secrets.AWS_ACCESS_KEY }}" ]; then
+            HELM_SET_ARGS="$HELM_SET_ARGS --set config.aws.accessKey='${{ secrets.AWS_ACCESS_KEY }}'"
+          fi
+          if [ ! -z "${{ secrets.AWS_SECRET_KEY }}" ]; then
+            HELM_SET_ARGS="$HELM_SET_ARGS --set config.aws.secretKey='${{ secrets.AWS_SECRET_KEY }}'"
+          fi
+          if [ ! -z "${{ secrets.AWS_REGION }}" ]; then
+            HELM_SET_ARGS="$HELM_SET_ARGS --set config.aws.region='${{ secrets.AWS_REGION }}'"
+          fi
+
+          $HELM_CMD ${{ steps.config.outputs.CHARTS_DIR }} \
+            --values ${{ steps.config.outputs.BASE_VALUES }} \
+            --values ${{ steps.config.outputs.VALUES_FILE }} \
+            $HELM_SET_ARGS \
+            --namespace ${{ inputs.namespace }} \
+            --create-namespace \
+            --timeout ${{ env.HELM_TIMEOUT }} \
+            --wait
+
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/${{ inputs.release_name }} \
+            -n ${{ inputs.namespace }} \
+            --timeout=${{ env.HELM_TIMEOUT }}
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          echo "✨ Deployment Summary"
+          echo "Environment: ${{ inputs.environment }}"
+          echo "Namespace: ${{ inputs.namespace }}"
+          echo "Release: ${{ inputs.release_name }}"
+          echo "Chart: ${{ steps.config.outputs.CHARTS_DIR }}"

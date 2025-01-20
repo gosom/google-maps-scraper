@@ -1,0 +1,124 @@
+name: Build Docker Image
+on:
+  workflow_call:
+    inputs:
+      dockerfile:
+        required: true
+        type: string
+      image-name:
+        required: true
+        type: string
+      platform:
+        required: true
+        type: string
+      context:
+        required: true
+        type: string
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: true
+      DOCKERHUB_PASSWORD:
+        required: true
+      DATABASE_URL:
+        required: false
+
+env:
+  DOCKER_USERNAME: feelguuds
+  DOCKER_PASSWORD: Granada123!
+
+jobs:
+  build:
+    name: Build standalone image
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Extract version from tag
+        id: extract_version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            # For tags: use the tag version
+            V_PREFIX="v"
+            VERSION="${GITHUB_REF_NAME}"
+            TRIMMED_VERSION="${VERSION/#$V_PREFIX}"
+            echo "version=$TRIMMED_VERSION" >> $GITHUB_OUTPUT
+            echo "is_tag=true" >> $GITHUB_OUTPUT
+          elif [[ $GITHUB_REF == refs/heads/main ]]; then
+            # For main: use semantic version
+            echo "version=${{ steps.next_pre_version.outputs.version }}" >> $GITHUB_OUTPUT
+            echo "is_tag=false" >> $GITHUB_OUTPUT
+          elif [[ $GITHUB_REF == refs/heads/staging ]]; then
+            # For staging: use semantic version with staging suffix
+            echo "version=${{ steps.next_pre_version.outputs.version }}-staging" >> $GITHUB_OUTPUT
+            echo "is_tag=false" >> $GITHUB_OUTPUT
+          else
+            # For other branches: use commit SHA
+            VERSION="${GITHUB_SHA:0:7}"
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "is_tag=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: ☁️ Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Save commit hashes for tag
+        id: commit
+        uses: pr-mpt/actions-commit-hash@v2
+
+      - name: 🔧 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🐋 Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKER_USERNAME }}
+          password: ${{ env.DOCKER_PASSWORD }}
+      - name: Get current time
+        id: current-time
+        run: echo "CURRENT_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+      - name: Calculate Next Pre-release version
+        id: next_pre_version
+        uses: paulhatch/semantic-version@v5.4.0
+        with:
+          version_format: "${major}.${minor}.${patch}-pre.${increment}"
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ inputs.image-name }}
+          tags: |
+            # For tagged releases
+            type=semver,pattern={{version}},enable=${{ steps.extract_version.outputs.is_tag == 'true' }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ steps.extract_version.outputs.is_tag == 'true' }}
+            type=semver,pattern={{major}},enable=${{ steps.extract_version.outputs.is_tag == 'true' }}
+
+            # For main branch
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
+            type=raw,value=${{ steps.extract_version.outputs.version }},enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
+
+            # For staging branch
+            type=raw,value=staging,enable=${{ github.ref == format('refs/heads/{0}', 'staging') }}
+            type=raw,value=${{ steps.extract_version.outputs.version }},enable=${{ github.ref == format('refs/heads/{0}', 'staging') }}
+
+            # For all builds
+            type=sha,format=long
+            type=ref,event=branch
+
+      - name: 📦 Build backend and export to Docker
+        uses: docker/build-push-action@v6
+        with:
+          push: ${{ github.event_name != 'pull_request' }}
+          sbom: true
+          provenance: true
+          context: ${{ inputs.context }}
+          tags: ${{ steps.meta.outputs.tags }}
+          platforms: ${{ inputs.platform }}
+          file: ${{ inputs.dockerfile }}
+          build-args: |
+            DATABASE_URL=${{ secrets.DATABASE_URL }}
+            VECTOR_VERSION=${{ steps.extract_version.outputs.version }}
+            buildDate=${{ steps.current-time.outputs.CURRENT_TIME }}
+            gitCommit=${{ github.sha }}
+            gitVersion=${{ github.ref_name }}
