@@ -86,8 +86,7 @@ jobs:
       - name: Go Build
         run: go build -o /dev/null ./...
       - name: Test
-        run: make test
-
+        run: go test -v -race -timeout 5m ./...
   build-leads-scraper:
     needs: run
     name: Build leads scraper images for ${{ inputs.environment }}
