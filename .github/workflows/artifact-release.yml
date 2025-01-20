@@ -1,4 +1,4 @@
-name: Deploy Vector Workspace To Environment
+name: Artifact Release
 on:
   push:
     branches:
@@ -52,7 +52,7 @@ jobs:
     with:
       dockerfile: Dockerfile
       image-name: feelguuds/leads-scraper-service
-      context: services/leads-scraper-service
+      context: .
       platform: linux/amd64
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -67,7 +67,7 @@ jobs:
       environment: ${{ github.ref == 'refs/heads/staging' && 'staging' || 'production' }}
       namespace: vector
       release_name: leads-scraper-service
-      app_root: services/leads-scraper-service
+      app_root: .
       chart_name: leads-scraper-service
       helm_timeout: "2m" # optional
       kubeconfig_expiry: "600" # optional
