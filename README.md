@@ -4,49 +4,44 @@
 
 > A command line and web UI google maps scraper
 
----
+## Sponsors
 
-<div align="center">
-	<p>
-		<p>
-			<sup>
-				<a href="https://github.com/sponsors/gosom">supported by the community</a>
-			</sup>
-		</p>
-		<sup>Special thanks to:</sup>
-		<br>
-		<br>
-		<a href="https://www.searchapi.io/google-maps?via=gosom" rel="nofollow">
-                  <div>
-                    <img src="https://www.searchapi.io/press/v1/svg/searchapi_logo_black_h.svg" width="300" alt="Google Maps API for easy SERP scraping"/>
-                  </div>
-                  <b>Google Maps API for easy SERP scraping</b>
-		</a>
-                <br>
-                <br>
-                <a href="https://www.capsolver.com/?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos" rel="nofollow">
-                  <div>
-                    <img src="https://raw.githubusercontent.com/gosom/google-maps-scraper/main/img/capsolver-banner.png" alt="Capsolver banner"/>
-                  </div>
-                  <b><a href="https://www.capsolver.com/?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos" rel="nofollow">CapSolver</a> automates CAPTCHA solving for efficient web scraping. It supports <a href="https://docs.capsolver.com/guide/captcha/ReCaptchaV2.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos" rel="nofolow">reCAPTCHA V2</a>, <a href="https://docs.capsolver.com/guide/captcha/ReCaptchaV3.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos" rel="nofollow">reCAPTCHA V3</a>, <a href="https://docs.capsolver.com/guide/captcha/HCaptcha.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos" rel="nofollow">hCaptcha</a>, and more. With API and extension options, it’s perfect for any web scraping project. </b>
-		</a>
-		<br>
-		<br>
-	</p>
-</div>
+### Supported by the Community
+
+[Supported by the community](https://github.com/sponsors/gosom)
+
+### Premium Sponsors
+
+**No time for code? Extract ALL Google Maps listings at country-scale in 2 clicks, without keywords or limits** 👉 [Try it now for free](https://scrap.io?utm_medium=ads&utm_source=github_gosom_gmap_scraper)
+
+[![Extract ALL Google Maps Listings](./img/premium_scrap_io.png)](https://scrap.io?utm_medium=ads&utm_source=github_gosom_gmap_scraper)
+
+
+
+
+### Special Thanks to:
+
+[![Google Maps API for easy SERP scraping](https://www.searchapi.io/press/v1/svg/searchapi_logo_black_h.svg)](https://www.searchapi.io/google-maps?via=gosom)
+**Google Maps API for easy SERP scraping**
+
+<br>
+
+[![Capsolver banner](https://raw.githubusercontent.com/gosom/google-maps-scraper/main/img/capsolver-banner.png)](https://www.capsolver.com/?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos)
+**[CapSolver](https://www.capsolver.com/?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos)** automates CAPTCHA solving for efficient web scraping. It supports [reCAPTCHA V2](https://docs.capsolver.com/guide/captcha/ReCaptchaV2.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos), [reCAPTCHA V3](https://docs.capsolver.com/guide/captcha/ReCaptchaV3.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos), [hCaptcha](https://docs.capsolver.com/guide/captcha/HCaptcha.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos), and more. With API and extension options, it’s perfect for any web scraping project.
+
+<br>
 
 [Evomi](https://evomi.com?utm_source=github&utm_medium=banner&utm_campaign=gosom-maps) is your Swiss Quality Proxy Provider, starting at **$0.49/GB**
 
 [![Evomi Banner](https://my.evomi.com/images/brand/cta.png)](https://evomi.com?utm_source=github&utm_medium=banner&utm_campaign=gosom-maps)
 
----
-## Try it
+## What Google maps scraper does
 
 A command line and web based google maps scraper build using 
 
 [scrapemate](https://github.com/gosom/scrapemate) web crawling framework.
 
-You can use this repository either as is, or you can use it's code as a base and
+You can use this repository either as is, or you can use its code as a base and
 customize it to your needs
 
 ![Example GIF](img/example.gif)
@@ -59,7 +54,7 @@ mkdir -p gmapsdata && docker run -v $PWD/gmapsdata:/gmapsdata -p 8080:8080 gosom
 
 Or dowload the [binary](https://github.com/gosom/google-maps-scraper/releases) for your platform and run it.
 
-Note: Even if you add one keyword the results will come in at least 3 minutes. This is a minimum configured runtime
+Note: The results will take at least 3 minutes to appear, even if you add only one keyword. This is the minimum configured runtime.
 
 Note: for MacOS the docker command should not work. **HELP REQUIRED**
 
@@ -99,7 +94,7 @@ Your support helps ensure continued improvement and maintenance.
 
 - Extracts many data points from google maps
 - Exports the data to CSV, JSON or PostgreSQL 
-- Perfomance about 120 urls per minute (-depth 1 -c 8)
+- Performance about 120 urls per minute (-depth 1 -c 8)
 - Extendable to write your own exporter
 - Dockerized for easy run in multiple platforms
 - Scalable in multiple machines
@@ -110,7 +105,7 @@ Your support helps ensure continued improvement and maintenance.
 
 ## Notes on email extraction
 
-By defaul email extraction is disabled. 
+By default email extraction is disabled. 
 
 If you enable email extraction (see quickstart) then the scraper will visit the 
 website of the business (if exists) and it will try to extract the emails from the
@@ -125,7 +120,7 @@ pages are scraped.
 ## Fast Mode
 
 Fast mode returns you at most 21 search results per query ordered by distance from the **latitude** and **longitude** provided.
-All the results are within the specificied **radius**
+All the results are within the specified **radius**
 
 It does not contain all the data points but basic ones. 
 However it provides the ability to extract data really fast. 
@@ -178,7 +173,7 @@ emails
 
 **Note**: email is empty by default (see Usage)
 
-**Note**: Input id is an ID that you can define per query. By default its a UUID
+**Note**: Input id is an ID that you can define per query. By default it's a UUID
 In order to define it you can have an input file like:
 
 ```
@@ -322,7 +317,7 @@ For running in your local machine:
 docker-compose -f docker-compose.dev.yaml up -d
 ```
 
-The above starts a PostgreSQL contains and creates the required tables
+The above starts a PostgreSQL container and creates the required tables
 
 to access db:
 
@@ -391,7 +386,7 @@ Use an appropriate kubernetes cluster
 Anonymous usage statistics are collected for debug and improvement reasons. 
 You can opt out by setting the env variable `DISABLE_TELEMETRY=1`
 
-## Perfomance
+## Performance
 
 Expected speed with concurrency of 8 and depth 1 is 120 jobs/per minute.
 Each search is 1 job + the number or results it contains.
@@ -402,7 +397,7 @@ if we have 1000 keywords to search with each contains 16 results => 1000 * 16 = 
 We expect this to take about 16000/120 ~ 133 minutes ~ 2.5 hours
 
 If you want to scrape many keywords then it's better to use the Database Provider in
-combination with Kubernetes for convenience and start multipe scrapers in more than 1 machines.
+combination with Kubernetes for convenience and start multiple scrapers in more than 1 machines.
 
 ## References
 
@@ -415,7 +410,7 @@ For more instruction you may also read the following links
 
 ## Licence
 
-This code is licenced under the MIT Licence
+This code is licensed under the MIT License
 
 
 ## Contributing
@@ -427,13 +422,10 @@ Thank you for considering support for the project. Every bit of assistance helps
 
 
 
-## Notes
-
-Please use this scraper responsibly
-
-banner is generated using OpenAI's DALE
 
 ## Sponsors
+
+### Special Thanks to:
 
 [Evomi](https://evomi.com?utm_source=github&utm_medium=banner&utm_campaign=gosom-maps) is your Swiss Quality Proxy Provider, starting at **$0.49/GB**
 
@@ -449,29 +441,35 @@ banner is generated using OpenAI's DALE
 
 [![Evomi Banner](https://my.evomi.com/images/brand/cta.png)](https://evomi.com?utm_source=github&utm_medium=banner&utm_campaign=gosom-maps)
 
+<br>
 
-<div align="center">
-	<p>
-		<a href="https://www.capsolver.com/?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos" rel="nofollow">
-                  <div>
-                    <img src="https://raw.githubusercontent.com/gosom/google-maps-scraper/main/img/capsolver-banner.png" alt="Capsolver banner"/>
-                  </div>
-                  <b><a href="https://www.capsolver.com/?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos" rel="nofollow">CapSolver</a> automates CAPTCHA solving for efficient web scraping. It supports <a href="https://docs.capsolver.com/guide/captcha/ReCaptchaV2.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos" rel="nofolow">reCAPTCHA V2</a>, <a href="https://docs.capsolver.com/guide/captcha/ReCaptchaV3.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos" rel="nofollow">reCAPTCHA V3</a>, <a href="https://docs.capsolver.com/guide/captcha/HCaptcha.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos" rel="nofollow">hCaptcha</a>, and more. With API and extension options, it’s perfect for any web scraping project. </b>
-		</a>
-		</a>
-                <br>
-                <br>
-                		<a href="https://www.searchapi.io/google-maps?via=gosom" rel="nofollow">
-                  <div>
-                    <img src="https://www.searchapi.io/press/v1/svg/searchapi_logo_black_h.svg" width="300" alt="Google Maps API for easy SERP scraping"/>
-                  </div>
-                  <b>Google Maps API for easy SERP scraping</b>
-		<br>
-		<br>
-	</p>
-</div>
+[![Capsolver banner](https://raw.githubusercontent.com/gosom/google-maps-scraper/main/img/capsolver-banner.png)](https://www.capsolver.com/?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos)
+**[CapSolver](https://www.capsolver.com/?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos)** automates CAPTCHA solving for efficient web scraping. It supports [reCAPTCHA V2](https://docs.capsolver.com/guide/captcha/ReCaptchaV2.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos), [reCAPTCHA V3](https://docs.capsolver.com/guide/captcha/ReCaptchaV3.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos), [hCaptcha](https://docs.capsolver.com/guide/captcha/HCaptcha.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos), and more. With API and extension options, it’s perfect for any web scraping project.
+
+<br>
+
+[![Google Maps API for easy SERP scraping](https://www.searchapi.io/press/v1/svg/searchapi_logo_black_h.svg)](https://www.searchapi.io/google-maps?via=gosom)
+**Google Maps API for easy SERP scraping**
 
 
 
+### Premium Sponsors
 
-If you register via the links on my page I may get a commission. This is another way to support my work
+**No time for code? Extract ALL Google Maps listings at country-scale in 2 clicks, without keywords or limits** 👉 [Try it now for free](https://scrap.io?utm_medium=ads&utm_source=github_gosom_gmap_scraper)
+
+[![Extract ALL Google Maps Listings](./img/premium_scrap_io.png)](https://scrap.io?utm_medium=ads&utm_source=github_gosom_gmap_scraper)
+
+For more information, see [scrap.io demo](scrap_io.md).
+
+
+### Supported by the Community
+
+[Supported by the community](https://github.com/sponsors/gosom)
+
+
+## Notes
+
+Please use this scraper responsibly and in accordance with all applicable laws and regulations. Unauthorized scraping of data may violate the terms of service of the website being scraped.
+
+banner is generated using OpenAI's DALL-E
+> **Note:** If you register via the links on my page, I may get a commission. This is another way to support my work
