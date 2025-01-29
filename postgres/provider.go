@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/gob"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -105,8 +104,14 @@ func (p *provider) Push(ctx context.Context, job scrapemate.IJob) error {
 		if err := enc.Encode(j); err != nil {
 			return err
 		}
+	case *gmaps.EmailExtractJob:
+		payloadType = "email"
+
+		if err := enc.Encode(j); err != nil {
+			return err
+		}
 	default:
-		return errors.New("invalid job type")
+		return fmt.Errorf("invalid job type %T", job)
 	}
 
 	_, err := p.db.ExecContext(ctx, q,
@@ -235,6 +240,13 @@ func decodeJob(payloadType string, payload []byte) (scrapemate.IJob, error) {
 		j := new(gmaps.PlaceJob)
 		if err := dec.Decode(j); err != nil {
 			return nil, fmt.Errorf("failed to decode place job: %w", err)
+		}
+
+		return j, nil
+	case "email":
+		j := new(gmaps.EmailExtractJob)
+		if err := dec.Decode(j); err != nil {
+			return nil, fmt.Errorf("failed to decode email job: %w", err)
 		}
 
 		return j, nil
