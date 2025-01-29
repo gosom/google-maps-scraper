@@ -22,7 +22,7 @@
 <tr>
 <td><img src="./img/SerpApi-logo-w.png" alt="SerpApi Logo" width="100"></td>
 <td>
-**At SerpApi, we scrape public data from Google Maps and other top search engines.**
+<b>At SerpApi, we scrape public data from Google Maps and other top search engines.</b>
 
 You can find the full list of our APIs here: [https://serpapi.com/search-api](https://serpapi.com/search-api)
 </td>
