@@ -17,27 +17,47 @@ import (
 const (
 	statusNew    = "new"
 	statusQueued = "queued"
+	batchSize    = 10
 )
 
 var _ scrapemate.JobProvider = (*provider)(nil)
 
 type provider struct {
-	db      *sql.DB
-	mu      *sync.Mutex
-	jobc    chan scrapemate.IJob
-	errc    chan error
-	started bool
+	db        *sql.DB
+	mu        *sync.Mutex
+	jobc      chan scrapemate.IJob
+	errc      chan error
+	started   bool
+	batchSize int
 }
 
-func NewProvider(db *sql.DB) scrapemate.JobProvider {
+func NewProvider(db *sql.DB, opts ...ProviderOption) scrapemate.JobProvider {
 	prov := provider{
-		db:   db,
-		mu:   &sync.Mutex{},
-		errc: make(chan error, 1),
-		jobc: make(chan scrapemate.IJob, 100),
+		db:        db,
+		mu:        &sync.Mutex{},
+		errc:      make(chan error, 1),
+		batchSize: batchSize,
 	}
 
+	for _, opt := range opts {
+		opt(&prov)
+	}
+
+	prov.jobc = make(chan scrapemate.IJob, 2*prov.batchSize)
+
 	return &prov
+}
+
+// ProviderOption allows configuring the provider
+type ProviderOption func(*provider)
+
+// WithBatchSize sets custom batch size
+func WithBatchSize(size int) ProviderOption {
+	return func(p *provider) {
+		if size > 0 {
+			p.batchSize = size
+		}
+	}
 }
 
 //nolint:gocritic // it contains about unnamed results
@@ -65,6 +85,10 @@ func (p *provider) Jobs(ctx context.Context) (<-chan scrapemate.IJob, <-chan err
 			case job, ok := <-p.jobc:
 				if !ok {
 					return
+				}
+
+				if job == nil || job.GetID() == "" {
+					continue
 				}
 
 				select {
@@ -133,19 +157,19 @@ func (p *provider) fetchJobs(ctx context.Context) {
 			SELECT id from gmaps_jobs
 			WHERE status = $2
 			ORDER BY priority ASC, created_at ASC FOR UPDATE SKIP LOCKED 
-		LIMIT 50
+		LIMIT $3
 		)
 		RETURNING *
 	)
 	SELECT payload_type, payload from updated ORDER by priority ASC, created_at ASC
 	`
 
-	baseDelay := time.Second
-	maxDelay := time.Minute
+	baseDelay := time.Millisecond * 50
+	maxDelay := time.Millisecond * 300
 	factor := 2
 	currentDelay := baseDelay
 
-	jobs := make([]scrapemate.IJob, 0, 50)
+	jobs := make([]scrapemate.IJob, 0, p.batchSize)
 
 	for {
 		select {
@@ -154,7 +178,7 @@ func (p *provider) fetchJobs(ctx context.Context) {
 		default:
 		}
 
-		rows, err := p.db.QueryContext(ctx, q, statusQueued, statusNew)
+		rows, err := p.db.QueryContext(ctx, q, statusQueued, statusNew, p.batchSize)
 		if err != nil {
 			p.errc <- err
 
