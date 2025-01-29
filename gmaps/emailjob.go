@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/google/uuid"
 	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/scrapemate"
 	"github.com/mcnijman/go-emailaddress"
@@ -27,6 +28,7 @@ func NewEmailJob(parentID string, entry *Entry, opts ...EmailExtractJobOptions) 
 
 	job := EmailExtractJob{
 		Job: scrapemate.Job{
+			ID:         uuid.New().String(),
 			ParentID:   parentID,
 			Method:     "GET",
 			URL:        entry.WebSite,
