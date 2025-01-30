@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -72,6 +73,50 @@ func NewRedisConfig() (*RedisConfig, error) {
 		cfg.QueuePriorities[queue] = priority
 	}
 
+	// Check if Redis URL is provided
+	if redisURL := os.Getenv("REDIS_URL"); redisURL != "" {
+		parsedURL, err := url.Parse(redisURL)
+		if err != nil {
+			return nil, fmt.Errorf("invalid Redis URL: %w", err)
+		}
+
+		// Parse host and port
+		host := parsedURL.Hostname()
+		if host != "" {
+			cfg.Host = host
+		}
+
+		if port := parsedURL.Port(); port != "" {
+			p, err := strconv.Atoi(port)
+			if err != nil {
+				return nil, fmt.Errorf("invalid port in Redis URL: %w", err)
+			}
+			cfg.Port = p
+		} else {
+			cfg.Port = defaultPort
+		}
+
+		// Parse password from URL
+		if password, ok := parsedURL.User.Password(); ok {
+			cfg.Password = password
+		}
+
+		// Parse database number from path
+		if path := parsedURL.Path; path != "" {
+			path = strings.TrimPrefix(path, "/")
+			if path != "" {
+				db, err := strconv.Atoi(path)
+				if err != nil {
+					return nil, fmt.Errorf("invalid database number in Redis URL: %w", err)
+				}
+				cfg.DB = db
+			}
+		}
+
+		return cfg, nil
+	}
+
+	// If no Redis URL is provided, use individual configuration parameters
 	// Validate and set Port
 	if port, err := validatePort(getEnvOrDefault("REDIS_PORT", strconv.Itoa(defaultPort))); err != nil {
 		return nil, fmt.Errorf("invalid port: %w", err)

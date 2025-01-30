@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"sync"
 	"time"
 
@@ -28,21 +29,39 @@ type RedisRunner struct {
 
 // New creates a new RedisRunner from the provided configuration.
 func New(cfg *runner.Config) (*RedisRunner, error) {
-	// Create Redis configuration
-	redisCfg := &config.RedisConfig{
-		Host:            cfg.RedisHost,
-		Port:            cfg.RedisPort,
-		Password:        cfg.RedisPassword,
-		DB:              cfg.RedisDB,
-		UseTLS:          cfg.RedisUseTLS,
-		CertFile:        cfg.RedisCertFile,
-		KeyFile:         cfg.RedisKeyFile,
-		CAFile:          cfg.RedisCAFile,
-		Workers:         cfg.RedisWorkers,
-		RetryInterval:   cfg.RedisRetryInterval,
-		MaxRetries:      cfg.RedisMaxRetries,
-		RetentionPeriod: time.Duration(cfg.RedisRetentionDays) * 24 * time.Hour,
+	var redisCfg *config.RedisConfig
+	var err error
+
+	// If Redis URL is provided, use it
+	if cfg.RedisURL != "" {
+		// Set the Redis URL in environment for the config package to pick up
+		if err := os.Setenv("REDIS_URL", cfg.RedisURL); err != nil {
+			return nil, fmt.Errorf("failed to set Redis URL: %w", err)
+		}
+		redisCfg, err = config.NewRedisConfig()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Redis config from URL: %w", err)
+		}
+	} else {
+		// Create Redis configuration from individual parameters
+		redisCfg = &config.RedisConfig{
+			Host:            cfg.RedisHost,
+			Port:            cfg.RedisPort,
+			Password:        cfg.RedisPassword,
+			DB:              cfg.RedisDB,
+			UseTLS:          cfg.RedisUseTLS,
+			CertFile:        cfg.RedisCertFile,
+			KeyFile:         cfg.RedisKeyFile,
+			CAFile:          cfg.RedisCAFile,
+			Workers:         cfg.RedisWorkers,
+			RetryInterval:   cfg.RedisRetryInterval,
+			MaxRetries:      cfg.RedisMaxRetries,
+			RetentionPeriod: time.Duration(cfg.RedisRetentionDays) * 24 * time.Hour,
+		}
 	}
+
+	// Set the workers count
+	redisCfg.Workers = cfg.RedisWorkers
 
 	// Initialize task handlers
 	handlers := map[string]tasks.TaskHandler{

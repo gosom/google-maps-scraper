@@ -46,6 +46,9 @@ spec:
             - "-lang={{ .Values.config.scraper.language }}"
             - "-radius={{ .Values.config.scraper.searchRadius }}"
             - "-zoom={{ .Values.config.scraper.zoomLevel }}"
+            - "-redis-enabled={{ .Values.config.redis.enabled }}"
+            - "-redis-url={{ .Values.config.redis.dsn }}"
+            - "-redis-workers={{ .Values.config.redis.workers }}"
             # Optional features
             {{- if .Values.config.scraper.emailExtraction }}
             - "-email"
@@ -81,15 +84,6 @@ spec:
             {{- end }}
             {{- if .Values.config.aws.s3.bucket }}
             - "-s3-bucket={{ .Values.config.aws.s3.bucket }}"
-            {{- end }}
-            {{- if .Values.config.redis.enabled }}
-            - "-redis-enabled"
-            {{- end }}
-            {{- if .Values.config.redis.dsn }}
-            - "-redis-dsn={{ .Values.config.redis.dsn }}"
-            {{- end }}
-            {{- if .Values.config.redis.workers }}
-            - "-redis-workers={{ .Values.config.redis.workers }}"
             {{- end }}
           ports:
             - name: http

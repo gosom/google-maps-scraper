@@ -31,9 +31,10 @@ CLUSTER_NAME="gmaps-cluster"
 NAMESPACE="default"
 RELEASE_NAME="gmaps-scraper-leads-scraper-service"
 CHART_PATH="./charts/leads-scraper-service"
-IMAGE_NAME="${DOCKER_IMAGE:-gosom/google-maps-scraper}"
+IMAGE_NAME="${DOCKER_IMAGE:-feelguuds/leads-scraper-service}"
 IMAGE_TAG="${DOCKER_TAG:-latest}"
 ENABLE_TESTS="false"
+REDIS_PASSWORD="redis-local-dev"
 
 # Parse arguments
 while [ "$#" -gt 0 ]; do
@@ -123,6 +124,10 @@ service:
   port: 8080
 
 config:
+  redis:
+    enabled: true
+    dsn: "redis://:${REDIS_PASSWORD}@${RELEASE_NAME}-redis-master:6379/0"
+    workers: 10
   scraper:
     webServer: true
     concurrency: 11
@@ -169,10 +174,33 @@ postgresql:
       - name: POSTGRESQL_SHARED_BUFFERS
         value: "128MB"
 
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: true
+    password: "${REDIS_PASSWORD}"
+  master:
+    persistence:
+      enabled: true
+      size: 1Gi
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
 EOF
 
     echo "Generated values.local.yaml:"
     cat values.local.yaml
+
+    # Add Bitnami repo if not already added
+    if ! helm repo list | grep -q "bitnami"; then
+        helm repo add bitnami https://charts.bitnami.com/bitnami
+        helm repo update
+    fi
 
     helm upgrade --install "$RELEASE_NAME" "$CHART_PATH" \
         --namespace "$NAMESPACE" \
