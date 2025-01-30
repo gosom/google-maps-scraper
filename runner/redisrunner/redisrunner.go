@@ -73,6 +73,14 @@ func New(cfg *runner.Config) (*RedisRunner, error) {
 			tasks.WithMaxRetries(cfg.RedisMaxRetries),
 			tasks.WithRetryInterval(cfg.RedisRetryInterval),
 		),
+		tasks.TypeHealthCheck: tasks.NewHandler(
+			tasks.WithMaxRetries(cfg.RedisMaxRetries),
+			tasks.WithRetryInterval(cfg.RedisRetryInterval),
+		),
+		tasks.TypeConnectionTest: tasks.NewHandler(
+			tasks.WithMaxRetries(cfg.RedisMaxRetries),
+			tasks.WithRetryInterval(cfg.RedisRetryInterval),
+		),
 	}
 
 	// Initialize Redis client

@@ -209,13 +209,11 @@ func ParseConfig() *Config {
 	}
 
 	switch {
-	case cfg.RedisEnabled:
-		cfg.RunMode = RunModeRedis
 	case cfg.AwsLambdaInvoker:
 		cfg.RunMode = RunModeAwsLambdaInvoker
 	case cfg.AwsLamdbaRunner:
 		cfg.RunMode = RunModeAwsLambda
-	case cfg.WebRunner || (cfg.Dsn == "" && cfg.InputFile == ""):
+	case cfg.RedisEnabled && (cfg.WebRunner || (cfg.Dsn == "" && cfg.InputFile == "")):
 		cfg.RunMode = RunModeWeb
 	case cfg.Dsn == "":
 		cfg.RunMode = RunModeFile

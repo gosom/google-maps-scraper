@@ -103,6 +103,10 @@ func (h *Handler) ProcessTask(ctx context.Context, task *asynq.Task) error {
 		return h.processScrapeTask(ctx, task)
 	case TypeEmailExtract:
 		return h.processEmailTask(ctx, task)
+	case TypeHealthCheck:
+		return nil // Health check task always succeeds
+	case TypeConnectionTest:
+		return nil // Connection test task always succeeds
 	default:
 		return fmt.Errorf("unknown task type: %s", task.Type())
 	}

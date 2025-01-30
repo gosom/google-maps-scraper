@@ -6,8 +6,10 @@ import (
 
 // Task types
 const (
-	TypeScrapeGMaps  = "scrape:gmaps"
-	TypeEmailExtract = "extract:email"
+	TypeScrapeGMaps    = "scrape:gmaps"
+	TypeEmailExtract   = "extract:email"
+	TypeHealthCheck    = "health:check"
+	TypeConnectionTest = "connection:test"
 )
 
 // TaskPriority defines priority levels for tasks

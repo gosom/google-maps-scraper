@@ -202,7 +202,7 @@ docker-run: docker-build ## builds and runs the docker container
 precommit: check-docker check-required-tools build docker-build test format vet quick-validate ## runs the precommit hooks
 
 .PHONY: deploy-local
-deploy-local: check-docker ## Deploy to local kind cluster
+deploy-local: check-docker clean-local ## Deploy to local kind cluster
 	./scripts/deploy-local.sh $(if $(ENABLE_TESTS),--enable-tests)
 
 .PHONY: clean-local
