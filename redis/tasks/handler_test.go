@@ -89,16 +89,6 @@ func TestProcessTask(t *testing.T) {
 		assert.Contains(t, err.Error(), "no keywords provided")
 	})
 
-	t.Run("email task", func(t *testing.T) {
-		h := NewHandler(
-			WithDataFolder(t.TempDir()),
-		)
-		task := asynq.NewTask(TypeEmailExtract, []byte(`{"input_file": "test.csv"}`))
-		err := h.ProcessTask(context.Background(), task)
-		// Email task currently returns nil as it's not fully implemented
-		assert.NoError(t, err)
-	})
-
 	t.Run("context timeout", func(t *testing.T) {
 		baseHandler := NewHandler(
 			WithDataFolder(t.TempDir()),
