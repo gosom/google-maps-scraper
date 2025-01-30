@@ -154,40 +154,105 @@ When you use the fast mode ensure that you have provided:
 
 ## Extracted Data Points
 
-```
-input_id
-link
-title
-category
-address
-open_hours
-popular_times
-website
-phone
-plus_code
-review_count
-review_rating
-reviews_per_rating
-latitude
-longitude
-cid
-status
-descriptions
-reviews_link
-thumbnail
-timezone
-price_range
-data_id
-images
-reservations
-order_online
-menu
-owner
-complete_address
-about
-user_reviews
-emails
-```
+#### 1. `input_id`
+- Internal identifier for the input query.
+
+#### 2. `link`
+- Direct URL to the business listing on Google Maps.
+
+#### 3. `title`
+- Name of the business.
+
+#### 4. `category`
+- Business type or category (e.g., Restaurant, Hotel).
+
+#### 5. `address`
+- Street address of the business.
+
+#### 6. `open_hours`
+- Business operating hours.
+
+#### 7. `popular_times`
+- Estimated visitor traffic at different times of the day.
+
+#### 8. `website`
+- Official business website.
+
+#### 9. `phone`
+- Business contact phone number.
+
+#### 10. `plus_code`
+- Shortcode representing the precise location of the business.
+
+#### 11. `review_count`
+- Total number of customer reviews.
+
+#### 12. `review_rating`
+- Average star rating based on reviews.
+
+#### 13. `reviews_per_rating`
+- Breakdown of reviews by each star rating (e.g., number of 5-star, 4-star reviews).
+
+#### 14. `latitude`
+- Latitude coordinate of the business location.
+
+#### 15. `longitude`
+- Longitude coordinate of the business location.
+
+#### 16. `cid`
+- **Customer ID** (CID) used by Google Maps to uniquely identify a business listing. This ID remains stable across updates and can be used in URLs.
+- **Example:** `3D3174616216150310598`
+
+#### 17. `status`
+- Business status (e.g., open, closed, temporarily closed).
+
+#### 18. `descriptions`
+- Brief description of the business.
+
+#### 19. `reviews_link`
+- Direct link to the reviews section of the business listing.
+
+#### 20. `thumbnail`
+- URL to a thumbnail image of the business.
+
+#### 21. `timezone`
+- Time zone of the business location.
+
+#### 22. `price_range`
+- Price range of the business (`$`, `$$`, `$$$`).
+
+#### 23. `data_id`
+- An internal Google Maps identifier composed of two hexadecimal values separated by a colon.
+- **Structure:** `<spatial_hex>:<listing_hex>`
+- **Example:** `0x3eb33fecd7dfa167:0x2c0e80a0f5d57ec6`
+- **Note:** This value may change if the listing is updated and should not be used for permanent identification.
+
+#### 24. `images`
+- Links to images associated with the business.
+
+#### 25. `reservations`
+- Link to book reservations (if available).
+
+#### 26. `order_online`
+- Link to place online orders.
+
+#### 27. `menu`
+- Link to the menu (for applicable businesses).
+
+#### 28. `owner`
+- Indicates whether the business listing is claimed by the owner.
+
+#### 29. `complete_address`
+- Fully formatted address of the business.
+
+#### 30. `about`
+- Additional information about the business.
+
+#### 31. `user_reviews`
+- Collection of customer reviews, including text, rating, and timestamp.
+
+#### 32. `emails`
+- Email addresses associated with the business, if available.
 
 **Note**: email is empty by default (see Usage)
 
