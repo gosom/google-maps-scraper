@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Vector/vector-leads-scraper/exiter"
 	"github.com/google/uuid"
-	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/scrapemate"
 	"github.com/playwright-community/playwright-go"
 )

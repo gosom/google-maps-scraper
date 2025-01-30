@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,10 +16,10 @@ import (
 	"github.com/mattn/go-runewidth"
 	"golang.org/x/term"
 
-	"github.com/gosom/google-maps-scraper/s3uploader"
-	"github.com/gosom/google-maps-scraper/tlmt"
-	"github.com/gosom/google-maps-scraper/tlmt/gonoop"
-	"github.com/gosom/google-maps-scraper/tlmt/goposthog"
+	"github.com/Vector/vector-leads-scraper/s3uploader"
+	"github.com/Vector/vector-leads-scraper/tlmt"
+	"github.com/Vector/vector-leads-scraper/tlmt/gonoop"
+	"github.com/Vector/vector-leads-scraper/tlmt/goposthog"
 )
 
 const (
@@ -29,6 +30,7 @@ const (
 	RunModeWeb
 	RunModeAwsLambda
 	RunModeAwsLambdaInvoker
+	RunModeRedis
 )
 
 var (
@@ -78,6 +80,22 @@ type Config struct {
 	Radius                   float64
 	Addr                     string
 	DisablePageReuse         bool
+	
+	// Redis-specific configurations
+	RedisEnabled            bool
+	RedisURL               string          // Redis connection string (takes precedence over other Redis settings)
+	RedisHost              string
+	RedisPort              int
+	RedisPassword          string
+	RedisDB                int
+	RedisUseTLS            bool
+	RedisCertFile          string
+	RedisKeyFile           string
+	RedisCAFile            string
+	RedisWorkers           int
+	RedisRetryInterval     time.Duration
+	RedisMaxRetries        int
+	RedisRetentionDays     int
 }
 
 func ParseConfig() *Config {
@@ -123,6 +141,22 @@ func ParseConfig() *Config {
 	flag.Float64Var(&cfg.Radius, "radius", 10000, "search radius in meters. Default is 10000 meters")
 	flag.StringVar(&cfg.Addr, "addr", ":8080", "address to listen on for web server")
 	flag.BoolVar(&cfg.DisablePageReuse, "disable-page-reuse", false, "disable page reuse in playwright")
+
+	// Redis-specific flags
+	flag.BoolVar(&cfg.RedisEnabled, "redis", false, "enable Redis-backed task processing")
+	flag.StringVar(&cfg.RedisURL, "redis-url", "", "Redis connection string (e.g., redis://:password@localhost:6379/0)")
+	flag.StringVar(&cfg.RedisHost, "redis-host", "localhost", "Redis server host")
+	flag.IntVar(&cfg.RedisPort, "redis-port", 6379, "Redis server port")
+	flag.StringVar(&cfg.RedisPassword, "redis-password", "", "Redis password")
+	flag.IntVar(&cfg.RedisDB, "redis-db", 0, "Redis database number")
+	flag.BoolVar(&cfg.RedisUseTLS, "redis-tls", false, "enable TLS for Redis connection")
+	flag.StringVar(&cfg.RedisCertFile, "redis-cert", "", "path to Redis TLS certificate file")
+	flag.StringVar(&cfg.RedisKeyFile, "redis-key", "", "path to Redis TLS key file")
+	flag.StringVar(&cfg.RedisCAFile, "redis-ca", "", "path to Redis CA certificate file")
+	flag.IntVar(&cfg.RedisWorkers, "redis-workers", 10, "number of Redis worker threads")
+	flag.DurationVar(&cfg.RedisRetryInterval, "redis-retry-interval", 5*time.Second, "interval between task retries")
+	flag.IntVar(&cfg.RedisMaxRetries, "redis-max-retries", 3, "maximum number of task retries")
+	flag.IntVar(&cfg.RedisRetentionDays, "redis-retention-days", 7, "number of days to retain task history")
 
 	flag.Parse()
 
@@ -175,6 +209,8 @@ func ParseConfig() *Config {
 	}
 
 	switch {
+	case cfg.RedisEnabled:
+		cfg.RunMode = RunModeRedis
 	case cfg.AwsLambdaInvoker:
 		cfg.RunMode = RunModeAwsLambdaInvoker
 	case cfg.AwsLamdbaRunner:
@@ -189,6 +225,26 @@ func ParseConfig() *Config {
 		cfg.RunMode = RunModeDatabase
 	default:
 		panic("Invalid configuration")
+	}
+
+	// Set Redis environment variables for compatibility with existing Redis config
+	if cfg.RedisEnabled {
+		if cfg.RedisURL != "" {
+			os.Setenv("REDIS_URL", cfg.RedisURL)
+		} else {
+			os.Setenv("REDIS_HOST", cfg.RedisHost)
+			os.Setenv("REDIS_PORT", strconv.Itoa(cfg.RedisPort))
+			os.Setenv("REDIS_PASSWORD", cfg.RedisPassword)
+			os.Setenv("REDIS_DB", strconv.Itoa(cfg.RedisDB))
+		}
+		os.Setenv("REDIS_USE_TLS", strconv.FormatBool(cfg.RedisUseTLS))
+		os.Setenv("REDIS_CERT_FILE", cfg.RedisCertFile)
+		os.Setenv("REDIS_KEY_FILE", cfg.RedisKeyFile)
+		os.Setenv("REDIS_CA_FILE", cfg.RedisCAFile)
+		os.Setenv("REDIS_WORKERS", strconv.Itoa(cfg.RedisWorkers))
+		os.Setenv("REDIS_RETRY_INTERVAL_SECONDS", strconv.Itoa(int(cfg.RedisRetryInterval.Seconds())))
+		os.Setenv("REDIS_MAX_RETRIES", strconv.Itoa(cfg.RedisMaxRetries))
+		os.Setenv("REDIS_RETENTION_DAYS", strconv.Itoa(cfg.RedisRetentionDays))
 	}
 
 	return &cfg
@@ -292,8 +348,9 @@ func banner(messages []string, width int) string {
 
 func Banner() {
 	message1 := "🌍 Google Maps Scraper"
-	message2 := "⭐ If you find this project useful, please star it on GitHub: https://github.com/gosom/google-maps-scraper"
+	message2 := "⭐ If you find this project useful, please star it on GitHub: https://github.com/Vector/vector-leads-scraper"
 	message3 := "💖 Consider sponsoring to support development: https://github.com/sponsors/gosom"
 
 	fmt.Fprintln(os.Stderr, banner([]string{message1, message2, message3}, 0))
 }
+

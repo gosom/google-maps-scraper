@@ -9,12 +9,12 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Vector/vector-leads-scraper/runner"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/google/uuid"
-	"github.com/gosom/google-maps-scraper/runner"
 )
 
 var _ runner.Runner = (*invoker)(nil)

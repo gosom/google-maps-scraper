@@ -8,12 +8,12 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/gosom/google-maps-scraper/runner"
-	"github.com/gosom/google-maps-scraper/runner/databaserunner"
-	"github.com/gosom/google-maps-scraper/runner/filerunner"
-	"github.com/gosom/google-maps-scraper/runner/installplaywright"
-	"github.com/gosom/google-maps-scraper/runner/lambdaaws"
-	"github.com/gosom/google-maps-scraper/runner/webrunner"
+	"github.com/Vector/vector-leads-scraper/runner"
+	"github.com/Vector/vector-leads-scraper/runner/databaserunner"
+	"github.com/Vector/vector-leads-scraper/runner/filerunner"
+	"github.com/Vector/vector-leads-scraper/runner/installplaywright"
+	"github.com/Vector/vector-leads-scraper/runner/lambdaaws"
+	"github.com/Vector/vector-leads-scraper/runner/webrunner"
 )
 
 func main() {

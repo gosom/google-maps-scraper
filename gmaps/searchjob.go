@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/Vector/vector-leads-scraper/exiter"
 	"github.com/google/uuid"
-	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/scrapemate"
 )
 

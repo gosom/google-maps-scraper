@@ -10,9 +10,9 @@ import (
 	// postgres driver
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/gosom/google-maps-scraper/postgres"
-	"github.com/gosom/google-maps-scraper/runner"
-	"github.com/gosom/google-maps-scraper/tlmt"
+	"github.com/Vector/vector-leads-scraper/postgres"
+	"github.com/Vector/vector-leads-scraper/runner"
+	"github.com/Vector/vector-leads-scraper/tlmt"
 	"github.com/gosom/scrapemate"
 	"github.com/gosom/scrapemate/scrapemateapp"
 )

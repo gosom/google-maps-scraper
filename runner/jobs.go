@@ -10,9 +10,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gosom/google-maps-scraper/deduper"
-	"github.com/gosom/google-maps-scraper/exiter"
-	"github.com/gosom/google-maps-scraper/gmaps"
+	"github.com/Vector/vector-leads-scraper/deduper"
+	"github.com/Vector/vector-leads-scraper/exiter"
+	"github.com/Vector/vector-leads-scraper/gmaps"
 	"github.com/gosom/scrapemate"
 )
 
