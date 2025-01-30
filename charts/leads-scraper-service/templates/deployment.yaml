@@ -82,6 +82,15 @@ spec:
             {{- if .Values.config.aws.s3.bucket }}
             - "-s3-bucket={{ .Values.config.aws.s3.bucket }}"
             {{- end }}
+            {{- if .Values.config.redis.enabled }}
+            - "-redis-enabled"
+            {{- end }}
+            {{- if .Values.config.redis.dsn }}
+            - "-redis-dsn={{ .Values.config.redis.dsn }}"
+            {{- end }}
+            {{- if .Values.config.redis.workers }}
+            - "-redis-workers={{ .Values.config.redis.workers }}"
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}

@@ -143,7 +143,7 @@ func ParseConfig() *Config {
 	flag.BoolVar(&cfg.DisablePageReuse, "disable-page-reuse", false, "disable page reuse in playwright")
 
 	// Redis-specific flags
-	flag.BoolVar(&cfg.RedisEnabled, "redis", false, "enable Redis-backed task processing")
+	flag.BoolVar(&cfg.RedisEnabled, "enable-redis", false, "enable Redis-backed task processing")
 	flag.StringVar(&cfg.RedisURL, "redis-url", "", "Redis connection string (e.g., redis://:password@localhost:6379/0)")
 	flag.StringVar(&cfg.RedisHost, "redis-host", "localhost", "Redis server host")
 	flag.IntVar(&cfg.RedisPort, "redis-port", 6379, "Redis server port")

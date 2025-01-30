@@ -50,6 +50,8 @@ on:
         required: false
       AWS_REGION:
         required: false
+      REDIS_URL:
+        required: false
 
 jobs:
   deploy:
@@ -125,6 +127,10 @@ jobs:
           fi
           if [ ! -z "${{ secrets.AWS_REGION }}" ]; then
             HELM_SET_ARGS="$HELM_SET_ARGS --set config.aws.region='${{ secrets.AWS_REGION }}'"
+          fi
+
+          if [ ! -z "${{ secrets.REDIS_URL }}" ]; then
+            HELM_SET_ARGS="$HELM_SET_ARGS --set config.redis.dsn='${{ secrets.REDIS_URL }}'"
           fi
 
           $HELM_CMD ${{ steps.config.outputs.CHARTS_DIR }} \

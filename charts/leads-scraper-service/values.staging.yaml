@@ -131,6 +131,13 @@ tests:
 
 # Application specific configuration
 config:
+  # -- Enable Redis task handler
+  redis:
+    enabled: true
+    # -- Redis connection string
+    dsn: ""
+    # -- Redis workers
+    workers: 10
   # Database Configuration (Required)
   database:
     # Database connection string (Required)
