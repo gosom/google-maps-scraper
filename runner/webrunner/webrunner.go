@@ -15,6 +15,7 @@ import (
 	"github.com/Vector/vector-leads-scraper/deduper"
 	"github.com/Vector/vector-leads-scraper/exiter"
 	"github.com/Vector/vector-leads-scraper/runner"
+	"github.com/Vector/vector-leads-scraper/runner/redisrunner"
 	"github.com/Vector/vector-leads-scraper/tlmt"
 	"github.com/Vector/vector-leads-scraper/web"
 	"github.com/Vector/vector-leads-scraper/web/sqlite"
@@ -25,9 +26,10 @@ import (
 )
 
 type webrunner struct {
-	srv *web.Server
-	svc *web.Service
-	cfg *runner.Config
+	srv         *web.Server
+	svc         *web.Service
+	cfg         *runner.Config
+	taskHandler *redisrunner.RedisRunner
 }
 
 func New(cfg *runner.Config) (runner.Runner, error) {
@@ -48,6 +50,12 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		return nil, err
 	}
 
+	// initialize redis runner
+	taskHandler, err := redisrunner.New(cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	svc := web.NewService(repo, cfg.DataFolder)
 
 	srv, err := web.New(svc, cfg.Addr)
@@ -56,9 +64,10 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 	}
 
 	ans := webrunner{
-		srv: srv,
-		svc: svc,
-		cfg: cfg,
+		srv:         srv,
+		svc:         svc,
+		cfg:         cfg,
+		taskHandler: taskHandler,
 	}
 
 	return &ans, nil
@@ -71,6 +80,12 @@ func (w *webrunner) Run(ctx context.Context) error {
 		return w.work(ctx)
 	})
 
+	// Start Redis task handler
+	egroup.Go(func() error {
+		return w.taskHandler.Run(ctx)
+	})
+
+	// Start web server
 	egroup.Go(func() error {
 		return w.srv.Start(ctx)
 	})
@@ -78,7 +93,22 @@ func (w *webrunner) Run(ctx context.Context) error {
 	return egroup.Wait()
 }
 
-func (w *webrunner) Close(context.Context) error {
+func (w *webrunner) Close(ctx context.Context) error {
+	// Create an error group for coordinated shutdown
+	eg, ctx := errgroup.WithContext(ctx)
+
+	// Then close the Redis handler
+	eg.Go(func() error {
+		if err := w.taskHandler.Close(ctx); err != nil {
+			return fmt.Errorf("failed to close Redis handler: %w", err)
+		}
+		return nil
+	})
+
+	// Wait for both services to close
+	if err := eg.Wait(); err != nil {
+		return fmt.Errorf("error during shutdown: %w", err)
+	}
 	return nil
 }
 
