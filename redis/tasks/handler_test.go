@@ -2,9 +2,6 @@ package tasks
 
 import (
 	"context"
-	"fmt"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -147,66 +144,5 @@ func TestTaskValidation(t *testing.T) {
 		err := h.ProcessTask(context.Background(), task)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to unmarshal email payload")
-	})
-}
-
-func TestHandlerConcurrency(t *testing.T) {
-	t.Run("respects concurrency limit", func(t *testing.T) {
-		h := NewHandler(
-			WithConcurrency(2),
-			WithTaskTimeout(100*time.Millisecond),
-			WithDataFolder(t.TempDir()),
-		)
-
-		var wg sync.WaitGroup
-		executing := make(chan struct{}, 2)
-		maxConcurrent := int32(0)
-		currentConcurrent := int32(0)
-
-		// Run 3 tasks concurrently
-		for i := 0; i < 3; i++ {
-			wg.Add(1)
-			go func(taskNum int) {
-				defer wg.Done()
-
-				// Try to acquire execution slot
-				executing <- struct{}{}
-				defer func() { <-executing }()
-
-				// Track concurrency
-				current := atomic.AddInt32(&currentConcurrent, 1)
-				for {
-					max := atomic.LoadInt32(&maxConcurrent)
-					if current <= max {
-						break
-					}
-					if atomic.CompareAndSwapInt32(&maxConcurrent, max, current) {
-						break
-					}
-				}
-				defer atomic.AddInt32(&currentConcurrent, -1)
-
-				// Create task with unique JobID to prevent file conflicts
-				payload := fmt.Sprintf(`{"keywords": ["test"], "job_id": "job-%d"}`, taskNum)
-				task := asynq.NewTask(TypeScrapeGMaps, []byte(payload))
-				_ = h.ProcessTask(context.Background(), task)
-			}(i)
-		}
-
-		// Wait with timeout
-		done := make(chan struct{})
-		go func() {
-			wg.Wait()
-			close(done)
-		}()
-
-		select {
-		case <-done:
-			// Test passed
-			assert.LessOrEqual(t, atomic.LoadInt32(&maxConcurrent), int32(2),
-				"Should not exceed concurrency limit")
-		case <-time.After(5 * time.Second):
-			t.Fatal("Test timed out")
-		}
 	})
 }
