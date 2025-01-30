@@ -14,6 +14,7 @@ KUBECTL := kubectl
 YAMLLINT := yamllint
 KUBEVAL := kubeval
 KIND := kind
+HELM_DOCS := helm-docs
 
 # Deployment variables
 DOCKER_IMAGE := gosom/google-maps-scraper
@@ -102,8 +103,12 @@ check-kubeval: ## Check if kubeval is installed
 check-kind: ## Check if kind is installed
 	@which $(KIND) >/dev/null || (echo "kind is required but not installed. Run 'make install-tools' to install" && exit 1)
 
+.PHONY: check-helm-docs
+check-helm-docs: ## Check if helm-docs is installed
+	@which $(HELM_DOCS) >/dev/null || (echo "helm-docs is required but not installed. Run 'make install-tools' to install" && exit 1)
+
 .PHONY: check-required-tools
-check-required-tools: check-helm check-kubectl check-yamllint check-kubeval check-kind # Check if required tools are installed
+check-required-tools: check-helm check-kubectl check-yamllint check-kubeval check-kind check-helm-docs # Check if required tools are installed
 
 .PHONY: quick-validate
 quick-validate: check-required-tools ## Run basic validations (faster)
@@ -210,3 +215,7 @@ clean-local: ## Clean up local deployment
 port-forward: ## Port forward the service to localhost (only if needed)
 	kubectl port-forward -n $(NAMESPACE) svc/$(RELEASE_NAME) 8080:8080
 	open http://localhost:8080/api/docs
+
+.PHONY: helm-docs
+helm-docs: check-helm-docs ## Generate Helm chart documentation
+	$(HELM_DOCS) -t ./charts/$(CHART_NAME)/.helm-docs.gotmpl -o ./charts/$(CHART_NAME)/README.md

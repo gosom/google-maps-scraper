@@ -1,0 +1,105 @@
+{{ template "chart.header" . }}
+
+{{ template "chart.description" . }}
+
+{{ template "chart.versionBadge" . }}{{ template "chart.typeBadge" . }}{{ template "chart.appVersionBadge" . }}
+
+## Prerequisites
+
+- Kubernetes 1.16+
+- Helm 3.0+
+- PostgreSQL database (can be deployed separately or using a dependency)
+- Access to the container registry containing the leads scraper image
+
+## Installing the Chart
+
+Add the repository (if hosted in a Helm repository):
+```bash
+helm repo add vector-charts <repository-url>
+helm repo update
+```
+
+To install the chart with the release name `leads-scraper`:
+
+```bash
+helm install leads-scraper ./charts/leads-scraper-service
+```
+
+{{ template "chart.requirementsSection" . }}
+
+{{ template "chart.valuesSection" . }}
+
+## Values File Example
+
+Create a `values.yaml` file to customize the installation:
+
+```yaml
+replicaCount: 2
+
+image:
+  repository: vector/leads-scraper
+  tag: latest
+  pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+postgresql:
+  host: my-postgres-host
+  port: 5432
+  database: leads_scraper
+  username: scraper_user
+  # password should be provided via secret
+```
+
+## Installing with Custom Values
+
+```bash
+helm install leads-scraper ./charts/leads-scraper-service -f values.yaml
+```
+
+## Upgrading
+
+To upgrade the release:
+```bash
+helm upgrade leads-scraper ./charts/leads-scraper-service -f values.yaml
+```
+
+## Uninstalling
+
+To uninstall/delete the deployment:
+```bash
+helm uninstall leads-scraper
+```
+
+## Security Considerations
+
+- Database credentials should be managed using Kubernetes Secrets
+- Use appropriate RBAC policies
+- Configure resource limits to prevent resource exhaustion
+- Enable network policies as needed
+
+## Troubleshooting
+
+Common issues and their solutions:
+
+1. **Pod fails to start**:
+   - Check the pod logs: `kubectl logs -l app=leads-scraper`
+   - Verify PostgreSQL connection details
+   - Ensure sufficient resources are available
+
+2. **Database connection issues**:
+   - Verify PostgreSQL credentials
+   - Check network connectivity
+   - Ensure database is accessible from the cluster
+
+## Support
+
+For support, please file issues in the GitHub repository or contact the Vector team.
+
+{{ template "helm-docs.versionFooter" . }} 

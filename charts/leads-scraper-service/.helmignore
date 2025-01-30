@@ -21,3 +21,5 @@
 .idea/
 *.tmproj
 .vscode/
+# Helm docs template
+.helm-docs.gotmpl

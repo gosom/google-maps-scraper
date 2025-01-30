@@ -2,32 +2,34 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
-# This will set the replicaset count more information can be found here: https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/
+# -- Number of replicas for the leads scraper deployment
 replicaCount: 1
 
 # This sets the container image more information can be found here: https://kubernetes.io/docs/concepts/containers/images/
 image:
+  # -- Container image repository
   repository: feelguuds/leads-scraper-service
-  # This sets the pull policy for images.
+  # -- Image pull policy
   pullPolicy: Always
   # Overrides the image tag whose default is the chart appVersion.
   tag: "latest"
 
 # This is for the secretes for pulling an image from a private repository more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
 imagePullSecrets: []
-# This is to override the chart name.
+# -- Override the chart name
 nameOverride: ""
+# -- Override the full name
 fullnameOverride: ""
 
 # This section builds out the service account more information can be found here: https://kubernetes.io/docs/concepts/security/service-accounts/
 serviceAccount:
-  # Specifies whether a service account should be created
+  # -- Specifies whether a service account should be created
   create: true
-  # Automatically mount a ServiceAccount's API credentials?
+  # -- Automatically mount a ServiceAccount's API credentials
   automount: true
-  # Annotations to add to the service account
+  # -- Annotations to add to the service account
   annotations: {}
-  # The name of the service account to use.
+  # -- The name of the service account to use.
   # If not set and create is true, a name is generated using the fullname template
   name: ""
 
@@ -50,14 +52,16 @@ securityContext: {}
 
 # This is for setting up a service more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/
 service:
-  # This sets the service type more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/#publishing-services-service-types
+  # -- Service type (ClusterIP, NodePort, LoadBalancer)
   type: ClusterIP
   # This sets the ports more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/#field-spec-ports
   port: 8080
 
 # This block is for setting up the ingress for more information can be found here: https://kubernetes.io/docs/concepts/services-networking/ingress/
 ingress:
+  # -- Enable ingress controller resource
   enabled: false
+  # -- IngressClass that will be be used
   className: ""
   annotations: {}
     # kubernetes.io/ingress.class: nginx
@@ -96,10 +100,15 @@ readinessProbe:
 
 # This section is for setting up autoscaling more information can be found here: https://kubernetes.io/docs/concepts/workloads/autoscaling/
 autoscaling:
+  # -- Enable autoscaling
   enabled: true
+  # -- Minimum number of replicas
   minReplicas: 1
+  # -- Maximum number of replicas
   maxReplicas: 5
+  # -- Target CPU utilization percentage
   targetCPUUtilizationPercentage: 95
+  # -- Target memory utilization percentage
   targetMemoryUtilizationPercentage: 95
   # Additional volumes on the output Deployment definition.
 volumes: []
@@ -122,38 +131,50 @@ affinity: {}
 
 # Test configuration
 tests:
-  enabled: false  # Set to true to enable helm tests
+  # -- Enable helm tests
+  enabled: false
   healthCheck:
+    # -- Enable health check test
     enabled: true
+    # -- Health check endpoint path
     path: "/health"
   configCheck:
+    # -- Enable config check test
     enabled: true
 
 # Application specific configuration
 config:
   # Database Configuration (Required)
   database:
-    # Database connection string (Required)
+    # -- Database connection string (Required)
+    # @default -- ""
     # Format: postgres://username:password@host:port/dbname
-    # This will be overridden when postgresql.enabled is true
     dsn: ""
 
   # AWS Configuration (Optional)
   aws:
+    # -- AWS access key
     accessKey: ""
+    # -- AWS secret key
     secretKey: ""
+    # -- AWS region
     region: "us-east-1"
     lambda:
+      # -- Enable AWS Lambda integration
       enabled: false
+      # -- Lambda chunk size
       chunkSize: 100
+      # -- Enable Lambda invoker
       invoker: false
+      # -- Lambda function name
       functionName: ""
     s3:
+      # -- S3 bucket name
       bucket: "leads-scraper-service"
 
   # Scraper Configuration
   scraper:
-    # Web server mode is always enabled
+    # -- Enable web server mode
     webServer: true
     # Core settings
     concurrency: 11
@@ -169,16 +190,22 @@ config:
 
 # PostgreSQL subchart configuration
 postgresql:
-  enabled: true  # Enable PostgreSQL by default for local development
+  # -- Enable PostgreSQL dependency
+  enabled: true
   auth:
+    # -- PostgreSQL username
     username: postgres
+    # -- PostgreSQL password
     password: postgres
+    # -- PostgreSQL database name
     database: leads_scraper
-    # PostgreSQL password will be stored in a secret
+    # -- Existing secret for PostgreSQL password
     existingSecret: ""
   primary:
     persistence:
+      # -- Enable PostgreSQL persistence
       enabled: true
+      # -- PostgreSQL PVC size
       size: 10Gi
     resources:
       requests:
@@ -189,6 +216,7 @@ postgresql:
         memory: 1Gi
     service:
       ports:
+        # -- PostgreSQL service port
         postgresql: 5432
     # PostgreSQL configuration
     extraEnvVars:

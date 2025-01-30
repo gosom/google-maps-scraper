@@ -1,6 +1,6 @@
 apiVersion: v2
 name: leads-scraper-service
-description: A Helm chart for Kubernetes
+description: A Helm chart for deploying the Vector Leads Scraper service, which extracts and processes business leads data
 
 # A chart can be either an 'application' or a 'library' chart.
 #
@@ -22,6 +22,30 @@ version: 0.1.0
 # follow Semantic Versioning. They should reflect the version the application is using.
 # It is recommended to use it with quotes.
 appVersion: "1.16.0"
+
+keywords:
+  - scraper
+  - leads
+  - data extraction
+  - vector
+
+home: https://github.com/Vector/vector-leads-scraper
+sources:
+  - https://github.com/Vector/vector-leads-scraper
+
+maintainers:
+  - name: Vector Team
+    url: https://github.com/Vector
+
+annotations:
+  artifacthub.io/changes: |
+    - Initial release of the Vector Leads Scraper service
+  artifacthub.io/license: MIT
+  artifacthub.io/prerelease: "false"
+  artifacthub.io/recommendations: |
+    - url: https://artifacthub.io/packages/helm/bitnami/postgresql
+      title: PostgreSQL
+  artifacthub.io/containsSecurityUpdates: "false"
 
 dependencies:
   - name: postgresql
