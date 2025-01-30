@@ -16,6 +16,25 @@ services:
       interval: 2s
       timeout: 30s
       retries: 5
+
+  redis:
+    image: redis:7.2-alpine
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redispass}
+    ports:
+      - '127.0.0.1:6379:6379'
+    expose:
+      - 6379
+    volumes:
+      - redis_data:/data
+    restart: "unless-stopped"
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "ping"]
+      interval: 2s
+      timeout: 30s
+      retries: 5
+    environment:
+      - TZ=UTC
+
   migrate:
     image: migrate/migrate
     volumes:
@@ -29,3 +48,4 @@ services:
 
 volumes:
   gmapsdev:
+  redis_data:

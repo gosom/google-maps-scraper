@@ -31,9 +31,10 @@ CLUSTER_NAME="gmaps-cluster"
 NAMESPACE="default"
 RELEASE_NAME="gmaps-scraper-leads-scraper-service"
 CHART_PATH="./charts/leads-scraper-service"
-IMAGE_NAME="${DOCKER_IMAGE:-gosom/google-maps-scraper}"
+IMAGE_NAME="${DOCKER_IMAGE:-feelguuds/leads-scraper-service}"
 IMAGE_TAG="${DOCKER_TAG:-latest}"
 ENABLE_TESTS="false"
+REDIS_PASSWORD="redis-local-dev"
 
 # Parse arguments
 while [ "$#" -gt 0 ]; do
@@ -123,6 +124,10 @@ service:
   port: 8080
 
 config:
+  redis:
+    enabled: true
+    dsn: "redis://:${REDIS_PASSWORD}@${RELEASE_NAME}-redis-master:6379/0"
+    workers: 10
   scraper:
     webServer: true
     concurrency: 11
@@ -169,10 +174,33 @@ postgresql:
       - name: POSTGRESQL_SHARED_BUFFERS
         value: "128MB"
 
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: true
+    password: "${REDIS_PASSWORD}"
+  master:
+    persistence:
+      enabled: true
+      size: 1Gi
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
 EOF
 
     echo "Generated values.local.yaml:"
     cat values.local.yaml
+
+    # Add Bitnami repo if not already added
+    if ! helm repo list | grep -q "bitnami"; then
+        helm repo add bitnami https://charts.bitnami.com/bitnami
+        helm repo update
+    fi
 
     helm upgrade --install "$RELEASE_NAME" "$CHART_PATH" \
         --namespace "$NAMESPACE" \
@@ -199,12 +227,45 @@ EOF
 verify_deployment() {
     print_step "Verifying deployment..."
     
-    # Wait for pods to be ready
-    echo "Waiting for pods to be ready..."
+    # Wait for Redis to be ready first
+    echo "Waiting for Redis to be ready..."
+    if ! kubectl wait --for=condition=ready pod -l "app.kubernetes.io/name=redis,app.kubernetes.io/instance=$RELEASE_NAME" \
+        --namespace "$NAMESPACE" \
+        --timeout=300s; then
+        echo -e "${RED}Redis pods did not become ready within timeout${NC}"
+        kubectl get pods -n "$NAMESPACE" -l "app.kubernetes.io/name=redis"
+        exit 1
+    fi
+
+    # Additional Redis readiness check
+    echo "Verifying Redis connectivity..."
+    for i in {1..30}; do
+        if kubectl run redis-test-$i --rm --restart=Never -i --image redis -- redis-cli -h "$RELEASE_NAME-redis-master" -a redis-local-dev ping | grep -q "PONG"; then
+            echo "Redis is accepting connections"
+            break
+        fi
+        if [ $i -eq 30 ]; then
+            echo -e "${RED}Redis is not accepting connections after multiple attempts${NC}"
+            echo "Redis service status:"
+            kubectl get svc -n "$NAMESPACE" -l "app.kubernetes.io/name=redis"
+            echo "Redis pod status:"
+            kubectl get pods -n "$NAMESPACE" -l "app.kubernetes.io/name=redis"
+            exit 1
+        fi
+        echo "Waiting for Redis to accept connections (attempt $i/30)..."
+        sleep 5
+    done
+
+    # Wait for application pods to be ready
+    echo "Waiting for application pods to be ready..."
     if ! kubectl wait --for=condition=ready pod -l "app.kubernetes.io/instance=$RELEASE_NAME" \
         --namespace "$NAMESPACE" \
-        --timeout=180s; then
-        echo -e "${RED}Pods did not become ready within timeout${NC}"
+        --timeout=300s; then
+        echo -e "${RED}Application pods did not become ready within timeout${NC}"
+        echo "Application pod logs:"
+        kubectl logs -l "app.kubernetes.io/instance=$RELEASE_NAME" -n "$NAMESPACE"
+        echo "Pod status:"
+        kubectl get pods -n "$NAMESPACE"
         exit 1
     fi
 

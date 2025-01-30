@@ -1,6 +1,6 @@
 # Google maps scraper
-![build](https://github.com/gosom/google-maps-scraper/actions/workflows/build.yml/badge.svg)
-[![Go Report Card](https://goreportcard.com/badge/github.com/gosom/google-maps-scraper)](https://goreportcard.com/report/github.com/gosom/google-maps-scraper)
+![build](https://github.com/Vector/vector-leads-scraper/actions/workflows/build.yml/badge.svg)
+[![Go Report Card](https://goreportcard.com/badge/github.com/Vector/vector-leads-scraper)](https://goreportcard.com/report/github.com/Vector/vector-leads-scraper)
 
 > A free and open-source Google Maps scraper with both command line and web UI options. This tool is easy to use and allows you to extract data from Google Maps efficiently.
 
@@ -70,7 +70,7 @@ customize it to your needs
 mkdir -p gmapsdata && docker run -v $PWD/gmapsdata:/gmapsdata -p 8080:8080 gosom/google-maps-scraper -data-folder /gmapsdata
 ```
 
-Or dowload the [binary](https://github.com/gosom/google-maps-scraper/releases) for your platform and run it.
+Or dowload the [binary](https://github.com/Vector/vector-leads-scraper/releases) for your platform and run it.
 
 Note: The results will take at least 3 minutes to appear, even if you add only one keyword. This is the minimum configured runtime.
 
@@ -217,7 +217,7 @@ file `results.csv` will contain the parsed results.
 
 
 ```
-git clone https://github.com/gosom/google-maps-scraper.git
+git clone https://github.com/Vector/vector-leads-scraper.git
 cd google-maps-scraper
 go mod download
 go build
@@ -312,7 +312,7 @@ See an example:
 
 1. Write your plugin (use the examples/plugins/example_writer.go as a reference)
 2. Build your plugin `go build -buildmode=plugin -tags=plugin -o ~/myplugins/example_writer.so plugins/example_writer.go`
-3. Download the lastes [release](https://github.com/gosom/google-maps-scraper/releases/) or build the program
+3. Download the lastes [release](https://github.com/Vector/vector-leads-scraper/releases/) or build the program
 4. Run the program like `./google-maps-scraper -writer ~/myplugins:DummyPrinter -input example-queries.txt`
 
 

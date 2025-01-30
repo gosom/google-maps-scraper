@@ -15,8 +15,8 @@ import (
 
 	"github.com/aws/aws-lambda-go/lambda"
 
-	"github.com/gosom/google-maps-scraper/exiter"
-	"github.com/gosom/google-maps-scraper/runner"
+	"github.com/Vector/vector-leads-scraper/exiter"
+	"github.com/Vector/vector-leads-scraper/runner"
 	"github.com/gosom/scrapemate"
 	"github.com/gosom/scrapemate/adapters/writers/csvwriter"
 	"github.com/gosom/scrapemate/scrapemateapp"

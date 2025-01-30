@@ -11,7 +11,7 @@ import (
 
 	"github.com/gosom/scrapemate"
 
-	"github.com/gosom/google-maps-scraper/gmaps"
+	"github.com/Vector/vector-leads-scraper/gmaps"
 )
 
 func NewResultWriter(db *sql.DB) scrapemate.ResultWriter {
