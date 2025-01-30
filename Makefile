@@ -1,5 +1,5 @@
 APP_NAME := google_maps_scraper
-VERSION := 1.6.1
+VERSION := 1.7.7
 
 # Helm/K8s related variables
 CHART_NAME := leads-scraper-service
