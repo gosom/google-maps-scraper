@@ -27,7 +27,7 @@ func setupRedis(ctx context.Context) (*redisContainer, error) {
 
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: req,
-		Started:         true,
+		Started:          true,
 	})
 	if err != nil {
 		return nil, err
@@ -119,7 +119,7 @@ func TestRedisConfigIntegration(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to get container host: %v", err)
 			}
-			
+
 			port, err := redisC.MappedPort(ctx, "6379")
 			if err != nil {
 				t.Fatalf("Failed to get container port: %v", err)
@@ -189,18 +189,18 @@ func TestNewRedisConfig(t *testing.T) {
 		{
 			name: "custom configuration",
 			envVars: map[string]string{
-				"REDIS_HOST":              "redis.example.com",
-				"REDIS_PORT":              "6380",
-				"REDIS_PASSWORD":          "secret",
-				"REDIS_DB":                "1",
-				"REDIS_WORKERS":           "20",
-				"REDIS_RETRY_INTERVAL":    "10s",
-				"REDIS_MAX_RETRIES":       "5",
-				"REDIS_RETENTION_DAYS":    "14",
-				"REDIS_USE_TLS":           "true",
-				"REDIS_CERT_FILE":         "/path/to/cert",
-				"REDIS_KEY_FILE":          "/path/to/key",
-				"REDIS_CA_FILE":           "/path/to/ca",
+				"REDIS_HOST":           "redis.example.com",
+				"REDIS_PORT":           "6380",
+				"REDIS_PASSWORD":       "secret",
+				"REDIS_DB":             "1",
+				"REDIS_WORKERS":        "20",
+				"REDIS_RETRY_INTERVAL": "10s",
+				"REDIS_MAX_RETRIES":    "5",
+				"REDIS_RETENTION_DAYS": "14",
+				"REDIS_USE_TLS":        "true",
+				"REDIS_CERT_FILE":      "/path/to/cert",
+				"REDIS_KEY_FILE":       "/path/to/key",
+				"REDIS_CA_FILE":        "/path/to/ca",
 			},
 			want: &RedisConfig{
 				Host:            "redis.example.com",
@@ -353,4 +353,4 @@ func TestRedisConfig_QueuePriorities(t *testing.T) {
 			t.Errorf("Queue %s: got priority %d, want %d", queue, got, priority)
 		}
 	}
-} 
+}

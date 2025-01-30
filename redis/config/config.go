@@ -27,25 +27,25 @@ type RedisConfig struct {
 }
 
 const (
-	defaultHost           = "localhost"
+	defaultHost          = "localhost"
 	defaultPort          = 6379
 	defaultDB            = 0
 	defaultWorkers       = 10
 	defaultRetryInterval = 5 * time.Second
 	defaultMaxRetries    = 3
 	defaultRetention     = 7 * 24 * time.Hour
-	minPort             = 1
-	maxPort             = 65535
-	minDB               = 0
-	maxDB               = 15
-	minWorkers          = 1
-	maxWorkers          = 100
-	minRetryInterval    = time.Second
-	maxRetryInterval    = time.Hour
-	minMaxRetries       = 1
-	maxMaxRetries       = 10
-	minRetentionDays    = 1
-	maxRetentionDays    = 365
+	minPort              = 1
+	maxPort              = 65535
+	minDB                = 0
+	maxDB                = 15
+	minWorkers           = 1
+	maxWorkers           = 100
+	minRetryInterval     = time.Second
+	maxRetryInterval     = time.Hour
+	minMaxRetries        = 1
+	maxMaxRetries        = 10
+	minRetentionDays     = 1
+	maxRetentionDays     = 365
 )
 
 // DefaultQueuePriorities defines the default priority settings for task queues
@@ -251,4 +251,4 @@ func getEnvBool(key string) bool {
 // isTestMode returns true if the code is running in test mode
 func isTestMode() bool {
 	return strings.HasSuffix(os.Args[0], ".test") || os.Getenv("GO_TEST") == "1"
-} 
+}

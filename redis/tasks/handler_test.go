@@ -95,12 +95,12 @@ func TestProcessTask(t *testing.T) {
 			WithTaskTimeout(1*time.Hour), // Long timeout to ensure context timeout triggers first
 		)
 		h := newMockBlockingHandler(baseHandler)
-		
+
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 		defer cancel()
 
 		task := asynq.NewTask(TypeScrapeGMaps, []byte(`{"keywords": ["test"]}`))
-		
+
 		errCh := make(chan error, 1)
 		go func() {
 			errCh <- h.ProcessTask(ctx, task)
@@ -168,7 +168,7 @@ func TestHandlerConcurrency(t *testing.T) {
 			wg.Add(1)
 			go func(taskNum int) {
 				defer wg.Done()
-				
+
 				// Try to acquire execution slot
 				executing <- struct{}{}
 				defer func() { <-executing }()
@@ -203,10 +203,10 @@ func TestHandlerConcurrency(t *testing.T) {
 		select {
 		case <-done:
 			// Test passed
-			assert.LessOrEqual(t, atomic.LoadInt32(&maxConcurrent), int32(2), 
+			assert.LessOrEqual(t, atomic.LoadInt32(&maxConcurrent), int32(2),
 				"Should not exceed concurrency limit")
 		case <-time.After(5 * time.Second):
 			t.Fatal("Test timed out")
 		}
 	})
-} 
+}

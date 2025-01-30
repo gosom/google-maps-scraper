@@ -11,9 +11,9 @@ import (
 
 const (
 	defaultPostgresPort = "5432"
-	defaultUser        = "test"
-	defaultPassword    = "test"
-	defaultDatabase    = "testdb"
+	defaultUser         = "test"
+	defaultPassword     = "test"
+	defaultDatabase     = "testdb"
 )
 
 // PostgresConfig holds PostgreSQL connection configuration for tests
@@ -53,7 +53,7 @@ func NewPostgresContainer(ctx context.Context) (*PostgresContainer, error) {
 
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: req,
-		Started:         true,
+		Started:          true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to start container: %w", err)
@@ -76,11 +76,11 @@ func NewPostgresContainer(ctx context.Context) (*PostgresContainer, error) {
 
 	return &PostgresContainer{
 		Container: container,
-		Host:     host,
-		Port:     port,
-		User:     defaultUser,
-		Password: defaultPassword,
-		Database: defaultDatabase,
+		Host:      host,
+		Port:      port,
+		User:      defaultUser,
+		Password:  defaultPassword,
+		Database:  defaultDatabase,
 	}, nil
 }
 
@@ -88,4 +88,4 @@ func NewPostgresContainer(ctx context.Context) (*PostgresContainer, error) {
 func (c *PostgresContainer) GetDSN() string {
 	return fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=disable",
 		c.User, c.Password, c.Host, c.Port, c.Database)
-} 
+}

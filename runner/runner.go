@@ -80,22 +80,22 @@ type Config struct {
 	Radius                   float64
 	Addr                     string
 	DisablePageReuse         bool
-	
+
 	// Redis-specific configurations
-	RedisEnabled            bool
-	RedisURL               string          // Redis connection string (takes precedence over other Redis settings)
-	RedisHost              string
-	RedisPort              int
-	RedisPassword          string
-	RedisDB                int
-	RedisUseTLS            bool
-	RedisCertFile          string
-	RedisKeyFile           string
-	RedisCAFile            string
-	RedisWorkers           int
-	RedisRetryInterval     time.Duration
-	RedisMaxRetries        int
-	RedisRetentionDays     int
+	RedisEnabled       bool
+	RedisURL           string // Redis connection string (takes precedence over other Redis settings)
+	RedisHost          string
+	RedisPort          int
+	RedisPassword      string
+	RedisDB            int
+	RedisUseTLS        bool
+	RedisCertFile      string
+	RedisKeyFile       string
+	RedisCAFile        string
+	RedisWorkers       int
+	RedisRetryInterval time.Duration
+	RedisMaxRetries    int
+	RedisRetentionDays int
 }
 
 func ParseConfig() *Config {
@@ -353,4 +353,3 @@ func Banner() {
 
 	fmt.Fprintln(os.Stderr, banner([]string{message1, message2, message3}, 0))
 }
-

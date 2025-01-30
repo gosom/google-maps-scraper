@@ -86,7 +86,7 @@ func NewRedisContainer(ctx context.Context) (*RedisContainer, error) {
 
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: req,
-		Started:         true,
+		Started:          true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to start container: %w", err)
@@ -109,9 +109,9 @@ func NewRedisContainer(ctx context.Context) (*RedisContainer, error) {
 
 	return &RedisContainer{
 		Container: container,
-		Host:     host,
-		Port:     port,
-		Password: "", // No password for test container
+		Host:      host,
+		Port:      port,
+		Password:  "", // No password for test container
 	}, nil
 }
 
@@ -123,4 +123,4 @@ func NewRedisContainer(ctx context.Context) (*RedisContainer, error) {
 //	address := container.GetAddress() // Returns something like "localhost:49153"
 func (c *RedisContainer) GetAddress() string {
 	return fmt.Sprintf("%s:%d", c.Host, c.Port)
-} 
+}

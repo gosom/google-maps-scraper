@@ -161,4 +161,4 @@ func (h *Handler) setupMate(_ context.Context, writer io.Writer, payload *Scrape
 	}
 
 	return scrapemateapp.NewScrapeMateApp(matecfg)
-} 
+}

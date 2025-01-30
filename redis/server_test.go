@@ -24,7 +24,7 @@ type mockHandler struct {
 	wg             *sync.WaitGroup
 	taskTypes      map[string]bool
 	processed      map[string]int
-	debug          bool  // Add debug flag
+	debug          bool // Add debug flag
 }
 
 func newMockHandler(wg *sync.WaitGroup, taskTypes ...string) *mockHandler {
@@ -33,7 +33,7 @@ func newMockHandler(wg *sync.WaitGroup, taskTypes ...string) *mockHandler {
 		taskTypes:      make(map[string]bool),
 		processed:      make(map[string]int),
 		processedTasks: make([]string, 0),
-		debug:          true,  // Enable debug logging
+		debug:          true, // Enable debug logging
 	}
 	for _, tt := range taskTypes {
 		h.taskTypes[tt] = true
@@ -52,7 +52,7 @@ func (h *mockHandler) ProcessTask(ctx context.Context, task *asynq.Task) error {
 	if h.debug {
 		log.Printf("Processing task: %s (tracked: %v)", taskType, h.taskTypes[taskType])
 	}
-	
+
 	// Immediately acknowledge the task to prevent retries
 	defer func() {
 		if h.wg != nil && h.taskTypes[taskType] {
@@ -67,7 +67,7 @@ func (h *mockHandler) ProcessTask(ctx context.Context, task *asynq.Task) error {
 
 	h.processedTasks = append(h.processedTasks, taskType)
 	h.processed[taskType]++
-	
+
 	if h.debug {
 		log.Printf("Successfully processed task: %s (count: %d)", taskType, h.processed[taskType])
 	}
@@ -118,15 +118,15 @@ func initializeQueues(t *testing.T, opt asynq.RedisClientOpt) error {
 
 func waitForServer(ctx context.Context, t *testing.T, opt asynq.RedisClientOpt) error {
 	t.Helper()
-	
+
 	// First ensure queues are initialized
 	if err := initializeQueues(t, opt); err != nil {
 		return err
 	}
 
 	inspector := asynq.NewInspector(opt)
-	deadline := time.Now().Add(30 * time.Second)  // Increased timeout
-	
+	deadline := time.Now().Add(30 * time.Second) // Increased timeout
+
 	for time.Now().Before(deadline) {
 		queues, err := inspector.Queues()
 		if err == nil && len(queues) > 0 {
@@ -136,7 +136,7 @@ func waitForServer(ctx context.Context, t *testing.T, opt asynq.RedisClientOpt) 
 			return nil
 		}
 		log.Printf("Waiting for Asynq server... err: %v", err)
-		time.Sleep(1 * time.Second)  // Increased interval
+		time.Sleep(1 * time.Second) // Increased interval
 	}
 	return fmt.Errorf("Asynq server failed to start within deadline")
 }
@@ -151,7 +151,7 @@ func startServerWithRetry(t *testing.T, cfg *config.RedisConfig, handler *mockHa
 		}
 
 		mux := asynq.NewServeMux()
-		
+
 		// Register a single handler for all task types
 		mux.HandleFunc("*", func(ctx context.Context, t *asynq.Task) error {
 			log.Printf("Received task type: %s", t.Type())
@@ -163,7 +163,7 @@ func startServerWithRetry(t *testing.T, cfg *config.RedisConfig, handler *mockHa
 		})
 
 		serverCtx, cancel := context.WithCancel(context.Background())
-		
+
 		errChan := make(chan error, 1)
 		go func() {
 			if err := server.Start(serverCtx, mux); err != nil && err != context.Canceled {
@@ -204,14 +204,14 @@ func TestServer(t *testing.T) {
 
 		err := waitForRedis(context.Background(), t, ctx.RedisConfig.Host, ctx.RedisConfig.Port, ctx.RedisConfig.Password)
 		require.NoError(t, err, "Redis should be ready")
-		
+
 		baseOpt := asynq.RedisClientOpt{
 			Addr:         fmt.Sprintf("%s:%d", ctx.RedisConfig.Host, ctx.RedisConfig.Port),
 			Password:     ctx.RedisConfig.Password,
 			DialTimeout:  5 * time.Second,
 			ReadTimeout:  5 * time.Second,
 			WriteTimeout: 5 * time.Second,
-			PoolSize:    10,
+			PoolSize:     10,
 		}
 
 		makeServerConfig := func(workers int) *config.RedisConfig {
@@ -224,7 +224,7 @@ func TestServer(t *testing.T) {
 					"default": 1,
 				},
 				RetryInterval:   time.Second,
-				MaxRetries:     3,
+				MaxRetries:      3,
 				RetentionPeriod: time.Hour,
 			}
 		}
@@ -232,7 +232,7 @@ func TestServer(t *testing.T) {
 		t.Run("starts and stops server", func(t *testing.T) {
 			cfg := makeServerConfig(2)
 			log.Printf("Creating server with config: %+v", cfg)
-			
+
 			handler := newMockHandler(nil)
 			cancel, err := startServerWithRetry(t, cfg, handler, baseOpt)
 			require.NoError(t, err)
@@ -250,7 +250,7 @@ func TestServer(t *testing.T) {
 			var wg sync.WaitGroup
 			wg.Add(1)
 			handler := newMockHandler(&wg, "test_task")
-			
+
 			cancel, err := startServerWithRetry(t, cfg, handler, baseOpt)
 			require.NoError(t, err)
 			defer cancel()
@@ -269,9 +269,9 @@ func TestServer(t *testing.T) {
 
 			log.Printf("Enqueueing test task...")
 			task := asynq.NewTask("test_task", []byte(`{"key": "value"}`))
-			info, err := client.Enqueue(task, asynq.Queue("default"), 
-				asynq.MaxRetry(3),  // Increase max retries
-				asynq.Timeout(15*time.Second))  // Increase timeout
+			info, err := client.Enqueue(task, asynq.Queue("default"),
+				asynq.MaxRetry(3),             // Increase max retries
+				asynq.Timeout(15*time.Second)) // Increase timeout
 			require.NoError(t, err)
 			require.NotNil(t, info)
 			log.Printf("Task enqueued with ID: %s", info.ID)
@@ -288,7 +288,7 @@ func TestServer(t *testing.T) {
 				log.Printf("Task processed successfully")
 				handler.mu.Lock()
 				defer handler.mu.Unlock()
-				
+
 				assert.Contains(t, handler.processed, "test_task", "Should have processed test_task")
 				assert.Equal(t, 1, handler.processed["test_task"], "Should process exactly one test task")
 			case <-time.After(5 * time.Second):
@@ -304,7 +304,7 @@ func TestServer(t *testing.T) {
 			var wg sync.WaitGroup
 			wg.Add(3)
 			handler := newMockHandler(&wg, "concurrent_task")
-			
+
 			cancel, err := startServerWithRetry(t, cfg, handler, baseOpt)
 			require.NoError(t, err)
 			defer cancel()
@@ -324,9 +324,9 @@ func TestServer(t *testing.T) {
 			log.Printf("Enqueueing concurrent tasks...")
 			for i := 0; i < 3; i++ {
 				task := asynq.NewTask("concurrent_task", []byte(fmt.Sprintf(`{"index": %d}`, i)))
-				info, err := client.Enqueue(task, asynq.Queue("default"), 
-					asynq.MaxRetry(3),  // Increase max retries
-					asynq.Timeout(15*time.Second))  // Increase timeout
+				info, err := client.Enqueue(task, asynq.Queue("default"),
+					asynq.MaxRetry(3),             // Increase max retries
+					asynq.Timeout(15*time.Second)) // Increase timeout
 				require.NoError(t, err)
 				require.NotNil(t, info)
 				log.Printf("Enqueued task %d with ID: %s", i, info.ID)
@@ -344,7 +344,7 @@ func TestServer(t *testing.T) {
 				log.Printf("All concurrent tasks processed successfully")
 				handler.mu.Lock()
 				defer handler.mu.Unlock()
-				
+
 				assert.Contains(t, handler.processed, "concurrent_task", "Should have processed concurrent_task")
 				assert.Equal(t, 3, handler.processed["concurrent_task"], "Should process exactly three concurrent tasks")
 			case <-time.After(5 * time.Second):
@@ -353,4 +353,4 @@ func TestServer(t *testing.T) {
 			}
 		})
 	})
-} 
+}

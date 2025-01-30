@@ -144,4 +144,4 @@ func TestClient(t *testing.T) {
 			assert.Nil(t, client)
 		})
 	})
-} 
+}

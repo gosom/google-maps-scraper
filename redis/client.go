@@ -39,7 +39,7 @@ func NewClient(cfg *config.RedisConfig) (*Client, error) {
 	}
 
 	client := asynq.NewClient(redisOpt)
-	
+
 	// Test connection
 	if err := testConnection(client); err != nil {
 		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
@@ -117,4 +117,4 @@ func testConnection(client *asynq.Client) error {
 		return fmt.Errorf("failed to connect to Redis: %w", err)
 	}
 	return nil
-} 
+}

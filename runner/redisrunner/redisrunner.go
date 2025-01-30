@@ -33,14 +33,14 @@ func New(cfg *runner.Config) (*RedisRunner, error) {
 		Host:            cfg.RedisHost,
 		Port:            cfg.RedisPort,
 		Password:        cfg.RedisPassword,
-		DB:             cfg.RedisDB,
-		UseTLS:         cfg.RedisUseTLS,
-		CertFile:       cfg.RedisCertFile,
-		KeyFile:        cfg.RedisKeyFile,
-		CAFile:         cfg.RedisCAFile,
-		Workers:        cfg.RedisWorkers,
-		RetryInterval:  cfg.RedisRetryInterval,
-		MaxRetries:     cfg.RedisMaxRetries,
+		DB:              cfg.RedisDB,
+		UseTLS:          cfg.RedisUseTLS,
+		CertFile:        cfg.RedisCertFile,
+		KeyFile:         cfg.RedisKeyFile,
+		CAFile:          cfg.RedisCAFile,
+		Workers:         cfg.RedisWorkers,
+		RetryInterval:   cfg.RedisRetryInterval,
+		MaxRetries:      cfg.RedisMaxRetries,
 		RetentionPeriod: time.Duration(cfg.RedisRetentionDays) * 24 * time.Hour,
 	}
 
@@ -158,4 +158,4 @@ func (r *RedisRunner) monitorHealth(ctx context.Context) {
 // EnqueueTask enqueues a new task for processing.
 func (r *RedisRunner) EnqueueTask(ctx context.Context, taskType string, payload []byte, opts ...asynq.Option) error {
 	return r.client.EnqueueTask(ctx, taskType, payload, opts...)
-} 
+}

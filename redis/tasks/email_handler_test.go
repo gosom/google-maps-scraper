@@ -58,7 +58,7 @@ func TestEmailExtraction(t *testing.T) {
 
 			// Test mailto extraction
 			emails := docEmailExtractor(doc)
-			
+
 			// If no mailto links found, test regex extraction
 			if len(emails) == 0 {
 				emails = regexEmailExtractor([]byte(tt.html))
@@ -175,4 +175,4 @@ func TestCreateEmailTask(t *testing.T) {
 			assert.Equal(t, tt.userAgent, payload.UserAgent)
 		})
 	}
-} 
+}

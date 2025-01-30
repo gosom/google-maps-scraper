@@ -46,7 +46,7 @@ func (j *EmailJob) Process(ctx context.Context, resp *scrapemate.Response) (any,
 
 	// Extract emails using both methods
 	var emails []string
-	
+
 	// Try extracting from mailto links first
 	if doc, ok := resp.Document.(*goquery.Document); ok {
 		emails = docEmailExtractor(doc)
@@ -200,4 +200,4 @@ func (h *Handler) processEmailTask(ctx context.Context, task *asynq.Task) error 
 	}
 
 	return nil
-} 
+}

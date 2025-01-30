@@ -241,4 +241,4 @@ func TestSetupMate(t *testing.T) {
 			}
 		})
 	}
-} 
+}

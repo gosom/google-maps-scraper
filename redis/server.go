@@ -47,7 +47,7 @@ func NewServer(cfg *config.RedisConfig) (*Server, error) {
 				log.Printf("Task %s failed, retry %d scheduled in %v: %v", task.Type(), n, delay, err)
 				return delay
 			},
-			Queues:    cfg.QueuePriorities,
+			Queues:         cfg.QueuePriorities,
 			StrictPriority: true,
 		},
 	)
@@ -107,4 +107,4 @@ func (s *Server) monitorHealth(ctx context.Context) {
 			}
 		}
 	}
-} 
+}

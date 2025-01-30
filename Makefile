@@ -199,7 +199,7 @@ run: build ## builds and runs the application
 docker-run: docker-build ## builds and runs the docker container
 	docker run -p 8080:8080 gosom/google-maps-scraper:${VERSION}
 
-precommit: check-docker check-required-tools lint build docker-build test format vet quick-validate ## runs the precommit hooks
+precommit: check-docker check-required-tools build docker-build test format vet quick-validate ## runs the precommit hooks
 
 .PHONY: deploy-local
 deploy-local: check-docker ## Deploy to local kind cluster

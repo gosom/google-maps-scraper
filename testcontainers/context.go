@@ -79,7 +79,7 @@ const (
 //	require.NoError(t, err)
 type TestContext struct {
 	t *testing.T
-	
+
 	// Context and cleanup
 	ctx        context.Context
 	cancelFunc context.CancelFunc
@@ -117,7 +117,7 @@ type TestContext struct {
 //	}
 func NewTestContext(t *testing.T) *TestContext {
 	t.Helper()
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	tc := &TestContext{
 		t:          t,
@@ -253,4 +253,4 @@ func (tc *TestContext) initPostgres() error {
 	}
 
 	return nil
-} 
+}
