@@ -13,6 +13,7 @@ import (
 	"github.com/Vector/vector-leads-scraper/runner/filerunner"
 	"github.com/Vector/vector-leads-scraper/runner/installplaywright"
 	"github.com/Vector/vector-leads-scraper/runner/lambdaaws"
+	"github.com/Vector/vector-leads-scraper/runner/redisrunner"
 	"github.com/Vector/vector-leads-scraper/runner/webrunner"
 )
 
@@ -77,6 +78,8 @@ func runnerFactory(cfg *runner.Config) (runner.Runner, error) {
 		return lambdaaws.New(cfg)
 	case runner.RunModeAwsLambdaInvoker:
 		return lambdaaws.NewInvoker(cfg)
+	case runner.RunModeRedis:
+		return redisrunner.New(cfg)
 	default:
 		return nil, fmt.Errorf("%w: %d", runner.ErrInvalidRunMode, cfg.RunMode)
 	}
