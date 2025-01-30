@@ -1,13 +1,14 @@
 package database
 
 import (
+	"context"
 	"fmt"
 	"time"
 
 	postgresdb "github.com/SolomonAIEngineering/backend-core-library/database/postgres"
 	"github.com/SolomonAIEngineering/backend-core-library/instrumentation"
-	"github.com/SolomonAIEngineering/backend-monorepo/src/core/api-definitions/pkg/generated/user_service/dal"
-	schema "github.com/SolomonAIEngineering/backend-monorepo/src/core/api-definitions/pkg/generated/user_service/v1"
+	"github.com/VectorEngineering/vector-protobuf-definitions/api-definitions/pkg/generated/lead_scraper_service/dal"
+	lead_scraper_servicev1 "github.com/VectorEngineering/vector-protobuf-definitions/api-definitions/pkg/generated/lead_scraper_service/v1"
 	"github.com/labstack/gommon/log"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -52,6 +53,9 @@ var (
 	// ErrInvalidPostgresClientObject is returned when the PostgreSQL client
 	// is nil or improperly configured
 	ErrInvalidPostgresClientObject = fmt.Errorf("invalid postgres client object")
+
+	// ErrInvalidInput is returned when the input parameters fail validation
+	ErrInvalidInput = fmt.Errorf("invalid input parameters")
 )
 
 // DatabaseOperations defines the methods to interact with the underlying database
@@ -66,7 +70,21 @@ var (
 //
 // Thread Safety:
 // All methods should be safe for concurrent use by multiple goroutines.
-type DatabaseOperations interface {}
+type DatabaseOperations interface {
+	// Account operations
+	CreateAccount(ctx context.Context, input *CreateAccountInput) (*lead_scraper_servicev1.Account, error)
+	GetAccount(context.Context, *GetAccountInput) (*lead_scraper_servicev1.Account, error)
+	UpdateAccount(ctx context.Context, account *lead_scraper_servicev1.Account) (*lead_scraper_servicev1.Account, error)
+	DeleteAccount(context.Context, *DeleteAccountParams) error
+	ListAccounts(ctx context.Context, input *ListAccountsInput) ([]*lead_scraper_servicev1.Account, error)
+
+	// Workspace operations
+	CreateWorkspace(ctx context.Context, workspace *lead_scraper_servicev1.Workspace) (*lead_scraper_servicev1.Workspace, error)
+	GetWorkspace(ctx context.Context, id uint64) (*lead_scraper_servicev1.Workspace, error)
+	UpdateWorkspace(ctx context.Context, workspace *lead_scraper_servicev1.Workspace) (*lead_scraper_servicev1.Workspace, error)
+	DeleteWorkspace(ctx context.Context, id uint64) error
+	ListWorkspaces(ctx context.Context, limit, offset int) ([]*lead_scraper_servicev1.Workspace, error)
+}
 
 // Db implements DatabaseOperations and provides connection handling for PostgreSQL.
 // It encapsulates the database client, query operations, logging, and instrumentation.
@@ -145,7 +163,7 @@ func (db *Db) Validate() error {
 func (db *Db) performSchemaMigration() error {
 	var (
 		engine *gorm.DB
-		models = schema.GetDatabaseSchemas()
+		models = lead_scraper_servicev1.GetDatabaseSchemas()
 	)
 
 	if db == nil {
@@ -157,7 +175,6 @@ func (db *Db) performSchemaMigration() error {
 	}
 
 	if len(models) > 0 {
-
 		tx := db.Client.Engine.Begin()
 		defer func() {
 			if r := recover(); r != nil {

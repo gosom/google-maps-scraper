@@ -10,7 +10,7 @@ import (
 
 	postgresdb "github.com/SolomonAIEngineering/backend-core-library/database/postgres"
 	"github.com/SolomonAIEngineering/backend-core-library/instrumentation"
-	"github.com/SolomonAIEngineering/backend-monorepo/src/core/api-definitions/pkg/generated/user_service/dal"
+	"github.com/VectorEngineering/vector-protobuf-definitions/api-definitions/pkg/generated/lead_scraper_service/dal"
 	lead_scraper_servicev1 "github.com/VectorEngineering/vector-protobuf-definitions/api-definitions/pkg/generated/lead_scraper_service/v1"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
@@ -187,7 +187,7 @@ func (tc *TestContext) initializeTestData() error {
 		tx.Rollback()
 		return fmt.Errorf("failed to create workspace: %w", err)
 	}
-	
+
 	return tx.Commit().Error
 }
 
