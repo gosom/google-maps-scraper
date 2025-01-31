@@ -25,9 +25,8 @@ func TestDeleteAccountParams_validate(t *testing.T) {
 			name: "success - valid input",
 			d: &DeleteAccountParams{
 				ID:           123,
-				OrgID:        "test-org",
-				TenantID:     "test-tenant",
 				DeletionType: DeletionTypeSoft,
+				AccountStatus: lead_scraper_servicev1.Account_ACCOUNT_STATUS_ACTIVE,
 			},
 			wantErr: false,
 		},
@@ -35,8 +34,6 @@ func TestDeleteAccountParams_validate(t *testing.T) {
 			name: "failure - zero account ID",
 			d: &DeleteAccountParams{
 				ID:           0,
-				OrgID:        "test-org",
-				TenantID:     "test-tenant",
 				DeletionType: DeletionTypeSoft,
 			},
 			wantErr: true,
@@ -58,7 +55,7 @@ func TestDb_DeleteAccount(t *testing.T) {
 	type args struct {
 		ctx    context.Context
 		params *DeleteAccountParams
-		setup  func(t *testing.T) (uint64, error)
+		setup  func(t *testing.T) (*lead_scraper_servicev1.Account, error)
 		clean  func(t *testing.T, id uint64)
 	}
 
@@ -75,11 +72,9 @@ func TestDb_DeleteAccount(t *testing.T) {
 			args: args{
 				ctx: context.Background(),
 				params: &DeleteAccountParams{
-					OrgID:        "test-org",
-					TenantID:     "test-tenant",
 					DeletionType: DeletionTypeSoft,
 				},
-				setup: func(t *testing.T) (uint64, error) {
+				setup: func(t *testing.T) (*lead_scraper_servicev1.Account, error) {
 					// Create the account first
 					acct, err := conn.CreateAccount(context.Background(), &CreateAccountInput{
 						Account:  validAccount,
@@ -89,7 +84,7 @@ func TestDb_DeleteAccount(t *testing.T) {
 					require.NoError(t, err)
 					require.NotNil(t, acct)
 					require.Equal(t, validAccount.Email, acct.Email)
-					return acct.Id, nil
+					return acct, nil
 				},
 				clean: func(t *testing.T, id uint64) {
 					// Verify account no longer exists
@@ -115,8 +110,6 @@ func TestDb_DeleteAccount(t *testing.T) {
 				ctx: context.Background(),
 				params: &DeleteAccountParams{
 					ID:           0,
-					OrgID:        "test-org",
-					TenantID:     "test-tenant",
 					DeletionType: DeletionTypeSoft,
 				},
 			},
@@ -129,9 +122,8 @@ func TestDb_DeleteAccount(t *testing.T) {
 				ctx: context.Background(),
 				params: &DeleteAccountParams{
 					ID:           999999,
-					OrgID:        "test-org",
-					TenantID:     "test-tenant",
 					DeletionType: DeletionTypeSoft,
+					AccountStatus: lead_scraper_servicev1.Account_ACCOUNT_STATUS_ACTIVE,
 				},
 			},
 		},
@@ -147,8 +139,6 @@ func TestDb_DeleteAccount(t *testing.T) {
 				}(),
 				params: &DeleteAccountParams{
 					ID:           1,
-					OrgID:        "test-org",
-					TenantID:     "test-tenant",
 					DeletionType: DeletionTypeSoft,
 				},
 			},
@@ -160,11 +150,9 @@ func TestDb_DeleteAccount(t *testing.T) {
 			args: args{
 				ctx: context.Background(),
 				params: &DeleteAccountParams{
-					OrgID:        "test-org",
-					TenantID:     "test-tenant",
 					DeletionType: DeletionTypeSoft,
 				},
-				setup: func(t *testing.T) (uint64, error) {
+				setup: func(t *testing.T) (*lead_scraper_servicev1.Account, error) {
 					// Create and then delete an account
 					acct, err := conn.CreateAccount(context.Background(), &CreateAccountInput{
 						Account:  validAccount,
@@ -177,13 +165,12 @@ func TestDb_DeleteAccount(t *testing.T) {
 					// Delete the account
 					err = conn.DeleteAccount(context.Background(), &DeleteAccountParams{
 						ID:           acct.Id,
-						OrgID:        "test-org",
-						TenantID:     "test-tenant",
 						DeletionType: DeletionTypeSoft,
+						AccountStatus: acct.AccountStatus,
 					})
 					require.NoError(t, err)
 
-					return acct.Id, nil
+					return acct, nil
 				},
 			},
 		},
@@ -196,10 +183,11 @@ func TestDb_DeleteAccount(t *testing.T) {
 
 			// Run setup if provided
 			if tt.args.setup != nil {
-				id, err = tt.args.setup(t)
+				createdAcct, err := tt.args.setup(t)
 				require.NoError(t, err)
-				if id != 0 {
-					tt.args.params.ID = id
+				if createdAcct != nil {
+					tt.args.params.ID = createdAcct.Id
+					tt.args.params.AccountStatus = createdAcct.AccountStatus
 				}
 			}
 
@@ -259,8 +247,7 @@ func TestDb_DeleteAccount_StressTest(t *testing.T) {
 			defer wg.Done()
 			err := conn.DeleteAccount(context.Background(), &DeleteAccountParams{
 				ID:           account.Id,
-				OrgID:        "test-org",
-				TenantID:     "test-tenant",
+				AccountStatus: account.AccountStatus,
 				DeletionType: DeletionTypeSoft,
 			})
 			if err != nil {
@@ -296,8 +283,7 @@ func TestDeleteAccountParams_Validate(t *testing.T) {
 			name: "success - valid params",
 			d: &DeleteAccountParams{
 				ID:           123,
-				OrgID:        "test-org",
-				TenantID:     "test-tenant",
+				AccountStatus: lead_scraper_servicev1.Account_ACCOUNT_STATUS_ACTIVE,
 				DeletionType: DeletionTypeSoft,
 			},
 			wantErr: false,
@@ -306,28 +292,7 @@ func TestDeleteAccountParams_Validate(t *testing.T) {
 			name: "failure - zero account ID",
 			d: &DeleteAccountParams{
 				ID:           0,
-				OrgID:        "test-org",
-				TenantID:     "test-tenant",
-				DeletionType: DeletionTypeSoft,
-			},
-			wantErr: true,
-		},
-		{
-			name: "failure - empty org ID",
-			d: &DeleteAccountParams{
-				ID:           123,
-				OrgID:        "",
-				TenantID:     "test-tenant",
-				DeletionType: DeletionTypeSoft,
-			},
-			wantErr: true,
-		},
-		{
-			name: "failure - empty tenant ID",
-			d: &DeleteAccountParams{
-				ID:           123,
-				OrgID:        "test-org",
-				TenantID:     "",
+				AccountStatus: lead_scraper_servicev1.Account_ACCOUNT_STATUS_ACTIVE,
 				DeletionType: DeletionTypeSoft,
 			},
 			wantErr: true,
@@ -403,7 +368,7 @@ func TestDb_DeleteAccountByEmail(t *testing.T) {
 		{
 			name:    "[failure scenario] - non-existent email",
 			wantErr: true,
-			errType: ErrAccountDoesNotExist,
+			errType: ErrFailedToGetAccountByEmail,
 			args: args{
 				ctx:      context.Background(),
 				email:    "nonexistent@example.com",
@@ -442,7 +407,7 @@ func TestDb_DeleteAccountByEmail(t *testing.T) {
 				}
 			}
 
-			err = conn.DeleteAccountByEmail(tt.args.ctx, tt.args.email, tt.args.orgID, tt.args.tenantID)
+			err = conn.DeleteAccountByEmail(tt.args.ctx, tt.args.email)
 			if tt.wantErr {
 				require.Error(t, err)
 				if tt.errType != nil {

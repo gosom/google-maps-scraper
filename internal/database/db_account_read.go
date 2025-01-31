@@ -15,6 +15,7 @@ import (
 // GetAccountInput holds the input parameters for the GetAccount function.
 type GetAccountInput struct {
 	ID                          uint64 `validate:"required,gt=0"`
+	AccountStatus               lead_scraper_servicev1.Account_AccountStatus `validate:"omitempty"`
 	EnableAccountInactiveClause bool   // Kept for API compatibility but not used
 }
 
@@ -59,9 +60,20 @@ func (db *Db) GetAccount(ctx context.Context, input *GetAccountInput) (*lead_scr
 		return nil, err
 	}
 
-	// Query the account using the generated GORM model
-	account := &lead_scraper_servicev1.Account{Id: input.ID}
-	result, err := lead_scraper_servicev1.DefaultReadAccount(ctx, account, db.Client.Engine)
+	// Query the account by id and account status. NOTE: we only include the account status if it is not unspecifed
+	ac := db.QueryOperator.AccountORM
+	queryRef := ac.WithContext(ctx).Where(ac.Id.Eq(input.ID))
+	if input.AccountStatus != lead_scraper_servicev1.Account_ACCOUNT_STATUS_UNSPECIFIED {
+		queryRef = queryRef.Where(ac.AccountStatus.Eq(input.AccountStatus.String()))
+	}
+
+	if input.EnableAccountInactiveClause {
+		queryRef = queryRef.Where(ac.AccountStatus.In(
+			lead_scraper_servicev1.Account_ACCOUNT_STATUS_SUSPENDED.String(),
+		))
+	}
+
+	result, err := queryRef.First()
 	if err != nil {
 		if err.Error() == "record not found" {
 			return nil, ErrAccountDoesNotExist
@@ -72,13 +84,17 @@ func (db *Db) GetAccount(ctx context.Context, input *GetAccountInput) (*lead_scr
 		return nil, fmt.Errorf("failed to get account: %w", err)
 	}
 
-	return result, nil
+	// convert to protobuf
+	acctPb, err := result.ToPB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert account to protobuf: %w", err)
+	}
+
+	return &acctPb, nil
 }
 
 // ListAccountsInput holds the input parameters for the ListAccounts function
 type ListAccountsInput struct {
-	OrgID    string `validate:"required"`
-	TenantID string `validate:"required"`
 	Limit    int    `validate:"required,gt=0"`
 	Offset   int    `validate:"gte=0"`
 }
@@ -117,8 +133,6 @@ func (db *Db) ListAccounts(ctx context.Context, input *ListAccountsInput) ([]*le
 	u := db.QueryOperator.AccountORM
 	queryRef := db.Client.Engine.
 		WithContext(ctx).
-		Where(u.OrgId.Eq(input.OrgID)).
-		Where(u.TenantId.Eq(input.TenantID)).
 		Order(u.Id).
 		Limit(input.Limit).
 		Offset(input.Offset)
@@ -126,9 +140,7 @@ func (db *Db) ListAccounts(ctx context.Context, input *ListAccountsInput) ([]*le
 	accounts, err := lead_scraper_servicev1.DefaultListAccount(ctx, queryRef)
 	if err != nil {
 		db.Logger.Error("failed to list accounts",
-			zap.Error(err),
-			zap.String("org_id", input.OrgID),
-			zap.String("tenant_id", input.TenantID))
+			zap.Error(err))
 		return nil, fmt.Errorf("failed to list accounts: %w", err)
 	}
 

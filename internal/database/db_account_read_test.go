@@ -20,6 +20,13 @@ func TestGetAccountInput_validate(t *testing.T) {
 		wantErr bool
 	}{
 		// TODO: Add test cases.
+		{
+			name: "success - valid input",
+			d: &GetAccountInput{
+				ID: 1,
+			},
+			wantErr: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -37,8 +44,8 @@ func TestDb_GetAccount(t *testing.T) {
 	type args struct {
 		ctx    context.Context
 		input  *GetAccountInput
-		setup  func(t *testing.T) (uint64, error)
-		clean  func(t *testing.T, id uint64)
+		setup  func(t *testing.T) (uint64, lead_scraper_servicev1.Account_AccountStatus, error)
+		clean  func(t *testing.T, id uint64, accountStatus lead_scraper_servicev1.Account_AccountStatus)
 	}
 
 	tests := []struct {
@@ -56,7 +63,7 @@ func TestDb_GetAccount(t *testing.T) {
 				input: &GetAccountInput{
 					ID:       1,
 				},
-				setup: func(t *testing.T) (uint64, error) {
+				setup: func(t *testing.T) (uint64, lead_scraper_servicev1.Account_AccountStatus, error) {
 					// Create the account first
 					acct, err := conn.CreateAccount(context.Background(), &CreateAccountInput{
 						Account:  validAccount,
@@ -66,14 +73,13 @@ func TestDb_GetAccount(t *testing.T) {
 					require.NoError(t, err)
 					require.NotNil(t, acct)
 					require.Equal(t, validAccount.Email, acct.Email)
-					return acct.Id, nil
+					return acct.Id, acct.AccountStatus, nil
 				},
-				clean: func(t *testing.T, id uint64) {
+				clean: func(t *testing.T, id uint64, accountStatus lead_scraper_servicev1.Account_AccountStatus) {
 					err := conn.DeleteAccount(context.Background(), &DeleteAccountParams{
 						ID:           id,
-						OrgID:        "test-org",
-						TenantID:     "test-tenant",
 						DeletionType: DeletionTypeSoft,
+						AccountStatus: accountStatus,
 					})
 					require.NoError(t, err)
 				},
@@ -128,10 +134,10 @@ func TestDb_GetAccount(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var id uint64
 			var err error
-
+			var accountStatus lead_scraper_servicev1.Account_AccountStatus
 			// Run setup if provided
 			if tt.args.setup != nil {
-				id, err = tt.args.setup(t)
+				id, accountStatus, err = tt.args.setup(t)
 				require.NoError(t, err)
 				if id != 0 {
 					tt.args.input.ID = id
@@ -141,7 +147,7 @@ func TestDb_GetAccount(t *testing.T) {
 			// Cleanup after test
 			defer func() {
 				if tt.args.clean != nil {
-					tt.args.clean(t, id)
+					tt.args.clean(t, id, accountStatus)
 				}
 			}()
 
@@ -174,32 +180,10 @@ func TestListAccountsInput_validate(t *testing.T) {
 		{
 			name: "success - valid input",
 			d: &ListAccountsInput{
-				OrgID:    "test-org",
-				TenantID: "test-tenant",
 				Limit:    10,
 				Offset:   0,
 			},
 			wantErr: false,
-		},
-		{
-			name: "failure - empty org ID",
-			d: &ListAccountsInput{
-				OrgID:    "",
-				TenantID: "test-tenant",
-				Limit:    10,
-				Offset:   0,
-			},
-			wantErr: true,
-		},
-		{
-			name: "failure - empty tenant ID",
-			d: &ListAccountsInput{
-				OrgID:    "test-org",
-				TenantID: "",
-				Limit:    10,
-				Offset:   0,
-			},
-			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
@@ -262,9 +246,8 @@ func TestDb_ListAccounts(t *testing.T) {
 		for _, acct := range accounts {
 			err := conn.DeleteAccount(cleanupCtx, &DeleteAccountParams{
 				ID:           acct.Id,
-				OrgID:        "test-org",
-				TenantID:     "test-tenant",
 				DeletionType: DeletionTypeHard,
+				AccountStatus: acct.AccountStatus,
 			})
 			require.NoError(t, err)
 		}
@@ -296,19 +279,14 @@ func TestDb_ListAccounts(t *testing.T) {
 			args: args{
 				ctx: context.Background(),
 				input: &ListAccountsInput{
-					OrgID:    "test-org",
-					TenantID: "test-tenant",
 					Limit:    10,
 					Offset:   0,
 				},
 			},
 			validate: func(t *testing.T, accounts []*lead_scraper_servicev1.Account) {
 				assert.NotNil(t, accounts)
-				assert.Len(t, accounts, numAccounts)
-				for _, acct := range accounts {
-					assert.Equal(t, "test-org", acct.OrgId)
-					assert.Equal(t, "test-tenant", acct.TenantId)
-				}
+				// we do this because the accounts from other tests may not have all been cleaned up
+				assert.LessOrEqual(t,numAccounts,  len(accounts), "some accounts may not have been cleaned up")
 			},
 		},
 		{
@@ -317,8 +295,6 @@ func TestDb_ListAccounts(t *testing.T) {
 			args: args{
 				ctx: context.Background(),
 				input: &ListAccountsInput{
-					OrgID:    "test-org",
-					TenantID: "test-tenant",
 					Limit:    2,
 					Offset:   0,
 				},
@@ -335,8 +311,6 @@ func TestDb_ListAccounts(t *testing.T) {
 			args: args{
 				ctx: context.Background(),
 				input: &ListAccountsInput{
-					OrgID:    "test-org",
-					TenantID: "test-tenant",
 					Limit:    0,
 					Offset:   0,
 				},
@@ -349,8 +323,6 @@ func TestDb_ListAccounts(t *testing.T) {
 			args: args{
 				ctx: context.Background(),
 				input: &ListAccountsInput{
-					OrgID:    "test-org",
-					TenantID: "test-tenant",
 					Limit:    10,
 					Offset:   -1,
 				},
@@ -367,8 +339,6 @@ func TestDb_ListAccounts(t *testing.T) {
 					return ctx
 				}(),
 				input: &ListAccountsInput{
-					OrgID:    "test-org",
-					TenantID: "test-tenant",
 					Limit:    10,
 					Offset:   0,
 				},
@@ -443,8 +413,6 @@ func TestListAccountsInput_Validate(t *testing.T) {
 		{
 			name: "success - valid input",
 			input: &ListAccountsInput{
-				OrgID:    "test-org",
-				TenantID: "test-tenant",
 				Limit:    10,
 				Offset:   0,
 			},
@@ -453,8 +421,6 @@ func TestListAccountsInput_Validate(t *testing.T) {
 		{
 			name: "failure - zero limit",
 			input: &ListAccountsInput{
-				OrgID:    "test-org",
-				TenantID: "test-tenant",
 				Limit:    0,
 				Offset:   0,
 			},
@@ -463,30 +429,8 @@ func TestListAccountsInput_Validate(t *testing.T) {
 		{
 			name: "failure - negative offset",
 			input: &ListAccountsInput{
-				OrgID:    "test-org",
-				TenantID: "test-tenant",
 				Limit:    10,
 				Offset:   -1,
-			},
-			wantErr: true,
-		},
-		{
-			name: "failure - empty org ID",
-			input: &ListAccountsInput{
-				OrgID:    "",
-				TenantID: "test-tenant",
-				Limit:    10,
-				Offset:   0,
-			},
-			wantErr: true,
-		},
-		{
-			name: "failure - empty tenant ID",
-			input: &ListAccountsInput{
-				OrgID:    "test-org",
-				TenantID: "",
-				Limit:    10,
-				Offset:   0,
 			},
 			wantErr: true,
 		},

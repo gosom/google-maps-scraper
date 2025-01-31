@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/Vector/vector-leads-scraper/internal/constants"
+	lead_scraper_servicev1 "github.com/VectorEngineering/vector-protobuf-definitions/api-definitions/pkg/generated/lead_scraper_service/v1"
 	"github.com/go-playground/validator/v10"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -19,6 +20,8 @@ var (
 	ErrAccountDoesNotExist = errors.New("account does not exist")
 	// ErrFailedToDeleteAccount is returned when the account deletion operation fails
 	ErrFailedToDeleteAccount = errors.New("failed to delete account")
+	// ErrFailedToGetAccountByEmail is returned when the account retrieval by email fails
+	ErrFailedToGetAccountByEmail = errors.New("failed to get account by email")
 )
 
 type DeletionType string
@@ -31,9 +34,8 @@ const (
 // DeleteAccountParams holds the parameters for deleting an account
 type DeleteAccountParams struct {
 	ID       uint64 `validate:"required,gt=0"`
-	OrgID    string `validate:"required"`
-	TenantID string `validate:"required"`
 	DeletionType DeletionType `validate:"required"`
+	AccountStatus lead_scraper_servicev1.Account_AccountStatus `validate:"required"`	
 }
 
 func (d *DeleteAccountParams) validate() error {
@@ -73,17 +75,12 @@ func (db *Db) DeleteAccount(ctx context.Context, params *DeleteAccountParams) er
 	}
 
 	// Check if account exists
-	account, err := db.GetAccount(ctx, &GetAccountInput{ID: params.ID})
+	account, err := db.GetAccount(ctx, &GetAccountInput{ID: params.ID, AccountStatus: params.AccountStatus})
 	if err != nil {
 		return fmt.Errorf("failed to get account: %w", err)
 	}
 	if account == nil {
 		return ErrAccountDoesNotExist
-	}
-
-	// Verify account belongs to the specified org and tenant
-	if account.OrgId != params.OrgID || account.TenantId != params.TenantID {
-		return fmt.Errorf("account does not belong to the specified organization or tenant")
 	}
 
 	// perform soft deletion
@@ -107,7 +104,7 @@ func (db *Db) DeleteAccount(ctx context.Context, params *DeleteAccountParams) er
 }
 
 // DeleteAccountByEmail deletes an account based on email address
-func (db *Db) DeleteAccountByEmail(ctx context.Context, email string, orgID string, tenantID string) error {
+func (db *Db) DeleteAccountByEmail(ctx context.Context, email string) error {
 	if email == constants.EMPTY {
 		return fmt.Errorf("email cannot be empty")
 	}
@@ -118,18 +115,23 @@ func (db *Db) DeleteAccountByEmail(ctx context.Context, email string, orgID stri
 		if errors.Is(err, ErrAccountDoesNotExist) {
 			return ErrAccountDoesNotExist
 		}
-		return fmt.Errorf("failed to get account by email: %w", err)
+		return fmt.Errorf("%w: %w", ErrFailedToGetAccountByEmail, err)
 	}
 	if account == nil {
 		return ErrAccountDoesNotExist
 	}
 
+	// convert to protobuf enum
+	acctPb, err := account.ToPB(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to convert account to protobuf: %w", err)
+	}
+
 	// Delete using the standard delete function
 	return db.DeleteAccount(ctx, &DeleteAccountParams{
 		ID:           account.Id,
-		OrgID:        orgID,
-		TenantID:     tenantID,
 		DeletionType: DeletionTypeSoft, // Default to soft deletion for safety
+		AccountStatus: acctPb.AccountStatus,
 	})
 }
 

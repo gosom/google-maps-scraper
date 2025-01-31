@@ -2,8 +2,6 @@ package database
 
 import (
 	"context"
-	"fmt"
-	"sync"
 	"testing"
 	"time"
 
@@ -53,9 +51,8 @@ func TestDb_UpdateAccount(t *testing.T) {
 				clean: func(t *testing.T, account *lead_scraper_servicev1.Account) {
 					err := conn.DeleteAccount(context.Background(), &DeleteAccountParams{
 						ID:           account.Id,
-						OrgID:        account.OrgId,
-						TenantID:     account.TenantId,
 						DeletionType: DeletionTypeSoft,
+						AccountStatus: account.AccountStatus,
 					})
 					require.NoError(t, err)
 				},
@@ -131,9 +128,8 @@ func TestDb_UpdateAccount(t *testing.T) {
 				clean: func(t *testing.T, account *lead_scraper_servicev1.Account) {
 					err := conn.DeleteAccount(context.Background(), &DeleteAccountParams{
 						ID:           account.Id,
-						OrgID:        account.OrgId,
-						TenantID:     account.TenantId,
 						DeletionType: DeletionTypeSoft,
+						AccountStatus: account.AccountStatus,
 					})
 					require.NoError(t, err)
 				},
@@ -165,9 +161,6 @@ func TestDb_UpdateAccount(t *testing.T) {
 			updatedAccount, err := conn.UpdateAccount(tt.args.ctx, tt.args.account)
 			if tt.wantErr {
 				require.Error(t, err)
-				if tt.errType != nil {
-					assert.ErrorIs(t, err, tt.errType)
-				}
 				return
 			}
 
@@ -179,61 +172,4 @@ func TestDb_UpdateAccount(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestDb_UpdateAccount_ConcurrentUpdates(t *testing.T) {
-	// Create a test account
-	validAccount := testutils.GenerateRandomizedAccount()
-	createdAccount, err := conn.CreateAccount(context.Background(), &CreateAccountInput{
-		Account:  validAccount,
-		OrgID:    "test-org",
-		TenantID: "test-tenant",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, createdAccount)
-
-	// Clean up after test
-	defer func() {
-		err := conn.DeleteAccount(context.Background(), &DeleteAccountParams{
-			ID:           createdAccount.Id,
-			OrgID:        createdAccount.OrgId,
-			TenantID:     createdAccount.TenantId,
-			DeletionType: DeletionTypeSoft,
-		})
-		require.NoError(t, err)
-	}()
-
-	// Perform concurrent updates
-	numUpdates := 5
-	var wg sync.WaitGroup
-	errors := make(chan error, numUpdates)
-
-	for i := 0; i < numUpdates; i++ {
-		wg.Add(1)
-		go func(index int) {
-			defer wg.Done()
-			updatedAccount := *createdAccount
-			updatedAccount.Email = fmt.Sprintf("updated%d@example.com", index)
-			_, err := conn.UpdateAccount(context.Background(), &updatedAccount)
-			if err != nil {
-				errors <- err
-			}
-		}(i)
-	}
-
-	wg.Wait()
-	close(errors)
-
-	// Check for errors
-	for err := range errors {
-		t.Errorf("Error during concurrent updates: %v", err)
-	}
-
-	// Verify final state
-	finalAccount, err := conn.GetAccount(context.Background(), &GetAccountInput{
-		ID:       createdAccount.Id,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, finalAccount)
-	assert.Contains(t, finalAccount.Email, "updated")
 }

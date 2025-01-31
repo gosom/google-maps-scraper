@@ -79,8 +79,6 @@ func TestDb_CreateAccount(t *testing.T) {
 					}
 					err := conn.DeleteAccount(context.Background(), &DeleteAccountParams{
 						ID:           account.Id,
-						OrgID:        account.OrgId,
-						TenantID:     account.TenantId,
 						DeletionType: DeletionTypeSoft,
 					})
 					if err != nil {
@@ -259,8 +257,6 @@ func TestDb_CreateAccount_DuplicateEmail(t *testing.T) {
 		if createdAccount != nil {
 			err := conn.DeleteAccount(context.Background(), &DeleteAccountParams{
 				ID:           createdAccount.Id,
-				OrgID:        createdAccount.OrgId,
-				TenantID:     createdAccount.TenantId,
 				DeletionType: DeletionTypeSoft,
 			})
 			if err != nil {
@@ -327,8 +323,6 @@ func TestDb_CreateAccount_ConcurrentCreation(t *testing.T) {
 			if account != nil {
 				err := conn.DeleteAccount(context.Background(), &DeleteAccountParams{
 					ID:           account.Id,
-					OrgID:        account.OrgId,
-					TenantID:     account.TenantId,
 					DeletionType: DeletionTypeSoft,
 				})
 				if err != nil {
