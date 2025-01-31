@@ -96,12 +96,6 @@ func WithTransaction(config *DBTestConfig, testName string, testFn TestDBFunc) f
 			}
 		}()
 
-		// Clean up the database first
-		err := tx.Exec("DELETE FROM accounts").Error
-		if err != nil {
-			t.Errorf("Failed to clean up database: %v", err)
-			return
-		}
 
 		// Run setup if provided
 		if config.SetupFunc != nil {
