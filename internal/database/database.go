@@ -6,7 +6,6 @@ import (
 	"time"
 
 	postgresdb "github.com/SolomonAIEngineering/backend-core-library/database/postgres"
-	"github.com/SolomonAIEngineering/backend-core-library/instrumentation"
 	"github.com/VectorEngineering/vector-protobuf-definitions/api-definitions/pkg/generated/lead_scraper_service/dal"
 	lead_scraper_servicev1 "github.com/VectorEngineering/vector-protobuf-definitions/api-definitions/pkg/generated/lead_scraper_service/v1"
 	"github.com/labstack/gommon/log"
@@ -94,8 +93,6 @@ type Db struct {
 	QueryOperator *dal.Query
 	// Logger is the logger that will be used to log database related messages
 	Logger *zap.Logger
-	// InstrumentationClient is the instrumentation client that will be used to emit metrics
-	instrumentation *instrumentation.Client
 }
 
 var _ DatabaseOperations = (*Db)(nil)
@@ -111,7 +108,7 @@ var _ DatabaseOperations = (*Db)(nil)
 // Returns:
 //   - *Db: Initialized database instance
 //   - error: Any error that occurred during initialization
-func New(client *postgresdb.Client, logger *zap.Logger, instrumentationClient *instrumentation.Client) (*Db, error) {
+func New(client *postgresdb.Client, logger *zap.Logger) (*Db, error) {
 	if client == nil {
 		return nil, ErrInvalidPostgresClientObject
 	}
@@ -120,7 +117,6 @@ func New(client *postgresdb.Client, logger *zap.Logger, instrumentationClient *i
 		Client:          client,
 		QueryOperator:   dal.Use(client.Engine),
 		Logger:          logger,
-		instrumentation: instrumentationClient,
 	}
 
 	// validate the database object
@@ -149,10 +145,6 @@ func (db *Db) Validate() error {
 
 	if db.Logger == nil {
 		return multierr.Append(ErrInvalidDBObject, fmt.Errorf("missing logger"))
-	}
-
-	if db.instrumentation == nil {
-		return multierr.Append(ErrInvalidDBObject, fmt.Errorf("missing instrumentation client"))
 	}
 
 	return nil
@@ -205,9 +197,4 @@ func (db *Db) GetQueryTimeout() time.Duration {
 // GetLogger returns the configured logger instance for database operations.
 func (db *Db) GetLogger() *zap.Logger {
 	return db.Logger
-}
-
-// GetInstrumentation returns the configured instrumentation client for metrics collection.
-func (db *Db) GetInstrumentation() *instrumentation.Client {
-	return db.instrumentation
 }

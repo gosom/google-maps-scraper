@@ -94,7 +94,6 @@ func NewTestDatabase() *Db {
 		Client:          client,
 		QueryOperator:   dal.Use(client.Engine),
 		Logger:          zap.NewNop(),
-		instrumentation: &instrumentation.Client{},
 	}
 }
 
@@ -232,12 +231,10 @@ func TestNew(t *testing.T) {
 			args: args{
 				client:                conn.Client,
 				logger:                zap.NewNop(),
-				instrumentationClient: &instrumentation.Client{},
 			},
 			want: &Db{
 				Client:          conn.Client,
 				Logger:          zap.NewNop(),
-				instrumentation: &instrumentation.Client{},
 			},
 			wantErr: false,
 		},
@@ -246,7 +243,6 @@ func TestNew(t *testing.T) {
 			args: args{
 				client:                nil,
 				logger:                zap.NewNop(),
-				instrumentationClient: &instrumentation.Client{},
 			},
 			wantErr: true,
 		},
@@ -255,7 +251,6 @@ func TestNew(t *testing.T) {
 			args: args{
 				client:                conn.Client,
 				logger:                nil,
-				instrumentationClient: &instrumentation.Client{},
 			},
 			wantErr: true,
 		},
@@ -263,7 +258,7 @@ func TestNew(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := New(tt.args.client, tt.args.logger, tt.args.instrumentationClient)
+			got, err := New(tt.args.client, tt.args.logger,)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -287,7 +282,6 @@ func TestDb_Validate(t *testing.T) {
 				Client:          conn.Client,
 				QueryOperator:   dal.Use(conn.Client.Engine),
 				Logger:          zap.NewNop(),
-				instrumentation: &instrumentation.Client{},
 			},
 			wantErr: false,
 		},
@@ -296,7 +290,6 @@ func TestDb_Validate(t *testing.T) {
 			db: &Db{
 				Client:          nil,
 				Logger:          zap.NewNop(),
-				instrumentation: &instrumentation.Client{},
 			},
 			wantErr: true,
 		},
@@ -305,7 +298,6 @@ func TestDb_Validate(t *testing.T) {
 			db: &Db{
 				Client:          conn.Client,
 				Logger:          nil,
-				instrumentation: &instrumentation.Client{},
 			},
 			wantErr: true,
 		},
@@ -379,7 +371,6 @@ func TestDb_GetLogger(t *testing.T) {
 			db: &Db{
 				Client:          conn.Client,
 				Logger:          logger,
-				instrumentation: &instrumentation.Client{},
 			},
 			want: logger,
 		},
@@ -389,33 +380,6 @@ func TestDb_GetLogger(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := tt.db.GetLogger(); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("Db.GetLogger() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestDb_GetInstrumentation(t *testing.T) {
-	instrumentationClient := &instrumentation.Client{}
-	tests := []struct {
-		name string
-		db   *Db
-		want *instrumentation.Client
-	}{
-		{
-			name: "success - get instrumentation client",
-			db: &Db{
-				Client:          conn.Client,
-				Logger:          zap.NewNop(),
-				instrumentation: instrumentationClient,
-			},
-			want: instrumentationClient,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.db.GetInstrumentation(); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Db.GetInstrumentation() = %v, want %v", got, tt.want)
 			}
 		})
 	}

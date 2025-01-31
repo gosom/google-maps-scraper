@@ -21,6 +21,26 @@ func TestDeleteAccountParams_validate(t *testing.T) {
 		wantErr bool
 	}{
 		// TODO: Add test cases.
+		{
+			name: "success - valid input",
+			d: &DeleteAccountParams{
+				ID:           123,
+				OrgID:        "test-org",
+				TenantID:     "test-tenant",
+				DeletionType: DeletionTypeSoft,
+			},
+			wantErr: false,
+		},
+		{
+			name: "failure - zero account ID",
+			d: &DeleteAccountParams{
+				ID:           0,
+				OrgID:        "test-org",
+				TenantID:     "test-tenant",
+				DeletionType: DeletionTypeSoft,
+			},
+			wantErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -75,8 +95,6 @@ func TestDb_DeleteAccount(t *testing.T) {
 					// Verify account no longer exists
 					_, err := conn.GetAccount(context.Background(), &GetAccountInput{
 						ID:       id,
-						OrgID:    "test-org",
-						TenantID: "test-tenant",
 					})
 					require.Error(t, err)
 				},
@@ -85,8 +103,6 @@ func TestDb_DeleteAccount(t *testing.T) {
 				// Verify account no longer exists
 				_, err := conn.GetAccount(context.Background(), &GetAccountInput{
 					ID:       id,
-					OrgID:    "test-org",
-					TenantID: "test-tenant",
 				})
 				require.Error(t, err)
 			},
@@ -212,42 +228,6 @@ func TestDb_DeleteAccount(t *testing.T) {
 	}
 }
 
-func TestDb_DeleteAccount_BatchDeletion(t *testing.T) {
-	// Create multiple test accounts
-	numAccounts := 5
-	accounts := make([]*lead_scraper_servicev1.Account, numAccounts)
-	for i := 0; i < numAccounts; i++ {
-		mockAccount := testutils.GenerateRandomizedAccount()
-		createdAcct, err := conn.CreateAccount(context.Background(), &CreateAccountInput{
-			Account:  mockAccount,
-			OrgID:    "test-org",
-			TenantID: "test-tenant",
-		})
-		require.NoError(t, err)
-		require.NotNil(t, createdAcct)
-		accounts[i] = createdAcct
-	}
-
-	// Delete accounts sequentially
-	for _, acct := range accounts {
-		err := conn.DeleteAccount(context.Background(), &DeleteAccountParams{
-			ID:           acct.Id,
-			OrgID:        "test-org",
-			TenantID:     "test-tenant",
-			DeletionType: DeletionTypeSoft,
-		})
-		require.NoError(t, err)
-
-		// Verify deletion
-		_, err = conn.GetAccount(context.Background(), &GetAccountInput{
-			ID:       acct.Id,
-			OrgID:    "test-org",
-			TenantID: "test-tenant",
-		})
-		require.Error(t, err)
-	}
-}
-
 func TestDb_DeleteAccount_StressTest(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping stress test in short mode")
@@ -301,8 +281,6 @@ func TestDb_DeleteAccount_StressTest(t *testing.T) {
 	for _, acct := range accounts {
 		_, err := conn.GetAccount(context.Background(), &GetAccountInput{
 			ID:       acct.Id,
-			OrgID:    "test-org",
-			TenantID: "test-tenant",
 		})
 		require.Error(t, err)
 	}
@@ -479,5 +457,152 @@ func TestDb_DeleteAccountByEmail(t *testing.T) {
 			_, err = conn.GetAccountByEmail(context.Background(), tt.args.email)
 			require.Error(t, err)
 		})
+	}
+}
+
+func TestDb_BatchDeleteAccounts(t *testing.T) {
+	// Create multiple test accounts
+	numAccounts := 10
+	accounts := make([]*lead_scraper_servicev1.Account, 0, numAccounts)
+	accountIDs := make([]uint64, 0, numAccounts)
+
+	for i := 0; i < numAccounts; i++ {
+		mockAccount := testutils.GenerateRandomizedAccount()
+		createdAcct, err := conn.CreateAccount(context.Background(), &CreateAccountInput{
+			Account:  mockAccount,
+			OrgID:    "test-org",
+			TenantID: "test-tenant",
+		})
+		require.NoError(t, err)
+		require.NotNil(t, createdAcct)
+		accounts = append(accounts, createdAcct)
+		accountIDs = append(accountIDs, createdAcct.Id)
+	}
+
+	type args struct {
+		ctx    context.Context
+		params *BatchDeleteAccountsParams
+	}
+
+	tests := []struct {
+		name    string
+		args    args
+		wantErr bool
+		errType error
+	}{
+		{
+			name:    "[success scenario] - delete all accounts in batches",
+			wantErr: false,
+			args: args{
+				ctx: context.Background(),
+				params: &BatchDeleteAccountsParams{
+					IDs:          accountIDs,
+					DeletionType: DeletionTypeSoft,
+					BatchSize:    3,
+				},
+			},
+		},
+		{
+			name:    "[failure scenario] - nil params",
+			wantErr: true,
+			errType: ErrInvalidInput,
+			args: args{
+				ctx:    context.Background(),
+				params: nil,
+			},
+		},
+		{
+			name:    "[failure scenario] - empty IDs",
+			wantErr: true,
+			errType: ErrInvalidInput,
+			args: args{
+				ctx: context.Background(),
+				params: &BatchDeleteAccountsParams{
+					IDs:          []uint64{},
+					DeletionType: DeletionTypeSoft,
+					BatchSize:    3,
+				},
+			},
+		},
+		{
+			name:    "[failure scenario] - invalid batch size",
+			wantErr: true,
+			errType: ErrInvalidInput,
+			args: args{
+				ctx: context.Background(),
+				params: &BatchDeleteAccountsParams{
+					IDs:          accountIDs,
+					DeletionType: DeletionTypeSoft,
+					BatchSize:    0,
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := conn.BatchDeleteAccounts(tt.args.ctx, tt.args.params)
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.errType != nil {
+					assert.ErrorIs(t, err, tt.errType)
+				}
+				return
+			}
+
+			require.NoError(t, err)
+
+			// Verify accounts are deleted
+			if tt.args.params != nil {
+				for _, id := range tt.args.params.IDs {
+					_, err := conn.GetAccount(context.Background(), &GetAccountInput{
+						ID:       id,
+					})
+					require.Error(t, err)
+					assert.ErrorIs(t, err, ErrAccountDoesNotExist)
+				}
+			}
+		})
+	}
+}
+
+func TestDb_BatchDeleteAccounts_LargeBatch(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping large batch test in short mode")
+	}
+
+	// Create a large number of test accounts
+	numAccounts := 100
+	accounts := make([]*lead_scraper_servicev1.Account, 0, numAccounts)
+	accountIDs := make([]uint64, 0, numAccounts)
+
+	for i := 0; i < numAccounts; i++ {
+		mockAccount := testutils.GenerateRandomizedAccount()
+		createdAcct, err := conn.CreateAccount(context.Background(), &CreateAccountInput{
+			Account:  mockAccount,
+			OrgID:    "test-org",
+			TenantID: "test-tenant",
+		})
+		require.NoError(t, err)
+		require.NotNil(t, createdAcct)
+		accounts = append(accounts, createdAcct)
+		accountIDs = append(accountIDs, createdAcct.Id)
+	}
+
+	// Delete accounts in batches
+	err := conn.BatchDeleteAccounts(context.Background(), &BatchDeleteAccountsParams{
+		IDs:          accountIDs,
+		DeletionType: DeletionTypeSoft,
+		BatchSize:    10,
+	})
+	require.NoError(t, err)
+
+	// Verify all accounts are deleted
+	for _, id := range accountIDs {
+		_, err := conn.GetAccount(context.Background(), &GetAccountInput{
+			ID:       id,
+		})
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrAccountDoesNotExist)
 	}
 }

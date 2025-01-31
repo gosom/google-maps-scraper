@@ -14,6 +14,18 @@ func (db *Db) UpdateWorkspace(ctx context.Context, workspace *lead_scraper_servi
 		return nil, fmt.Errorf("workspace cannot be nil")
 	}
 
+	// query the workspace
+	existing, err := db.GetWorkspace(ctx, workspace.Id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get workspace: %w", err)
+	}
+
+	// check if the workspace exists
+	if existing == nil {
+		return nil, fmt.Errorf("workspace not found")
+	}
+
+
 	result, err := lead_scraper_servicev1.DefaultStrictUpdateWorkspace(ctx, workspace, db.Client.Engine)
 	if err != nil {
 		db.Logger.Error("failed to update workspace", zap.Error(err))

@@ -15,8 +15,6 @@ import (
 // GetAccountInput holds the input parameters for the GetAccount function.
 type GetAccountInput struct {
 	ID                          uint64 `validate:"required,gt=0"`
-	OrgID                       string `validate:"required"`
-	TenantID                    string `validate:"required"`
 	EnableAccountInactiveClause bool   // Kept for API compatibility but not used
 }
 
@@ -61,21 +59,17 @@ func (db *Db) GetAccount(ctx context.Context, input *GetAccountInput) (*lead_scr
 		return nil, err
 	}
 
-	// Query the account
-	account := &lead_scraper_servicev1.Account{Id: input.ID, OrgId: input.OrgID, TenantId: input.TenantID}
+	// Query the account using the generated GORM model
+	account := &lead_scraper_servicev1.Account{Id: input.ID}
 	result, err := lead_scraper_servicev1.DefaultReadAccount(ctx, account, db.Client.Engine)
 	if err != nil {
+		if err.Error() == "record not found" {
+			return nil, ErrAccountDoesNotExist
+		}
 		db.Logger.Error("failed to get account",
 			zap.Error(err),
-			zap.Uint64("account_id", input.ID),
-			zap.String("org_id", input.OrgID),
-			zap.String("tenant_id", input.TenantID))
+			zap.Uint64("account_id", input.ID))
 		return nil, fmt.Errorf("failed to get account: %w", err)
-	}
-
-	// Verify account belongs to the specified org and tenant
-	if result.OrgId != input.OrgID || result.TenantId != input.TenantID {
-		return nil, fmt.Errorf("account does not belong to the specified organization or tenant")
 	}
 
 	return result, nil
@@ -119,12 +113,13 @@ func (db *Db) ListAccounts(ctx context.Context, input *ListAccountsInput) ([]*le
 		return nil, err
 	}
 
-	// Query accounts with pagination
+	// Query accounts with pagination using the generated GORM model
 	u := db.QueryOperator.AccountORM
 	queryRef := db.Client.Engine.
 		WithContext(ctx).
 		Where(u.OrgId.Eq(input.OrgID)).
 		Where(u.TenantId.Eq(input.TenantID)).
+		Order(u.Id).
 		Limit(input.Limit).
 		Offset(input.Offset)
 

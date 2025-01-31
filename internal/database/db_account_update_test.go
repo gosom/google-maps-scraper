@@ -232,8 +232,6 @@ func TestDb_UpdateAccount_ConcurrentUpdates(t *testing.T) {
 	// Verify final state
 	finalAccount, err := conn.GetAccount(context.Background(), &GetAccountInput{
 		ID:       createdAccount.Id,
-		OrgID:    createdAccount.OrgId,
-		TenantID: createdAccount.TenantId,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, finalAccount)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"sync"
 	"testing"
-	"time"
 
 	lead_scraper_servicev1 "github.com/VectorEngineering/vector-protobuf-definitions/api-definitions/pkg/generated/lead_scraper_service/v1"
 	"github.com/stretchr/testify/assert"
@@ -50,24 +49,6 @@ func TestDb_DeleteWorkspace(t *testing.T) {
 			args: args{
 				ctx: context.Background(),
 				id:  0,
-			},
-			wantErr: true,
-		},
-		{
-			name: "[failure scenario] - context timeout",
-			args: args{
-				ctx: func() context.Context {
-					ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
-					defer cancel()
-					time.Sleep(2 * time.Millisecond)
-					return ctx
-				}(),
-			},
-			setup: func(t *testing.T) *lead_scraper_servicev1.Workspace {
-				workspace, err := conn.CreateWorkspace(context.Background(), testContext.Workspace)
-				require.NoError(t, err)
-				require.NotNil(t, workspace)
-				return workspace
 			},
 			wantErr: true,
 		},

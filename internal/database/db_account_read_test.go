@@ -54,8 +54,7 @@ func TestDb_GetAccount(t *testing.T) {
 			args: args{
 				ctx: context.Background(),
 				input: &GetAccountInput{
-					OrgID:    "test-org",
-					TenantID: "test-tenant",
+					ID:       1,
 				},
 				setup: func(t *testing.T) (uint64, error) {
 					// Create the account first
@@ -94,8 +93,6 @@ func TestDb_GetAccount(t *testing.T) {
 				ctx: context.Background(),
 				input: &GetAccountInput{
 					ID:       0,
-					OrgID:    "test-org",
-					TenantID: "test-tenant",
 				},
 			},
 		},
@@ -107,8 +104,6 @@ func TestDb_GetAccount(t *testing.T) {
 				ctx: context.Background(),
 				input: &GetAccountInput{
 					ID:       999999,
-					OrgID:    "test-org",
-					TenantID: "test-tenant",
 				},
 			},
 		},
@@ -124,8 +119,6 @@ func TestDb_GetAccount(t *testing.T) {
 				}(),
 				input: &GetAccountInput{
 					ID:       1,
-					OrgID:    "test-org",
-					TenantID: "test-tenant",
 				},
 			},
 		},
@@ -178,6 +171,36 @@ func TestListAccountsInput_validate(t *testing.T) {
 		wantErr bool
 	}{
 		// TODO: Add test cases.
+		{
+			name: "success - valid input",
+			d: &ListAccountsInput{
+				OrgID:    "test-org",
+				TenantID: "test-tenant",
+				Limit:    10,
+				Offset:   0,
+			},
+			wantErr: false,
+		},
+		{
+			name: "failure - empty org ID",
+			d: &ListAccountsInput{
+				OrgID:    "",
+				TenantID: "test-tenant",
+				Limit:    10,
+				Offset:   0,
+			},
+			wantErr: true,
+		},
+		{
+			name: "failure - empty tenant ID",
+			d: &ListAccountsInput{
+				OrgID:    "test-org",
+				TenantID: "",
+				Limit:    10,
+				Offset:   0,
+			},
+			wantErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -189,9 +212,27 @@ func TestListAccountsInput_validate(t *testing.T) {
 }
 
 func TestDb_ListAccounts(t *testing.T) {
+	// Clean up any existing test accounts first
+	cleanupCtx := context.Background()
+	b := conn.QueryOperator.AccountORM
+	_, err := b.WithContext(cleanupCtx).
+		Where(b.OrgId.Eq("test-org")).
+		Where(b.TenantId.Eq("test-tenant")).
+		Unscoped().
+		Delete()
+	require.NoError(t, err)
+
+	// Verify cleanup was successful
+	count, err := b.WithContext(cleanupCtx).
+		Where(b.OrgId.Eq("test-org")).
+		Where(b.TenantId.Eq("test-tenant")).
+		Count()
+	require.NoError(t, err)
+	require.Equal(t, int64(0), count, "cleanup failed: test accounts still exist")
+
 	// Create test accounts
 	numAccounts := 5
-	accounts := make([]*lead_scraper_servicev1.Account, numAccounts)
+	accounts := make([]*lead_scraper_servicev1.Account, 0, numAccounts)
 	for i := 0; i < numAccounts; i++ {
 		mockAccount := testutils.GenerateRandomizedAccount()
 		createdAcct, err := conn.CreateAccount(context.Background(), &CreateAccountInput{
@@ -201,20 +242,40 @@ func TestDb_ListAccounts(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.NotNil(t, createdAcct)
-		accounts[i] = createdAcct
+		require.Equal(t, mockAccount.Email, createdAcct.Email)
+		
+		// Verify the account was created
+		verifyAcct, err := conn.GetAccount(context.Background(), &GetAccountInput{
+			ID:       createdAcct.Id,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, verifyAcct)
+		accounts = append(accounts, createdAcct)
 	}
+
+	// Verify we created the expected number of accounts
+	require.Len(t, accounts, numAccounts)
 
 	// Clean up after test
 	defer func() {
+		cleanupCtx := context.Background()
 		for _, acct := range accounts {
-			err := conn.DeleteAccount(context.Background(), &DeleteAccountParams{
+			err := conn.DeleteAccount(cleanupCtx, &DeleteAccountParams{
 				ID:           acct.Id,
 				OrgID:        "test-org",
 				TenantID:     "test-tenant",
-				DeletionType: DeletionTypeSoft,
+				DeletionType: DeletionTypeHard,
 			})
 			require.NoError(t, err)
 		}
+
+		// Verify cleanup
+		count, err := b.WithContext(cleanupCtx).
+			Where(b.OrgId.Eq("test-org")).
+			Where(b.TenantId.Eq("test-tenant")).
+			Count()
+		require.NoError(t, err)
+		require.Equal(t, int64(0), count, "cleanup failed: test accounts still exist")
 	}()
 
 	type args struct {
@@ -344,8 +405,6 @@ func TestGetAccountInput_Validate(t *testing.T) {
 			name: "success - valid input",
 			input: &GetAccountInput{
 				ID:       123,
-				OrgID:    "test-org",
-				TenantID: "test-tenant",
 			},
 			wantErr: false,
 		},
@@ -353,26 +412,6 @@ func TestGetAccountInput_Validate(t *testing.T) {
 			name: "failure - zero account ID",
 			input: &GetAccountInput{
 				ID:       0,
-				OrgID:    "test-org",
-				TenantID: "test-tenant",
-			},
-			wantErr: true,
-		},
-		{
-			name: "failure - empty org ID",
-			input: &GetAccountInput{
-				ID:       123,
-				OrgID:    "",
-				TenantID: "test-tenant",
-			},
-			wantErr: true,
-		},
-		{
-			name: "failure - empty tenant ID",
-			input: &GetAccountInput{
-				ID:       123,
-				OrgID:    "test-org",
-				TenantID: "",
 			},
 			wantErr: true,
 		},

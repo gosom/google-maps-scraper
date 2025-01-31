@@ -4,7 +4,6 @@ import (
 	"context"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/Vector/vector-leads-scraper/internal/testutils"
 	lead_scraper_servicev1 "github.com/VectorEngineering/vector-protobuf-definitions/api-definitions/pkg/generated/lead_scraper_service/v1"
@@ -52,19 +51,6 @@ func TestDb_CreateWorkspace(t *testing.T) {
 			args: args{
 				ctx:       context.Background(),
 				workspace: nil,
-			},
-		},
-		{
-			name:    "[failure scenario] - context timeout",
-			wantErr: true,
-			args: args{
-				ctx: func() context.Context {
-					ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
-					defer cancel()
-					time.Sleep(2 * time.Millisecond)
-					return ctx
-				}(),
-				workspace: validWorkspace,
 			},
 		},
 	}

@@ -14,6 +14,17 @@ func (db *Db) UpdateAccount(ctx context.Context, account *lead_scraper_servicev1
 		return nil, fmt.Errorf("account cannot be nil")
 	}
 
+	// check that the account exists
+	existing, err := db.GetAccount(ctx, &GetAccountInput{
+		ID: account.Id,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get account: %w", err)
+	}
+	if existing == nil {
+		return nil, fmt.Errorf("account not found")
+	}
+
 	result, err := lead_scraper_servicev1.DefaultStrictUpdateAccount(ctx, account, db.Client.Engine)
 	if err != nil {
 		db.Logger.Error("failed to update account", zap.Error(err))

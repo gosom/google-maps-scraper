@@ -5,7 +5,6 @@ go 1.23.4
 require (
 	github.com/PuerkitoBio/goquery v1.10.0
 	github.com/SolomonAIEngineering/backend-core-library v1.30.0
-	github.com/SolomonAIEngineering/backend-monorepo/src/core/api-definitions v0.0.0-20250129052803-9101bda65b17
 	github.com/VectorEngineering/vector-protobuf-definitions/api-definitions v0.0.0-20250130201622-94b5c1c79ee0
 	github.com/aws/aws-lambda-go v1.47.0
 	github.com/aws/aws-sdk-go-v2 v1.32.3
@@ -13,6 +12,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.42
 	github.com/aws/aws-sdk-go-v2/service/lambda v1.64.1
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.66.2
+	github.com/go-playground/validator/v10 v10.22.1
 	github.com/golangci/golangci-lint v1.61.0
 	github.com/google/open-location-code/go v0.0.0-20241213145606-bf601ad90a45
 	github.com/google/uuid v1.6.0
@@ -34,6 +34,7 @@ require (
 	golang.org/x/sync v0.10.0
 	golang.org/x/term v0.28.0
 	google.golang.org/protobuf v1.36.4
+	gorm.io/gen v0.3.26
 	gorm.io/gorm v1.25.12
 	modernc.org/sqlite v1.33.1
 )
@@ -61,7 +62,6 @@ require (
 	github.com/Noooste/utls v1.2.12 // indirect
 	github.com/Noooste/websocket v1.0.3 // indirect
 	github.com/OpenPeeDeeP/depguard/v2 v2.2.0 // indirect
-	github.com/VectorEngineering/vector-protobuf-definitions v1.3.2 // indirect
 	github.com/adhocore/gronx v1.19.5 // indirect
 	github.com/alecthomas/go-check-sumtype v0.1.4 // indirect
 	github.com/alexkohler/nakedret/v2 v2.0.4 // indirect
@@ -135,7 +135,6 @@ require (
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
-	github.com/go-playground/validator/v10 v10.22.1 // indirect
 	github.com/go-sql-driver/mysql v1.8.1 // indirect
 	github.com/go-stack/stack v1.8.1 // indirect
 	github.com/go-toolsmith/astcast v1.1.0 // indirect
@@ -191,7 +190,6 @@ require (
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/juju/errgo v0.0.0-20140925100237-08cceb5d0b53 // indirect
 	github.com/julz/importas v0.1.0 // indirect
-	github.com/k2io/hookingo v1.0.6 // indirect
 	github.com/karamaru-alpha/copyloopvar v1.1.0 // indirect
 	github.com/kisielk/errcheck v1.7.0 // indirect
 	github.com/kkHAIKE/contextcheck v1.1.5 // indirect
@@ -230,6 +228,7 @@ require (
 	github.com/morikuni/aec v1.0.0 // indirect
 	github.com/nakabonne/nestif v0.3.1 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
+	github.com/newrelic/csec-go-agent v1.6.0 // indirect
 	github.com/newrelic/go-agent/v3 v3.35.1 // indirect
 	github.com/newrelic/go-agent/v3/integrations/nrgorilla v1.2.2 // indirect
 	github.com/newrelic/go-agent/v3/integrations/nrgrpc v1.4.4 // indirect
@@ -335,7 +334,6 @@ require (
 	gorm.io/driver/mysql v1.5.7 // indirect
 	gorm.io/driver/postgres v1.5.11 // indirect
 	gorm.io/driver/sqlite v1.5.7 // indirect
-	gorm.io/gen v0.3.26 // indirect
 	gorm.io/hints v1.1.2 // indirect
 	gorm.io/plugin/dbresolver v1.5.3 // indirect
 	honnef.co/go/tools v0.5.1 // indirect
