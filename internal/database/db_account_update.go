@@ -5,19 +5,18 @@ import (
 	"fmt"
 
 	lead_scraper_servicev1 "github.com/VectorEngineering/vector-protobuf-definitions/api-definitions/pkg/generated/lead_scraper_service/v1"
-	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
 // UpdateAccount updates an existing account in the database
 func (db *Db) UpdateAccount(ctx context.Context, account *lead_scraper_servicev1.Account) (*lead_scraper_servicev1.Account, error) {
 	if account == nil {
-		return nil, errors.New("invalid input parameters")
+		return nil, ErrInvalidInput
 	}
 
 	// Validate email
 	if account.Email == "" {
-		return nil, errors.New("email is required")
+		return nil, ErrInvalidInput
 	}
 
 	// check that the account exists
