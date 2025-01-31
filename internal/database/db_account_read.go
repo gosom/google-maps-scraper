@@ -61,19 +61,20 @@ func (db *Db) GetAccount(ctx context.Context, input *GetAccountInput) (*lead_scr
 	}
 
 	// Query the account by id and account status. NOTE: we only include the account status if it is not unspecifed
-	ac := db.QueryOperator.AccountORM
-	queryRef := ac.WithContext(ctx).Where(ac.Id.Eq(input.ID))
+	var account lead_scraper_servicev1.AccountORM
+	query := db.Client.Engine.WithContext(ctx)
+
 	if input.AccountStatus != lead_scraper_servicev1.Account_ACCOUNT_STATUS_UNSPECIFIED {
-		queryRef = queryRef.Where(ac.AccountStatus.Eq(input.AccountStatus.String()))
+		query = query.Where("account_status = ?", input.AccountStatus.String())
 	}
 
 	if input.EnableAccountInactiveClause {
-		queryRef = queryRef.Where(ac.AccountStatus.In(
+		query = query.Where("account_status IN (?)", []string{
 			lead_scraper_servicev1.Account_ACCOUNT_STATUS_SUSPENDED.String(),
-		))
+		})
 	}
 
-	result, err := queryRef.First()
+	err := query.Where("id = ?", input.ID).First(&account).Error
 	if err != nil {
 		if err.Error() == "record not found" {
 			return nil, ErrAccountDoesNotExist
@@ -85,7 +86,7 @@ func (db *Db) GetAccount(ctx context.Context, input *GetAccountInput) (*lead_scr
 	}
 
 	// convert to protobuf
-	acctPb, err := result.ToPB(ctx)
+	acctPb, err := account.ToPB(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert account to protobuf: %w", err)
 	}
@@ -129,20 +130,30 @@ func (db *Db) ListAccounts(ctx context.Context, input *ListAccountsInput) ([]*le
 		return nil, err
 	}
 
-	// Query accounts with pagination using the generated GORM model
-	u := db.QueryOperator.AccountORM
-	queryRef := db.Client.Engine.
+	// Query accounts with pagination using GORM directly
+	var accounts []*lead_scraper_servicev1.AccountORM
+	if err := db.Client.Engine.
 		WithContext(ctx).
-		Order(u.Id).
+		Order("id").
 		Limit(input.Limit).
-		Offset(input.Offset)
-
-	accounts, err := lead_scraper_servicev1.DefaultListAccount(ctx, queryRef)
-	if err != nil {
+		Offset(input.Offset).
+		Find(&accounts).Error; err != nil {
 		db.Logger.Error("failed to list accounts",
 			zap.Error(err))
 		return nil, fmt.Errorf("failed to list accounts: %w", err)
 	}
 
-	return accounts, nil
+	// Convert ORM objects to protobuf objects
+	result := make([]*lead_scraper_servicev1.Account, len(accounts))
+	for i, account := range accounts {
+		pb, err := account.ToPB(ctx)
+		if err != nil {
+			db.Logger.Error("failed to convert account to protobuf",
+				zap.Error(err))
+			return nil, fmt.Errorf("failed to convert account to protobuf: %w", err)
+		}
+		result[i] = &pb
+	}
+
+	return result, nil
 }

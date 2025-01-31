@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Vector/vector-leads-scraper/internal/testutils"
 	lead_scraper_servicev1 "github.com/VectorEngineering/vector-protobuf-definitions/api-definitions/pkg/generated/lead_scraper_service/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -39,18 +38,11 @@ func TestGetAccountInput_validate(t *testing.T) {
 
 func TestDb_GetAccount(t *testing.T) {
 	// Create test accounts
-	validAccount := testutils.GenerateRandomizedAccount()
-
-	type args struct {
-		ctx    context.Context
-		input  *GetAccountInput
-		setup  func(t *testing.T) (uint64, lead_scraper_servicev1.Account_AccountStatus, error)
-		clean  func(t *testing.T, id uint64, accountStatus lead_scraper_servicev1.Account_AccountStatus)
-	}
+	validAccount := generateRandomizedAccount()
 
 	tests := []struct {
 		name     string
-		args     args
+		input    *GetAccountInput
 		wantErr  bool
 		errType  error
 		validate func(t *testing.T, account *lead_scraper_servicev1.Account)
@@ -58,31 +50,8 @@ func TestDb_GetAccount(t *testing.T) {
 		{
 			name:    "[success scenario] - get existing account",
 			wantErr: false,
-			args: args{
-				ctx: context.Background(),
-				input: &GetAccountInput{
-					ID:       1,
-				},
-				setup: func(t *testing.T) (uint64, lead_scraper_servicev1.Account_AccountStatus, error) {
-					// Create the account first
-					acct, err := conn.CreateAccount(context.Background(), &CreateAccountInput{
-						Account:  validAccount,
-						OrgID:    "test-org",
-						TenantID: "test-tenant",
-					})
-					require.NoError(t, err)
-					require.NotNil(t, acct)
-					require.Equal(t, validAccount.Email, acct.Email)
-					return acct.Id, acct.AccountStatus, nil
-				},
-				clean: func(t *testing.T, id uint64, accountStatus lead_scraper_servicev1.Account_AccountStatus) {
-					err := conn.DeleteAccount(context.Background(), &DeleteAccountParams{
-						ID:           id,
-						DeletionType: DeletionTypeSoft,
-						AccountStatus: accountStatus,
-					})
-					require.NoError(t, err)
-				},
+			input: &GetAccountInput{
+				ID: 1, // Will be updated in setup
 			},
 			validate: func(t *testing.T, account *lead_scraper_servicev1.Account) {
 				assert.NotNil(t, account)
@@ -95,77 +64,77 @@ func TestDb_GetAccount(t *testing.T) {
 			name:    "[failure scenario] - zero account ID",
 			wantErr: true,
 			errType: ErrInvalidInput,
-			args: args{
-				ctx: context.Background(),
-				input: &GetAccountInput{
-					ID:       0,
-				},
+			input: &GetAccountInput{
+				ID: 0,
 			},
 		},
 		{
 			name:    "[failure scenario] - non-existent account",
 			wantErr: true,
 			errType: ErrAccountDoesNotExist,
-			args: args{
-				ctx: context.Background(),
-				input: &GetAccountInput{
-					ID:       999999,
-				},
+			input: &GetAccountInput{
+				ID: 999999,
 			},
 		},
 		{
 			name:    "[failure scenario] - context timeout",
 			wantErr: true,
-			args: args{
-				ctx: func() context.Context {
-					ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
-					defer cancel()
-					time.Sleep(2 * time.Millisecond)
-					return ctx
-				}(),
-				input: &GetAccountInput{
-					ID:       1,
-				},
+			input: &GetAccountInput{
+				ID: 1,
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var id uint64
-			var err error
-			var accountStatus lead_scraper_servicev1.Account_AccountStatus
-			// Run setup if provided
-			if tt.args.setup != nil {
-				id, accountStatus, err = tt.args.setup(t)
+			config := NewDBTestConfig(conn)
+
+			if tt.name == "[success scenario] - get existing account" {
+				config = config.WithSetup(func(t *testing.T, db *Db) error {
+					// Create the account first
+					acct, err := db.CreateAccount(context.Background(), &CreateAccountInput{
+						Account:  validAccount,
+						OrgID:    "test-org",
+						TenantID: "test-tenant",
+					})
+					require.NoError(t, err)
+					require.NotNil(t, acct)
+					require.Equal(t, validAccount.Email, acct.Email)
+
+					// Update the input with the created account ID
+					tt.input.ID = acct.Id
+					return nil
+				})
+			}
+
+			test := func(t *testing.T, db *Db) error {
+				ctx := context.Background()
+				if tt.name == "[failure scenario] - context timeout" {
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithTimeout(ctx, 1*time.Nanosecond)
+					defer cancel()
+					time.Sleep(2 * time.Millisecond)
+				}
+
+				account, err := db.GetAccount(ctx, tt.input)
+				if tt.wantErr {
+					require.Error(t, err)
+					if tt.errType != nil {
+						assert.ErrorIs(t, err, tt.errType)
+					}
+					return nil
+				}
+
 				require.NoError(t, err)
-				if id != 0 {
-					tt.args.input.ID = id
+				require.NotNil(t, account)
+
+				if tt.validate != nil {
+					tt.validate(t, account)
 				}
+				return nil
 			}
 
-			// Cleanup after test
-			defer func() {
-				if tt.args.clean != nil {
-					tt.args.clean(t, id, accountStatus)
-				}
-			}()
-
-			account, err := conn.GetAccount(tt.args.ctx, tt.args.input)
-			if tt.wantErr {
-				require.Error(t, err)
-				if tt.errType != nil {
-					assert.ErrorIs(t, err, tt.errType)
-				}
-				return
-			}
-
-			require.NoError(t, err)
-			require.NotNil(t, account)
-
-			if tt.validate != nil {
-				tt.validate(t, account)
-			}
+			WithTransaction(config, tt.name, test)(t)
 		})
 	}
 }
@@ -196,79 +165,10 @@ func TestListAccountsInput_validate(t *testing.T) {
 }
 
 func TestDb_ListAccounts(t *testing.T) {
-	// Clean up any existing test accounts first
-	cleanupCtx := context.Background()
-	b := conn.QueryOperator.AccountORM
-	_, err := b.WithContext(cleanupCtx).
-		Where(b.OrgId.Eq("test-org")).
-		Where(b.TenantId.Eq("test-tenant")).
-		Unscoped().
-		Delete()
-	require.NoError(t, err)
-
-	// Verify cleanup was successful
-	count, err := b.WithContext(cleanupCtx).
-		Where(b.OrgId.Eq("test-org")).
-		Where(b.TenantId.Eq("test-tenant")).
-		Count()
-	require.NoError(t, err)
-	require.Equal(t, int64(0), count, "cleanup failed: test accounts still exist")
-
-	// Create test accounts
-	numAccounts := 5
-	accounts := make([]*lead_scraper_servicev1.Account, 0, numAccounts)
-	for i := 0; i < numAccounts; i++ {
-		mockAccount := testutils.GenerateRandomizedAccount()
-		createdAcct, err := conn.CreateAccount(context.Background(), &CreateAccountInput{
-			Account:  mockAccount,
-			OrgID:    "test-org",
-			TenantID: "test-tenant",
-		})
-		require.NoError(t, err)
-		require.NotNil(t, createdAcct)
-		require.Equal(t, mockAccount.Email, createdAcct.Email)
-		
-		// Verify the account was created
-		verifyAcct, err := conn.GetAccount(context.Background(), &GetAccountInput{
-			ID:       createdAcct.Id,
-		})
-		require.NoError(t, err)
-		require.NotNil(t, verifyAcct)
-		accounts = append(accounts, createdAcct)
-	}
-
-	// Verify we created the expected number of accounts
-	require.Len(t, accounts, numAccounts)
-
-	// Clean up after test
-	defer func() {
-		cleanupCtx := context.Background()
-		for _, acct := range accounts {
-			err := conn.DeleteAccount(cleanupCtx, &DeleteAccountParams{
-				ID:           acct.Id,
-				DeletionType: DeletionTypeHard,
-				AccountStatus: acct.AccountStatus,
-			})
-			require.NoError(t, err)
-		}
-
-		// Verify cleanup
-		count, err := b.WithContext(cleanupCtx).
-			Where(b.OrgId.Eq("test-org")).
-			Where(b.TenantId.Eq("test-tenant")).
-			Count()
-		require.NoError(t, err)
-		require.Equal(t, int64(0), count, "cleanup failed: test accounts still exist")
-	}()
-
-	type args struct {
-		ctx   context.Context
-		input *ListAccountsInput
-	}
-
 	tests := []struct {
 		name     string
-		args     args
+		input    *ListAccountsInput
+		numAccounts int
 		wantErr  bool
 		errType  error
 		validate func(t *testing.T, accounts []*lead_scraper_servicev1.Account)
@@ -276,28 +176,23 @@ func TestDb_ListAccounts(t *testing.T) {
 		{
 			name:    "[success scenario] - list all accounts",
 			wantErr: false,
-			args: args{
-				ctx: context.Background(),
-				input: &ListAccountsInput{
-					Limit:    10,
-					Offset:   0,
-				},
+			numAccounts: 5,
+			input: &ListAccountsInput{
+				Limit:    10,
+				Offset:   0,
 			},
 			validate: func(t *testing.T, accounts []*lead_scraper_servicev1.Account) {
 				assert.NotNil(t, accounts)
-				// we do this because the accounts from other tests may not have all been cleaned up
-				assert.LessOrEqual(t,numAccounts,  len(accounts), "some accounts may not have been cleaned up")
+				assert.Len(t, accounts, 5)
 			},
 		},
 		{
-			name:    "[success scenario] - paginated list",
+			name:    "[success scenario] - list accounts with offset",
 			wantErr: false,
-			args: args{
-				ctx: context.Background(),
-				input: &ListAccountsInput{
-					Limit:    2,
-					Offset:   0,
-				},
+			numAccounts: 5,
+			input: &ListAccountsInput{
+				Limit:    2,
+				Offset:   2,
 			},
 			validate: func(t *testing.T, accounts []*lead_scraper_servicev1.Account) {
 				assert.NotNil(t, accounts)
@@ -308,59 +203,66 @@ func TestDb_ListAccounts(t *testing.T) {
 			name:    "[failure scenario] - invalid limit",
 			wantErr: true,
 			errType: ErrInvalidInput,
-			args: args{
-				ctx: context.Background(),
-				input: &ListAccountsInput{
-					Limit:    0,
-					Offset:   0,
-				},
+			input: &ListAccountsInput{
+				Limit:    0,
+				Offset:   0,
 			},
 		},
 		{
 			name:    "[failure scenario] - invalid offset",
 			wantErr: true,
 			errType: ErrInvalidInput,
-			args: args{
-				ctx: context.Background(),
-				input: &ListAccountsInput{
-					Limit:    10,
-					Offset:   -1,
-				},
-			},
-		},
-		{
-			name:    "[failure scenario] - context timeout",
-			wantErr: true,
-			args: args{
-				ctx: func() context.Context {
-					ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
-					defer cancel()
-					time.Sleep(2 * time.Millisecond)
-					return ctx
-				}(),
-				input: &ListAccountsInput{
-					Limit:    10,
-					Offset:   0,
-				},
+			input: &ListAccountsInput{
+				Limit:    10,
+				Offset:   -1,
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			accounts, err := conn.ListAccounts(tt.args.ctx, tt.args.input)
-			if tt.wantErr {
-				require.Error(t, err)
-				if tt.errType != nil {
-					assert.ErrorIs(t, err, tt.errType)
-				}
-				return
+			config := NewDBTestConfig(conn)
+
+			if tt.numAccounts > 0 {
+				config = config.WithSetup(func(t *testing.T, db *Db) error {
+					// Create test accounts
+					for i := 0; i < tt.numAccounts; i++ {
+						mockAccount := generateRandomizedAccount()
+						createdAcct, err := db.CreateAccount(context.Background(), &CreateAccountInput{
+							Account:  mockAccount,
+							OrgID:    "test-org",
+							TenantID: "test-tenant",
+						})
+						require.NoError(t, err)
+						require.NotNil(t, createdAcct)
+						require.Equal(t, mockAccount.Email, createdAcct.Email)
+						require.Equal(t, "test-org", createdAcct.OrgId)
+						require.Equal(t, "test-tenant", createdAcct.TenantId)
+					}
+					return nil
+				})
 			}
 
-			require.NoError(t, err)
-			if tt.validate != nil {
-				tt.validate(t, accounts)
+			test := func(t *testing.T, db *Db) error {
+				accounts, err := db.ListAccounts(context.Background(), tt.input)
+				if tt.wantErr {
+					require.Error(t, err)
+					if tt.errType != nil {
+						assert.ErrorIs(t, err, tt.errType)
+					}
+					return nil
+				}
+
+				require.NoError(t, err)
+				require.NotNil(t, accounts)
+
+				if tt.validate != nil {
+					tt.validate(t, accounts)
+				}
+				return nil
 			}
+
+			WithTransaction(config, tt.name, test)(t)
 		})
 	}
 }

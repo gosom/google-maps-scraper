@@ -8,7 +8,6 @@ import (
 
 	postgresdb "github.com/SolomonAIEngineering/backend-core-library/database/postgres"
 	lead_scraper_servicev1 "github.com/VectorEngineering/vector-protobuf-definitions/api-definitions/pkg/generated/lead_scraper_service/v1"
-	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
@@ -73,60 +72,69 @@ func WithTransaction(config *DBTestConfig, testName string, testFn TestDBFunc) f
 	return func(t *testing.T) {
 		t.Helper()
 
-		// Start a setup transaction and commit it
-		if config.SetupFunc != nil {
-			setupTx := config.BaseDb.Client.Engine.Begin()
-			require.NoError(t, setupTx.Error)
-
-			setupDb := createTestDb(setupTx, config.BaseDb, config.QueryTimeout)
-
-			// Run setup
-			err := config.SetupFunc(t, setupDb)
-			if err != nil {
-				setupTx.Rollback()
-				t.Fatalf("Failed to setup test: %v", err)
-			}
-
-			// Commit the setup transaction
-			err = setupTx.Commit().Error
-			require.NoError(t, err, "Failed to commit setup transaction")
-		}
-
-		// Start a new transaction for the test
+		// Start a transaction for both setup and test
 		tx := config.BaseDb.Client.Engine.Begin()
-		require.NoError(t, tx.Error)
+		if tx.Error != nil {
+			t.Fatalf("Failed to begin transaction: %v", tx.Error)
+		}
 
 		// Create test database instance
 		testDb := createTestDb(tx, config.BaseDb, config.QueryTimeout)
 
-		// Ensure we rollback the test transaction at the end
+		// Always ensure we clean up the transaction
+		var committed bool
 		defer func() {
-			tx.Rollback()
+			if r := recover(); r != nil {
+				if !committed {
+					tx.Rollback()
+				}
+				panic(r) // re-throw panic after cleanup
+			}
+			// If we haven't committed or rolled back yet, do it now
+			if !committed {
+				tx.Rollback()
+			}
 		}()
 
-		// Run the test
-		if err := testFn(t, testDb); err != nil {
-			t.Errorf("Test failed: %v", err)
+		// Clean up the database first
+		err := tx.Exec("DELETE FROM accounts").Error
+		if err != nil {
+			t.Errorf("Failed to clean up database: %v", err)
+			return
 		}
+
+		// Run setup if provided
+		if config.SetupFunc != nil {
+			err := config.SetupFunc(t, testDb)
+			if err != nil {
+				t.Errorf("Failed to setup test: %v", err)
+				return
+			}
+		}
+
+		// Run the test
+		testErr := testFn(t, testDb)
 
 		// Run cleanup if provided
 		if config.CleanupFunc != nil {
-			cleanupTx := config.BaseDb.Client.Engine.Begin()
-			require.NoError(t, cleanupTx.Error)
-
-			cleanupDb := createTestDb(cleanupTx, config.BaseDb, config.QueryTimeout)
-
-			err := config.CleanupFunc(t, cleanupDb)
+			err := config.CleanupFunc(t, testDb)
 			if err != nil {
-				cleanupTx.Rollback()
 				t.Errorf("Failed to cleanup test: %v", err)
 				return
 			}
-
-			err = cleanupTx.Commit().Error
-			if err != nil {
-				t.Errorf("Failed to commit cleanup transaction: %v", err)
-			}
 		}
+
+		// If test failed, return
+		if testErr != nil {
+			t.Errorf("Test failed: %v", testErr)
+			return
+		}
+
+		// If we got here, commit the transaction
+		if err := tx.Commit().Error; err != nil {
+			t.Errorf("Failed to commit transaction: %v", err)
+			return
+		}
+		committed = true
 	}
 } 
