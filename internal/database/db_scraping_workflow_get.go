@@ -19,6 +19,9 @@ func (db *Db) GetScrapingWorkflow(ctx context.Context, id uint64) (*lead_scraper
 	var workflowORM lead_scraper_servicev1.ScrapingWorkflowORM
 	result := db.Client.Engine.WithContext(ctx).Where("id = ?", id).First(&workflowORM)
 	if result.Error != nil {
+		if result.Error.Error() == "record not found" {
+			return nil, fmt.Errorf("%w: %v", ErrWorkflowDoesNotExist, result.Error)
+		}
 		return nil, fmt.Errorf("failed to get scraping workflow: %w", result.Error)
 	}
 
