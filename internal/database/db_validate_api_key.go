@@ -23,6 +23,9 @@ func (db *Db) ValidateAPIKey(ctx context.Context, hash string) (*lead_scraper_se
 	defer cancel()
 
 	if apiKeyORM, err = aQop.WithContext(ctx).Where(aQop.KeyHash.Eq(hash)).First(); err != nil {
+		if err.Error() == "record not found" {
+			return nil, fmt.Errorf("%w: %v", ErrJobDoesNotExist, err)
+		}
 		return nil, fmt.Errorf("failed to validate API key: %w", err)
 	}
 
