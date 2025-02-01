@@ -46,11 +46,29 @@ func TestListScrapingWorkflows(t *testing.T) {
 		},
 	}
 
+	createdWorkflows := make([]*lead_scraper_servicev1.ScrapingWorkflow, 0, len(workflows))
 	for _, w := range workflows {
 		created, err := conn.CreateScrapingWorkflow(context.Background(), w)
-		assert.NoError(t, err)
-		assert.NotNil(t, created)
+		if err != nil {
+			t.Fatalf("Failed to create test workflow: %v", err)
+		}
+		if created == nil {
+			t.Fatal("Created workflow is nil")
+		}
+		createdWorkflows = append(createdWorkflows, created)
 	}
+
+	// Clean up after all tests
+	defer func() {
+		for _, w := range createdWorkflows {
+			if w != nil {
+				err := conn.DeleteScrapingWorkflow(context.Background(), w.Id)
+				if err != nil {
+					t.Logf("Failed to delete test workflow: %v", err)
+				}
+			}
+		}
+	}()
 
 	tests := []struct {
 		name      string
@@ -70,7 +88,7 @@ func TestListScrapingWorkflows(t *testing.T) {
 			name:      "zero limit",
 			limit:     0,
 			offset:    0,
-			wantCount: 10, // default limit
+			wantCount: len(createdWorkflows), // should get all workflows up to default limit
 			wantError: false,
 		},
 		{
@@ -103,6 +121,14 @@ func TestListScrapingWorkflows(t *testing.T) {
 					assert.NotEmpty(t, first.AlertEmails)
 					assert.NotEmpty(t, first.OrgId)
 					assert.NotEmpty(t, first.TenantId)
+
+					// For the first test case, verify we get the expected workflows in order
+					if tt.name == "valid limit and offset" {
+						assert.Equal(t, createdWorkflows[0].Id, results[0].Id)
+						if len(results) > 1 {
+							assert.Equal(t, createdWorkflows[1].Id, results[1].Id)
+						}
+					}
 				}
 			}
 		})

@@ -17,7 +17,7 @@ func (db *Db) ListScrapingWorkflows(ctx context.Context, limit, offset int) ([]*
 	defer cancel()
 
 	var workflowsORM []lead_scraper_servicev1.ScrapingWorkflowORM
-	result := db.Client.Engine.WithContext(ctx).Limit(limit).Offset(offset).Find(&workflowsORM)
+	result := db.Client.Engine.WithContext(ctx).Order("id asc").Limit(limit).Offset(offset).Find(&workflowsORM)
 	if result.Error != nil {
 		return nil, fmt.Errorf("failed to list scraping workflows: %w", result.Error)
 	}
