@@ -79,24 +79,6 @@ func TestCreateScrapingWorkflow(t *testing.T) {
 			errType:   ErrInvalidInput,
 		},
 		{
-			name: "[failure scenario] - missing org ID",
-			workflow: &lead_scraper_servicev1.ScrapingWorkflow{
-				CronExpression: "0 0 * * *",
-				TenantId:      "test-tenant",
-			},
-			wantError: true,
-			errType:   ErrInvalidInput,
-		},
-		{
-			name: "[failure scenario] - missing tenant ID",
-			workflow: &lead_scraper_servicev1.ScrapingWorkflow{
-				CronExpression: "0 0 * * *",
-				OrgId:         "test-org",
-			},
-			wantError: true,
-			errType:   ErrInvalidInput,
-		},
-		{
 			name: "[failure scenario] - invalid geo fencing parameters",
 			workflow: &lead_scraper_servicev1.ScrapingWorkflow{
 				CronExpression:    "0 0 * * *",

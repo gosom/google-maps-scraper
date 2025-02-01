@@ -21,15 +21,9 @@ func (db *Db) CreateLead(ctx context.Context, scrapingJobID uint64, lead *lead_s
 	defer cancel()
 
 	// ensure the scraping job exists
-	scrapingJob, err := db.GetScrapingJob(ctx, scrapingJobID)
+	scrapingJob, err := sQop.WithContext(ctx).Where(sQop.Id.Eq(scrapingJobID)).First()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get scraping job: %w", err)
-	}
-
-	// convert to ORM
-	scrapingJobORM, err := scrapingJob.ToORM(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert to ORM model: %w", err)
 	}
 
 	// convert to ORM model
@@ -38,12 +32,12 @@ func (db *Db) CreateLead(ctx context.Context, scrapingJobID uint64, lead *lead_s
 		return nil, fmt.Errorf("failed to convert to ORM model: %w", err)
 	}
 
-	if err := sQop.Leads.WithContext(ctx).Model(&scrapingJobORM).Append(&leadORM); err != nil {
+	if err := sQop.Leads.WithContext(ctx).Model(scrapingJob).Append(&leadORM); err != nil {
 		return nil, fmt.Errorf("failed to append lead to scraping job: %w", err)
 	}
 
 	// save the scraping job
-	if _, err := sQop.WithContext(ctx).Updates(&scrapingJobORM); err != nil {
+	if _, err := sQop.WithContext(ctx).Updates(scrapingJob); err != nil {
 		return nil, fmt.Errorf("failed to save scraping job: %w", err)
 	}
 

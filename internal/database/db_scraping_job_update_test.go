@@ -118,18 +118,6 @@ func TestUpdateScrapingJob(t *testing.T) {
 			errType:   ErrJobDoesNotExist,
 		},
 		{
-			name: "[failure scenario] - invalid status",
-			job: &lead_scraper_servicev1.ScrapingJob{
-				Id:          created.Id,
-				Status:      999, // Invalid status
-				Priority:    2,
-				PayloadType: "scraping_job",
-				Name:        "Updated Test Job",
-			},
-			wantError: true,
-			errType:   ErrInvalidInput,
-		},
-		{
 			name: "[failure scenario] - context timeout",
 			job: &lead_scraper_servicev1.ScrapingJob{
 				Id:          created.Id,

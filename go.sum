@@ -56,10 +56,14 @@ github.com/SolomonAIEngineering/backend-core-library v1.30.0 h1:c4W2Mvd7uh6wOVTL
 github.com/SolomonAIEngineering/backend-core-library v1.30.0/go.mod h1:DQv8Xb1rljobwulkSPf+1fnknm/V2SkzVcIgP3lPT/w=
 github.com/VectorEngineering/vector-protobuf-definitions v1.6.0 h1:n5MTn2ZP6+PPKGtZp5RcbVxC5lvZkJsK/1rvYR6H/7Y=
 github.com/VectorEngineering/vector-protobuf-definitions v1.6.0/go.mod h1:oan/JMiDAM9j5u6AgEL8AGhQL8hkSHBNtgxVmXWKA6o=
+github.com/VectorEngineering/vector-protobuf-definitions v1.7.0 h1:3fQc/Xu7qcLCVcGbR8OxFB6fdu8a/6QGQ26nZuzwtVc=
+github.com/VectorEngineering/vector-protobuf-definitions v1.7.0/go.mod h1:oan/JMiDAM9j5u6AgEL8AGhQL8hkSHBNtgxVmXWKA6o=
 github.com/VectorEngineering/vector-protobuf-definitions/api-definitions v0.0.0-20250130201622-94b5c1c79ee0 h1:CTq+CfjCe3aKXmAd/OwhOfPgNKEWA2/spT+3iZX4z9Y=
 github.com/VectorEngineering/vector-protobuf-definitions/api-definitions v0.0.0-20250130201622-94b5c1c79ee0/go.mod h1:IxfUHQhLfFULZm7FwQ3Tx0qanQJQGwFpoAu6doCVOQo=
 github.com/VectorEngineering/vector-protobuf-definitions/api-definitions v0.0.0-20250201211524-e03b47e38996 h1:+5kucQVC+BLsd9U92L+Kqp6X+VegDMHl875HQkvwJ8g=
 github.com/VectorEngineering/vector-protobuf-definitions/api-definitions v0.0.0-20250201211524-e03b47e38996/go.mod h1:IxfUHQhLfFULZm7FwQ3Tx0qanQJQGwFpoAu6doCVOQo=
+github.com/VectorEngineering/vector-protobuf-definitions/api-definitions v0.0.0-20250201224936-0421781dba95 h1:SoRFkGylcMBZmos6uITvbiN4SCpJ3x4ng63/6+NnowE=
+github.com/VectorEngineering/vector-protobuf-definitions/api-definitions v0.0.0-20250201224936-0421781dba95/go.mod h1:IxfUHQhLfFULZm7FwQ3Tx0qanQJQGwFpoAu6doCVOQo=
 github.com/adhocore/gronx v1.19.5 h1:cwIG4nT1v9DvadxtHBe6MzE+FZ1JDvAUC45U2fl4eSQ=
 github.com/adhocore/gronx v1.19.5/go.mod h1:7oUY1WAU8rEJWmAxXR2DN0JaO4gi9khSgKjiRypqteg=
 github.com/alecthomas/assert/v2 v2.2.2 h1:Z/iVC0xZfWTaFNE6bA3z07T86hd45Xe2eLt6WVy2bbk=

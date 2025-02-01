@@ -16,6 +16,11 @@ func (db *Db) CreateScrapingWorkflow(ctx context.Context, workflow *lead_scraper
 	ctx, cancel := context.WithTimeout(ctx, db.GetQueryTimeout())
 	defer cancel()
 
+	// validate the workflow
+	if err := workflow.Validate(); err != nil {
+		return nil, fmt.Errorf("failed to validate scraping workflow: %w", err)
+	}
+
 	// convert to ORM model
 	workflowORM, err := workflow.ToORM(ctx)
 	if err != nil {

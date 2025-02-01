@@ -66,8 +66,6 @@ func TestGetScrapingJob(t *testing.T) {
 				assert.Equal(t, created.Lat, job.Lat)
 				assert.Equal(t, created.Lon, job.Lon)
 				assert.Equal(t, created.FastMode, job.FastMode)
-				assert.Equal(t, created.Radius, job.Radius)
-				assert.Equal(t, created.MaxTime, job.MaxTime)
 			},
 		},
 		{

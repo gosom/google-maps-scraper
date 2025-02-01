@@ -9,6 +9,10 @@ import (
 
 // CreateScrapingJob creates a new scraping job in the database
 func (db *Db) CreateScrapingJob(ctx context.Context, job *lead_scraper_servicev1.ScrapingJob) (*lead_scraper_servicev1.ScrapingJob, error) {
+	var (
+		sQop = db.QueryOperator.ScrapingJobORM
+	)
+
 	if job == nil {
 		return nil, ErrInvalidInput
 	}
@@ -29,9 +33,8 @@ func (db *Db) CreateScrapingJob(ctx context.Context, job *lead_scraper_servicev1
 	}
 
 	// create the job
-	result := db.Client.Engine.WithContext(ctx).Create(&jobORM)
-	if result.Error != nil {
-		return nil, fmt.Errorf("failed to create scraping job: %w", result.Error)
+	if err := sQop.WithContext(ctx).Create(&jobORM); err != nil {
+		return nil, fmt.Errorf("failed to create scraping job: %w", err)
 	}
 
 	// convert back to protobuf

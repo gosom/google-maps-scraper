@@ -64,6 +64,9 @@ var (
 
 	// ErrJobDoesNotExist is returned when attempting to operate on a non-existent job
 	ErrJobDoesNotExist = fmt.Errorf("job does not exist")
+
+	// ErrAPIKeyDoesNotExist is returned when attempting to operate on a non-existent API key
+	ErrAPIKeyDoesNotExist = fmt.Errorf("API key does not exist")
 )
 
 // DatabaseOperations defines the methods to interact with the underlying database

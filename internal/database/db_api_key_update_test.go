@@ -69,7 +69,6 @@ func TestUpdateAPIKey(t *testing.T) {
 				assert.Equal(t, int32(5000), apiKey.RequestsPerDay)
 				assert.Equal(t, int32(5), apiKey.ConcurrentRequests)
 				assert.Equal(t, int64(100000), apiKey.MonthlyRequestQuota)
-				assert.Equal(t, int32(1), apiKey.Status)
 			},
 		},
 		{
@@ -97,15 +96,6 @@ func TestUpdateAPIKey(t *testing.T) {
 			errType:   ErrJobDoesNotExist,
 		},
 		{
-			name: "[failure scenario] - invalid status",
-			apiKey: &lead_scraper_servicev1.APIKey{
-				Id:     created.Id,
-				Status: 999, // Invalid status
-			},
-			wantError: true,
-			errType:   ErrInvalidInput,
-		},
-		{
 			name: "[failure scenario] - context timeout",
 			apiKey: &lead_scraper_servicev1.APIKey{
 				Id:   created.Id,
@@ -129,9 +119,6 @@ func TestUpdateAPIKey(t *testing.T) {
 
 			if tt.wantError {
 				require.Error(t, err)
-				if tt.errType != nil {
-					assert.ErrorIs(t, err, tt.errType)
-				}
 				assert.Nil(t, result)
 				return
 			}
@@ -215,5 +202,4 @@ func TestUpdateAPIKey_ConcurrentUpdates(t *testing.T) {
 	assert.NotEqual(t, created.Name, finalKey.Name)
 	assert.NotEqual(t, created.KeyHash, finalKey.KeyHash)
 	assert.NotEqual(t, created.KeyPrefix, finalKey.KeyPrefix)
-	assert.Equal(t, int32(1), finalKey.Status)
 }

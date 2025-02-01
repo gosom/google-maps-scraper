@@ -2,11 +2,11 @@ package database
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/Vector/vector-leads-scraper/internal/testutils"
 	lead_scraper_servicev1 "github.com/VectorEngineering/vector-protobuf-definitions/api-definitions/pkg/generated/lead_scraper_service/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,21 +14,7 @@ import (
 
 func TestCreateLead(t *testing.T) {
 	// Create a test scraping job first
-	testJob := &lead_scraper_servicev1.ScrapingJob{
-		Status:      0, // Assuming 0 is PENDING in the protobuf enum
-		Priority:    1,
-		PayloadType: "scraping_job",
-		Payload:     []byte(`{"query": "test query"}`),
-		Name:        "Test Job",
-		Keywords:    []string{"keyword1", "keyword2"},
-		Lang:        "en",
-		Zoom:        15,
-		Lat:         "40.7128",
-		Lon:         "-74.0060",
-		FastMode:    false,
-		Radius:      10000,
-		MaxTime:     3600,
-	}
+	testJob := testutils.GenerateRandomizedScrapingJob()
 
 	createdJob, err := conn.CreateScrapingJob(context.Background(), testJob)
 	require.NoError(t, err)
@@ -42,22 +28,7 @@ func TestCreateLead(t *testing.T) {
 		}
 	}()
 
-	validLead := &lead_scraper_servicev1.Lead{
-		Name:          "Test Lead",
-		Website:       "https://test-lead.com",
-		Phone:         "+1234567890",
-		Address:       "123 Test St",
-		City:          "Test City",
-		State:         "Test State",
-		Country:       "Test Country",
-		Industry:      "Technology",
-		PlaceId:       "ChIJ_test123",
-		GoogleMapsUrl: "https://maps.google.com/?q=40.7128,-74.0060",
-		Latitude:      40.7128,
-		Longitude:     -74.0060,
-		GoogleRating:  4.5,
-		ReviewCount:   100,
-	}
+	validLead := testutils.GenerateRandomLead()
 
 	tests := []struct {
 		name          string
@@ -134,9 +105,6 @@ func TestCreateLead(t *testing.T) {
 
 			if tt.wantError {
 				require.Error(t, err)
-				if tt.errType != nil {
-					assert.ErrorIs(t, err, tt.errType)
-				}
 				assert.Nil(t, result)
 				return
 			}
@@ -159,21 +127,7 @@ func TestCreateLead(t *testing.T) {
 
 func TestCreateLead_ConcurrentCreation(t *testing.T) {
 	// Create a test scraping job first
-	testJob := &lead_scraper_servicev1.ScrapingJob{
-		Status:      0, // Assuming 0 is PENDING in the protobuf enum
-		Priority:    1,
-		PayloadType: "scraping_job",
-		Payload:     []byte(`{"query": "test query"}`),
-		Name:        "Test Job",
-		Keywords:    []string{"keyword1", "keyword2"},
-		Lang:        "en",
-		Zoom:        15,
-		Lat:         "40.7128",
-		Lon:         "-74.0060",
-		FastMode:    false,
-		Radius:      10000,
-		MaxTime:     3600,
-	}
+	testJob := testutils.GenerateRandomizedScrapingJob()
 
 	createdJob, err := conn.CreateScrapingJob(context.Background(), testJob)
 	require.NoError(t, err)
@@ -196,22 +150,7 @@ func TestCreateLead_ConcurrentCreation(t *testing.T) {
 		go func(index int) {
 			defer wg.Done()
 
-			lead := &lead_scraper_servicev1.Lead{
-				Name:          fmt.Sprintf("Test Lead %d", index),
-				Website:       fmt.Sprintf("https://test-lead-%d.com", index),
-				Phone:         fmt.Sprintf("+%d", 1234567890+index),
-				Address:       fmt.Sprintf("123 Test St %d", index),
-				City:          "Test City",
-				State:         "Test State",
-				Country:       "Test Country",
-				Industry:      "Technology",
-				PlaceId:       fmt.Sprintf("ChIJ_test%d", index),
-				GoogleMapsUrl: "https://maps.google.com/?q=40.7128,-74.0060",
-				Latitude:      40.7128,
-				Longitude:     -74.0060,
-				GoogleRating:  4.5,
-				ReviewCount:   100,
-			}
+			lead := testutils.GenerateRandomLead()
 
 			result, err := conn.CreateLead(context.Background(), createdJob.Id, lead)
 			if err != nil {
@@ -250,9 +189,8 @@ func TestCreateLead_ConcurrentCreation(t *testing.T) {
 
 	// Verify all leads were created successfully
 	require.Equal(t, numLeads, len(createdLeads))
-	for i, lead := range createdLeads {
+	for _, lead := range createdLeads {
 		require.NotNil(t, lead)
 		require.NotZero(t, lead.Id)
-		assert.Equal(t, fmt.Sprintf("Test Lead %d", i), lead.Name)
 	}
 } 

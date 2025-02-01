@@ -61,6 +61,7 @@ func TestDeleteScrapingWorkflow(t *testing.T) {
 					CronExpression: "0 0 * * *",
 					OrgId:         "test-org",
 					TenantId:      "test-tenant",
+					MaxRetries:    5,
 				}
 				created, err := conn.CreateScrapingWorkflow(context.Background(), workflow)
 				require.NoError(t, err)
