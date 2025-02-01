@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Vector/vector-leads-scraper/internal/testutils"
 	lead_scraper_servicev1 "github.com/VectorEngineering/vector-protobuf-definitions/api-definitions/pkg/generated/lead_scraper_service/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -37,22 +38,7 @@ func TestBatchUpdateLeads(t *testing.T) {
 	numLeads := 10
 	createdLeads := make([]*lead_scraper_servicev1.Lead, numLeads)
 	for i := 0; i < numLeads; i++ {
-		lead := &lead_scraper_servicev1.Lead{
-			Name:          fmt.Sprintf("Test Lead %d", i),
-			Website:       fmt.Sprintf("https://test-lead-%d.com", i),
-			Phone:         fmt.Sprintf("+%d", 1234567890+i),
-			Address:       fmt.Sprintf("123 Test St %d", i),
-			City:          "Test City",
-			State:         "Test State",
-			Country:       "Test Country",
-			Industry:      "Technology",
-			PlaceId:       fmt.Sprintf("ChIJ_test%d", i),
-			GoogleMapsUrl: "https://maps.google.com/?q=40.7128,-74.0060",
-			Latitude:      40.7128,
-			Longitude:     -74.0060,
-			GoogleRating:  4.5,
-			ReviewCount:   100,
-		}
+		lead := testutils.GenerateRandomLead()
 		created, err := conn.CreateLead(context.Background(), createdJob.Id, lead)
 		require.NoError(t, err)
 		require.NotNil(t, created)
