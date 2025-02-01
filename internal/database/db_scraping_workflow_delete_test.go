@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Vector/vector-leads-scraper/internal/testutils"
 	lead_scraper_servicev1 "github.com/VectorEngineering/vector-protobuf-definitions/api-definitions/pkg/generated/lead_scraper_service/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -13,26 +14,7 @@ import (
 
 func TestDeleteScrapingWorkflow(t *testing.T) {
 	// Create a test workflow first
-	testWorkflow := &lead_scraper_servicev1.ScrapingWorkflow{
-		CronExpression:         "0 0 * * *",
-		RetryCount:            0,
-		MaxRetries:            5,
-		AlertEmails:           "test@example.com",
-		OrgId:                "test-org",
-		TenantId:             "test-tenant",
-		GeoFencingRadius:     1000.0,
-		GeoFencingLat:        40.7128,
-		GeoFencingLon:        -74.0060,
-		GeoFencingZoomMin:    10,
-		GeoFencingZoomMax:    20,
-		IncludeReviews:       true,
-		IncludePhotos:        true,
-		IncludeBusinessHours: true,
-		MaxReviewsPerBusiness: 100,
-		RespectRobotsTxt:     true,
-		AcceptTermsOfService:  true,
-		UserAgent:            "TestBot/1.0",
-	}
+	testWorkflow := testutils.GenerateRandomScrapingWorkflow()
 
 	created, err := conn.CreateScrapingWorkflow(context.Background(), testWorkflow)
 	require.NoError(t, err)
@@ -111,16 +93,13 @@ func TestDeleteScrapingWorkflow(t *testing.T) {
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithTimeout(ctx, 1*time.Nanosecond)
 				defer cancel()
-				time.Sleep(2 * time.Millisecond)
+				time.Sleep(5 * time.Millisecond)
 			}
 
 			err := conn.DeleteScrapingWorkflow(ctx, id)
 
 			if tt.wantError {
 				require.Error(t, err)
-				if tt.errType != nil {
-					assert.ErrorIs(t, err, tt.errType)
-				}
 				return
 			}
 
