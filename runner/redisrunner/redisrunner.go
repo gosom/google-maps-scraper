@@ -89,7 +89,7 @@ func New(cfg *runner.Config) (*RedisRunner, error) {
 		return nil, fmt.Errorf("failed to create Redis client: %w", err)
 	}
 
-	// Initialize Redis server
+	// Initialize task queue server
 	server, err := redis.NewServer(redisCfg)
 	if err != nil {
 		client.Close()

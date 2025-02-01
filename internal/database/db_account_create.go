@@ -82,6 +82,10 @@ func (d *CreateAccountInput) validate() error {
 //	    return err
 //	}
 func (db *Db) CreateAccount(ctx context.Context, input *CreateAccountInput) (*lead_scraper_servicev1.Account, error) {
+	var (
+		u = db.QueryOperator.AccountORM
+	)
+
 	// ensure the db operation executes within the specified timeout
 	ctx, cancel := context.WithTimeout(ctx, db.GetQueryTimeout())
 	defer cancel()
@@ -110,12 +114,24 @@ func (db *Db) CreateAccount(ctx context.Context, input *CreateAccountInput) (*le
 		input.Account.AccountStatus = lead_scraper_servicev1.Account_ACCOUNT_STATUS_ACTIVE
 	}
 
-	acct, err := lead_scraper_servicev1.DefaultCreateAccount(ctx, input.Account, db.Client.Engine)
+	// convert account to orm
+	accountORM, err := input.Account.ToORM(ctx)
 	if err != nil {
 		return nil, err
 	}
-	
-	return acct, nil
+
+	if err := u.WithContext(ctx).Create(&accountORM); err != nil {
+		return nil, err
+	}
+
+
+	// convert orm to pb
+	acct, err := accountORM.ToPB(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &acct, nil
 }
 
 // GetAccountByEmail retrieves an account by email address

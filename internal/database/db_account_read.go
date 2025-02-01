@@ -51,6 +51,11 @@ func (db *Db) GetAccount(ctx context.Context, input *GetAccountInput) (*lead_scr
 	ctx, cancel := context.WithTimeout(ctx, db.GetQueryTimeout())
 	defer cancel()
 
+	var (
+		qOp = db.QueryOperator
+		b   = qOp.AccountORM
+	)
+
 	if input == nil {
 		return nil, ErrInvalidInput
 	}
@@ -61,20 +66,18 @@ func (db *Db) GetAccount(ctx context.Context, input *GetAccountInput) (*lead_scr
 	}
 
 	// Query the account by id and account status. NOTE: we only include the account status if it is not unspecifed
-	var account lead_scraper_servicev1.AccountORM
-	query := db.Client.Engine.WithContext(ctx)
+	var account *lead_scraper_servicev1.AccountORM
+	queryRef := b.WithContext(ctx)		
 
 	if input.AccountStatus != lead_scraper_servicev1.Account_ACCOUNT_STATUS_UNSPECIFIED {
-		query = query.Where("account_status = ?", input.AccountStatus.String())
+		queryRef = queryRef.Where(b.AccountStatus.Eq(input.AccountStatus.String()))
 	}
 
 	if input.EnableAccountInactiveClause {
-		query = query.Where("account_status IN (?)", []string{
-			lead_scraper_servicev1.Account_ACCOUNT_STATUS_SUSPENDED.String(),
-		})
+		queryRef = queryRef.Where(b.AccountStatus.In(lead_scraper_servicev1.Account_ACCOUNT_STATUS_SUSPENDED.String()))
 	}
 
-	err := query.Where("id = ?", input.ID).First(&account).Error
+	account, err := queryRef.Where(b.Id.Eq(input.ID)).First()
 	if err != nil {
 		if err.Error() == "record not found" {
 			return nil, ErrAccountDoesNotExist

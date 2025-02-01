@@ -39,7 +39,6 @@ func NewClient(cfg *config.RedisConfig) (*Client, error) {
 	}
 
 	client := asynq.NewClient(redisOpt)
-
 	// Test connection
 	if err := testConnection(client); err != nil {
 		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
@@ -51,7 +50,17 @@ func NewClient(cfg *config.RedisConfig) (*Client, error) {
 	}, nil
 }
 
-// EnqueueTask enqueues a task with the given type and payload
+// EnqueueTask enqueues a task with the given type and payload.
+// Available options include:
+//   - asynq.MaxRetry(n): Set maximum number of retries
+//   - asynq.Queue(name): Specify queue name
+//   - asynq.Timeout(d): Set task timeout duration
+//   - asynq.Deadline(t): Set task deadline time
+//   - asynq.Unique(ttl): Ensure task uniqueness with TTL
+//   - asynq.ProcessAt(t): Schedule task for specific time
+//   - asynq.ProcessIn(d): Schedule task after duration
+//   - asynq.Retention(d): Set task retention duration
+//   - asynq.Group(name): Specify task group
 func (c *Client) EnqueueTask(ctx context.Context, taskType string, payload []byte, opts ...asynq.Option) error {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
