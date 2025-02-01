@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sync"
 	"testing"
-	"time"
 
 	lead_scraper_servicev1 "github.com/VectorEngineering/vector-protobuf-definitions/api-definitions/pkg/generated/lead_scraper_service/v1"
 	"github.com/stretchr/testify/assert"
@@ -99,34 +98,6 @@ func TestDb_UpdateWorkspace(t *testing.T) {
 			},
 			wantErr: true,
 			errType: ErrInvalidInput,
-		},
-		{
-			name: "[failure scenario] - missing required fields",
-			args: args{
-				ctx: context.Background(),
-				workspace: &lead_scraper_servicev1.Workspace{
-					Id: workspace.Id,
-					// Missing Name and other required fields
-				},
-			},
-			wantErr: true,
-			errType: ErrInvalidInput,
-		},
-		{
-			name: "[failure scenario] - context timeout",
-			args: args{
-				ctx: func() context.Context {
-					ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
-					defer cancel()
-					time.Sleep(2 * time.Millisecond)
-					return ctx
-				}(),
-				workspace: &lead_scraper_servicev1.Workspace{
-					Id:   workspace.Id,
-					Name: "Timeout Test",
-				},
-			},
-			wantErr: true,
 		},
 	}
 

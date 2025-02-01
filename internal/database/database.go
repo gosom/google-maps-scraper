@@ -61,6 +61,9 @@ var (
 
 	// ErrWorkspaceDoesNotExist is returned when attempting to operate on a non-existent workspace
 	ErrWorkspaceDoesNotExist = fmt.Errorf("workspace does not exist")
+
+	// ErrJobDoesNotExist is returned when attempting to operate on a non-existent job
+	ErrJobDoesNotExist = fmt.Errorf("job does not exist")
 )
 
 // DatabaseOperations defines the methods to interact with the underlying database
@@ -92,10 +95,10 @@ type DatabaseOperations interface {
 
 	// ScrapingJob operations
 	CreateScrapingJob(ctx context.Context, job *lead_scraper_servicev1.ScrapingJob) (*lead_scraper_servicev1.ScrapingJob, error)
-	GetScrapingJob(ctx context.Context, id string) (*lead_scraper_servicev1.ScrapingJob, error)
+	GetScrapingJob(ctx context.Context, id uint64) (*lead_scraper_servicev1.ScrapingJob, error)
 	UpdateScrapingJob(ctx context.Context, job *lead_scraper_servicev1.ScrapingJob) (*lead_scraper_servicev1.ScrapingJob, error)
 	BatchUpdateScrapingJobs(ctx context.Context, jobs []*lead_scraper_servicev1.ScrapingJob) ([]*lead_scraper_servicev1.ScrapingJob, error)
-	DeleteScrapingJob(ctx context.Context, id string) error
+	DeleteScrapingJob(ctx context.Context, id uint64) error
 	ListScrapingJobs(ctx context.Context, limit, offset int) ([]*lead_scraper_servicev1.ScrapingJob, error)
 
 	// ScrapingWorkflow operations
@@ -106,11 +109,11 @@ type DatabaseOperations interface {
 	ListScrapingWorkflows(ctx context.Context, limit, offset int) ([]*lead_scraper_servicev1.ScrapingWorkflow, error)
 
 	// Lead operations
-	CreateLead(ctx context.Context, lead *lead_scraper_servicev1.Lead) (*lead_scraper_servicev1.Lead, error)
+	CreateLead(ctx context.Context, jobID uint64, lead *lead_scraper_servicev1.Lead) (*lead_scraper_servicev1.Lead, error)
 	GetLead(ctx context.Context, id uint64) (*lead_scraper_servicev1.Lead, error)
 	UpdateLead(ctx context.Context, lead *lead_scraper_servicev1.Lead) (*lead_scraper_servicev1.Lead, error)
 	BatchUpdateLeads(ctx context.Context, leads []*lead_scraper_servicev1.Lead) ([]*lead_scraper_servicev1.Lead, error)
-	DeleteLead(ctx context.Context, id uint64) error
+	DeleteLead(ctx context.Context, id uint64, deletionType DeletionType) error
 	BatchDeleteLeads(ctx context.Context, leadIDs []uint64) error
 	ListLeads(ctx context.Context, limit, offset int) ([]*lead_scraper_servicev1.Lead, error)
 
