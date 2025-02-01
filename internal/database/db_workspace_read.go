@@ -12,14 +12,22 @@ import (
 
 // GetWorkspace retrieves a workspace by ID from the database
 func (db *Db) GetWorkspace(ctx context.Context, id uint64) (*lead_scraper_servicev1.Workspace, error) {
+	if id == 0 {
+		return nil, ErrInvalidInput
+	}
+
 	workspace := &lead_scraper_servicev1.Workspace{Id: id}
 	result, err := lead_scraper_servicev1.DefaultReadWorkspace(ctx, workspace, db.Client.Engine)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("workspace not found")
+			return nil, ErrWorkspaceDoesNotExist
 		}
 		db.Logger.Error("failed to get workspace", zap.Error(err))
 		return nil, fmt.Errorf("failed to get workspace: %w", err)
+	}
+
+	if result == nil {
+		return nil, ErrWorkspaceDoesNotExist
 	}
 
 	return result, nil
@@ -27,12 +35,23 @@ func (db *Db) GetWorkspace(ctx context.Context, id uint64) (*lead_scraper_servic
 
 // ListWorkspaces retrieves a paginated list of workspaces from the database
 func (db *Db) ListWorkspaces(ctx context.Context, limit, offset int) ([]*lead_scraper_servicev1.Workspace, error) {
+	if limit <= 0 {
+		return nil, ErrInvalidInput
+	}
+
+	if offset < 0 {
+		return nil, ErrInvalidInput
+	}
+
 	workspaces, err := lead_scraper_servicev1.DefaultListWorkspace(
 		ctx, 
 		db.Client.Engine.
 			Limit(limit).
 			Offset(offset))
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil // Empty list is not an error
+		}
 		db.Logger.Error("failed to list workspaces", zap.Error(err))
 		return nil, fmt.Errorf("failed to list workspaces: %w", err)
 	}

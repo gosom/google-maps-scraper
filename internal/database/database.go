@@ -55,6 +55,12 @@ var (
 
 	// ErrInvalidInput is returned when the input parameters fail validation
 	ErrInvalidInput = fmt.Errorf("invalid input parameters")
+
+	// ErrWorkflowDoesNotExist is returned when attempting to operate on a non-existent workflow
+	ErrWorkflowDoesNotExist = fmt.Errorf("workflow does not exist")
+
+	// ErrWorkspaceDoesNotExist is returned when attempting to operate on a non-existent workspace
+	ErrWorkspaceDoesNotExist = fmt.Errorf("workspace does not exist")
 )
 
 // DatabaseOperations defines the methods to interact with the underlying database
