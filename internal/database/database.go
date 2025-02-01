@@ -83,6 +83,37 @@ type DatabaseOperations interface {
 	UpdateWorkspace(ctx context.Context, workspace *lead_scraper_servicev1.Workspace) (*lead_scraper_servicev1.Workspace, error)
 	DeleteWorkspace(ctx context.Context, id uint64) error
 	ListWorkspaces(ctx context.Context, limit, offset int) ([]*lead_scraper_servicev1.Workspace, error)
+
+	// ScrapingJob operations
+	CreateScrapingJob(ctx context.Context, job *lead_scraper_servicev1.ScrapingJob) (*lead_scraper_servicev1.ScrapingJob, error)
+	GetScrapingJob(ctx context.Context, id string) (*lead_scraper_servicev1.ScrapingJob, error)
+	UpdateScrapingJob(ctx context.Context, job *lead_scraper_servicev1.ScrapingJob) (*lead_scraper_servicev1.ScrapingJob, error)
+	BatchUpdateScrapingJobs(ctx context.Context, jobs []*lead_scraper_servicev1.ScrapingJob) ([]*lead_scraper_servicev1.ScrapingJob, error)
+	DeleteScrapingJob(ctx context.Context, id string) error
+	ListScrapingJobs(ctx context.Context, limit, offset int) ([]*lead_scraper_servicev1.ScrapingJob, error)
+
+	// ScrapingWorkflow operations
+	CreateScrapingWorkflow(ctx context.Context, workflow *lead_scraper_servicev1.ScrapingWorkflow) (*lead_scraper_servicev1.ScrapingWorkflow, error)
+	GetScrapingWorkflow(ctx context.Context, id uint64) (*lead_scraper_servicev1.ScrapingWorkflow, error)
+	UpdateScrapingWorkflow(ctx context.Context, workflow *lead_scraper_servicev1.ScrapingWorkflow) (*lead_scraper_servicev1.ScrapingWorkflow, error)
+	DeleteScrapingWorkflow(ctx context.Context, id uint64) error
+	ListScrapingWorkflows(ctx context.Context, limit, offset int) ([]*lead_scraper_servicev1.ScrapingWorkflow, error)
+
+	// Lead operations
+	CreateLead(ctx context.Context, lead *lead_scraper_servicev1.Lead) (*lead_scraper_servicev1.Lead, error)
+	GetLead(ctx context.Context, id uint64) (*lead_scraper_servicev1.Lead, error)
+	UpdateLead(ctx context.Context, lead *lead_scraper_servicev1.Lead) (*lead_scraper_servicev1.Lead, error)
+	BatchUpdateLeads(ctx context.Context, leads []*lead_scraper_servicev1.Lead) ([]*lead_scraper_servicev1.Lead, error)
+	DeleteLead(ctx context.Context, id uint64) error
+	BatchDeleteLeads(ctx context.Context, leadIDs []uint64) error
+	ListLeads(ctx context.Context, limit, offset int) ([]*lead_scraper_servicev1.Lead, error)
+
+	// APIKey operations
+	CreateAPIKey(ctx context.Context, apiKey *lead_scraper_servicev1.APIKey) (*lead_scraper_servicev1.APIKey, error)
+	GetAPIKey(ctx context.Context, id uint64) (*lead_scraper_servicev1.APIKey, error)
+	UpdateAPIKey(ctx context.Context, apiKey *lead_scraper_servicev1.APIKey) (*lead_scraper_servicev1.APIKey, error)
+	DeleteAPIKey(ctx context.Context, id uint64) error
+	ListAPIKeys(ctx context.Context, limit, offset int) ([]*lead_scraper_servicev1.APIKey, error)
 }
 
 // Db implements DatabaseOperations and provides connection handling for PostgreSQL.

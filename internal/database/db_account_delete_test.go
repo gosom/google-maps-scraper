@@ -24,8 +24,8 @@ func TestDeleteAccountParams_validate(t *testing.T) {
 		{
 			name: "success - valid input",
 			d: &DeleteAccountParams{
-				ID:           123,
-				DeletionType: DeletionTypeSoft,
+				ID:            123,
+				DeletionType:  DeletionTypeSoft,
 				AccountStatus: lead_scraper_servicev1.Account_ACCOUNT_STATUS_ACTIVE,
 			},
 			wantErr: false,
@@ -89,7 +89,7 @@ func TestDb_DeleteAccount(t *testing.T) {
 				clean: func(t *testing.T, id uint64) {
 					// Verify account no longer exists
 					_, err := conn.GetAccount(context.Background(), &GetAccountInput{
-						ID:       id,
+						ID: id,
 					})
 					require.Error(t, err)
 				},
@@ -97,7 +97,7 @@ func TestDb_DeleteAccount(t *testing.T) {
 			validate: func(t *testing.T, id uint64) {
 				// Verify account no longer exists
 				_, err := conn.GetAccount(context.Background(), &GetAccountInput{
-					ID:       id,
+					ID: id,
 				})
 				require.Error(t, err)
 			},
@@ -121,8 +121,8 @@ func TestDb_DeleteAccount(t *testing.T) {
 			args: args{
 				ctx: context.Background(),
 				params: &DeleteAccountParams{
-					ID:           999999,
-					DeletionType: DeletionTypeSoft,
+					ID:            999999,
+					DeletionType:  DeletionTypeSoft,
 					AccountStatus: lead_scraper_servicev1.Account_ACCOUNT_STATUS_ACTIVE,
 				},
 			},
@@ -164,8 +164,8 @@ func TestDb_DeleteAccount(t *testing.T) {
 
 					// Delete the account
 					err = conn.DeleteAccount(context.Background(), &DeleteAccountParams{
-						ID:           acct.Id,
-						DeletionType: DeletionTypeSoft,
+						ID:            acct.Id,
+						DeletionType:  DeletionTypeSoft,
 						AccountStatus: acct.AccountStatus,
 					})
 					require.NoError(t, err)
@@ -246,9 +246,9 @@ func TestDb_DeleteAccount_StressTest(t *testing.T) {
 		go func(account *lead_scraper_servicev1.Account) {
 			defer wg.Done()
 			err := conn.DeleteAccount(context.Background(), &DeleteAccountParams{
-				ID:           account.Id,
+				ID:            account.Id,
 				AccountStatus: account.AccountStatus,
-				DeletionType: DeletionTypeSoft,
+				DeletionType:  DeletionTypeSoft,
 			})
 			if err != nil {
 				errors <- err
@@ -267,7 +267,7 @@ func TestDb_DeleteAccount_StressTest(t *testing.T) {
 	// Verify all accounts are deleted
 	for _, acct := range accounts {
 		_, err := conn.GetAccount(context.Background(), &GetAccountInput{
-			ID:       acct.Id,
+			ID: acct.Id,
 		})
 		require.Error(t, err)
 	}
@@ -282,18 +282,18 @@ func TestDeleteAccountParams_Validate(t *testing.T) {
 		{
 			name: "success - valid params",
 			d: &DeleteAccountParams{
-				ID:           123,
+				ID:            123,
 				AccountStatus: lead_scraper_servicev1.Account_ACCOUNT_STATUS_ACTIVE,
-				DeletionType: DeletionTypeSoft,
+				DeletionType:  DeletionTypeSoft,
 			},
 			wantErr: false,
 		},
 		{
 			name: "failure - zero account ID",
 			d: &DeleteAccountParams{
-				ID:           0,
+				ID:            0,
 				AccountStatus: lead_scraper_servicev1.Account_ACCOUNT_STATUS_ACTIVE,
-				DeletionType: DeletionTypeSoft,
+				DeletionType:  DeletionTypeSoft,
 			},
 			wantErr: true,
 		},
@@ -521,7 +521,7 @@ func TestDb_BatchDeleteAccounts(t *testing.T) {
 			if tt.args.params != nil {
 				for _, id := range tt.args.params.IDs {
 					_, err := conn.GetAccount(context.Background(), &GetAccountInput{
-						ID:       id,
+						ID: id,
 					})
 					require.Error(t, err)
 					assert.ErrorIs(t, err, ErrAccountDoesNotExist)
@@ -565,9 +565,26 @@ func TestDb_BatchDeleteAccounts_LargeBatch(t *testing.T) {
 	// Verify all accounts are deleted
 	for _, id := range accountIDs {
 		_, err := conn.GetAccount(context.Background(), &GetAccountInput{
-			ID:       id,
+			ID: id,
 		})
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrAccountDoesNotExist)
+	}
+}
+
+func TestBatchDeleteAccountsParams_validate(t *testing.T) {
+	tests := []struct {
+		name    string
+		d       *BatchDeleteAccountsParams
+		wantErr bool
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.d.validate(); (err != nil) != tt.wantErr {
+				t.Errorf("BatchDeleteAccountsParams.validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
 	}
 }

@@ -27,7 +27,11 @@ func (db *Db) GetWorkspace(ctx context.Context, id uint64) (*lead_scraper_servic
 
 // ListWorkspaces retrieves a paginated list of workspaces from the database
 func (db *Db) ListWorkspaces(ctx context.Context, limit, offset int) ([]*lead_scraper_servicev1.Workspace, error) {
-	workspaces, err := lead_scraper_servicev1.DefaultListWorkspace(ctx, db.Client.Engine.Limit(limit).Offset(offset))
+	workspaces, err := lead_scraper_servicev1.DefaultListWorkspace(
+		ctx, 
+		db.Client.Engine.
+			Limit(limit).
+			Offset(offset))
 	if err != nil {
 		db.Logger.Error("failed to list workspaces", zap.Error(err))
 		return nil, fmt.Errorf("failed to list workspaces: %w", err)
