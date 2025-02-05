@@ -1,62 +1,29 @@
-# Build stage for Playwright dependencies
-FROM golang:1.23.2-bullseye AS playwright-deps
-ENV PLAYWRIGHT_BROWSERS_PATH=/opt/browsers
-#ENV PLAYWRIGHT_DRIVER_PATH=/opt/
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* \
-    && go install github.com/playwright-community/playwright-go/cmd/playwright@latest \
-    && mkdir -p /opt/browsers \
-    && playwright install chromium --with-deps
+# Build stage: use an Alpine-based Go image to compile the binary
+FROM golang:1.23.6-alpine AS builder
 
-# Build stage
-FROM golang:1.23.2-bullseye AS builder
+# Install git for module downloads
+RUN apk add --no-cache git
+
 WORKDIR /app
-COPY go.mod go.sum ./
-RUN go mod download
+# Copy the project source code
 COPY . .
-RUN CGO_ENABLED=0 go build -ldflags="-w -s" -o /usr/bin/google-maps-scraper
 
-# Final stage
-FROM debian:bullseye-slim
-ENV PLAYWRIGHT_BROWSERS_PATH=/opt/browsers
-ENV PLAYWRIGHT_DRIVER_PATH=/opt
+# Remove go.work (which contains an invalid Go version format for this build)
+RUN rm -f go.work
 
-# Install only the necessary dependencies in a single layer
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    libnss3 \
-    libnspr4 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libdrm2 \
-    libdbus-1-3 \
-    libxkbcommon0 \
-    libatspi2.0-0 \
-    libx11-6 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxext6 \
-    libxfixes3 \
-    libxrandr2 \
-    libgbm1 \
-    libpango-1.0-0 \
-    libcairo2 \
-    libasound2 \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+# Download dependencies and build the binary
+RUN go mod download
+RUN go build -o google-maps-scraper .
 
-COPY --from=playwright-deps /opt/browsers /opt/browsers
-COPY --from=playwright-deps /root/.cache/ms-playwright-go /opt/ms-playwright-go
+# Final stage: use a minimal Alpine image for runtime
+FROM alpine:latest
 
-RUN chmod -R 755 /opt/browsers \
-    && chmod -R 755 /opt/ms-playwright-go
+WORKDIR /app
+# Copy the compiled binary from the builder stage
+COPY --from=builder /app/google-maps-scraper .
 
-COPY --from=builder /usr/bin/google-maps-scraper /usr/bin/
+# Expose port 8080 (the port the web server listens on)
+EXPOSE 8080
 
-ENTRYPOINT ["google-maps-scraper"]
+# Run the scraper in web mode
+CMD ["./google-maps-scraper", "-web"]
