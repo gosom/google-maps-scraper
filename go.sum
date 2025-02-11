@@ -367,6 +367,8 @@ github.com/gosom/kit v0.0.0-20230309082109-543b32ac686a h1:5tcB33GTXm0pFUiEFpmE9
 github.com/gosom/kit v0.0.0-20230309082109-543b32ac686a/go.mod h1:ngnWSsuBEpCA5Y43kZRa3x8RBYZZ4LDtvZHO4N5dHZ0=
 github.com/gosom/scrapemate v0.9.2 h1:4fvVKLoSeFEgSMxURyrvTkxdHh6iJzrM0mujksm8l5E=
 github.com/gosom/scrapemate v0.9.2/go.mod h1:p1sYz9zdpbMGC04ZclBB4sLOE/2bKZ4BYbe/UohEvpU=
+github.com/gosom/scrapemate v0.9.3 h1:DViIoy4Lobvs/bhb/LajPH8VTWJ/Hka74AJeEjPnZxY=
+github.com/gosom/scrapemate v0.9.3/go.mod h1:p1sYz9zdpbMGC04ZclBB4sLOE/2bKZ4BYbe/UohEvpU=
 github.com/gostaticanalysis/analysisutil v0.7.1 h1:ZMCjoue3DtDWQ5WyU16YbjbQEQ3VuzwxALrpYd+HeKk=
 github.com/gostaticanalysis/analysisutil v0.7.1/go.mod h1:v21E3hY37WKMGSnbsw2S/ojApNWb6C1//mXO48CXbVc=
 github.com/gostaticanalysis/comment v1.4.1/go.mod h1:ih6ZxzTHLdadaiSnF5WY3dxUoXfXAlTaRzuaNDlSado=
