@@ -4,6 +4,23 @@
 
 > A free and open-source Google Maps scraper with both command line and web UI options. This tool is easy to use and allows you to extract data from Google Maps efficiently.
 
+## 🚀 Take Your Lead Generation to the Next Level
+
+**Tired of manual data collection? Meet LeadsDB - an API service that integrates with this scraper.**
+
+[LeadsDB](https://gm.thexos.dev/) enhances your lead generation with:
+- ✅ Cloud storage for all your search results
+- ✅ Visualization dashboard
+- ✅ Advanced filtering & export options
+- ✅ Simple API integration with this scraper
+- ✅ Expose your data to other services via a REST API
+
+Plans start at just €4.99/month
+
+**[Join our waitlist →](https://gm.thexos.dev/)**
+
+_Continue using this free scraper and supercharge your workflow with LeadsDB._
+
 ## Sponsors
 
 ### Supported by the Community
