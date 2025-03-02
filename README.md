@@ -17,7 +17,7 @@
 
 Plans start at just €4.99/month
 
-**[Join our waitlist →](https://gm.thexos.dev/)**
+**[Join the waitlist →](https://gm.thexos.dev/)**
 
 _Continue using this free scraper and supercharge your workflow with LeadsDB._
 
