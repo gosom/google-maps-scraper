@@ -2,6 +2,7 @@ package webrunner
 
 import (
 	"context"
+	"database/sql"
 	"encoding/csv"
 	"errors"
 	"fmt"
@@ -14,13 +15,14 @@ import (
 
 	"github.com/gosom/google-maps-scraper/deduper"
 	"github.com/gosom/google-maps-scraper/exiter"
+	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/runner"
 	"github.com/gosom/google-maps-scraper/tlmt"
 	"github.com/gosom/google-maps-scraper/web"
-	"github.com/gosom/google-maps-scraper/web/sqlite"
 	"github.com/gosom/scrapemate"
 	"github.com/gosom/scrapemate/adapters/writers/csvwriter"
 	"github.com/gosom/scrapemate/scrapemateapp"
+	_ "github.com/jackc/pgx/v5/stdlib" // PostgreSQL driver
 	"golang.org/x/sync/errgroup"
 )
 
@@ -39,18 +41,104 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		return nil, err
 	}
 
-	const dbfname = "jobs.db"
+	var repo web.JobRepository
+	var err error
+	// Use PostgreSQL if DSN is provided, otherwise fallback to SQLite
+	if cfg.Dsn != "" {
+		// Connect to PostgreSQL
+		db, err := sql.Open("pgx", cfg.Dsn)
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect to PostgreSQL: %w", err)
+		}
 
-	dbpath := filepath.Join(cfg.DataFolder, dbfname)
+		// Set connection pool settings
+		db.SetMaxOpenConns(25)
+		db.SetMaxIdleConns(5)
+		db.SetConnMaxLifetime(5 * time.Minute)
 
-	repo, err := sqlite.New(dbpath)
-	if err != nil {
-		return nil, err
-	}
+		// Ping the database to verify connection
+		if err := db.Ping(); err != nil {
+			return nil, fmt.Errorf("failed to ping PostgreSQL: %w", err)
+		}
+
+		// Run migrations
+		log.Println("Running database migrations...")
+		
+		// Log all valid migration paths that exist
+		validPaths := postgres.GetMigrationPaths()
+		if len(validPaths) == 0 {
+			log.Println("Warning: No valid migration paths found")
+		} else {
+			log.Printf("Found %d valid migration paths:", len(validPaths))
+			for _, path := range validPaths {
+				log.Printf("  - %s", path)
+			}
+		}
+		
+		// Create and run migration manager
+		migrationRunner := postgres.NewMigrationRunner(cfg.Dsn)
+		
+		if err := migrationRunner.RunMigrations(); err != nil {
+			log.Printf("Warning: failed to run migrations: %v", err)
+			// Continue anyway - migrations might be handled externally
+		} else {
+			log.Println("Database migrations completed successfully")
+		}
+
+		// Create PostgreSQL repository
+		repo, err = postgres.NewRepository(db)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create PostgreSQL repository: %w", err)
+		}
+
+		log.Printf("Using PostgreSQL database for web API")
+	} /* else {
+		// Fallback to SQLite
+		const dbfname = "jobs.db"
+		dbpath := filepath.Join(cfg.DataFolder, dbfname)
+
+		repo, err = sqlite.New(dbpath)
+		if err != nil {
+			return nil, err
+		}
+
+		log.Printf("Using SQLite database for web API")
+	} */
 
 	svc := web.NewService(repo, cfg.DataFolder)
 
-	srv, err := web.New(svc, cfg.Addr)
+	// Initialize server configuration
+	serverCfg := web.ServerConfig{
+		Service: svc,
+		Addr:    cfg.Addr,
+	}
+	// Load application config
+	appConfig := web.LoadConfig()
+
+	// Add PostgreSQL and authentication if available
+	if cfg.Dsn != "" {
+		// If we're using PostgreSQL, add user repository and usage limiter
+		db, err := sql.Open("pgx", cfg.Dsn)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize PostgreSQL connection: %w", err)
+		}
+
+		userRepo := postgres.NewUserRepository(db)
+		usageLimiter := postgres.NewUsageLimiter(db, 5) // 5 jobs per day limit
+
+		serverCfg.PgDB = db
+		serverCfg.UserRepo = userRepo
+		serverCfg.UsageLimiter = usageLimiter
+
+		// Use Clerk API key from config
+		if appConfig.ClerkAPIKey != "" {
+			serverCfg.ClerkAPIKey = appConfig.ClerkAPIKey
+			log.Println("Authentication enabled with Clerk")
+		}
+	}
+
+	// Create web server
+	srv, err := web.New(serverCfg)
 	if err != nil {
 		return nil, err
 	}

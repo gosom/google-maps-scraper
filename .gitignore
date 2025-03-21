@@ -2,3 +2,24 @@ cache/
 vendor
 bin
 webdata/
+
+# Environment variables
+.env
+*.env
+
+# Binary files
+google-maps-scraper
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Output of the go coverage tool
+*.out
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo

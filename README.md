@@ -411,39 +411,54 @@ otherwise you will encounter an error like:
 
 ## Using Database Provider (postgreSQL)
 
-For running in your local machine:
+### Setting up the Database
 
+Before using PostgreSQL with this tool, you need to set up the database with proper permissions:
+
+```bash
+# Run the database setup script as a superuser (e.g., postgres)
+psql -U postgres -f scripts/setup_db.sql
 ```
+
+This script creates:
+- The `google_maps_scraper` database
+- The `scraper` user with proper permissions
+- All necessary tables and migrations
+
+See [DATABASE.md](DATABASE.md) for detailed setup instructions.
+
+### Running with PostgreSQL
+
+Once the database is set up, you can run the scraper with PostgreSQL:
+
+```bash
+# Run the web interface with PostgreSQL
+./google-maps-scraper -web -dsn "postgres://scraper:strongpassword@localhost:5432/google_maps_scraper?sslmode=disable"
+
+# Or produce jobs to process
+./google-maps-scraper -dsn "postgres://scraper:strongpassword@localhost:5432/google_maps_scraper?sslmode=disable" -produce -input example-queries.txt --lang en
+
+# Run workers to process the jobs
+./google-maps-scraper -c 2 -depth 1 -dsn "postgres://scraper:strongpassword@localhost:5432/google_maps_scraper?sslmode=disable"
+```
+
+### Using Docker Compose (Development)
+
+For development, you can use the included docker-compose file:
+
+```bash
 docker-compose -f docker-compose.dev.yaml up -d
 ```
 
-The above starts a PostgreSQL container and creates the required tables
+This starts a PostgreSQL container with the required tables.
 
-to access db:
-
-```
+```bash
+# Access the development database
 psql -h localhost -U postgres -d postgres
+# Password is postgres
 ```
 
-Password is `postgres`
-
-Then from your host run:
-
-```
-go run main.go -dsn "postgres://postgres:postgres@localhost:5432/postgres" -produce -input example-queries.txt --lang el
-```
-
-(configure your queries and the desired language)
-
-This will populate the table `gmaps_jobs` . 
-
-you may run the scraper using:
-
-```
-go run main.go -c 2 -depth 1 -dsn "postgres://postgres:postgres@localhost:5432/postgres"
-```
-
-If you have a database server and several machines you can start multiple instances of the scraper as above.
+If you have a database server and several machines, you can start multiple instances of the scraper as above.
 
 ### Kubernetes
 

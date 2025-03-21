@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"database/sql"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -17,23 +18,42 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/gorilla/mux"
+	"github.com/gosom/google-maps-scraper/postgres"
+	"github.com/gosom/google-maps-scraper/web/auth"
 )
 
 //go:embed static
 var static embed.FS
 
 type Server struct {
-	tmpl map[string]*template.Template
-	srv  *http.Server
-	svc  *Service
+	tmpl           map[string]*template.Template
+	srv            *http.Server
+	svc            *Service
+	authMiddleware *auth.AuthMiddleware
+	userRepo       postgres.UserRepository
+	usageLimiter   postgres.UsageLimiter
+	db             *sql.DB
 }
 
-func New(svc *Service, addr string) (*Server, error) {
+type ServerConfig struct {
+	Service      *Service
+	Addr         string
+	PgDB         *sql.DB // Optional PostgreSQL connection
+	UserRepo     postgres.UserRepository
+	UsageLimiter postgres.UsageLimiter
+	ClerkAPIKey  string // Optional Clerk API key for authentication
+}
+
+func New(cfg ServerConfig) (*Server, error) {
 	ans := Server{
-		svc:  svc,
-		tmpl: make(map[string]*template.Template),
+		svc:          cfg.Service,
+		tmpl:         make(map[string]*template.Template),
+		db:           cfg.PgDB,
+		userRepo:     cfg.UserRepo,
+		usageLimiter: cfg.UsageLimiter,
 		srv: &http.Server{
-			Addr:              addr,
+			Addr:              cfg.Addr,
 			ReadHeaderTimeout: 10 * time.Second,
 			ReadTimeout:       60 * time.Second,
 			WriteTimeout:      60 * time.Second,
@@ -42,83 +62,56 @@ func New(svc *Service, addr string) (*Server, error) {
 		},
 	}
 
+	// Initialize authentication middleware if Clerk API key is provided
+	if cfg.ClerkAPIKey != "" && cfg.UserRepo != nil && cfg.UsageLimiter != nil {
+		var err error
+		ans.authMiddleware, err = auth.NewAuthMiddleware(cfg.ClerkAPIKey, cfg.UserRepo, cfg.UsageLimiter)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize authentication: %w", err)
+		}
+	}
+
 	staticFS, err := fs.Sub(static, "static")
 	if err != nil {
 		return nil, err
 	}
 
 	fileServer := http.FileServer(http.FS(staticFS))
-	mux := http.NewServeMux()
+	router := mux.NewRouter()
 
-	mux.Handle("/static/", http.StripPrefix("/static/", fileServer))
-	mux.HandleFunc("/scrape", ans.scrape)
-	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
-		r = requestWithID(r)
+	// Static files
+	router.PathPrefix("/static/").Handler(http.StripPrefix("/static/", fileServer))
 
-		ans.download(w, r)
-	})
-	mux.HandleFunc("/delete", func(w http.ResponseWriter, r *http.Request) {
-		r = requestWithID(r)
+	// Web UI routes
+	router.HandleFunc("/", ans.index).Methods(http.MethodGet)
+	router.HandleFunc("/scrape", ans.scrape).Methods(http.MethodPost)
+	router.HandleFunc("/jobs", ans.getJobs).Methods(http.MethodGet)
+	router.HandleFunc("/download", ans.download).Methods(http.MethodGet)
+	router.HandleFunc("/delete", ans.delete).Methods(http.MethodDelete)
 
-		ans.delete(w, r)
-	})
-	mux.HandleFunc("/jobs", ans.getJobs)
-	mux.HandleFunc("/", ans.index)
+	// API documentation
+	router.HandleFunc("/api/docs", ans.redocHandler).Methods(http.MethodGet)
 
-	// api routes
-	mux.HandleFunc("/api/docs", ans.redocHandler)
-	mux.HandleFunc("/api/v1/jobs", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost:
-			ans.apiScrape(w, r)
-		case http.MethodGet:
-			ans.apiGetJobs(w, r)
-		default:
-			ans := apiError{
-				Code:    http.StatusMethodNotAllowed,
-				Message: "Method not allowed",
-			}
+	// API routes with authentication if available
+	apiRouter := router.PathPrefix("/api/v1").Subrouter()
 
-			renderJSON(w, http.StatusMethodNotAllowed, ans)
-		}
-	})
+	// Apply authentication middleware if available
+	if ans.authMiddleware != nil {
+		apiRouter.Use(ans.authMiddleware.Authenticate)
+		apiRouter.Use(ans.authMiddleware.CheckUsageLimit)
+	}
 
-	mux.HandleFunc("/api/v1/jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
-		r = requestWithID(r)
+	// API endpoints
+	apiRouter.HandleFunc("/jobs", ans.apiGetJobs).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/jobs/user", ans.apiGetUserJobs).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/jobs", ans.apiScrape).Methods(http.MethodPost)
+	apiRouter.HandleFunc("/jobs/{id}", ans.apiGetJob).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/jobs/{id}", ans.apiDeleteJob).Methods(http.MethodDelete)
+	apiRouter.HandleFunc("/jobs/{id}/download", ans.download).Methods(http.MethodGet)
 
-		switch r.Method {
-		case http.MethodGet:
-			ans.apiGetJob(w, r)
-		case http.MethodDelete:
-			ans.apiDeleteJob(w, r)
-		default:
-			ans := apiError{
-				Code:    http.StatusMethodNotAllowed,
-				Message: "Method not allowed",
-			}
-
-			renderJSON(w, http.StatusMethodNotAllowed, ans)
-		}
-	})
-
-	mux.HandleFunc("/api/v1/jobs/{id}/download", func(w http.ResponseWriter, r *http.Request) {
-		r = requestWithID(r)
-
-		if r.Method != http.MethodGet {
-			ans := apiError{
-				Code:    http.StatusMethodNotAllowed,
-				Message: "Method not allowed",
-			}
-
-			renderJSON(w, http.StatusMethodNotAllowed, ans)
-
-			return
-		}
-
-		ans.download(w, r)
-	})
-
-	handler := securityHeaders(mux)
+	// Apply security headers to all routes
+	// Apply security headers and CORS to all routes
+	handler := corsMiddleware(securityHeaders(router))
 	ans.srv.Handler = handler
 
 	tmplsKeys := []string{
@@ -138,6 +131,24 @@ func New(svc *Service, addr string) (*Server, error) {
 	}
 
 	return &ans, nil
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Set CORS headers
+		w.Header().Set("Access-Control-Allow-Origin", "*") // Or specific origin like "http://localhost:3000"
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+		// Handle preflight requests
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) Start(ctx context.Context) error {
@@ -344,7 +355,7 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	err = newJob.Validate()
+	err = ValidateJob(&newJob)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 
@@ -371,7 +382,6 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getJobs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-
 		return
 	}
 
@@ -381,10 +391,10 @@ func (s *Server) getJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobs, err := s.svc.All(context.Background())
+	// For the web UI, we show all jobs (no authentication for web UI)
+	jobs, err := s.svc.All(context.Background(), "")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-
 		return
 	}
 
@@ -491,12 +501,53 @@ func (s *Server) apiScrape(w http.ResponseWriter, r *http.Request) {
 		}
 
 		renderJSON(w, http.StatusUnprocessableEntity, ans)
-
 		return
+	}
+
+	// Get user ID from context if authentication is enabled
+	var userID string
+	if s.authMiddleware != nil {
+		userID, err = auth.GetUserID(r.Context())
+		if err != nil {
+			ans := apiError{
+				Code:    http.StatusUnauthorized,
+				Message: "User not authenticated",
+			}
+			renderJSON(w, http.StatusUnauthorized, ans)
+			return
+		}
+	} else {
+		// If auth middleware is not enabled but we're using a DB that requires user_id
+		// Use a default user ID for development/testing without auth
+		// This is useful when running locally without Clerk authentication
+		userID = "default_user_id"
+
+		// Check if the default user exists, create it if not
+		if s.userRepo != nil {
+			_, err := s.userRepo.GetByID(r.Context(), userID)
+			if err != nil {
+				// Create default user
+				defaultUser := postgres.User{
+					ID:    userID,
+					Email: "default@example.com",
+				}
+				err = s.userRepo.Create(r.Context(), &defaultUser)
+				if err != nil {
+					log.Printf("Failed to create default user: %v", err)
+					ans := apiError{
+						Code:    http.StatusInternalServerError,
+						Message: "Failed to create default user: " + err.Error(),
+					}
+					renderJSON(w, http.StatusInternalServerError, ans)
+					return
+				}
+			}
+		}
 	}
 
 	newJob := Job{
 		ID:     uuid.New().String(),
+		UserID: userID, // Set the user ID from authenticated context or default
 		Name:   req.Name,
 		Date:   time.Now().UTC(),
 		Status: StatusPending,
@@ -506,7 +557,7 @@ func (s *Server) apiScrape(w http.ResponseWriter, r *http.Request) {
 	// convert to seconds
 	newJob.Data.MaxTime *= time.Second
 
-	err = newJob.Validate()
+	err = ValidateJob(&newJob)
 	if err != nil {
 		ans := apiError{
 			Code:    http.StatusUnprocessableEntity,
@@ -514,7 +565,6 @@ func (s *Server) apiScrape(w http.ResponseWriter, r *http.Request) {
 		}
 
 		renderJSON(w, http.StatusUnprocessableEntity, ans)
-
 		return
 	}
 
@@ -522,12 +572,19 @@ func (s *Server) apiScrape(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		ans := apiError{
 			Code:    http.StatusInternalServerError,
-			Message: err.Error(),
+			Message: "failed to create job: " + err.Error(),
 		}
 
 		renderJSON(w, http.StatusInternalServerError, ans)
-
 		return
+	}
+
+	// Increment usage if authentication is enabled
+	if s.authMiddleware != nil {
+		if err := s.authMiddleware.IncrementUsage(r.Context()); err != nil {
+			log.Printf("Failed to increment usage for user %s: %v", userID, err)
+			// Continue anyway - the job was created successfully
+		}
 	}
 
 	ans := apiScrapeResponse{
@@ -538,15 +595,71 @@ func (s *Server) apiScrape(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiGetJobs(w http.ResponseWriter, r *http.Request) {
-	jobs, err := s.svc.All(r.Context())
+	// Get user ID from context if authentication is enabled
+	var jobs []Job
+	var err error
+
+	if s.authMiddleware != nil {
+		userID, err := auth.GetUserID(r.Context())
+		if err != nil {
+			apiError := apiError{
+				Code:    http.StatusUnauthorized,
+				Message: "User not authenticated",
+			}
+			renderJSON(w, http.StatusUnauthorized, apiError)
+			return
+		}
+
+		// Only return jobs for the authenticated user
+		jobs, err = s.svc.All(r.Context(), userID)
+	} else {
+		// If authentication is not enabled, return all jobs
+		jobs, err = s.svc.All(r.Context(), "")
+	}
+
 	if err != nil {
 		apiError := apiError{
 			Code:    http.StatusInternalServerError,
 			Message: err.Error(),
 		}
-
 		renderJSON(w, http.StatusInternalServerError, apiError)
+		return
+	}
 
+	renderJSON(w, http.StatusOK, jobs)
+}
+
+func (s *Server) apiGetUserJobs(w http.ResponseWriter, r *http.Request) {
+	// This endpoint always requires authentication
+	fmt.Println("apiGetUserJobs")
+	if s.authMiddleware == nil {
+		apiError := apiError{
+			Code:    http.StatusUnauthorized,
+			Message: "Authentication not configured",
+		}
+		renderJSON(w, http.StatusUnauthorized, apiError)
+		return
+	}
+
+	// Get user ID from context
+	userID, err := auth.GetUserID(r.Context())
+	if err != nil {
+		apiError := apiError{
+			Code:    http.StatusUnauthorized,
+			Message: "User not authenticated",
+		}
+		renderJSON(w, http.StatusUnauthorized, apiError)
+		return
+	}
+
+	// Only return jobs for the authenticated user (strict matching)
+	jobs, err := s.svc.All(r.Context(), userID)
+	if err != nil {
+		apiError := apiError{
+			Code:    http.StatusInternalServerError,
+			Message: err.Error(),
+		}
+		renderJSON(w, http.StatusInternalServerError, apiError)
 		return
 	}
 

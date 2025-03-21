@@ -24,8 +24,8 @@ func (s *Service) Create(ctx context.Context, job *Job) error {
 	return s.repo.Create(ctx, job)
 }
 
-func (s *Service) All(ctx context.Context) ([]Job, error) {
-	return s.repo.Select(ctx, SelectParams{})
+func (s *Service) All(ctx context.Context, userID string) ([]Job, error) {
+	return s.repo.Select(ctx, SelectParams{UserID: userID})
 }
 
 func (s *Service) Get(ctx context.Context, id string) (Job, error) {
@@ -55,6 +55,7 @@ func (s *Service) Update(ctx context.Context, job *Job) error {
 }
 
 func (s *Service) SelectPending(ctx context.Context) ([]Job, error) {
+	// We don't filter by user ID when selecting pending jobs for processing
 	return s.repo.Select(ctx, SelectParams{Status: StatusPending, Limit: 1})
 }
 

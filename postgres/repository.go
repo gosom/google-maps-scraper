@@ -1,0 +1,282 @@
+package postgres
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/gosom/google-maps-scraper/models"
+	_ "github.com/jackc/pgx/v5/stdlib" // PostgreSQL driver
+)
+
+type repository struct {
+	db *sql.DB
+}
+
+// NewRepository creates a new PostgreSQL implementation of models.JobRepository
+func NewRepository(db *sql.DB) (models.JobRepository, error) {
+	if err := db.Ping(); err != nil {
+		return nil, err
+	}
+
+	// We don't create schema here anymore since we're using migrations
+	return &repository{db: db}, nil
+}
+
+// Get retrieves a job by ID
+func (repo *repository) Get(ctx context.Context, id string) (models.Job, error) {
+	const q = `SELECT id, name, status, data, extract(epoch from created_at), extract(epoch from updated_at), user_id 
+               FROM jobs WHERE id = $1`
+
+	row := repo.db.QueryRowContext(ctx, q, id)
+
+	return rowToJob(row)
+}
+
+// Create inserts a new job into the database
+func (repo *repository) Create(ctx context.Context, job *models.Job) error {
+	item, err := jobToRow(job)
+	if err != nil {
+		return err
+	}
+
+	const q = `INSERT INTO jobs (id, name, status, data, created_at, updated_at, user_id) 
+               VALUES ($1, $2, $3, $4, to_timestamp($5), to_timestamp($6), $7)`
+
+	_, err = repo.db.ExecContext(ctx, q, item.ID, item.Name, item.Status, item.Data, item.CreatedAt, item.UpdatedAt, item.UserID)
+	if err != nil {
+		return fmt.Errorf("failed to create job: %w", err)
+	}
+
+	return nil
+}
+
+// Delete removes a job from the database
+func (repo *repository) Delete(ctx context.Context, id string) error {
+	const q = `DELETE FROM jobs WHERE id = $1`
+
+	_, err := repo.db.ExecContext(ctx, q, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete job: %w", err)
+	}
+
+	return nil
+}
+
+// Select finds jobs based on the provided parameters
+func (repo *repository) Select(ctx context.Context, params models.SelectParams) ([]models.Job, error) {
+	q := `SELECT id, name, status, data, extract(epoch from created_at), extract(epoch from updated_at), user_id FROM jobs`
+
+	var args []interface{}
+	var conditions []string
+	var argNum int = 1
+
+	if params.Status != "" {
+		conditions = append(conditions, fmt.Sprintf("status = $%d", argNum))
+		args = append(args, params.Status)
+		argNum++
+	}
+
+	if params.UserID != "" {
+		conditions = append(conditions, fmt.Sprintf("(user_id = $%d OR user_id IS NULL)", argNum))
+		args = append(args, params.UserID)
+		argNum++
+	}
+
+	if len(conditions) > 0 {
+		q += " WHERE " + conditions[0]
+		for i := 1; i < len(conditions); i++ {
+			q += " AND " + conditions[i]
+		}
+	}
+
+	q += " ORDER BY created_at DESC"
+
+	if params.Limit > 0 {
+		q += fmt.Sprintf(" LIMIT $%d", argNum)
+		args = append(args, params.Limit)
+	}
+
+	rows, err := repo.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select jobs: %w", err)
+	}
+
+	defer rows.Close()
+
+	var ans []models.Job
+
+	for rows.Next() {
+		job, err := rowToJob(rows)
+		if err != nil {
+			return nil, err
+		}
+
+		ans = append(ans, job)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return ans, nil
+}
+
+// Update modifies an existing job
+func (repo *repository) Update(ctx context.Context, job *models.Job) error {
+	item, err := jobToRow(job)
+	if err != nil {
+		return err
+	}
+
+	const q = `UPDATE jobs SET name = $1, status = $2, data = $3, updated_at = to_timestamp($4), user_id = $5 WHERE id = $6`
+
+	_, err = repo.db.ExecContext(ctx, q, item.Name, item.Status, item.Data, item.UpdatedAt, item.UserID, item.ID)
+	if err != nil {
+		return fmt.Errorf("failed to update job: %w", err)
+	}
+
+	return nil
+}
+
+type scannable interface {
+	Scan(dest ...any) error
+}
+
+func rowToJob(row scannable) (models.Job, error) {
+	var j job
+
+	err := row.Scan(&j.ID, &j.Name, &j.Status, &j.Data, &j.CreatedAt, &j.UpdatedAt, &j.UserID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return models.Job{}, errors.New("job not found")
+		}
+		return models.Job{}, fmt.Errorf("failed to scan job: %w", err)
+	}
+
+	ans := models.Job{
+		ID:     j.ID,
+		UserID: j.UserID,
+		Name:   j.Name,
+		Status: j.Status,
+		Date:   time.Unix(int64(j.CreatedAt), 0).UTC(),
+	}
+
+	err = json.Unmarshal([]byte(j.Data), &ans.Data)
+	if err != nil {
+		return models.Job{}, fmt.Errorf("failed to unmarshal job data: %w", err)
+	}
+
+	return ans, nil
+}
+
+func jobToRow(item *models.Job) (job, error) {
+	data, err := json.Marshal(item.Data)
+	if err != nil {
+		return job{}, fmt.Errorf("failed to marshal job data: %w", err)
+	}
+
+	return job{
+		ID:        item.ID,
+		UserID:    item.UserID,
+		Name:      item.Name,
+		Status:    item.Status,
+		Data:      string(data),
+		CreatedAt: float64(item.Date.Unix()),
+		UpdatedAt: float64(time.Now().UTC().Unix()),
+	}, nil
+}
+
+type job struct {
+	ID        string
+	UserID    string
+	Name      string
+	Status    string
+	Data      string
+	CreatedAt float64
+	UpdatedAt float64
+}
+
+// createSchema ensures the required database schema exists
+func createSchema(db *sql.DB) error {
+	// Create jobs table - split into individual statements for better error handling
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS jobs (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			status TEXT NOT NULL,
+			data JSONB NOT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			user_id TEXT
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create jobs table: %w", err)
+	}
+
+	// Create users table
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS users (
+			id TEXT PRIMARY KEY,
+			email TEXT NOT NULL UNIQUE,
+			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create users table: %w", err)
+	}
+
+	// Create user_usage table 
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS user_usage (
+			id SERIAL PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			job_count INTEGER NOT NULL DEFAULT 0,
+			last_job_date TIMESTAMP,
+			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			CONSTRAINT fk_user_id FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create user_usage table: %w", err)
+	}
+
+	// Add foreign key constraint for jobs to users if not exists
+	_, err = db.Exec(`
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1 FROM information_schema.tables 
+				WHERE table_schema = 'public' AND table_name = 'users'
+			) AND NOT EXISTS (
+				SELECT 1 FROM pg_constraint WHERE conname = 'jobs_user_id_fkey'
+			) THEN
+				ALTER TABLE jobs ADD CONSTRAINT jobs_user_id_fkey
+					FOREIGN KEY (user_id) REFERENCES users(id);
+			END IF;
+		END
+		$$;
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to add foreign key constraint: %w", err)
+	}
+
+	// Create indexes
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, created_at)`)
+	if err != nil {
+		return fmt.Errorf("failed to create status index: %w", err)
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_user_id ON jobs(user_id)`)
+	if err != nil {
+		return fmt.Errorf("failed to create user_id index: %w", err)
+	}
+
+	return nil
+}

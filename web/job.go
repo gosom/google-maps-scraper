@@ -1,42 +1,35 @@
 package web
 
 import (
-	"context"
 	"errors"
-	"time"
+
+	"github.com/gosom/google-maps-scraper/models"
 )
 
-var jobs []Job
+var jobs []models.Job
 
+// Use the status constants from models package
 const (
-	StatusPending = "pending"
-	StatusWorking = "working"
-	StatusOK      = "ok"
-	StatusFailed  = "failed"
+	StatusPending = models.StatusPending
+	StatusWorking = models.StatusWorking
+	StatusOK      = models.StatusOK
+	StatusFailed  = models.StatusFailed
 )
 
-type SelectParams struct {
-	Status string
-	Limit  int
-}
+// JobRepository is now an alias to the models.JobRepository interface
+type JobRepository = models.JobRepository
 
-type JobRepository interface {
-	Get(context.Context, string) (Job, error)
-	Create(context.Context, *Job) error
-	Delete(context.Context, string) error
-	Select(context.Context, SelectParams) ([]Job, error)
-	Update(context.Context, *Job) error
-}
+// Job is now an alias to the models.Job struct
+type Job = models.Job
 
-type Job struct {
-	ID     string
-	Name   string
-	Date   time.Time
-	Status string
-	Data   JobData
-}
+// JobData is now an alias to the models.JobData struct
+type JobData = models.JobData
 
-func (j *Job) Validate() error {
+// SelectParams is now an alias to the models.SelectParams struct
+type SelectParams = models.SelectParams
+
+// ValidateJob validates a job
+func ValidateJob(j *Job) error {
 	if j.ID == "" {
 		return errors.New("missing id")
 	}
@@ -53,28 +46,15 @@ func (j *Job) Validate() error {
 		return errors.New("missing date")
 	}
 
-	if err := j.Data.Validate(); err != nil {
+	if err := ValidateJobData(&j.Data); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-type JobData struct {
-	Keywords []string      `json:"keywords"`
-	Lang     string        `json:"lang"`
-	Zoom     int           `json:"zoom"`
-	Lat      string        `json:"lat"`
-	Lon      string        `json:"lon"`
-	FastMode bool          `json:"fast_mode"`
-	Radius   int           `json:"radius"`
-	Depth    int           `json:"depth"`
-	Email    bool          `json:"email"`
-	MaxTime  time.Duration `json:"max_time"`
-	Proxies  []string      `json:"proxies"`
-}
-
-func (d *JobData) Validate() error {
+// ValidateJobData validates job data
+func ValidateJobData(d *JobData) error {
 	if len(d.Keywords) == 0 {
 		return errors.New("missing keywords")
 	}

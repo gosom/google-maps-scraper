@@ -1,0 +1,4 @@
+BEGIN;
+    DROP TABLE IF EXISTS results;
+    DROP TABLE IF EXISTS gmaps_jobs;
+COMMIT;
