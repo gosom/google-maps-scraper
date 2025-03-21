@@ -165,7 +165,7 @@ func (s *Server) Start(ctx context.Context) error {
 		log.Println("server stopped")
 	}()
 
-	fmt.Fprintf(os.Stderr, "visit http://localhost%s\n", s.srv.Addr)
+	log.Printf("\033[32mGo server started at http://localhost%s\033[0m\n", s.srv.Addr)
 
 	err := s.srv.ListenAndServe()
 	if err != nil && err != http.ErrServerClosed {

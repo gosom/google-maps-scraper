@@ -36,6 +36,9 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 	if cfg.DataFolder == "" {
 		return nil, fmt.Errorf("data folder is required")
 	}
+	if cfg.Dsn == "" {
+		return nil, fmt.Errorf("PostgreSQL DSN is required")
+	}
 
 	if err := os.MkdirAll(cfg.DataFolder, os.ModePerm); err != nil {
 		return nil, err
@@ -43,67 +46,37 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 
 	var repo web.JobRepository
 	var err error
-	// Use PostgreSQL if DSN is provided, otherwise fallback to SQLite
-	if cfg.Dsn != "" {
-		// Connect to PostgreSQL
-		db, err := sql.Open("pgx", cfg.Dsn)
-		if err != nil {
-			return nil, fmt.Errorf("failed to connect to PostgreSQL: %w", err)
-		}
+	db, err := sql.Open("pgx", cfg.Dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to PostgreSQL: %w", err)
+	}
 
-		// Set connection pool settings
-		db.SetMaxOpenConns(25)
-		db.SetMaxIdleConns(5)
-		db.SetConnMaxLifetime(5 * time.Minute)
+	// Set connection pool settings
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
 
-		// Ping the database to verify connection
-		if err := db.Ping(); err != nil {
-			return nil, fmt.Errorf("failed to ping PostgreSQL: %w", err)
-		}
+	// Ping the database to verify connection
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping PostgreSQL: %w", err)
+	}
 
-		// Run migrations
-		log.Println("Running database migrations...")
-		
-		// Log all valid migration paths that exist
-		validPaths := postgres.GetMigrationPaths()
-		if len(validPaths) == 0 {
-			log.Println("Warning: No valid migration paths found")
-		} else {
-			log.Printf("Found %d valid migration paths:", len(validPaths))
-			for _, path := range validPaths {
-				log.Printf("  - %s", path)
-			}
-		}
-		
-		// Create and run migration manager
-		migrationRunner := postgres.NewMigrationRunner(cfg.Dsn)
-		
-		if err := migrationRunner.RunMigrations(); err != nil {
-			log.Printf("Warning: failed to run migrations: %v", err)
-			// Continue anyway - migrations might be handled externally
-		} else {
-			log.Println("Database migrations completed successfully")
-		}
+	log.Println("Running database migrations...")
 
-		// Create PostgreSQL repository
-		repo, err = postgres.NewRepository(db)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create PostgreSQL repository: %w", err)
-		}
+	migrationRunner := postgres.NewMigrationRunner(cfg.Dsn)
 
-		log.Printf("Using PostgreSQL database for web API")
-	} /* else {
-		// Fallback to SQLite
-		const dbfname = "jobs.db"
-		dbpath := filepath.Join(cfg.DataFolder, dbfname)
+	if err := migrationRunner.RunMigrations(); err != nil {
+		log.Printf("Warning: failed to run migrations: %v", err)
+		//TODO: handle migration error
+	} else {
+		log.Println("Database migrations completed.")
+	}
 
-		repo, err = sqlite.New(dbpath)
-		if err != nil {
-			return nil, err
-		}
-
-		log.Printf("Using SQLite database for web API")
-	} */
+	// Create PostgreSQL repository
+	repo, err = postgres.NewRepository(db)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create PostgreSQL repository: %w", err)
+	}
 
 	svc := web.NewService(repo, cfg.DataFolder)
 
