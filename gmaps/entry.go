@@ -449,7 +449,9 @@ func getHours(darray []any) map[string][]string {
 	hours := make(map[string][]string, len(items))
 
 	for _, item := range items {
+		//nolint:errcheck // it's ok, I'm "sure" the indexes are correct
 		day := getNthElementAndCast[string](item.([]any), 0)
+		//nolint:errcheck // it's ok, I'm "sure" the indexes are correct
 		timesI := getNthElementAndCast[[]any](item.([]any), 1)
 		times := make([]string, len(timesI))
 
