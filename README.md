@@ -538,11 +538,6 @@ Thank you for considering support for the project. Every bit of assistance helps
 
 <br>
 
-[![Capsolver banner](https://raw.githubusercontent.com/gosom/google-maps-scraper/main/img/capsolver-banner.png)](https://www.capsolver.com/?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos)
-**[CapSolver](https://www.capsolver.com/?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos)** automates CAPTCHA solving for efficient web scraping. It supports [reCAPTCHA V2](https://docs.capsolver.com/guide/captcha/ReCaptchaV2.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos), [reCAPTCHA V3](https://docs.capsolver.com/guide/captcha/ReCaptchaV3.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos), [hCaptcha](https://docs.capsolver.com/guide/captcha/HCaptcha.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos), and more. With API and extension options, it’s perfect for any web scraping project.
-
-<br>
-
 [![Google Maps API for easy SERP scraping](https://www.searchapi.io/press/v1/svg/searchapi_logo_black_h.svg)](https://www.searchapi.io/google-maps?via=gosom)
 **Google Maps API for easy SERP scraping**
 
