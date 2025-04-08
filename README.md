@@ -88,6 +88,8 @@ Note: The results will take at least 3 minutes to appear, even if you add only o
 
 Note: for MacOS the docker command should not work. **HELP REQUIRED**
 
+You can download a MacOs App version here: https://github.com/melogabriel/google-maps-scraper/releases/tag/MacOs-v1.0.0 
+
 
 ### Command line:
 
