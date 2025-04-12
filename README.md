@@ -64,27 +64,6 @@ You can find the full list of our APIs here: [https://serpapi.com/search-api](ht
 
 <hr>
 
-<div align="center">
-  <h4>Scrapeless: One-click to scrape Google search results, supporting 15+ SERP scenarios such as Google Maps/Scholars/Jobs, $0.1/thousand queries, 0.2s response.</h4>
-  
-  <h3>
-    <a href="https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps">
-      👉 Free Trial
-    </a>
-  </h3>
-</div>
-
-<p align="center">
-  <a href="https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="./img/scrapeless_dark.png">
-      <source media="(prefers-color-scheme: light)" srcset="./img/scrapeless_light.png">
-      <img alt="Scrapeless service overview" src="./img/scrapeless_light.png">
-    </picture>
-  </a>
-</p>
-
-
 <hr>
 
 
@@ -544,30 +523,6 @@ Thank you for considering support for the project. Every bit of assistance helps
 ## Sponsors
 
 ### Special Thanks to:
-
-<div align="center">
-  <h4>Scrapeless: One-click to scrape Google search results, supporting 15+ SERP scenarios such as Google Maps/Scholars/Jobs, $0.1/thousand queries, 0.2s response.</h4>
-  
-  <h3>
-    <a href="https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps">
-      👉 Free Trial
-    </a>
-  </h3>
-</div>
-
-<!-- Light mode image -->
-<p align="center">
-  <a href="https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps">
-    <img src="./img/scrapeless_light.png#gh-light-mode-only" alt="Scrapeless service overview">
-  </a>
-</p>
-
-<!-- Dark mode image -->
-<p align="center">
-  <a href="https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps">
-    <img src="./img/scrapeless_dark.png#gh-dark-mode-only" alt="Scrapeless service overview">
-  </a>
-</p>
 
 
 <br>
