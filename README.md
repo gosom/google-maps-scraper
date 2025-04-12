@@ -526,22 +526,8 @@ Thank you for considering support for the project. Every bit of assistance helps
 
 <br>
 
-<div align="center">
-  <h4>Scrapeless: One-click to scrape Google search results, supporting 15+ SERP scenarios such as Google Maps/Scholars/Jobs, $0.1/thousand queries, 0.2s response.</h4>
-  
-  <h3>
-    <a href="https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps">
-      👉 Free Trial
-    </a>
-  </h3>
-</div>
-
-<p align="center">
-  <a href="https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps">
-    <img alt="Scrapeless service overview" src="./img/scrapeless_dark.png#gh-dark-mode-only">
-    <img alt="Scrapeless service overview" src="./img/scrapeless_light.png#gh-light-mode-only">
-  </a>
-</p>
+![Scrapeless: One-click to scrape Google search results, supporting 15+ SERP scenarios such as Google Maps/Scholars/Jobs, $0.1/thousand queries, 0.2s response. 👉 [Free Trial](https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps)](./img/scrapeless_dark.png#gh-dark-mode-only)
+![Scrapeless: One-click to scrape Google search results, supporting 15+ SERP scenarios such as Google Maps/Scholars/Jobs, $0.1/thousand queries, 0.2s response. 👉 [Free Trial](https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps)](./img/scrapeless_light.png#gh-light-mode-only)
 
 
 
