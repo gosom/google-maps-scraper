@@ -74,13 +74,15 @@ You can find the full list of our APIs here: [https://serpapi.com/search-api](ht
   </h3>
 </div>
 
-<div align="center">
-  
-[![Scrapeless service overview](./img/scrapeless_light.png#gh-light-mode-only)](https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps)
-
-[![Scrapeless service overview](./img/scrapeless_dark.png#gh-dark-mode-only)](https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps)
-
-</div>
+<p align="center">
+  <a href="https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="./img/scrapeless_dark.png">
+      <source media="(prefers-color-scheme: light)" srcset="./img/scrapeless_light.png">
+      <img alt="Scrapeless service overview" src="./img/scrapeless_light.png">
+    </picture>
+  </a>
+</p>
 
 
 <hr>
