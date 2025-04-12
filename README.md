@@ -65,19 +65,28 @@ You can find the full list of our APIs here: [https://serpapi.com/search-api](ht
 <hr>
 
 <div align="center">
-  <p style="font-size: 16px; margin-bottom: 15px;">
-    <strong>Scrapeless:</strong> One-click to scrape Google search results, supporting 15+ SERP scenarios such as Google Maps/Scholars/Jobs, $0.1/thousand queries, 0.2s response.
-  </p>
+  <h4>Scrapeless: One-click to scrape Google search results, supporting 15+ SERP scenarios such as Google Maps/Scholars/Jobs, $0.1/thousand queries, 0.2s response.</h4>
   
-  <a href="https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps" style="display: inline-block; padding: 8px 20px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; margin-bottom: 15px;">
-    👉 Free Trial
-  </a>
-  
+  <h3>
+    <a href="https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps">
+      👉 Free Trial
+    </a>
+  </h3>
+</div>
+
+<!-- Light mode image -->
+<p align="center">
   <a href="https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps">
     <img src="./img/scrapeless_light.png#gh-light-mode-only" alt="Scrapeless service overview">
+  </a>
+</p>
+
+<!-- Dark mode image -->
+<p align="center">
+  <a href="https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps">
     <img src="./img/scrapeless_dark.png#gh-dark-mode-only" alt="Scrapeless service overview">
   </a>
-</div>
+</p>
 
 
 <hr>
@@ -541,19 +550,29 @@ Thank you for considering support for the project. Every bit of assistance helps
 ### Special Thanks to:
 
 <div align="center">
-  <p style="font-size: 16px; margin-bottom: 15px;">
-    <strong>Scrapeless:</strong> One-click to scrape Google search results, supporting 15+ SERP scenarios such as Google Maps/Scholars/Jobs, $0.1/thousand queries, 0.2s response.
-  </p>
+  <h4>Scrapeless: One-click to scrape Google search results, supporting 15+ SERP scenarios such as Google Maps/Scholars/Jobs, $0.1/thousand queries, 0.2s response.</h4>
   
-  <a href="https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps" style="display: inline-block; padding: 8px 20px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; margin-bottom: 15px;">
-    👉 Free Trial
-  </a>
-  
+  <h3>
+    <a href="https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps">
+      👉 Free Trial
+    </a>
+  </h3>
+</div>
+
+<!-- Light mode image -->
+<p align="center">
   <a href="https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps">
     <img src="./img/scrapeless_light.png#gh-light-mode-only" alt="Scrapeless service overview">
+  </a>
+</p>
+
+<!-- Dark mode image -->
+<p align="center">
+  <a href="https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps">
     <img src="./img/scrapeless_dark.png#gh-dark-mode-only" alt="Scrapeless service overview">
   </a>
-</div>
+</p>
+
 
 <br>
 
