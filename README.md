@@ -64,7 +64,11 @@ You can find the full list of our APIs here: [https://serpapi.com/search-api](ht
 
 <hr>
 
+![Scrapeless: One-click to scrape Google search results, supporting 15+ SERP scenarios such as Google Maps/Scholars/Jobs, $0.1/thousand queries, 0.2s response. 👉 Free Trial](./img/scrapeless_light.png#gh-light-mode-only)
 
+![Scrapeless: One-click to scrape Google search results, supporting 15+ SERP scenarios such as Google Maps/Scholars/Jobs, $0.1/thousand queries, 0.2s response. 👉 Free Trial](./img/scrapeless_dark.png#gh-dark-mode-only)
+
+<hr>
 ## What Google maps scraper does
 
 A command line and web based google maps scraper build using 
