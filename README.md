@@ -64,9 +64,21 @@ You can find the full list of our APIs here: [https://serpapi.com/search-api](ht
 
 <hr>
 
-![Scrapeless: One-click to scrape Google search results, supporting 15+ SERP scenarios such as Google Maps/Scholars/Jobs, $0.1/thousand queries, 0.2s response. 👉 [Free Trial](https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps)](./img/scrapeless_light.png#gh-light-mode-only)
+<div align="center">
+  <p style="font-size: 16px; margin-bottom: 15px;">
+    <strong>Scrapeless:</strong> One-click to scrape Google search results, supporting 15+ SERP scenarios such as Google Maps/Scholars/Jobs, $0.1/thousand queries, 0.2s response.
+  </p>
+  
+  <a href="https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps" style="display: inline-block; padding: 8px 20px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; margin-bottom: 15px;">
+    👉 Free Trial
+  </a>
+  
+  <a href="https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps">
+    <img src="./img/scrapeless_light.png#gh-light-mode-only" alt="Scrapeless service overview">
+    <img src="./img/scrapeless_dark.png#gh-dark-mode-only" alt="Scrapeless service overview">
+  </a>
+</div>
 
-![Scrapeless: One-click to scrape Google search results, supporting 15+ SERP scenarios such as Google Maps/Scholars/Jobs, $0.1/thousand queries, 0.2s response. 👉 [Free Trial](https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps)](./img/scrapeless_dark.png#gh-dark-mode-only)
 
 <hr>
 
@@ -527,6 +539,23 @@ Thank you for considering support for the project. Every bit of assistance helps
 ## Sponsors
 
 ### Special Thanks to:
+
+<div align="center">
+  <p style="font-size: 16px; margin-bottom: 15px;">
+    <strong>Scrapeless:</strong> One-click to scrape Google search results, supporting 15+ SERP scenarios such as Google Maps/Scholars/Jobs, $0.1/thousand queries, 0.2s response.
+  </p>
+  
+  <a href="https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps" style="display: inline-block; padding: 8px 20px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; margin-bottom: 15px;">
+    👉 Free Trial
+  </a>
+  
+  <a href="https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps">
+    <img src="./img/scrapeless_light.png#gh-light-mode-only" alt="Scrapeless service overview">
+    <img src="./img/scrapeless_dark.png#gh-dark-mode-only" alt="Scrapeless service overview">
+  </a>
+</div>
+
+<br>
 
 [Evomi](https://evomi.com?utm_source=github&utm_medium=banner&utm_campaign=gosom-maps) is your Swiss Quality Proxy Provider, starting at **$0.49/GB**
 
