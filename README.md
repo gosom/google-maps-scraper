@@ -64,6 +64,16 @@ You can find the full list of our APIs here: [https://serpapi.com/search-api](ht
 
 <hr>
 
+[Scrapeless](https://www.scrapeless.com/): One-click to scrape Google search results, supporting 15+ SERP scenarios such as Google Maps/Scholars/Jobs, $0.1/thousand queries, 0.2s response.
+
+**[👉 Free Trial](https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps)**
+
+![Scrapeless](./img/scrapeless_dark.png#gh-dark-mode-only)
+
+![Scrapeless](./img/scrapeless_light.png#gh-light-mode-only)
+
+
+
 <hr>
 
 
@@ -459,7 +469,7 @@ metadata:
 spec:
   selector:
     matchLabels:
-      app: google-maps-scraper
+      app: goohttps://www.scrapeless.com/gle-maps-scraper
   replicas: {NUM_OF_REPLICAS}
   template:
     metadata:
@@ -524,15 +534,13 @@ Thank you for considering support for the project. Every bit of assistance helps
 
 ### Special Thanks to:
 
-<br>
-
 [Scrapeless](https://www.scrapeless.com/): One-click to scrape Google search results, supporting 15+ SERP scenarios such as Google Maps/Scholars/Jobs, $0.1/thousand queries, 0.2s response.
 
 **[👉 Free Trial](https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps)**
 
-[![Scrapeless Dark](./img/scrapeless_dark.png#gh-dark-mode-only)](https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps)
+![Scrapeless](./img/scrapeless_dark.png#gh-dark-mode-only)
 
-[![Scrapeless Light](./img/scrapeless_light.png#gh-light-mode-only)](https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps)
+![Scrapeless](./img/scrapeless_light.png#gh-light-mode-only)
 
 
 <br>
