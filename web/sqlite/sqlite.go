@@ -171,6 +171,30 @@ func initDatabase(path string) (*sql.DB, error) {
 		return nil, err
 	}
 
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(30 * time.Minute)
+
+	_, err = db.Exec("PRAGMA busy_timeout = 5000")
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec("PRAGMA journal_mode=WAL")
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec("PRAGMA synchronous=NORMAL")
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec("PRAGMA cache_size=1000")
+	if err != nil {
+		return nil, err
+	}
+
 	err = db.Ping()
 	if err != nil {
 		return nil, err
