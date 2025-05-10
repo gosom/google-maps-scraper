@@ -304,6 +304,8 @@ file `results.csv` will contain the parsed results.
 
 (tested only on Ubuntu 22.04)
 
+**make sure you use go version 1.24.3**
+
 
 ```
 git clone https://github.com/gosom/google-maps-scraper.git
