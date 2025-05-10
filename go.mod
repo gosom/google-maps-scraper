@@ -1,8 +1,6 @@
 module github.com/gosom/google-maps-scraper
 
-go 1.24.0
-
-toolchain go1.24.2
+go 1.24.3
 
 require (
 	github.com/PuerkitoBio/goquery v1.10.3
