@@ -193,17 +193,18 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 		Timeout: playwright.Float(500),
 	})
 
-	if err != nil {
-		select {
-		case <-ctx.Done():
-			resp.Error = ctx.Err()
+	var singlePlace bool
 
-			return resp
-		case <-time.After(3 * time.Second):
-		}
+	if err != nil {
+		waitCtx, waitCancel := context.WithTimeout(ctx, time.Second*5)
+		defer waitCancel()
+
+		singlePlace = waitUntilURLContains(waitCtx, page, "/maps/place/")
+
+		waitCancel()
 	}
 
-	if strings.Contains(page.URL(), "/maps/place/") {
+	if singlePlace {
 		resp.URL = page.URL()
 
 		var body string
@@ -235,6 +236,22 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 	resp.Body = []byte(body)
 
 	return resp
+}
+
+func waitUntilURLContains(ctx context.Context, page playwright.Page, s string) bool {
+	ticker := time.NewTicker(time.Millisecond * 100)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+			if strings.Contains(page.URL(), s) {
+				return true
+			}
+		}
+	}
 }
 
 func clickRejectCookiesIfRequired(page playwright.Page) error {
