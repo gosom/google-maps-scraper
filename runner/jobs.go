@@ -27,6 +27,7 @@ func CreateSeedJobs(
 	radius float64,
 	dedup deduper.Deduper,
 	exitMonitor exiter.Exiter,
+	extraReviews bool,
 ) (jobs []scrapemate.IJob, err error) {
 	var lat, lon float64
 
@@ -93,6 +94,10 @@ func CreateSeedJobs(
 
 			if exitMonitor != nil {
 				opts = append(opts, gmaps.WithExitMonitor(exitMonitor))
+			}
+
+			if extraReviews {
+				opts = append(opts, gmaps.WithExtraReviews())
 			}
 
 			job = gmaps.NewGmapJob(id, langCode, query, maxDepth, email, geoCoordinates, zoom, opts...)

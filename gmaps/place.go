@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/gosom/google-maps-scraper/exiter"
@@ -17,12 +18,13 @@ type PlaceJobOptions func(*PlaceJob)
 type PlaceJob struct {
 	scrapemate.Job
 
-	UsageInResultststs bool
-	ExtractEmail       bool
-	ExitMonitor        exiter.Exiter
+	UsageInResultststs  bool
+	ExtractEmail        bool
+	ExitMonitor         exiter.Exiter
+	ExtractExtraReviews bool
 }
 
-func NewPlaceJob(parentID, langCode, u string, extractEmail bool, opts ...PlaceJobOptions) *PlaceJob {
+func NewPlaceJob(parentID, langCode, u string, extractEmail, extraExtraReviews bool, opts ...PlaceJobOptions) *PlaceJob {
 	const (
 		defaultPrio       = scrapemate.PriorityMedium
 		defaultMaxRetries = 3
@@ -42,6 +44,7 @@ func NewPlaceJob(parentID, langCode, u string, extractEmail bool, opts ...PlaceJ
 
 	job.UsageInResultststs = true
 	job.ExtractEmail = extractEmail
+	job.ExtractExtraReviews = extraExtraReviews
 
 	for _, opt := range opts {
 		opt(&job)
@@ -79,6 +82,11 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 		entry.Link = j.GetURL()
 	}
 
+	allReviewsRaw, ok := resp.Meta["reviews_raw"].(fetchReviewsResponse)
+	if ok && len(allReviewsRaw.pages) > 0 {
+		entry.AddExtraReviews(allReviewsRaw.pages)
+	}
+
 	if j.ExtractEmail && entry.IsWebsiteValidForEmail() {
 		opts := []EmailExtractJobOptions{}
 		if j.ExitMonitor != nil {
@@ -97,7 +105,7 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 	return &entry, nil, err
 }
 
-func (j *PlaceJob) BrowserActions(_ context.Context, page playwright.Page) scrapemate.Response {
+func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scrapemate.Response {
 	var resp scrapemate.Response
 
 	pageResponse, err := page.Goto(j.GetURL(), playwright.PageGotoOptions{
@@ -136,35 +144,78 @@ func (j *PlaceJob) BrowserActions(_ context.Context, page playwright.Page) scrap
 		resp.Headers.Add(k, v)
 	}
 
-	rawI, err := page.Evaluate(js)
+	raw, err := j.extractJSON(page)
 	if err != nil {
 		resp.Error = err
 
 		return resp
 	}
 
+	if resp.Meta == nil {
+		resp.Meta = make(map[string]any)
+	}
+
+	resp.Meta["json"] = raw
+
+	if j.ExtractExtraReviews {
+		reviewCount := j.getReviewCount(raw)
+		if reviewCount > 8 { // we have more reviews
+			params := fetchReviewsParams{
+				page:        page,
+				mapURL:      page.URL(),
+				reviewCount: reviewCount,
+			}
+
+			reviewFetcher := newReviewFetcher(params)
+
+			reviewData, err := reviewFetcher.fetch(ctx)
+			if err != nil {
+				return resp
+			}
+
+			resp.Meta["reviews_raw"] = reviewData
+		}
+	}
+
+	return resp
+}
+
+func (j *PlaceJob) extractJSON(page playwright.Page) ([]byte, error) {
+	rawI, err := page.Evaluate(js)
+	if err != nil {
+		return nil, err
+	}
+
 	raw, ok := rawI.(string)
 	if !ok {
-		resp.Error = fmt.Errorf("could not convert to string")
-
-		return resp
+		return nil, fmt.Errorf("could not convert to string")
 	}
 
 	const prefix = `)]}'`
 
 	raw = strings.TrimSpace(strings.TrimPrefix(raw, prefix))
 
-	if resp.Meta == nil {
-		resp.Meta = make(map[string]any)
+	return []byte(raw), nil
+}
+
+func (j *PlaceJob) getReviewCount(data []byte) int {
+	tmpEntry, err := EntryFromJSON(data, true)
+	if err != nil {
+		return 0
 	}
 
-	resp.Meta["json"] = []byte(raw)
-
-	return resp
+	return tmpEntry.ReviewCount
 }
 
 func (j *PlaceJob) UseInResults() bool {
 	return j.UsageInResultststs
+}
+
+func ctxWait(ctx context.Context, dur time.Duration) {
+	select {
+	case <-ctx.Done():
+	case <-time.After(dur):
+	}
 }
 
 const js = `
