@@ -30,9 +30,16 @@ _Continue using this free scraper and supercharge your workflow with LeadsDB._
 
 ## Sponsors
 
+
 ### Supported by the Community
 
-[Supported by the community](https://github.com/sponsors/gosom)
+This project relies on the support of its users and sponsors to stay alive and improve. If you find it useful, here’s how you can help:
+
+- ⭐ **Star the repository** to show your support and help others discover it.
+- ❤️ **Sponsor the project** to contribute directly to its development. [Become a sponsor →](https://github.com/sponsors/gosom)
+- 🤝 **Use the services of our sponsors** to support the project while benefiting from their offerings.
+
+Your support ensures the project remains maintained and continues to grow. Thank you!
 
 ### Premium Sponsors
 
@@ -57,6 +64,17 @@ You can find the full list of our APIs here: [https://serpapi.com/search-api](ht
 
 <hr>
 
+**G Maps Extractor**  
+A no-code Google Maps scraper that pulls business leads from Google Maps in one click.
+
+- 📇 **Includes** emails, social profiles, phone numbers, addresses, reviews, images and more.
+- 📥 **Export** to CSV · Excel · JSON  
+- 🎁 **Free**: Get your first **1,000 leads** today  
+[Get Started for Free](https://gmapsextractor.com?utm_source=github&utm_medium=banner&utm_campaign=gosom)
+
+[![Gmaps Extractor](./img/gmaps-extractor-banner.png)](https://gmapsextractor.com?utm_source=github&utm_medium=banner&utm_campaign=gosom)
+
+</hr>
 
 ### Special Thanks to:
 
@@ -592,6 +610,26 @@ Thank you for considering support for the project. Every bit of assistance helps
 
 
 ### Premium Sponsors
+
+<table>
+<tr>
+<td>
+<a href="https://gmapsextractor.com?utm_source=github&utm_medium=banner&utm_campaign=gosom">
+<img src="img/gmaps-extractor-logo.png" alt="G Maps Extractor Logo" width="100">
+</a>
+</td>
+<td>
+<b>G Maps Extractor</b>  
+A no-code Google Maps scraper that pulls business leads from Google Maps in one click.
+
+- 📇 **Includes** emails, social profiles, phone numbers, addresses, reviews, images and more.
+- 📥 **Export** to CSV · Excel · JSON  
+- 🎁 **Free**: Get your first **1,000 leads** today  
+<a href="https://gmapsextractor.com?utm_source=github&utm_medium=banner&utm_campaign=gosom">Get Started for Free</a>
+</td>
+</tr>
+</table>
+<hr>
 
 <table>
 <tr>
