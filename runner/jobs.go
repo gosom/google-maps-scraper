@@ -28,6 +28,7 @@ func CreateSeedJobs(
 	dedup deduper.Deduper,
 	exitMonitor exiter.Exiter,
 	extraReviews bool,
+	reviewsLimit int,
 ) (jobs []scrapemate.IJob, err error) {
 	var lat, lon float64
 
@@ -76,6 +77,50 @@ func CreateSeedJobs(
 			continue
 		}
 
+		// Handle problematic URL patterns
+		if strings.Contains(query, "https://www.google.com/maps/place/Your+Business/@xx.xxxx,yy.yyyy,17z") {
+			fmt.Println("WARNING: Detected template URL. Replacing with a simple business search.")
+			query = "business"
+		}
+		
+		// Clean URLs that are mistakenly used as search terms
+		if strings.HasPrefix(query, "http") {
+			fmt.Printf("WARNING: Input looks like a URL: %s\nCleaning for better search results.\n", query)
+			
+			// For Google Maps URLs, extract meaningful parts
+			if strings.Contains(query, "google.com/maps") {
+				parts := strings.Split(query, "/")
+				cleaned := false
+				
+				// Try to extract a meaningful part (not coordinates, not empty)
+				for i := len(parts) - 1; i >= 0; i-- {
+					part := parts[i]
+					if part != "" && 
+					   !strings.HasPrefix(part, "@") && 
+					   !strings.Contains(part, ",") &&
+					   !strings.Contains(part, ".") {
+						query = part
+						fmt.Printf("Extracted query: %s\n", query)
+						cleaned = true
+						break
+					}
+				}
+				
+				// If we couldn't find a good part, use a generic term
+				if !cleaned {
+					query = "business"
+					fmt.Println("Could not extract meaningful search term from URL. Using 'business'.")
+				}
+			} else {
+				// For regular URLs, use the domain
+				parts := strings.Split(query, "/")
+				if len(parts) > 2 {
+					query = parts[2] // Usually the domain name
+					fmt.Printf("Using domain as query: %s\n", query)
+				}
+			}
+		}
+
 		var id string
 
 		if before, after, ok := strings.Cut(query, "#!#"); ok {
@@ -100,7 +145,7 @@ func CreateSeedJobs(
 				opts = append(opts, gmaps.WithExtraReviews())
 			}
 
-			job = gmaps.NewGmapJob(id, langCode, query, maxDepth, email, geoCoordinates, zoom, opts...)
+			job = gmaps.NewGmapJob(id, langCode, query, maxDepth, email, geoCoordinates, zoom, reviewsLimit, opts...)
 		} else {
 			jparams := gmaps.MapSearchParams{
 				Location: gmaps.MapLocation{
