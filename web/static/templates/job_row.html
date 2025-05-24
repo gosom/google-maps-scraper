@@ -7,9 +7,11 @@
     </td>
     <td>
         {{ if eq .Status "ok" }}
-            <a href="/download?id={{.ID}}" download class="button download-button">Download</a>
+        <a href="/view/json?id={{.ID}}" target="_blank" class="button view-button">View JSON</a>
+        <a href="/download/json?id={{.ID}}" download class="button download-button">Download JSON</a>
+        <a href="/download/csv?id={{.ID}}" download class="button download-button">Download CSV</a>
         {{ end }}
-        <button hx-delete="/delete?id={{.ID}}" 
+        <button hx-delete="/delete?id={{.ID}}"
                 hx-target="closest tr"
                 hx-swap="outerHTML"
                 hx-confirm="Are you sure you want to delete this job?"

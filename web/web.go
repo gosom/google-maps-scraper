@@ -52,14 +52,20 @@ func New(svc *Service, addr string) (*Server, error) {
 
 	mux.Handle("/static/", http.StripPrefix("/static/", fileServer))
 	mux.HandleFunc("/scrape", ans.scrape)
-	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/download/csv", func(w http.ResponseWriter, r *http.Request) {
 		r = requestWithID(r)
-
-		ans.download(w, r)
+		ans.downloadCSV(w, r)
+	})
+	mux.HandleFunc("/download/json", func(w http.ResponseWriter, r *http.Request) {
+		r = requestWithID(r)
+		ans.downloadJSON(w, r)
+	})
+	mux.HandleFunc("/view/json", func(w http.ResponseWriter, r *http.Request) {
+		r = requestWithID(r)
+		ans.viewJSON(w, r)
 	})
 	mux.HandleFunc("/delete", func(w http.ResponseWriter, r *http.Request) {
 		r = requestWithID(r)
-
 		ans.delete(w, r)
 	})
 	mux.HandleFunc("/jobs", ans.getJobs)
@@ -101,7 +107,7 @@ func New(svc *Service, addr string) (*Server, error) {
 		}
 	})
 
-	mux.HandleFunc("/api/v1/jobs/{id}/download", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/jobs/{id}/download/csv", func(w http.ResponseWriter, r *http.Request) {
 		r = requestWithID(r)
 
 		if r.Method != http.MethodGet {
@@ -115,7 +121,41 @@ func New(svc *Service, addr string) (*Server, error) {
 			return
 		}
 
-		ans.download(w, r)
+		ans.downloadCSV(w, r)
+	})
+
+	mux.HandleFunc("/api/v1/jobs/{id}/download/json", func(w http.ResponseWriter, r *http.Request) {
+		r = requestWithID(r)
+
+		if r.Method != http.MethodGet {
+			ans := apiError{
+				Code:    http.StatusMethodNotAllowed,
+				Message: "Method not allowed",
+			}
+
+			renderJSON(w, http.StatusMethodNotAllowed, ans)
+
+			return
+		}
+
+		ans.downloadJSON(w, r)
+	})
+
+	mux.HandleFunc("/api/v1/jobs/{id}/view/json", func(w http.ResponseWriter, r *http.Request) {
+		r = requestWithID(r)
+
+		if r.Method != http.MethodGet {
+			ans := apiError{
+				Code:    http.StatusMethodNotAllowed,
+				Message: "Method not allowed",
+			}
+
+			renderJSON(w, http.StatusMethodNotAllowed, ans)
+
+			return
+		}
+
+		ans.apiViewJSON(w, r)
 	})
 
 	handler := securityHeaders(mux)
@@ -275,8 +315,8 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if maxTime < time.Minute*3 {
-		http.Error(w, "max time must be more than 3m", http.StatusUnprocessableEntity)
+	if maxTime < time.Minute*1 {
+		http.Error(w, "max time must be more than 1m", http.StatusUnprocessableEntity)
 
 		return
 	}
@@ -391,7 +431,7 @@ func (s *Server) getJobs(w http.ResponseWriter, r *http.Request) {
 	_ = tmpl.Execute(w, jobs)
 }
 
-func (s *Server) download(w http.ResponseWriter, r *http.Request) {
+func (s *Server) downloadCSV(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 
@@ -427,6 +467,93 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 	_, err = io.Copy(w, file)
 	if err != nil {
 		http.Error(w, "Failed to send file", http.StatusInternalServerError)
+		return
+	}
+}
+
+func (s *Server) downloadJSON(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+
+		return
+	}
+
+	ctx := r.Context()
+
+	id, ok := getIDFromRequest(r)
+	if !ok {
+		http.Error(w, "Invalid ID", http.StatusUnprocessableEntity)
+
+		return
+	}
+
+	filePath, err := s.svc.GetJSON(ctx, id.String())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		http.Error(w, "Failed to open file", http.StatusInternalServerError)
+		return
+	}
+	defer file.Close()
+
+	fileName := filepath.Base(filePath)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", fileName))
+	w.Header().Set("Content-Type", "application/json")
+
+	_, err = io.Copy(w, file)
+	if err != nil {
+		http.Error(w, "Failed to send file", http.StatusInternalServerError)
+		return
+	}
+}
+
+func (s *Server) viewJSON(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	ctx := r.Context()
+
+	id, ok := getIDFromRequest(r)
+	if !ok {
+		http.Error(w, "Invalid ID", http.StatusUnprocessableEntity)
+		return
+	}
+
+	filePath, err := s.svc.GetJSON(ctx, id.String())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	// Leggi il file JSON
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		http.Error(w, "Failed to read file", http.StatusInternalServerError)
+		return
+	}
+
+	// Verifica che sia un JSON valido
+	var jsonData interface{}
+	if err := json.Unmarshal(data, &jsonData); err != nil {
+		http.Error(w, "Invalid JSON file", http.StatusInternalServerError)
+		return
+	}
+
+	// Imposta gli header per visualizzare il JSON nel browser
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+
+	// Scrivi il JSON formattato
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(jsonData); err != nil {
+		http.Error(w, "Failed to encode JSON", http.StatusInternalServerError)
 		return
 	}
 }
@@ -607,6 +734,56 @@ func (s *Server) apiDeleteJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) apiViewJSON(w http.ResponseWriter, r *http.Request) {
+	id, ok := getIDFromRequest(r)
+	if !ok {
+		apiError := apiError{
+			Code:    http.StatusUnprocessableEntity,
+			Message: "Invalid ID",
+		}
+
+		renderJSON(w, http.StatusUnprocessableEntity, apiError)
+		return
+	}
+
+	filePath, err := s.svc.GetJSON(r.Context(), id.String())
+	if err != nil {
+		apiError := apiError{
+			Code:    http.StatusNotFound,
+			Message: err.Error(),
+		}
+
+		renderJSON(w, http.StatusNotFound, apiError)
+		return
+	}
+
+	// Leggi il file JSON
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		apiError := apiError{
+			Code:    http.StatusInternalServerError,
+			Message: "Failed to read file",
+		}
+
+		renderJSON(w, http.StatusInternalServerError, apiError)
+		return
+	}
+
+	// Verifica che sia un JSON valido e restituiscilo
+	var jsonData interface{}
+	if err := json.Unmarshal(data, &jsonData); err != nil {
+		apiError := apiError{
+			Code:    http.StatusInternalServerError,
+			Message: "Invalid JSON file",
+		}
+
+		renderJSON(w, http.StatusInternalServerError, apiError)
+		return
+	}
+
+	renderJSON(w, http.StatusOK, jsonData)
 }
 
 func renderJSON(w http.ResponseWriter, code int, data any) {

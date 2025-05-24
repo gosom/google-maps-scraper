@@ -37,10 +37,22 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("invalid file name")
 	}
 
-	datapath := filepath.Join(s.dataFolder, id+".csv")
+	// Elimina sia il file CSV che JSON
+	csvPath := filepath.Join(s.dataFolder, id+".csv")
+	jsonPath := filepath.Join(s.dataFolder, id+".json")
 
-	if _, err := os.Stat(datapath); err == nil {
-		if err := os.Remove(datapath); err != nil {
+	// Rimuovi il file CSV se esiste
+	if _, err := os.Stat(csvPath); err == nil {
+		if err := os.Remove(csvPath); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	// Rimuovi il file JSON se esiste
+	if _, err := os.Stat(jsonPath); err == nil {
+		if err := os.Remove(jsonPath); err != nil {
 			return err
 		}
 	} else if !os.IsNotExist(err) {
@@ -58,6 +70,7 @@ func (s *Service) SelectPending(ctx context.Context) ([]Job, error) {
 	return s.repo.Select(ctx, SelectParams{Status: StatusPending, Limit: 1})
 }
 
+// GetCSV restituisce il percorso del file CSV per un job
 func (s *Service) GetCSV(_ context.Context, id string) (string, error) {
 	if strings.Contains(id, "/") || strings.Contains(id, "\\") || strings.Contains(id, "..") {
 		return "", fmt.Errorf("invalid file name")
@@ -67,6 +80,21 @@ func (s *Service) GetCSV(_ context.Context, id string) (string, error) {
 
 	if _, err := os.Stat(datapath); os.IsNotExist(err) {
 		return "", fmt.Errorf("csv file not found for job %s", id)
+	}
+
+	return datapath, nil
+}
+
+// GetJSON restituisce il percorso del file JSON per un job
+func (s *Service) GetJSON(_ context.Context, id string) (string, error) {
+	if strings.Contains(id, "/") || strings.Contains(id, "\\") || strings.Contains(id, "..") {
+		return "", fmt.Errorf("invalid file name")
+	}
+
+	datapath := filepath.Join(s.dataFolder, id+".json")
+
+	if _, err := os.Stat(datapath); os.IsNotExist(err) {
+		return "", fmt.Errorf("json file not found for job %s", id)
 	}
 
 	return datapath, nil

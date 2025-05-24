@@ -2,7 +2,6 @@ package webrunner
 
 import (
 	"context"
-	"encoding/csv"
 	"errors"
 	"fmt"
 	"io"
@@ -19,7 +18,6 @@ import (
 	"github.com/gosom/google-maps-scraper/web"
 	"github.com/gosom/google-maps-scraper/web/sqlite"
 	"github.com/gosom/scrapemate"
-	"github.com/gosom/scrapemate/adapters/writers/csvwriter"
 	"github.com/gosom/scrapemate/scrapemateapp"
 	"golang.org/x/sync/errgroup"
 )
@@ -144,18 +142,26 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		return w.svc.Update(ctx, job)
 	}
 
-	outpath := filepath.Join(w.cfg.DataFolder, job.ID+".csv")
+	// Crea entrambi i file: CSV e JSON
+	csvPath := filepath.Join(w.cfg.DataFolder, job.ID+".csv")
+	jsonPath := filepath.Join(w.cfg.DataFolder, job.ID+".json")
 
-	outfile, err := os.Create(outpath)
+	csvFile, err := os.Create(csvPath)
 	if err != nil {
 		return err
 	}
+	defer csvFile.Close()
 
-	defer func() {
-		_ = outfile.Close()
-	}()
+	jsonFile, err := os.Create(jsonPath)
+	if err != nil {
+		csvFile.Close()
+		os.Remove(csvPath)
+		return err
+	}
+	defer jsonFile.Close()
 
-	mate, err := w.setupMate(ctx, outfile, job)
+	// Crea un MultiWriter che scrive su entrambi i file
+	mate, err := w.setupMate(ctx, csvFile, jsonFile, job)
 	if err != nil {
 		job.Status = web.StatusFailed
 
@@ -231,6 +237,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
 			cancel()
 
+			job.Status = web.StatusFailed
 			err2 := w.svc.Update(ctx, job)
 			if err2 != nil {
 				log.Printf("failed to update job status: %v", err2)
@@ -240,16 +247,33 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		}
 
 		cancel()
+
+		// Aspetta un momento per assicurarsi che i writer completino
+		time.Sleep(500 * time.Millisecond)
 	}
 
+	log.Printf("closing scrapemate app for job %s", job.ID)
 	mate.Close()
 
+	// Assicuriamoci che entrambi i file siano stati scritti correttamente
+	if err := csvFile.Sync(); err != nil {
+		log.Printf("error syncing CSV file: %v", err)
+	}
+	if err := jsonFile.Sync(); err != nil {
+		log.Printf("error syncing JSON file: %v", err)
+	}
+
+	log.Printf("updating job %s status to OK", job.ID)
 	job.Status = web.StatusOK
 
-	return w.svc.Update(ctx, job)
+	err = w.svc.Update(ctx, job)
+	if err != nil {
+		log.Printf("error updating job %s status: %v", job.ID, err)
+	}
+	return err
 }
 
-func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job) (*scrapemateapp.ScrapemateApp, error) {
+func (w *webrunner) setupMate(_ context.Context, csvWriter, jsonWriter io.Writer, job *web.Job) (*scrapemateapp.ScrapemateApp, error) {
 	opts := []func(*scrapemateapp.Config) error{
 		scrapemateapp.WithConcurrency(w.cfg.Concurrency),
 		scrapemateapp.WithExitOnInactivity(time.Minute * 3),
@@ -286,9 +310,10 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job)
 
 	log.Printf("job %s has proxy: %v", job.ID, hasProxy)
 
-	csvWriter := csvwriter.NewCsvWriter(csv.NewWriter(writer))
+	// Usa il DualWriter per scrivere su entrambi i formati
+	dualWriter := NewDualWriter(csvWriter, jsonWriter)
 
-	writers := []scrapemate.ResultWriter{csvWriter}
+	writers := []scrapemate.ResultWriter{dualWriter}
 
 	matecfg, err := scrapemateapp.NewConfig(
 		writers,
