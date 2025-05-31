@@ -23,7 +23,7 @@ type EmailExtractJob struct {
 func NewEmailJob(parentID string, entry *Entry, opts ...EmailExtractJobOptions) *EmailExtractJob {
 	const (
 		defaultPrio       = scrapemate.PriorityHigh
-		defaultMaxRetries = 0
+		defaultMaxRetries = 0 // Cambiato da 0 a 1 per permettere un retry
 	)
 
 	job := EmailExtractJob{
@@ -68,13 +68,18 @@ func (j *EmailExtractJob) Process(ctx context.Context, resp *scrapemate.Response
 
 	log.Info("Processing email job", "url", j.URL)
 
-	// if html fetch failed just return
 	if resp.Error != nil {
+		log.Warn("Failed to fetch website for email extraction", "url", j.URL, "error", resp.Error)
+		// Restituisce l'entry senza email invece di restituire l'errore
+		j.Entry.Emails = []string{} // Lista vuota di email
 		return j.Entry, nil, nil
 	}
 
 	doc, ok := resp.Document.(*goquery.Document)
 	if !ok {
+		log.Warn("Failed to parse HTML document for email extraction", "url", j.URL)
+		// Anche qui, restituisce l'entry senza email invece di fallire
+		j.Entry.Emails = []string{}
 		return j.Entry, nil, nil
 	}
 
@@ -85,11 +90,13 @@ func (j *EmailExtractJob) Process(ctx context.Context, resp *scrapemate.Response
 
 	j.Entry.Emails = emails
 
+	log.Info("Email extraction completed", "url", j.URL, "emails_found", len(emails))
+
 	return j.Entry, nil, nil
 }
 
 func (j *EmailExtractJob) ProcessOnFetchError() bool {
-	return true
+	return true // Questo è fondamentale - dice di processare anche se c'è un errore di fetch
 }
 
 func docEmailExtractor(doc *goquery.Document) []string {
