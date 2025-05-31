@@ -294,8 +294,8 @@ func banner(messages []string, width int) string {
 
 func Banner() {
 	message1 := "🌍 Google Maps Scraper"
-	message2 := "⭐ If you find this project useful, please star it on GitHub: https://github.com/gosom/google-maps-scraper"
-	message3 := "💖 Consider sponsoring to support development: https://github.com/sponsors/gosom"
+	message2 := "⭐ Forked from: https://github.com/gosom/google-maps-scraper"
+	message3 := "💖  Version by Polliog"
 
 	fmt.Fprintln(os.Stderr, banner([]string{message1, message2, message3}, 0))
 }
