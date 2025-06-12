@@ -1,5 +1,5 @@
 # Build stage for Playwright dependencies
-FROM golang:1.24.3-bullseye AS playwright-deps
+FROM golang:1.24.4-bullseye AS playwright-deps
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/browsers
 #ENV PLAYWRIGHT_DRIVER_PATH=/opt/
 RUN apt-get update && apt-get install -y --no-install-recommends \
