@@ -8,9 +8,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/scrapemate"
 	"github.com/playwright-community/playwright-go"
+
+	"github.com/gosom/google-maps-scraper/exiter"
 )
 
 type PlaceJobOptions func(*PlaceJob)
@@ -111,7 +112,6 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 	pageResponse, err := page.Goto(j.GetURL(), playwright.PageGotoOptions{
 		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
 	})
-
 	if err != nil {
 		resp.Error = err
 
@@ -220,7 +220,18 @@ func ctxWait(ctx context.Context, dur time.Duration) {
 
 const js = `
 function parse() {
-  const inputString = window.APP_INITIALIZATION_STATE[3][6]
-  return inputString
+	const appState = window.APP_INITIALIZATION_STATE[3];
+	if (!appState) {
+		return null;
+	}
+
+	for (let i = 65; i <= 90; i++) {
+		const key = String.fromCharCode(i) + "f";
+		if (appState[key] && appState[key][6]) {
+		return appState[key][6];
+		}
+	}
+
+	return null;
 }
 `
