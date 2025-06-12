@@ -220,7 +220,7 @@ func ctxWait(ctx context.Context, dur time.Duration) {
 
 const js = `
 function parse() {
-  const inputString = window.APP_INITIALIZATION_STATE[3][6]
+  const inputString = window.APP_INITIALIZATION_STATE[3]["Tf"][6]
   return inputString
 }
 `
