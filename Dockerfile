@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && playwright install chromium --with-deps
 
 # Build stage
-FROM golang:1.24.3-bullseye AS builder
+FROM golang:1.24.4-bullseye AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
