@@ -1,14 +1,45 @@
 # Google maps scraper
 ![build](https://github.com/gosom/google-maps-scraper/actions/workflows/build.yml/badge.svg)
 [![Go Report Card](https://goreportcard.com/badge/github.com/gosom/google-maps-scraper)](https://goreportcard.com/report/github.com/gosom/google-maps-scraper)
+[![Discord](https://img.shields.io/badge/Discord-Join%20Chat-7289DA?logo=discord&logoColor=white)](https://discord.gg/fpaAVhNCCu)
 
 > A free and open-source Google Maps scraper with both command line and web UI options. This tool is easy to use and allows you to extract data from Google Maps efficiently.
 
+## Join Our Community
+
+[![Discord](https://img.shields.io/badge/Discord-Join%20Chat-7289DA?logo=discord&logoColor=white)](https://discord.gg/fpaAVhNCCu)
+
+Join our Discord server to get help, share ideas, and connect with other users of the Google Maps Scraper!
+
+## 🚀 Take Your Lead Generation to the Next Level
+
+**Tired of manual data collection? Meet LeadsDB - an API service that integrates with this scraper.**
+
+[LeadsDB](https://gm.thexos.dev/) enhances your lead generation with:
+- ✅ Cloud storage for all your search results
+- ✅ Visualization dashboard
+- ✅ Advanced filtering & export options
+- ✅ Simple API integration with this scraper
+- ✅ Expose your data to other services via a REST API
+
+Plans start at just €4.99/month
+
+**[Join the waitlist →](https://gm.thexos.dev/)**
+
+_Continue using this free scraper and supercharge your workflow with LeadsDB._
+
 ## Sponsors
+
 
 ### Supported by the Community
 
-[Supported by the community](https://github.com/sponsors/gosom)
+This project relies on the support of its users and sponsors to stay alive and improve. If you find it useful, here’s how you can help:
+
+- ⭐ **Star the repository** to show your support and help others discover it.
+- ❤️ **Sponsor the project** to contribute directly to its development. [Become a sponsor →](https://github.com/sponsors/gosom)
+- 🤝 **Use the services of our sponsors** to support the project while benefiting from their offerings.
+
+Your support ensures the project remains maintained and continues to grow. Thank you!
 
 ### Premium Sponsors
 
@@ -33,6 +64,17 @@ You can find the full list of our APIs here: [https://serpapi.com/search-api](ht
 
 <hr>
 
+**G Maps Extractor**  
+A no-code Google Maps scraper that pulls business leads from Google Maps in one click.
+
+- 📇 **Includes** emails, social profiles, phone numbers, addresses, reviews, images and more.
+- 📥 **Export** to CSV · Excel · JSON  
+- 🎁 **Free**: Get your first **1,000 leads** today  
+[Get Started for Free](https://gmapsextractor.com?utm_source=github&utm_medium=banner&utm_campaign=gosom)
+
+[![Gmaps Extractor](./img/gmaps-extractor-banner.png)](https://gmapsextractor.com?utm_source=github&utm_medium=banner&utm_campaign=gosom)
+
+</hr>
 
 ### Special Thanks to:
 
@@ -41,14 +83,21 @@ You can find the full list of our APIs here: [https://serpapi.com/search-api](ht
 
 <hr>
 
-[![Capsolver banner](https://raw.githubusercontent.com/gosom/google-maps-scraper/main/img/capsolver-banner.png)](https://www.capsolver.com/?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos)
-**[CapSolver](https://www.capsolver.com/?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos)** automates CAPTCHA solving for efficient web scraping. It supports [reCAPTCHA V2](https://docs.capsolver.com/guide/captcha/ReCaptchaV2.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos), [reCAPTCHA V3](https://docs.capsolver.com/guide/captcha/ReCaptchaV3.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos), [hCaptcha](https://docs.capsolver.com/guide/captcha/HCaptcha.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos), and more. With API and extension options, it’s perfect for any web scraping project.
-
-<hr>
-
 [Evomi](https://evomi.com?utm_source=github&utm_medium=banner&utm_campaign=gosom-maps) is your Swiss Quality Proxy Provider, starting at **$0.49/GB**
 
 [![Evomi Banner](https://my.evomi.com/images/brand/cta.png)](https://evomi.com?utm_source=github&utm_medium=banner&utm_campaign=gosom-maps)
+
+<hr>
+
+[Scrapeless](https://www.scrapeless.com/): One-click to scrape Google search results, supporting 15+ SERP scenarios such as Google Maps/Scholars/Jobs, $0.1/thousand queries, 0.2s response.
+
+**[👉 Free Trial](https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps)**
+
+![Scrapeless](./img/scrapeless_dark.png#gh-dark-mode-only)
+
+![Scrapeless](./img/scrapeless_light.png#gh-light-mode-only)
+
+
 
 <hr>
 
@@ -154,45 +203,117 @@ When you use the fast mode ensure that you have provided:
 
 ## Extracted Data Points
 
-```
-input_id
-link
-title
-category
-address
-open_hours
-popular_times
-website
-phone
-plus_code
-review_count
-review_rating
-reviews_per_rating
-latitude
-longitude
-cid
-status
-descriptions
-reviews_link
-thumbnail
-timezone
-price_range
-data_id
-images
-reservations
-order_online
-menu
-owner
-complete_address
-about
-user_reviews
-emails
-```
+#### 1. `input_id`
+- Internal identifier for the input query.
+
+#### 2. `link`
+- Direct URL to the business listing on Google Maps.
+
+#### 3. `title`
+- Name of the business.
+
+#### 4. `category`
+- Business type or category (e.g., Restaurant, Hotel).
+
+#### 5. `address`
+- Street address of the business.
+
+#### 6. `open_hours`
+- Business operating hours.
+
+#### 7. `popular_times`
+- Estimated visitor traffic at different times of the day.
+
+#### 8. `website`
+- Official business website.
+
+#### 9. `phone`
+- Business contact phone number.
+
+#### 10. `plus_code`
+- Shortcode representing the precise location of the business.
+
+#### 11. `review_count`
+- Total number of customer reviews.
+
+#### 12. `review_rating`
+- Average star rating based on reviews.
+
+#### 13. `reviews_per_rating`
+- Breakdown of reviews by each star rating (e.g., number of 5-star, 4-star reviews).
+
+#### 14. `latitude`
+- Latitude coordinate of the business location.
+
+#### 15. `longitude`
+- Longitude coordinate of the business location.
+
+#### 16. `cid`
+- **Customer ID** (CID) used by Google Maps to uniquely identify a business listing. This ID remains stable across updates and can be used in URLs.
+- **Example:** `3D3174616216150310598`
+
+#### 17. `status`
+- Business status (e.g., open, closed, temporarily closed).
+
+#### 18. `descriptions`
+- Brief description of the business.
+
+#### 19. `reviews_link`
+- Direct link to the reviews section of the business listing.
+
+#### 20. `thumbnail`
+- URL to a thumbnail image of the business.
+
+#### 21. `timezone`
+- Time zone of the business location.
+
+#### 22. `price_range`
+- Price range of the business (`$`, `$$`, `$$$`).
+
+#### 23. `data_id`
+- An internal Google Maps identifier composed of two hexadecimal values separated by a colon.
+- **Structure:** `<spatial_hex>:<listing_hex>`
+- **Example:** `0x3eb33fecd7dfa167:0x2c0e80a0f5d57ec6`
+- **Note:** This value may change if the listing is updated and should not be used for permanent identification.
+
+#### 24. `images`
+- Links to images associated with the business.
+
+#### 25. `reservations`
+- Link to book reservations (if available).
+
+#### 26. `order_online`
+- Link to place online orders.
+
+#### 27. `menu`
+- Link to the menu (for applicable businesses).
+
+#### 28. `owner`
+- Indicates whether the business listing is claimed by the owner.
+
+#### 29. `complete_address`
+- Fully formatted address of the business.
+
+#### 30. `about`
+- Additional information about the business.
+
+#### 31. `user_reviews`
+- Collection of customer reviews, including text, rating, and timestamp.
+
+#### 32. `emails`
+- Email addresses associated with the business, if available.
+
+#### 33. `user_reviews_extended`
+- Collection of customer reviews, including text, rating, and timestamp. This includes all the
+  reviews that can be extracted (up to around 300)
 
 **Note**: email is empty by default (see Usage)
 
 **Note**: Input id is an ID that you can define per query. By default it's a UUID
 In order to define it you can have an input file like:
+
+**Note**: user_reviews_extended is empty by default. You need to start the program with the
+`-extra-reviews` command line flag to enabled this (see Usage)
 
 ```
 Matsuhisa Athens #!#MyIDentifier
@@ -210,10 +331,17 @@ file `results.csv` will contain the parsed results.
 
 **If you want emails use additionally the `-email` parameter**
 
+**All Reviews**
+You can fetch up to around 300 reviews instead of the first 8 by using the 
+command line parameter `--extra-reviews`. If you do that I recommend you use JSON
+output instead of CSV.
+
 
 ### On your host
 
 (tested only on Ubuntu 22.04)
+
+**make sure you use go version 1.24.3**
 
 
 ```
@@ -249,7 +377,7 @@ try `./google-maps-scraper -h` to see the command line options available:
   -aws-secret-key string
         AWS secret key
   -c int
-        sets the concurrency [default: half of CPU cores] (default 11)
+        sets the concurrency [default: half of CPU cores] (default 1)
   -cache string
         sets the cache directory [no effect at the moment] (default "cache")
   -data-folder string
@@ -258,12 +386,16 @@ try `./google-maps-scraper -h` to see the command line options available:
         enable headful crawl (opens browser window) [default: false]
   -depth int
         maximum scroll depth in search results [default: 10] (default 10)
+  -disable-page-reuse
+        disable page reuse in playwright
   -dsn string
         database connection string [only valid with database provider]
   -email
         extract emails from websites
   -exit-on-inactivity duration
         exit after inactivity duration (e.g., '5m')
+  -extra-reviews
+        enable extra reviews collection
   -fast-mode
         fast mode (reduced data collection)
   -function-name string
@@ -380,7 +512,7 @@ metadata:
 spec:
   selector:
     matchLabels:
-      app: google-maps-scraper
+      app: goohttps://www.scrapeless.com/gle-maps-scraper
   replicas: {NUM_OF_REPLICAS}
   template:
     metadata:
@@ -445,6 +577,17 @@ Thank you for considering support for the project. Every bit of assistance helps
 
 ### Special Thanks to:
 
+[Scrapeless](https://www.scrapeless.com/): One-click to scrape Google search results, supporting 15+ SERP scenarios such as Google Maps/Scholars/Jobs, $0.1/thousand queries, 0.2s response.
+
+**[👉 Free Trial](https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps)**
+
+![Scrapeless](./img/scrapeless_dark.png#gh-dark-mode-only)
+
+![Scrapeless](./img/scrapeless_light.png#gh-light-mode-only)
+
+
+<br>
+
 [Evomi](https://evomi.com?utm_source=github&utm_medium=banner&utm_campaign=gosom-maps) is your Swiss Quality Proxy Provider, starting at **$0.49/GB**
 
 - 👩‍💻 **$0.49 per GB Residential Proxies**: Our price is unbeatable
@@ -461,17 +604,32 @@ Thank you for considering support for the project. Every bit of assistance helps
 
 <br>
 
-[![Capsolver banner](https://raw.githubusercontent.com/gosom/google-maps-scraper/main/img/capsolver-banner.png)](https://www.capsolver.com/?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos)
-**[CapSolver](https://www.capsolver.com/?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos)** automates CAPTCHA solving for efficient web scraping. It supports [reCAPTCHA V2](https://docs.capsolver.com/guide/captcha/ReCaptchaV2.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos), [reCAPTCHA V3](https://docs.capsolver.com/guide/captcha/ReCaptchaV3.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos), [hCaptcha](https://docs.capsolver.com/guide/captcha/HCaptcha.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos), and more. With API and extension options, it’s perfect for any web scraping project.
-
-<br>
-
 [![Google Maps API for easy SERP scraping](https://www.searchapi.io/press/v1/svg/searchapi_logo_black_h.svg)](https://www.searchapi.io/google-maps?via=gosom)
 **Google Maps API for easy SERP scraping**
 
 
 
 ### Premium Sponsors
+
+<table>
+<tr>
+<td>
+<a href="https://gmapsextractor.com?utm_source=github&utm_medium=banner&utm_campaign=gosom">
+<img src="img/gmaps-extractor-logo.png" alt="G Maps Extractor Logo" width="100">
+</a>
+</td>
+<td>
+<b>G Maps Extractor</b>  
+A no-code Google Maps scraper that pulls business leads from Google Maps in one click.
+
+- 📇 **Includes** emails, social profiles, phone numbers, addresses, reviews, images and more.
+- 📥 **Export** to CSV · Excel · JSON  
+- 🎁 **Free**: Get your first **1,000 leads** today  
+<a href="https://gmapsextractor.com?utm_source=github&utm_medium=banner&utm_campaign=gosom">Get Started for Free</a>
+</td>
+</tr>
+</table>
+<hr>
 
 <table>
 <tr>

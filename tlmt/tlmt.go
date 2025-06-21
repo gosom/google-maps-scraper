@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"runtime"
 	"strings"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shirou/gopsutil/v4/host"
-	"golang.org/x/exp/rand"
 )
 
 var (
@@ -92,9 +92,7 @@ func fetchExternalIP() string {
 		"https://ifconfig.co",
 	}
 
-	r := rand.New(rand.NewSource(uint64(time.Now().UnixNano()))) //nolint:gosec // no need for secure random here
-
-	r.Shuffle(len(endpoints), func(i, j int) {
+	rand.Shuffle(len(endpoints), func(i, j int) {
 		endpoints[i], endpoints[j] = endpoints[j], endpoints[i]
 	})
 

@@ -78,6 +78,7 @@ type Config struct {
 	Radius                   float64
 	Addr                     string
 	DisablePageReuse         bool
+	ExtraReviews             bool
 }
 
 func ParseConfig() *Config {
@@ -93,7 +94,7 @@ func ParseConfig() *Config {
 		proxies string
 	)
 
-	flag.IntVar(&cfg.Concurrency, "c", runtime.NumCPU()/2, "sets the concurrency [default: half of CPU cores]")
+	flag.IntVar(&cfg.Concurrency, "c", min(runtime.NumCPU()/2, 1), "sets the concurrency [default: half of CPU cores]")
 	flag.StringVar(&cfg.CacheDir, "cache", "cache", "sets the cache directory [no effect at the moment]")
 	flag.IntVar(&cfg.MaxDepth, "depth", 10, "maximum scroll depth in search results [default: 10]")
 	flag.StringVar(&cfg.ResultsFile, "results", "stdout", "path to the results file [default: stdout]")
@@ -123,6 +124,7 @@ func ParseConfig() *Config {
 	flag.Float64Var(&cfg.Radius, "radius", 10000, "search radius in meters. Default is 10000 meters")
 	flag.StringVar(&cfg.Addr, "addr", ":8080", "address to listen on for web server")
 	flag.BoolVar(&cfg.DisablePageReuse, "disable-page-reuse", false, "disable page reuse in playwright")
+	flag.BoolVar(&cfg.ExtraReviews, "extra-reviews", false, "enable extra reviews collection")
 
 	flag.Parse()
 
