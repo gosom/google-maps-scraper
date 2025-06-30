@@ -34,6 +34,7 @@ type Server struct {
 	userRepo       postgres.UserRepository
 	usageLimiter   postgres.UsageLimiter
 	db             *sql.DB
+	logger         *log.Logger
 }
 
 type ServerConfig struct {
@@ -52,6 +53,7 @@ func New(cfg ServerConfig) (*Server, error) {
 		db:           cfg.PgDB,
 		userRepo:     cfg.UserRepo,
 		usageLimiter: cfg.UsageLimiter,
+		logger:       log.New(os.Stdout, "[API] ", log.LstdFlags),
 		srv: &http.Server{
 			Addr:              cfg.Addr,
 			ReadHeaderTimeout: 10 * time.Second,
@@ -109,7 +111,6 @@ func New(cfg ServerConfig) (*Server, error) {
 	apiRouter.HandleFunc("/jobs/{id}", ans.apiDeleteJob).Methods(http.MethodDelete)
 	apiRouter.HandleFunc("/jobs/{id}/download", ans.download).Methods(http.MethodGet)
 
-	// Apply security headers to all routes
 	// Apply security headers and CORS to all routes
 	handler := corsMiddleware(securityHeaders(router))
 	ans.srv.Handler = handler
@@ -157,15 +158,16 @@ func (s *Server) Start(ctx context.Context) error {
 
 		err := s.srv.Shutdown(context.Background())
 		if err != nil {
-			log.Println(err)
-
+			s.logger.Println(err)
 			return
 		}
 
-		log.Println("server stopped")
+		s.logger.Println("server stopped")
 	}()
 
-	log.Printf("\033[32mGo server started at http://localhost%s\033[0m\n", s.srv.Addr)
+	s.logger.Printf("\033[32mGo server started at http://localhost%s...\033[0m\n", s.srv.Addr)
+	fmt.Println("◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤")
+	fmt.Println("	")
 
 	err := s.srv.ListenAndServe()
 	if err != nil && err != http.ErrServerClosed {
@@ -225,16 +227,18 @@ func (f formData) KeywordsString() string {
 }
 
 func (s *Server) index(w http.ResponseWriter, r *http.Request) {
+	s.logger.Printf("GET %s", r.URL.Path)
+
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-
+		s.logger.Printf("Method not allowed: %s %s", r.Method, r.URL.Path)
 		return
 	}
 
 	tmpl, ok := s.tmpl["static/templates/index.html"]
 	if !ok {
 		http.Error(w, "missing tpl", http.StatusInternalServerError)
-
+		s.logger.Printf("Missing template: index.html")
 		return
 	}
 
@@ -253,19 +257,22 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = tmpl.Execute(w, data)
+	s.logger.Printf("Rendered index page")
 }
 
 func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
+	s.logger.Printf("POST %s", r.URL.Path)
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-
+		s.logger.Printf("Method not allowed: %s %s", r.Method, r.URL.Path)
 		return
 	}
 
 	err := r.ParseForm()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-
+		s.logger.Printf("Error parsing form: %v", err)
 		return
 	}
 
@@ -282,13 +289,13 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 	maxTime, err := time.ParseDuration(maxTimeStr)
 	if err != nil {
 		http.Error(w, "invalid max time", http.StatusUnprocessableEntity)
-
+		s.logger.Printf("Invalid max time: %s", maxTimeStr)
 		return
 	}
 
 	if maxTime < time.Minute*3 {
 		http.Error(w, "max time must be more than 3m", http.StatusUnprocessableEntity)
-
+		s.logger.Printf("Max time too short: %s", maxTimeStr)
 		return
 	}
 
@@ -297,7 +304,7 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 	keywordsStr, ok := r.Form["keywords"]
 	if !ok {
 		http.Error(w, "missing keywords", http.StatusUnprocessableEntity)
-
+		s.logger.Printf("Missing keywords")
 		return
 	}
 
@@ -316,7 +323,7 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 	newJob.Data.Zoom, err = strconv.Atoi(r.Form.Get("zoom"))
 	if err != nil {
 		http.Error(w, "invalid zoom", http.StatusUnprocessableEntity)
-
+		s.logger.Printf("Invalid zoom: %s", r.Form.Get("zoom"))
 		return
 	}
 
@@ -327,7 +334,7 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 	newJob.Data.Radius, err = strconv.Atoi(r.Form.Get("radius"))
 	if err != nil {
 		http.Error(w, "invalid radius", http.StatusUnprocessableEntity)
-
+		s.logger.Printf("Invalid radius: %s", r.Form.Get("radius"))
 		return
 	}
 
@@ -337,7 +344,7 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 	newJob.Data.Depth, err = strconv.Atoi(r.Form.Get("depth"))
 	if err != nil {
 		http.Error(w, "invalid depth", http.StatusUnprocessableEntity)
-
+		s.logger.Printf("Invalid depth: %s", r.Form.Get("depth"))
 		return
 	}
 
@@ -358,36 +365,41 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 	err = ValidateJob(&newJob)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
-
+		s.logger.Printf("Job validation failed: %v", err)
 		return
 	}
 
 	err = s.svc.Create(r.Context(), &newJob)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-
+		s.logger.Printf("Failed to create job: %v", err)
 		return
 	}
 
 	tmpl, ok := s.tmpl["static/templates/job_row.html"]
 	if !ok {
 		http.Error(w, "missing tpl", http.StatusInternalServerError)
-
+		s.logger.Printf("Missing template: job_row.html")
 		return
 	}
 
 	_ = tmpl.Execute(w, newJob)
+	s.logger.Printf("Created job: %s", newJob.ID)
 }
 
 func (s *Server) getJobs(w http.ResponseWriter, r *http.Request) {
+	s.logger.Printf("GET %s", r.URL.Path)
+
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		s.logger.Printf("Method not allowed: %s %s", r.Method, r.URL.Path)
 		return
 	}
 
 	tmpl, ok := s.tmpl["static/templates/job_rows.html"]
 	if !ok {
 		http.Error(w, "missing tpl", http.StatusInternalServerError)
+		s.logger.Printf("Missing template: job_rows.html")
 		return
 	}
 
@@ -395,37 +407,56 @@ func (s *Server) getJobs(w http.ResponseWriter, r *http.Request) {
 	jobs, err := s.svc.All(context.Background(), "")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.logger.Printf("Failed to get all jobs: %v", err)
 		return
 	}
 
 	_ = tmpl.Execute(w, jobs)
+	s.logger.Printf("Retrieved %d jobs", len(jobs))
 }
 
 func (s *Server) download(w http.ResponseWriter, r *http.Request) {
+	s.logger.Printf("GET %s", r.URL.Path)
+
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-
+		s.logger.Printf("Method not allowed: %s %s", r.Method, r.URL.Path)
 		return
 	}
 
-	ctx := r.Context()
+	// Extract ID directly from the URL path using Gorilla Mux
+	vars := mux.Vars(r)
+	idStr := vars["id"]
 
-	id, ok := getIDFromRequest(r)
-	if !ok {
-		http.Error(w, "Invalid ID", http.StatusUnprocessableEntity)
+	if idStr == "" {
+		// Fallback to query parameter if not in path
+		idStr = r.URL.Query().Get("id")
+	}
 
+	if idStr == "" {
+		http.Error(w, "Missing ID", http.StatusUnprocessableEntity)
+		s.logger.Printf("Missing ID for download")
 		return
 	}
 
-	filePath, err := s.svc.GetCSV(ctx, id.String())
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		http.Error(w, "Invalid ID format", http.StatusUnprocessableEntity)
+		s.logger.Printf("Invalid ID format for download: %v", err)
+		return
+	}
+
+	filePath, err := s.svc.GetCSV(r.Context(), id.String())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
+		s.logger.Printf("Failed to get CSV for job %s: %v", id, err)
 		return
 	}
 
 	file, err := os.Open(filePath)
 	if err != nil {
 		http.Error(w, "Failed to open file", http.StatusInternalServerError)
+		s.logger.Printf("Failed to open file %s: %v", filePath, err)
 		return
 	}
 	defer file.Close()
@@ -437,32 +468,37 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 	_, err = io.Copy(w, file)
 	if err != nil {
 		http.Error(w, "Failed to send file", http.StatusInternalServerError)
+		s.logger.Printf("Failed to send file %s: %v", fileName, err)
 		return
 	}
+
 }
 
 func (s *Server) delete(w http.ResponseWriter, r *http.Request) {
+	s.logger.Printf("DELETE %s", r.URL.Path)
+
 	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-
+		s.logger.Printf("Method not allowed: %s %s", r.Method, r.URL.Path)
 		return
 	}
 
 	deleteID, ok := getIDFromRequest(r)
 	if !ok {
 		http.Error(w, "Invalid ID", http.StatusUnprocessableEntity)
-
+		s.logger.Printf("Invalid ID for delete")
 		return
 	}
 
 	err := s.svc.Delete(r.Context(), deleteID.String())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-
+		s.logger.Printf("Failed to delete job %s: %v", deleteID, err)
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
+	s.logger.Printf("Deleted job: %s", deleteID)
 }
 
 type apiError struct {
@@ -479,18 +515,23 @@ type apiScrapeResponse struct {
 	ID string `json:"id"`
 }
 
-func (s *Server) redocHandler(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) redocHandler(w http.ResponseWriter, r *http.Request) {
+	s.logger.Printf("GET %s", r.URL.Path)
+
 	tmpl, ok := s.tmpl["static/templates/redoc.html"]
 	if !ok {
 		http.Error(w, "missing tpl", http.StatusInternalServerError)
-
+		s.logger.Printf("Missing template: redoc.html")
 		return
 	}
 
 	_ = tmpl.Execute(w, nil)
+	s.logger.Printf("Rendered API docs page")
 }
 
 func (s *Server) apiScrape(w http.ResponseWriter, r *http.Request) {
+	s.logger.Printf("POST %s", r.URL.Path)
+
 	var req apiScrapeRequest
 
 	err := json.NewDecoder(r.Body).Decode(&req)
@@ -501,6 +542,7 @@ func (s *Server) apiScrape(w http.ResponseWriter, r *http.Request) {
 		}
 
 		renderJSON(w, http.StatusUnprocessableEntity, ans)
+		s.logger.Printf("Failed to decode API scrape request: %v", err)
 		return
 	}
 
@@ -514,6 +556,7 @@ func (s *Server) apiScrape(w http.ResponseWriter, r *http.Request) {
 				Message: "User not authenticated",
 			}
 			renderJSON(w, http.StatusUnauthorized, ans)
+			s.logger.Printf("User not authenticated: %v", err)
 			return
 		}
 	} else {
@@ -533,12 +576,12 @@ func (s *Server) apiScrape(w http.ResponseWriter, r *http.Request) {
 				}
 				err = s.userRepo.Create(r.Context(), &defaultUser)
 				if err != nil {
-					log.Printf("Failed to create default user: %v", err)
 					ans := apiError{
 						Code:    http.StatusInternalServerError,
 						Message: "Failed to create default user: " + err.Error(),
 					}
 					renderJSON(w, http.StatusInternalServerError, ans)
+					s.logger.Printf("Failed to create default user: %v", err)
 					return
 				}
 			}
@@ -565,6 +608,7 @@ func (s *Server) apiScrape(w http.ResponseWriter, r *http.Request) {
 		}
 
 		renderJSON(w, http.StatusUnprocessableEntity, ans)
+		s.logger.Printf("Job validation failed: %v", err)
 		return
 	}
 
@@ -576,13 +620,14 @@ func (s *Server) apiScrape(w http.ResponseWriter, r *http.Request) {
 		}
 
 		renderJSON(w, http.StatusInternalServerError, ans)
+		s.logger.Printf("Failed to create job: %v", err)
 		return
 	}
 
 	// Increment usage if authentication is enabled
 	if s.authMiddleware != nil {
 		if err := s.authMiddleware.IncrementUsage(r.Context()); err != nil {
-			log.Printf("Failed to increment usage for user %s: %v", userID, err)
+			s.logger.Printf("Failed to increment usage for user %s: %v", userID, err)
 			// Continue anyway - the job was created successfully
 		}
 	}
@@ -592,9 +637,12 @@ func (s *Server) apiScrape(w http.ResponseWriter, r *http.Request) {
 	}
 
 	renderJSON(w, http.StatusCreated, ans)
+	s.logger.Printf("Created API job: %s for user: %s", newJob.ID, userID)
 }
 
 func (s *Server) apiGetJobs(w http.ResponseWriter, r *http.Request) {
+	s.logger.Printf("GET %s", r.URL.Path)
+
 	// Get user ID from context if authentication is enabled
 	var jobs []Job
 	var err error
@@ -607,37 +655,51 @@ func (s *Server) apiGetJobs(w http.ResponseWriter, r *http.Request) {
 				Message: "User not authenticated",
 			}
 			renderJSON(w, http.StatusUnauthorized, apiError)
+			s.logger.Printf("User not authenticated: %v", err)
 			return
 		}
 
 		// Only return jobs for the authenticated user
 		jobs, err = s.svc.All(r.Context(), userID)
+		if err != nil {
+			apiError := apiError{
+				Code:    http.StatusInternalServerError,
+				Message: err.Error(),
+			}
+			renderJSON(w, http.StatusInternalServerError, apiError)
+			s.logger.Printf("Failed to get jobs for user %s: %v", userID, err)
+			return
+		}
+		s.logger.Printf("Retrieved %d jobs for user %s", len(jobs), userID)
 	} else {
 		// If authentication is not enabled, return all jobs
 		jobs, err = s.svc.All(r.Context(), "")
-	}
-
-	if err != nil {
-		apiError := apiError{
-			Code:    http.StatusInternalServerError,
-			Message: err.Error(),
+		if err != nil {
+			apiError := apiError{
+				Code:    http.StatusInternalServerError,
+				Message: err.Error(),
+			}
+			renderJSON(w, http.StatusInternalServerError, apiError)
+			s.logger.Printf("Failed to get all jobs: %v", err)
+			return
 		}
-		renderJSON(w, http.StatusInternalServerError, apiError)
-		return
+		s.logger.Printf("Retrieved %d jobs (no auth)", len(jobs))
 	}
 
 	renderJSON(w, http.StatusOK, jobs)
 }
 
 func (s *Server) apiGetUserJobs(w http.ResponseWriter, r *http.Request) {
+	s.logger.Printf("GET %s", r.URL.Path)
+
 	// This endpoint always requires authentication
-	fmt.Println("apiGetUserJobs")
 	if s.authMiddleware == nil {
 		apiError := apiError{
 			Code:    http.StatusUnauthorized,
 			Message: "Authentication not configured",
 		}
 		renderJSON(w, http.StatusUnauthorized, apiError)
+		s.logger.Printf("Authentication not configured for user jobs endpoint")
 		return
 	}
 
@@ -649,6 +711,7 @@ func (s *Server) apiGetUserJobs(w http.ResponseWriter, r *http.Request) {
 			Message: "User not authenticated",
 		}
 		renderJSON(w, http.StatusUnauthorized, apiError)
+		s.logger.Printf("User not authenticated: %v", err)
 		return
 	}
 
@@ -660,13 +723,17 @@ func (s *Server) apiGetUserJobs(w http.ResponseWriter, r *http.Request) {
 			Message: err.Error(),
 		}
 		renderJSON(w, http.StatusInternalServerError, apiError)
+		s.logger.Printf("Failed to get jobs for user %s: %v", userID, err)
 		return
 	}
 
 	renderJSON(w, http.StatusOK, jobs)
+	s.logger.Printf("Retrieved %d jobs for user %s", len(jobs), userID)
 }
 
 func (s *Server) apiGetJob(w http.ResponseWriter, r *http.Request) {
+	s.logger.Printf("GET %s", r.URL.Path)
+
 	id, ok := getIDFromRequest(r)
 	if !ok {
 		apiError := apiError{
@@ -675,7 +742,7 @@ func (s *Server) apiGetJob(w http.ResponseWriter, r *http.Request) {
 		}
 
 		renderJSON(w, http.StatusUnprocessableEntity, apiError)
-
+		s.logger.Printf("Invalid ID for get job")
 		return
 	}
 
@@ -687,14 +754,17 @@ func (s *Server) apiGetJob(w http.ResponseWriter, r *http.Request) {
 		}
 
 		renderJSON(w, http.StatusNotFound, apiError)
-
+		s.logger.Printf("Failed to get job %s: %v", id, err)
 		return
 	}
 
 	renderJSON(w, http.StatusOK, job)
+	s.logger.Printf("Retrieved job: %s", id)
 }
 
 func (s *Server) apiDeleteJob(w http.ResponseWriter, r *http.Request) {
+	s.logger.Printf("DELETE %s", r.URL.Path)
+
 	id, ok := getIDFromRequest(r)
 	if !ok {
 		apiError := apiError{
@@ -703,7 +773,7 @@ func (s *Server) apiDeleteJob(w http.ResponseWriter, r *http.Request) {
 		}
 
 		renderJSON(w, http.StatusUnprocessableEntity, apiError)
-
+		s.logger.Printf("Invalid ID for delete job")
 		return
 	}
 
@@ -715,11 +785,12 @@ func (s *Server) apiDeleteJob(w http.ResponseWriter, r *http.Request) {
 		}
 
 		renderJSON(w, http.StatusInternalServerError, apiError)
-
+		s.logger.Printf("Failed to delete job %s: %v", id, err)
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
+	s.logger.Printf("Deleted job: %s", id)
 }
 
 func renderJSON(w http.ResponseWriter, code int, data any) {
