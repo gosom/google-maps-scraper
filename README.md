@@ -1,74 +1,4 @@
 # Google maps scraper
-![build](https://github.com/gosom/google-maps-scraper/actions/workflows/build.yml/badge.svg)
-[![Go Report Card](https://goreportcard.com/badge/github.com/gosom/google-maps-scraper)](https://goreportcard.com/report/github.com/gosom/google-maps-scraper)
-
-> A free and open-source Google Maps scraper with both command line and web UI options. This tool is easy to use and allows you to extract data from Google Maps efficiently.
-
-## 🚀 Take Your Lead Generation to the Next Level
-
-**Tired of manual data collection? Meet LeadsDB - an API service that integrates with this scraper.**
-
-[LeadsDB](https://gm.thexos.dev/) enhances your lead generation with:
-- ✅ Cloud storage for all your search results
-- ✅ Visualization dashboard
-- ✅ Advanced filtering & export options
-- ✅ Simple API integration with this scraper
-- ✅ Expose your data to other services via a REST API
-
-Plans start at just €4.99/month
-
-**[Join the waitlist →](https://gm.thexos.dev/)**
-
-_Continue using this free scraper and supercharge your workflow with LeadsDB._
-
-## Sponsors
-
-### Supported by the Community
-
-[Supported by the community](https://github.com/sponsors/gosom)
-
-### Premium Sponsors
-
-**No time for code? Extract ALL Google Maps listings at country-scale in 2 clicks, without keywords or limits** 👉 [Try it now for free](https://scrap.io?utm_medium=ads&utm_source=github_gosom_gmap_scraper)
-
-[![Extract ALL Google Maps Listings](./img/premium_scrap_io.png)](https://scrap.io?utm_medium=ads&utm_source=github_gosom_gmap_scraper)
-
-<hr>
-
-<table>
-<tr>
-<td><img src="./img/SerpApi-logo-w.png" alt="SerpApi Logo" width="100"></td>
-<td>
-<b>At SerpApi, we scrape public data from Google Maps and other top search engines.</b>
-
-You can find the full list of our APIs here: [https://serpapi.com/search-api](https://serpapi.com/search-api)
-</td>
-</tr>
-</table>
-
-[![SerpApi Banner](./img/SerpApi-banner.png)](https://serpapi.com/?utm_source=google-maps-scraper)
-
-<hr>
-
-
-### Special Thanks to:
-
-[![Google Maps API for easy SERP scraping](https://www.searchapi.io/press/v1/svg/searchapi_logo_black_h.svg)](https://www.searchapi.io/google-maps?via=gosom)
-**Google Maps API for easy SERP scraping**
-
-<hr>
-
-[![Capsolver banner](https://raw.githubusercontent.com/gosom/google-maps-scraper/main/img/capsolver-banner.png)](https://www.capsolver.com/?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos)
-**[CapSolver](https://www.capsolver.com/?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos)** automates CAPTCHA solving for efficient web scraping. It supports [reCAPTCHA V2](https://docs.capsolver.com/guide/captcha/ReCaptchaV2.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos), [reCAPTCHA V3](https://docs.capsolver.com/guide/captcha/ReCaptchaV3.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos), [hCaptcha](https://docs.capsolver.com/guide/captcha/HCaptcha.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos), and more. With API and extension options, it’s perfect for any web scraping project.
-
-<hr>
-
-[Evomi](https://evomi.com?utm_source=github&utm_medium=banner&utm_campaign=gosom-maps) is your Swiss Quality Proxy Provider, starting at **$0.49/GB**
-
-[![Evomi Banner](https://my.evomi.com/images/brand/cta.png)](https://evomi.com?utm_source=github&utm_medium=banner&utm_campaign=gosom-maps)
-
-<hr>
-
 
 ## What Google maps scraper does
 
@@ -83,39 +13,234 @@ customize it to your needs
 
 ### Web UI:
 
-```
-mkdir -p gmapsdata && docker run -v $PWD/gmapsdata:/gmapsdata -p 8080:8080 gosom/google-maps-scraper -data-folder /gmapsdata
-```
+#### Option 1: Using Docker (Recommended for beginners)
 
-Or dowload the [binary](https://github.com/gosom/google-maps-scraper/releases) for your platform and run it.
+**Prerequisites:**
+- Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) for your platform
+- Make sure Docker is running
 
-Note: The results will take at least 3 minutes to appear, even if you add only one keyword. This is the minimum configured runtime.
+**Quick Start:**
+```bash
+# Create a directory for your data
+mkdir -p gmapsdata
 
-Note: for MacOS the docker command should not work. **HELP REQUIRED**
-
-
-### Command line:
-
-```
-touch results.csv && docker run -v $PWD/example-queries.txt:/example-queries -v $PWD/results.csv:/results.csv gosom/google-maps-scraper -depth 1 -input /example-queries -results /results.csv -exit-on-inactivity 3m
+# Run the scraper with Docker
+docker run -v $PWD/gmapsdata:/gmapsdata -p 8080:8080 gosom/google-maps-scraper -data-folder /gmapsdata
 ```
 
-file `results.csv` will contain the parsed results.
+**What this does:**
+- `-v $PWD/gmapsdata:/gmapsdata`: Mounts your local `gmapsdata` folder into the container
+- `-p 8080:8080`: Maps port 8080 from the container to your local machine
+- `-data-folder /gmapsdata`: Tells the scraper where to save results
 
-**If you want emails use additionally the `-email` parameter*
+**Access the web interface:**
+Open your browser and go to: `http://localhost:8080`
+
+#### Option 2: Using Docker Compose (For advanced users)
+
+If you have a PostgreSQL database running on your machine:
+
+```bash
+# Clone the repository
+git clone https://github.com/gosom/google-maps-scraper.git
+cd google-maps-scraper
+
+# Build and run with Docker Compose
+docker compose -f docker-compose.staging.yaml up --build -d
+
+# Access the web interface
+open http://localhost:8080
+```
+
+#### Option 3: Download Binary
+
+Download the [binary](https://github.com/gosom/google-maps-scraper/releases) for your platform and run it directly.
+
+**Note:** The results will take at least 3 minutes to appear, even if you add only one keyword. This is the minimum configured runtime.
+
+
+### Command Line:
+
+#### Using Docker (Recommended)
+
+**Prerequisites:**
+- Install [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+- Create a file with your search queries (one per line)
+
+**Quick Start:**
+```bash
+# Create your queries file
+echo "restaurants in New York" > example-queries.txt
+echo "coffee shops in San Francisco" >> example-queries.txt
+
+# Create an empty results file
+touch results.csv
+
+# Run the scraper
+docker run -v $PWD/example-queries.txt:/example-queries \
+           -v $PWD/results.csv:/results.csv \
+           gosom/google-maps-scraper \
+           -depth 1 \
+           -input /example-queries \
+           -results /results.csv \
+           -exit-on-inactivity 3m
+```
+
+**What each parameter does:**
+- `-depth 1`: Scrape only the first page of results (faster)
+- `-input /example-queries`: Use your queries file
+- `-results /results.csv`: Save results to CSV file
+- `-exit-on-inactivity 3m`: Stop after 3 minutes of no activity
+
+**For email extraction, add the `-email` parameter:**
+```bash
+docker run -v $PWD/example-queries.txt:/example-queries \
+           -v $PWD/results.csv:/results.csv \
+           gosom/google-maps-scraper \
+           -depth 1 \
+           -input /example-queries \
+           -results /results.csv \
+           -exit-on-inactivity 3m \
+           -email
+```
+
+**Results:**
+The `results.csv` file will contain all the parsed data from Google Maps.
 
 ### REST API
 The Google Maps Scraper provides a RESTful API for programmatic management of scraping tasks.
 
-### Key Endpoints
+#### Getting Started with the API
 
-- POST /api/v1/jobs: Create a new scraping job
-- GET /api/v1/jobs: List all jobs
-- GET /api/v1/jobs/{id}: Get details of a specific job
-- DELETE /api/v1/jobs/{id}: Delete a job
-- GET /api/v1/jobs/{id}/download: Download job results as CSV
+**Start the API server:**
+```bash
+# Using Docker (recommended)
+docker run -p 8080:8080 gosom/google-maps-scraper -web
 
-For detailed API documentation, refer to the OpenAPI 3.0.3 specification available through Swagger UI or Redoc when running the app https://localhost:8080/api/docs
+# Or with database support
+docker run -p 8080:8080 -e DSN="postgres://user:pass@host:5432/dbname" gosom/google-maps-scraper -web
+```
+
+**Access API documentation:**
+Open your browser and go to: `http://localhost:8080/api/docs`
+
+#### Key Endpoints
+
+- **POST /api/v1/jobs**: Create a new scraping job
+- **GET /api/v1/jobs**: List all jobs
+- **GET /api/v1/jobs/{id}**: Get details of a specific job
+- **DELETE /api/v1/jobs/{id}**: Delete a job
+- **GET /api/v1/jobs/{id}/download**: Download job results as CSV
+
+#### Example API Usage
+
+```bash
+# Create a new scraping job
+curl -X POST http://localhost:8080/api/v1/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Restaurants in NYC",
+    "keywords": ["restaurants", "food"],
+    "lang": "en",
+    "depth": 5
+  }'
+
+# List all jobs
+curl http://localhost:8080/api/v1/jobs
+
+# Get job details
+curl http://localhost:8080/api/v1/jobs/{job-id}
+```
+
+For detailed API documentation, refer to the OpenAPI 3.0.3 specification available through Swagger UI or Redoc when running the app at `http://localhost:8080/api/docs`
+
+## Brezel.ai Staging API
+
+This project serves as the backend API for Brezel.ai staging environment.
+
+### New Endpoints Added:
+- **GET /health** - Health check for infrastructure monitoring
+- **GET /api/v1/status** - API status with feature information
+
+### Staging Deployment:
+- **URL**: https://staging.brezel.ai
+- **Health**: https://staging.brezel.ai/health  
+- **Status**: https://staging.brezel.ai/api/v1/status
+- **API Docs**: https://staging.brezel.ai/api/docs
+
+### Features:
+- ✅ Google Maps scraping functionality
+- ✅ REST API with authentication
+- ✅ PostgreSQL database integration
+- ✅ Usage limiting and monitoring
+- ✅ Docker containerization
+- ✅ GitHub Actions CI/CD
+
+### Staging Setup for Developers:
+
+**Prerequisites:**
+- Docker and Docker Compose installed
+- PostgreSQL running on the host machine
+- Git access to the repository
+
+**Quick Start:**
+```bash
+# Clone the repository
+git clone https://github.com/gosom/google-maps-scraper.git
+cd google-maps-scraper
+
+# Build and run with Docker Compose
+docker compose -f docker-compose.staging.yaml up --build -d
+
+# Verify the API is running
+curl http://localhost:8080/health
+curl http://localhost:8080/api/v1/status
+```
+
+**Database Configuration:**
+The staging setup connects to a PostgreSQL database running outside Docker. Update the DSN in `docker-compose.staging.yaml`:
+
+```yaml
+environment:
+  - DSN=postgres://username:password@host.docker.internal:5432/database_name?sslmode=disable
+```
+
+**For Linux servers:** If `host.docker.internal` is not available, use the host's IP address instead.
+
+## Troubleshooting
+
+### Common Docker Issues
+
+**"Cannot connect to the Docker daemon"**
+- Make sure Docker Desktop is running
+- On Linux, you might need to add your user to the docker group: `sudo usermod -aG docker $USER`
+
+**"Port already in use"**
+- Stop any existing containers: `docker stop $(docker ps -q)`
+- Or use a different port: `docker run -p 8081:8080 ...`
+
+**"Permission denied" on mounted volumes**
+- On Linux/Mac, ensure the directory has proper permissions
+- Try: `chmod 755 gmapsdata`
+
+**Container exits immediately**
+- Check logs: `docker logs <container-name>`
+- Ensure all required parameters are provided
+- For API mode, make sure the database connection string is correct
+
+**Database connection issues**
+- Verify PostgreSQL is running: `pg_isready -h localhost -p 5432`
+- Check firewall settings
+- Ensure the database user has proper permissions
+
+### Getting Help
+
+- Check the [Issues](https://github.com/gosom/google-maps-scraper/issues) page
+- Review the logs: `docker logs <container-name>`
+- Test database connectivity from inside the container:
+  ```bash
+  docker run --rm postgres:15 psql -h host.docker.internal -U your_user -d your_database
+  ```
 
 
 ## 🌟 Support the Project!
@@ -528,79 +653,6 @@ For more instruction you may also read the following links
 This code is licensed under the MIT License
 
 
-## Contributing
-
-Please open an ISSUE or make a Pull Request
-
-
-Thank you for considering support for the project. Every bit of assistance helps maintain momentum and enhances the scraper’s capabilities!
 
 
 
-
-## Sponsors
-
-### Special Thanks to:
-
-[Evomi](https://evomi.com?utm_source=github&utm_medium=banner&utm_campaign=gosom-maps) is your Swiss Quality Proxy Provider, starting at **$0.49/GB**
-
-- 👩‍💻 **$0.49 per GB Residential Proxies**: Our price is unbeatable
-- 👩‍💻 **24/7 Expert Support**: We will join your Slack Channel
-- 🌍 **Global Presence**: Available in 150+ Countries
-- ⚡ **Low Latency**
-- 🔒 **Swiss Quality and Privacy**
-- 🎁 **Free Trial**
-- 🛡️ **99.9% Uptime**
-- 🤝 **Special IP Pool selection**: Optimize for fast, quality or quantity of ips
-- 🔧 **Easy Integration**: Compatible with most software and programming languages
-
-[![Evomi Banner](https://my.evomi.com/images/brand/cta.png)](https://evomi.com?utm_source=github&utm_medium=banner&utm_campaign=gosom-maps)
-
-<br>
-
-[![Capsolver banner](https://raw.githubusercontent.com/gosom/google-maps-scraper/main/img/capsolver-banner.png)](https://www.capsolver.com/?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos)
-**[CapSolver](https://www.capsolver.com/?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos)** automates CAPTCHA solving for efficient web scraping. It supports [reCAPTCHA V2](https://docs.capsolver.com/guide/captcha/ReCaptchaV2.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos), [reCAPTCHA V3](https://docs.capsolver.com/guide/captcha/ReCaptchaV3.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos), [hCaptcha](https://docs.capsolver.com/guide/captcha/HCaptcha.html?utm_source=github&utm_medium=banner_repo&utm_campaign=scraping&utm_term=giorgos), and more. With API and extension options, it’s perfect for any web scraping project.
-
-<br>
-
-[![Google Maps API for easy SERP scraping](https://www.searchapi.io/press/v1/svg/searchapi_logo_black_h.svg)](https://www.searchapi.io/google-maps?via=gosom)
-**Google Maps API for easy SERP scraping**
-
-
-
-### Premium Sponsors
-
-<table>
-<tr>
-<td><img src="./img/SerpApi-logo-w.png" alt="SerpApi Logo" width="100"></td>
-<td>
-<b>At SerpApi, we scrape public data from Google Maps and other top search engines.</b>
-
-You can find the full list of our APIs here: [https://serpapi.com/search-api](https://serpapi.com/search-api)
-</td>
-</tr>
-</table>
-
-For more information, see [document](serpapi.md).
-
-
-<hr>
-
-**No time for code? Extract ALL Google Maps listings at country-scale in 2 clicks, without keywords or limits** 👉 [Try it now for free](https://scrap.io?utm_medium=ads&utm_source=github_gosom_gmap_scraper)
-
-[![Extract ALL Google Maps Listings](./img/premium_scrap_io.png)](https://scrap.io?utm_medium=ads&utm_source=github_gosom_gmap_scraper)
-
-For more information, see [scrap.io demo](scrap_io.md).
-
-
-### Supported by the Community
-
-[Supported by the community](https://github.com/sponsors/gosom)
-
-
-## Notes
-
-Please use this scraper responsibly and in accordance with all applicable laws and regulations. Unauthorized scraping of data may violate the terms of service of the website being scraped.
-
-banner is generated using OpenAI's DALL-E
-> **Note:** If you register via the links on my page, I may get a commission. This is another way to support my work

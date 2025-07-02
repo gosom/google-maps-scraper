@@ -138,6 +138,10 @@ func ParseConfig() *Config {
 		cfg.AwsRegion = os.Getenv("MY_AWS_REGION")
 	}
 
+	if cfg.Dsn == "" {
+		cfg.Dsn = os.Getenv("DSN")
+	}
+
 	if cfg.AwsLambdaInvoker && cfg.FunctionName == "" {
 		panic("FunctionName must be provided when using AwsLambdaInvoker")
 	}

@@ -1,0 +1,26 @@
+services:
+  # For external PostgreSQL - this connects to PostgreSQL running on host
+  brezel-api:
+    image: brezel-staging-test
+    environment:
+      - DSN=${DSN:-postgres://scraper:strongpassword@host.docker.internal:5432/google_maps_scraper?sslmode=disable}
+      - DATA_FOLDER=/gmapsdata
+      - WEB_ADDR=:8080
+      - LOG_LEVEL=info
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./gmapsdata:/gmapsdata
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
+
+volumes:
+  gmapsdata:
+
+# .env file example (DO NOT commit to version control):
+# DSN=postgres://username:password@host.docker.internal:5432/database_name?sslmode=disable 

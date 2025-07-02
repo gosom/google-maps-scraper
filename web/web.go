@@ -81,6 +81,9 @@ func New(cfg ServerConfig) (*Server, error) {
 	fileServer := http.FileServer(http.FS(staticFS))
 	router := mux.NewRouter()
 
+	// Health check endpoint (no authentication needed)
+	router.HandleFunc("/health", ans.healthCheck).Methods(http.MethodGet)
+
 	// Static files
 	router.PathPrefix("/static/").Handler(http.StripPrefix("/static/", fileServer))
 
@@ -110,6 +113,9 @@ func New(cfg ServerConfig) (*Server, error) {
 	apiRouter.HandleFunc("/jobs/{id}", ans.apiGetJob).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/{id}", ans.apiDeleteJob).Methods(http.MethodDelete)
 	apiRouter.HandleFunc("/jobs/{id}/download", ans.download).Methods(http.MethodGet)
+
+	// Brezel.ai status endpoint (public)
+	router.HandleFunc("/api/v1/status", ans.apiStatus).Methods(http.MethodGet)
 
 	// Apply security headers and CORS to all routes
 	handler := corsMiddleware(securityHeaders(router))
@@ -166,7 +172,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}()
 
 	s.logger.Printf("\033[32mGo server started at http://localhost%s...\033[0m\n", s.srv.Addr)
-	fmt.Println("◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤")
+	fmt.Println("◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤◢◣◥◤")
 	fmt.Println("	")
 
 	err := s.srv.ListenAndServe()
@@ -820,4 +826,74 @@ func securityHeaders(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// Brezel.ai specific API endpoints
+func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
+	s.logger.Printf("GET %s", r.URL.Path)
+
+	response := map[string]interface{}{
+		"service":     "brezel.ai API",
+		"version":     "v1.0.0",
+		"environment": "staging",
+		"status":      "running",
+		"features": map[string]interface{}{
+			"google_maps_scraping": true,
+			"authentication":       s.authMiddleware != nil,
+			"database":             s.db != nil,
+			"usage_limiting":       s.usageLimiter != nil,
+		},
+		"endpoints": map[string][]string{
+			"public": {
+				"GET /health",
+				"GET /api/v1/status",
+				"GET /api/docs",
+			},
+			"authenticated": {
+				"GET /api/v1/jobs",
+				"GET /api/v1/jobs/user",
+				"POST /api/v1/jobs",
+				"GET /api/v1/jobs/{id}",
+				"DELETE /api/v1/jobs/{id}",
+				"GET /api/v1/jobs/{id}/download",
+			},
+		},
+		"timestamp": time.Now().UTC(),
+	}
+
+	renderJSON(w, http.StatusOK, response)
+	s.logger.Printf("Rendered Brezel.ai API status")
+}
+
+// Health check endpoint for staging infrastructure
+func (s *Server) healthCheck(w http.ResponseWriter, r *http.Request) {
+	s.logger.Printf("GET %s", r.URL.Path)
+
+	// Check database connection if available
+	dbStatus := "not_configured"
+	if s.db != nil {
+		if err := s.db.Ping(); err != nil {
+			dbStatus = "unhealthy"
+		} else {
+			dbStatus = "healthy"
+		}
+	}
+
+	response := map[string]interface{}{
+		"status":    "healthy",
+		"version":   "v1.0.0",
+		"service":   "brezel.ai",
+		"timestamp": time.Now().UTC(),
+		"checks": map[string]string{
+			"database": dbStatus,
+			"server":   "healthy",
+		},
+	}
+
+	// Return 503 if database is unhealthy
+	if dbStatus == "unhealthy" {
+		renderJSON(w, http.StatusServiceUnavailable, response)
+	} else {
+		renderJSON(w, http.StatusOK, response)
+	}
 }
