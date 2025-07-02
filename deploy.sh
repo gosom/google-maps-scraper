@@ -45,7 +45,14 @@ print_status "🚀 Starting Brezel.ai deployment..."
 # Check prerequisites
 print_status "Checking prerequisites..."
 check_command "docker"
-check_command "docker-compose"
+if command -v "docker-compose" &> /dev/null; then
+    DOCKER_COMPOSE_CMD="docker-compose"
+elif docker compose version &> /dev/null; then
+    DOCKER_COMPOSE_CMD="docker compose"
+else
+    print_error "Neither docker-compose nor docker compose is available"
+    exit 1
+fi
 check_command "git"
 
 # Check if PostgreSQL is running (if local)
@@ -63,10 +70,43 @@ if [ ! -f ".env.staging" ]; then
         cp .env.staging.example .env.staging
         print_warning "⚠️  Please edit .env.staging with your database credentials before continuing."
         print_warning "   Run: nano .env.staging"
+        print_warning "   For Linux servers, use: DSN=postgres://user:pass@172.17.0.1:5432/dbname?sslmode=disable"
         read -p "Press Enter after editing .env.staging to continue..."
     else
         print_error ".env.staging.example not found. Please create .env.staging manually."
         exit 1
+    fi
+fi
+
+# Test database connectivity if DSN is available
+if [ -f ".env.staging" ]; then
+    print_status "Testing database connectivity..."
+    source .env.staging
+    if [ ! -z "$DSN" ]; then
+        # Extract connection details from DSN for testing
+        DB_HOST=$(echo $DSN | sed -n 's/.*@\([^:]*\):.*/\1/p')
+        DB_PORT=$(echo $DSN | sed -n 's/.*:\([0-9]*\)\/.*/\1/p')
+        
+        if [ "$DB_HOST" = "172.17.0.1" ] || [ "$DB_HOST" = "host.docker.internal" ]; then
+            # Test PostgreSQL connectivity
+            if command -v pg_isready &> /dev/null; then
+                if [ "$DB_HOST" = "172.17.0.1" ]; then
+                    TEST_HOST="localhost"
+                else
+                    TEST_HOST="$DB_HOST"
+                fi
+                
+                if pg_isready -h $TEST_HOST -p ${DB_PORT:-5432} >/dev/null 2>&1; then
+                    print_status "✅ Database connectivity test passed"
+                else
+                    print_warning "⚠️  Database connectivity test failed. Make sure PostgreSQL is running."
+                fi
+            else
+                print_warning "⚠️  pg_isready not found. Skipping database connectivity test."
+            fi
+        else
+            print_status "External database configured. Skipping local connectivity test."
+        fi
     fi
 fi
 
@@ -81,11 +121,11 @@ print_status "✅ Docker image built successfully"
 
 # Stop existing containers
 print_status "Stopping existing containers..."
-docker compose -f docker-compose.staging.yaml down --remove-orphans 2>/dev/null || true
+$DOCKER_COMPOSE_CMD -f docker-compose.staging.yaml down --remove-orphans 2>/dev/null || true
 
 # Start the application
 print_status "Starting the application..."
-docker compose -f docker-compose.staging.yaml --env-file .env.staging up -d || {
+$DOCKER_COMPOSE_CMD -f docker-compose.staging.yaml --env-file .env.staging up -d || {
     print_error "Failed to start the application"
     exit 1
 }
@@ -116,17 +156,21 @@ done
 # Display status
 print_status "🎉 Deployment completed successfully!"
 echo
+
+# Get server IP address
+SERVER_IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "localhost")
+
 print_status "Application URLs:"
-echo "  Health Check: http://localhost:8080/health"
-echo "  API Status:   http://localhost:8080/api/v1/status"
-echo "  Web UI:       http://localhost:8080/"
-echo "  API Docs:     http://localhost:8080/api/docs"
+echo "  🌐 Web UI:       http://$SERVER_IP:8080/"
+echo "  💚 Health Check: http://$SERVER_IP:8080/health"
+echo "  📊 API Status:   http://$SERVER_IP:8080/api/v1/status"
+echo "  📚 API Docs:     http://$SERVER_IP:8080/api/docs"
 echo
 
 print_status "Useful commands:"
 echo "  View logs:    docker logs google-maps-scraper-2-brezel-api-1"
-echo "  Stop app:     docker compose -f docker-compose.staging.yaml down"
-echo "  Restart app:  docker compose -f docker-compose.staging.yaml restart"
+echo "  Stop app:     $DOCKER_COMPOSE_CMD -f docker-compose.staging.yaml down"
+echo "  Restart app:  $DOCKER_COMPOSE_CMD -f docker-compose.staging.yaml restart"
 echo
 
 # Show application status
