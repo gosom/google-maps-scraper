@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -144,6 +145,13 @@ func ParseConfig() *Config {
 
 	if cfg.Dsn == "" {
 		cfg.Dsn = os.Getenv("DSN")
+	}
+
+	// Allow concurrency override via environment variable
+	if concurrencyEnv := os.Getenv("CONCURRENCY"); concurrencyEnv != "" {
+		if c, err := strconv.Atoi(concurrencyEnv); err == nil && c > 0 {
+			cfg.Concurrency = c
+		}
 	}
 
 	if cfg.AwsLambdaInvoker && cfg.FunctionName == "" {

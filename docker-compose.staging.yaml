@@ -6,8 +6,9 @@ services:
       - DSN=${DSN:-postgres://scraper:strongpassword@172.17.0.1:5432/google_maps_scraper?sslmode=disable}
       - DATA_FOLDER=/gmapsdata
       - WEB_ADDR=:8080
-      - LOG_LEVEL=info
-    command: ["-web", "-c", "2"]
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - CONCURRENCY=${CONCURRENCY:-}
+    command: ["-web"]
     ports:
       - "8080:8080"
     volumes:
