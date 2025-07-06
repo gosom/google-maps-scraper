@@ -1,17 +1,17 @@
 #!/bin/bash
 
-# Brezel.ai Staging Deployment Script
-# This script automates the deployment process for Linux servers
+# 🧠 Smart Deployment Script for Any CPU Configuration
+# Automatically detects CPU cores and configures concurrency appropriately
 
-set -e  # Exit on any error
+set -e
 
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Function to print colored output
 print_status() {
     echo -e "${GREEN}[INFO]${NC} $1"
 }
@@ -24,157 +24,138 @@ print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Function to check if command exists
-check_command() {
-    if ! command -v $1 &> /dev/null; then
-        print_error "$1 is not installed. Please install it first."
-        exit 1
-    fi
+print_header() {
+    echo -e "${BLUE}[SMART-DEPLOY]${NC} $1"
 }
 
-# Function to check if service is running
-check_service() {
-    if ! systemctl is-active --quiet $1; then
-        print_error "$1 service is not running. Please start it first."
-        exit 1
-    fi
-}
+print_header "🧠 Smart Deployment for Multi-Core Compatibility"
 
-print_status "🚀 Starting Brezel.ai deployment..."
-
-# Check prerequisites
-print_status "Checking prerequisites..."
-check_command "docker"
-if command -v "docker-compose" &> /dev/null; then
-    DOCKER_COMPOSE_CMD="docker-compose"
-elif docker compose version &> /dev/null; then
-    DOCKER_COMPOSE_CMD="docker compose"
-else
-    print_error "Neither docker-compose nor docker compose is available"
-    exit 1
-fi
-check_command "git"
-
-# Check if PostgreSQL is running (if local)
-if systemctl list-units --full -all | grep -Fq "postgresql.service"; then
-    check_service "postgresql"
-    print_status "✅ PostgreSQL service is running"
-else
-    print_warning "PostgreSQL service not found locally. Make sure external PostgreSQL is accessible."
+# 1. Detect CPU configuration
+CPU_CORES=$(nproc 2>/dev/null || echo "1")
+OPTIMAL_CONCURRENCY=$((CPU_CORES / 2))
+if [ $OPTIMAL_CONCURRENCY -lt 1 ]; then
+    OPTIMAL_CONCURRENCY=1
 fi
 
-# Check if .env.staging exists
-if [ ! -f ".env.staging" ]; then
-    print_warning ".env.staging not found. Creating from example..."
-    if [ -f ".env.staging.example" ]; then
-        cp .env.staging.example .env.staging
-        print_warning "⚠️  Please edit .env.staging with your database credentials before continuing."
-        print_warning "   Run: nano .env.staging"
-        print_warning "   For Linux servers, use: DSN=postgres://user:pass@172.17.0.1:5432/dbname?sslmode=disable"
-        read -p "Press Enter after editing .env.staging to continue..."
+print_status "🔍 System Analysis:"
+echo "   CPU Cores: $CPU_CORES"
+echo "   Optimal Concurrency: $OPTIMAL_CONCURRENCY"
+echo
+
+# 2. Check and fix .env.staging
+print_status "📝 Configuring environment..."
+if [ ! -f ".env" ]; then
+    print_warning ".env not found. Creating from .env.example..."
+    cp .env.example .env
+fi
+
+# Fix DSN for Linux if needed
+if grep -q "host\.docker\.internal" .env; then
+    print_status "🔧 Fixing DSN for Linux compatibility..."
+    sed -i 's/host\.docker\.internal/172.17.0.1/g' .env
+fi
+
+# Add or update CONCURRENCY setting if on single core
+if [ $CPU_CORES -eq 1 ]; then
+    print_status "🎯 Single-core server detected - setting explicit concurrency"
+    if grep -q "^CONCURRENCY=" .env; then
+        sed -i "s/^CONCURRENCY=.*/CONCURRENCY=1/" .env
+    elif grep -q "^# CONCURRENCY=" .env; then
+        sed -i "s/^# CONCURRENCY=.*/CONCURRENCY=1/" .env
     else
-        print_error ".env.staging.example not found. Please create .env.staging manually."
-        exit 1
+        echo "" >> .env
+        echo "# Single-core server configuration" >> .env
+        echo "CONCURRENCY=1" >> .env
     fi
+else
+    print_status "🚀 Multi-core server detected - using auto-detection"
+    # Remove explicit CONCURRENCY setting to use auto-detection
+    sed -i '/^CONCURRENCY=/d' .env
 fi
 
-# Test database connectivity if DSN is available
-if [ -f ".env.staging" ]; then
-    print_status "Testing database connectivity..."
-    source .env.staging
-    if [ ! -z "$DSN" ]; then
-        # Extract connection details from DSN for testing
-        DB_HOST=$(echo $DSN | sed -n 's/.*@\([^:]*\):.*/\1/p')
-        DB_PORT=$(echo $DSN | sed -n 's/.*:\([0-9]*\)\/.*/\1/p')
-        
-        if [ "$DB_HOST" = "172.17.0.1" ] || [ "$DB_HOST" = "host.docker.internal" ]; then
-            # Test PostgreSQL connectivity
-            if command -v pg_isready &> /dev/null; then
-                if [ "$DB_HOST" = "172.17.0.1" ]; then
-                    TEST_HOST="localhost"
-                else
-                    TEST_HOST="$DB_HOST"
-                fi
-                
-                if pg_isready -h $TEST_HOST -p ${DB_PORT:-5432} >/dev/null 2>&1; then
-                    print_status "✅ Database connectivity test passed"
-                else
-                    print_warning "⚠️  Database connectivity test failed. Make sure PostgreSQL is running."
-                fi
-            else
-                print_warning "⚠️  pg_isready not found. Skipping database connectivity test."
-            fi
-        else
-            print_status "External database configured. Skipping local connectivity test."
-        fi
-    fi
+print_status "📋 Current configuration:"
+echo "   Database: $(grep "^DSN=" .env | cut -d'@' -f2 | cut -d':' -f1)"
+if grep -q "^CONCURRENCY=" .env; then
+    echo "   Concurrency: $(grep "^CONCURRENCY=" .env | cut -d'=' -f2) (explicit)"
+else
+    echo "   Concurrency: Auto-detected ($OPTIMAL_CONCURRENCY)"
 fi
+echo
 
-# Build Docker image
-print_status "Building Docker image..."
-docker build -t brezel-staging-test . || {
-    print_error "Failed to build Docker image"
-    exit 1
-}
+# 3. Build with no cache to ensure latest fixes
+print_status "🏗️ Building Docker image with CPU optimizations..."
+docker build --no-cache -t brezel-staging-test .
 
-print_status "✅ Docker image built successfully"
+# 4. Stop existing containers
+print_status "🛑 Stopping existing containers..."
+docker compose -f docker-compose.staging.yaml down --remove-orphans 2>/dev/null || true
 
-# Stop existing containers
-print_status "Stopping existing containers..."
-$DOCKER_COMPOSE_CMD -f docker-compose.staging.yaml down --remove-orphans 2>/dev/null || true
+# 5. Start application
+print_status "🚀 Starting application..."
+docker compose -f docker-compose.staging.yaml --env-file .env up -d
 
-# Start the application
-print_status "Starting the application..."
-$DOCKER_COMPOSE_CMD -f docker-compose.staging.yaml --env-file .env.staging up -d || {
-    print_error "Failed to start the application"
-    exit 1
-}
+# 6. Wait and monitor
+print_status "⏳ Waiting for application startup..."
+sleep 5
 
-# Wait for the application to start
-print_status "Waiting for application to start..."
-sleep 10
-
-# Check if the application is running
-print_status "Verifying deployment..."
-
-# Test health endpoint
+# 7. Test startup with detailed monitoring
+print_status "🔍 Monitoring startup process..."
 for i in {1..30}; do
-    if curl -s -f http://localhost:8080/health > /dev/null 2>&1; then
+    if curl -s -f http://localhost:8080/health >/dev/null 2>&1; then
         print_status "✅ Application is healthy!"
         break
     else
         if [ $i -eq 30 ]; then
-            print_error "Application failed to start properly"
-            print_error "Check logs with: docker logs google-maps-scraper-2-brezel-api-1"
+            print_error "❌ Application failed to start"
+            echo
+            print_error "🔍 Debugging information:"
+            echo "Container status:"
+            docker ps -a | grep brezel
+            echo
+            echo "Recent logs:"
+            docker logs google-maps-scraper-brezel-api-1 --tail 10
+            echo
+            print_error "💡 Troubleshooting suggestions:"
+            echo "   1. Check database connectivity: pg_isready -h 172.17.0.1 -p 5432"
+            echo "   2. Verify .env.staging configuration"
+            echo "   3. Check container logs: docker logs google-maps-scraper-brezel-api-1"
             exit 1
         fi
-        print_status "Waiting for application... ($i/30)"
+        echo "   Startup attempt $i/30..."
         sleep 2
     fi
 done
 
-# Display status
-print_status "🎉 Deployment completed successfully!"
+# 8. Show success information
+print_header "🎉 Deployment Successful!"
 echo
 
-# Get server IP address
+# Get server info
 SERVER_IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "localhost")
+CONTAINER_CPU_INFO=$(docker exec google-maps-scraper-brezel-api-1 nproc 2>/dev/null || echo "unknown")
 
-print_status "Application URLs:"
-echo "  🌐 Web UI:       http://$SERVER_IP:8080/"
-echo "  💚 Health Check: http://$SERVER_IP:8080/health"
-echo "  📊 API Status:   http://$SERVER_IP:8080/api/v1/status"
-echo "  📚 API Docs:     http://$SERVER_IP:8080/api/docs"
+print_status "🖥️ Server Information:"
+echo "   Server IP: $SERVER_IP"
+echo "   Host CPUs: $CPU_CORES"
+echo "   Container CPUs: $CONTAINER_CPU_INFO"
 echo
 
-print_status "Useful commands:"
-echo "  View logs:    docker logs google-maps-scraper-2-brezel-api-1"
-echo "  Stop app:     $DOCKER_COMPOSE_CMD -f docker-compose.staging.yaml down"
-echo "  Restart app:  $DOCKER_COMPOSE_CMD -f docker-compose.staging.yaml restart"
+print_status "🌐 Application URLs:"
+echo "   Web Interface:  http://$SERVER_IP:8080/"
+echo "   Health Check:   http://$SERVER_IP:8080/health"
+echo "   API Status:     http://$SERVER_IP:8080/api/v1/status"
+echo "   API Docs:       http://$SERVER_IP:8080/api/docs"
 echo
 
-# Show application status
-print_status "Current status:"
+print_status "📊 Application Status:"
 curl -s http://localhost:8080/api/v1/status | jq . 2>/dev/null || curl -s http://localhost:8080/api/v1/status
+echo
 
-print_status "Deployment completed successfully! 🚀"
+print_status "🛠️ Management Commands:"
+echo "   View logs:      docker logs google-maps-scraper-brezel-api-1"
+echo "   Restart:        docker compose -f docker-compose.staging.yaml restart"
+echo "   Stop:           docker compose -f docker-compose.staging.yaml down"
+echo "   Monitor:        docker stats google-maps-scraper-brezel-api-1"
+echo
+
+print_header "✨ Your application is ready and optimized for $CPU_CORES CPU core(s)!"

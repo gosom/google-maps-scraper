@@ -3,11 +3,13 @@ services:
   brezel-api:
     image: brezel-staging-test
     environment:
-      - DSN=${DSN:-postgres://scraper:strongpassword@172.17.0.1:5432/google_maps_scraper?sslmode=disable}
-      - DATA_FOLDER=/gmapsdata
-      - WEB_ADDR=:8080
+      - DSN=${DSN}
+      - DATA_FOLDER=${DATA_FOLDER:-/gmapsdata}
+      - WEB_ADDR=${WEB_ADDR:-:8080}
       - LOG_LEVEL=${LOG_LEVEL:-info}
-      - CONCURRENCY=${CONCURRENCY:-}
+      - CONCURRENCY=${CONCURRENCY}
+      - CLERK_API_KEY=${CLERK_API_KEY}
+      - DISABLE_TELEMETRY=${DISABLE_TELEMETRY:-0}
     command: ["-web"]
     ports:
       - "8080:8080"

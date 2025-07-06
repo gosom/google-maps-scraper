@@ -4,11 +4,12 @@ services:
     image: brezel-staging-test
     environment:
       - DSN=${DSN}
-      - DATA_FOLDER=/gmapsdata
-      - WEB_ADDR=:8080
+      - DATA_FOLDER=${DATA_FOLDER:-/gmapsdata}
+      - WEB_ADDR=${WEB_ADDR:-:8080}
       - LOG_LEVEL=${LOG_LEVEL:-info}
+      - CONCURRENCY=${CONCURRENCY}
+      - CLERK_API_KEY=${CLERK_API_KEY}
       - DISABLE_TELEMETRY=${DISABLE_TELEMETRY:-0}
-      - CLERK_API_KEY=${CLERK_API_KEY:-}
     ports:
       - "${API_PORT:-8080}:8080"
     volumes:

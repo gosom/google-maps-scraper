@@ -2,8 +2,8 @@ services:
   db:
     image: postgres:15.2-alpine
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
     ports:
       - '127.0.0.1:5432:5432'
     expose:

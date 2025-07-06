@@ -89,12 +89,8 @@ func New(cfg ServerConfig) (*Server, error) {
 
 	// Web UI routes
 	router.HandleFunc("/", ans.index).Methods(http.MethodGet)
-	router.HandleFunc("/scrape", ans.scrape).Methods(http.MethodPost)
-	router.HandleFunc("/jobs", ans.getJobs).Methods(http.MethodGet)
-	router.HandleFunc("/download", ans.download).Methods(http.MethodGet)
-	router.HandleFunc("/delete", ans.delete).Methods(http.MethodDelete)
 
-	// API documentation
+	// API documentation (public access)
 	router.HandleFunc("/api/docs", ans.redocHandler).Methods(http.MethodGet)
 
 	// API routes with authentication if available
@@ -106,16 +102,13 @@ func New(cfg ServerConfig) (*Server, error) {
 		apiRouter.Use(ans.authMiddleware.CheckUsageLimit)
 	}
 
-	// API endpoints
+	// API endpoints (these are protected by middleware if enabled)
 	apiRouter.HandleFunc("/jobs", ans.apiGetJobs).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/user", ans.apiGetUserJobs).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs", ans.apiScrape).Methods(http.MethodPost)
 	apiRouter.HandleFunc("/jobs/{id}", ans.apiGetJob).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/{id}", ans.apiDeleteJob).Methods(http.MethodDelete)
 	apiRouter.HandleFunc("/jobs/{id}/download", ans.download).Methods(http.MethodGet)
-
-	// Brezel.ai status endpoint (public)
-	router.HandleFunc("/api/v1/status", ans.apiStatus).Methods(http.MethodGet)
 
 	// Apply security headers and CORS to all routes
 	handler := corsMiddleware(securityHeaders(router))
@@ -391,34 +384,6 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 
 	_ = tmpl.Execute(w, newJob)
 	s.logger.Printf("Created job: %s", newJob.ID)
-}
-
-func (s *Server) getJobs(w http.ResponseWriter, r *http.Request) {
-	s.logger.Printf("GET %s", r.URL.Path)
-
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		s.logger.Printf("Method not allowed: %s %s", r.Method, r.URL.Path)
-		return
-	}
-
-	tmpl, ok := s.tmpl["static/templates/job_rows.html"]
-	if !ok {
-		http.Error(w, "missing tpl", http.StatusInternalServerError)
-		s.logger.Printf("Missing template: job_rows.html")
-		return
-	}
-
-	// For the web UI, we show all jobs (no authentication for web UI)
-	jobs, err := s.svc.All(context.Background(), "")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		s.logger.Printf("Failed to get all jobs: %v", err)
-		return
-	}
-
-	_ = tmpl.Execute(w, jobs)
-	s.logger.Printf("Retrieved %d jobs", len(jobs))
 }
 
 func (s *Server) download(w http.ResponseWriter, r *http.Request) {
@@ -826,43 +791,6 @@ func securityHeaders(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
-}
-
-// Brezel.ai specific API endpoints
-func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
-	s.logger.Printf("GET %s", r.URL.Path)
-
-	response := map[string]interface{}{
-		"service":     "brezel.ai API",
-		"version":     "v1.0.0",
-		"environment": "staging",
-		"status":      "running",
-		"features": map[string]interface{}{
-			"google_maps_scraping": true,
-			"authentication":       s.authMiddleware != nil,
-			"database":             s.db != nil,
-			"usage_limiting":       s.usageLimiter != nil,
-		},
-		"endpoints": map[string][]string{
-			"public": {
-				"GET /health",
-				"GET /api/v1/status",
-				"GET /api/docs",
-			},
-			"authenticated": {
-				"GET /api/v1/jobs",
-				"GET /api/v1/jobs/user",
-				"POST /api/v1/jobs",
-				"GET /api/v1/jobs/{id}",
-				"DELETE /api/v1/jobs/{id}",
-				"GET /api/v1/jobs/{id}/download",
-			},
-		},
-		"timestamp": time.Now().UTC(),
-	}
-
-	renderJSON(w, http.StatusOK, response)
-	s.logger.Printf("Rendered Brezel.ai API status")
 }
 
 // Health check endpoint for staging infrastructure
