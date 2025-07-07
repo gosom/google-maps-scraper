@@ -1,5 +1,4 @@
 services:
-  # For external PostgreSQL - this connects to PostgreSQL running on host
   brezel-api:
     image: brezel-staging-test
     environment:
@@ -16,6 +15,8 @@ services:
     volumes:
       - ./gmapsdata:/gmapsdata
     restart: unless-stopped
+    networks:
+      - gmaps
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
@@ -23,8 +24,28 @@ services:
       start_period: 40s
       retries: 3
 
+  frontend:
+    build:
+      context: ../google-maps-scraper-webapp
+      dockerfile: Dockerfile
+    image: gmaps-webapp-staging
+    container_name: gmaps-webapp-staging
+    ports:
+      - "3000:3000"
+    env_file:
+      - ../google-maps-scraper-webapp/.env.staging
+    environment:
+      - NEXT_PUBLIC_API_URL=http://brezel-api:8080
+    restart: unless-stopped
+    networks:
+      - gmaps
+    depends_on:
+      - brezel-api
+
 volumes:
   gmapsdata:
 
-# .env file example (DO NOT commit to version control):
-# DSN=postgres://username:password@host.docker.internal:5432/database_name?sslmode=disable 
+networks:
+  gmaps:
+    driver: bridge
+ 
