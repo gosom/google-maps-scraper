@@ -34,8 +34,6 @@ services:
       - "3000:3000"
     env_file:
       - ../google-maps-scraper-webapp/.env.staging
-    environment:
-      - NEXT_PUBLIC_API_URL=http://brezel-api:8080
     restart: unless-stopped
     networks:
       - gmaps
