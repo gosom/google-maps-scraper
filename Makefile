@@ -1,5 +1,5 @@
 APP_NAME := google_maps_scraper
-VERSION := 1.7.10
+VERSION := 1.8.1
 
 default: help
 
@@ -26,8 +26,11 @@ test-cover-report: ## an html report of the coverage statistics
 	go tool cover -html coverage.out -o coverage.html
 	open coverage.html
 
+vuln: ## runs vulnerability checks
+	go tool govulncheck -C . -show verbose -format text -scan symbol ./...
+
 lint: ## runs the linter
-	go generate -v ./lint.go
+	go tool golangci-lint -v run ./...
 
 cross-compile: ## cross compiles the application
 	GOOS=linux GOARCH=amd64 go build -o bin/$(APP_NAME)-${VERSION}-linux-amd64

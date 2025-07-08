@@ -67,31 +67,32 @@ type Entry struct {
 	OpenHours  map[string][]string `json:"open_hours"`
 	// PopularTImes is a map with keys the days of the week
 	// and value is a map with key the hour and value the traffic in that time
-	PopularTimes     map[string]map[int]int `json:"popular_times"`
-	WebSite          string                 `json:"web_site"`
-	Phone            string                 `json:"phone"`
-	PlusCode         string                 `json:"plus_code"`
-	ReviewCount      int                    `json:"review_count"`
-	ReviewRating     float64                `json:"review_rating"`
-	ReviewsPerRating map[int]int            `json:"reviews_per_rating"`
-	Latitude         float64                `json:"latitude"`
-	Longtitude       float64                `json:"longtitude"`
-	Status           string                 `json:"status"`
-	Description      string                 `json:"description"`
-	ReviewsLink      string                 `json:"reviews_link"`
-	Thumbnail        string                 `json:"thumbnail"`
-	Timezone         string                 `json:"timezone"`
-	PriceRange       string                 `json:"price_range"`
-	DataID           string                 `json:"data_id"`
-	Images           []Image                `json:"images"`
-	Reservations     []LinkSource           `json:"reservations"`
-	OrderOnline      []LinkSource           `json:"order_online"`
-	Menu             LinkSource             `json:"menu"`
-	Owner            Owner                  `json:"owner"`
-	CompleteAddress  Address                `json:"complete_address"`
-	About            []About                `json:"about"`
-	UserReviews      []Review               `json:"user_reviews"`
-	Emails           []string               `json:"emails"`
+	PopularTimes        map[string]map[int]int `json:"popular_times"`
+	WebSite             string                 `json:"web_site"`
+	Phone               string                 `json:"phone"`
+	PlusCode            string                 `json:"plus_code"`
+	ReviewCount         int                    `json:"review_count"`
+	ReviewRating        float64                `json:"review_rating"`
+	ReviewsPerRating    map[int]int            `json:"reviews_per_rating"`
+	Latitude            float64                `json:"latitude"`
+	Longtitude          float64                `json:"longtitude"`
+	Status              string                 `json:"status"`
+	Description         string                 `json:"description"`
+	ReviewsLink         string                 `json:"reviews_link"`
+	Thumbnail           string                 `json:"thumbnail"`
+	Timezone            string                 `json:"timezone"`
+	PriceRange          string                 `json:"price_range"`
+	DataID              string                 `json:"data_id"`
+	Images              []Image                `json:"images"`
+	Reservations        []LinkSource           `json:"reservations"`
+	OrderOnline         []LinkSource           `json:"order_online"`
+	Menu                LinkSource             `json:"menu"`
+	Owner               Owner                  `json:"owner"`
+	CompleteAddress     Address                `json:"complete_address"`
+	About               []About                `json:"about"`
+	UserReviews         []Review               `json:"user_reviews"`
+	UserReviewsExtended []Review               `json:"user_reviews_extended"`
+	Emails              []string               `json:"emails"`
 }
 
 func (e *Entry) haversineDistance(lat, lon float64) float64 {
@@ -186,6 +187,7 @@ func (e *Entry) CsvHeaders() []string {
 		"complete_address",
 		"about",
 		"user_reviews",
+		"user_reviews_extended",
 		"emails",
 	}
 }
@@ -223,12 +225,42 @@ func (e *Entry) CsvRow() []string {
 		stringify(e.CompleteAddress),
 		stringify(e.About),
 		stringify(e.UserReviews),
+		stringify(e.UserReviewsExtended),
 		stringSliceToString(e.Emails),
 	}
 }
 
+func (e *Entry) AddExtraReviews(pages [][]byte) {
+	if len(pages) == 0 {
+		return
+	}
+
+	for _, page := range pages {
+		reviews := extractReviews(page)
+		if len(reviews) > 0 {
+			e.UserReviewsExtended = append(e.UserReviewsExtended, reviews...)
+		}
+	}
+}
+
+func extractReviews(data []byte) []Review {
+	if len(data) >= 4 && string(data[0:4]) == `)]}'` {
+		data = data[4:] // Skip security prefix
+	}
+
+	var jd []any
+	if err := json.Unmarshal(data, &jd); err != nil {
+		fmt.Printf("Error unmarshalling JSON: %v\n", err)
+		return nil
+	}
+
+	reviewsI := getNthElementAndCast[[]any](jd, 2)
+
+	return parseReviews(reviewsI)
+}
+
 //nolint:gomnd // it's ok, I need the indexes
-func EntryFromJSON(raw []byte) (entry Entry, err error) {
+func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("recovered from panic: %v stack: %s", r, debug.Stack())
@@ -236,6 +268,12 @@ func EntryFromJSON(raw []byte) (entry Entry, err error) {
 			return
 		}
 	}()
+
+	onlyReviewCount := false
+
+	if len(reviewCountOnly) == 1 && reviewCountOnly[0] {
+		onlyReviewCount = true
+	}
 
 	var jd []any
 	if err := json.Unmarshal(raw, &jd); err != nil {
@@ -249,6 +287,12 @@ func EntryFromJSON(raw []byte) (entry Entry, err error) {
 	darray, ok := jd[6].([]any)
 	if !ok {
 		return entry, fmt.Errorf("invalid json")
+	}
+
+	entry.ReviewCount = int(getNthElementAndCast[float64](darray, 4, 8))
+
+	if onlyReviewCount {
+		return entry, nil
 	}
 
 	entry.Link = getNthElementAndCast[string](darray, 27)
@@ -273,7 +317,6 @@ func EntryFromJSON(raw []byte) (entry Entry, err error) {
 	entry.WebSite = getNthElementAndCast[string](darray, 7, 0)
 	entry.Phone = getNthElementAndCast[string](darray, 178, 0, 0)
 	entry.PlusCode = getNthElementAndCast[string](darray, 183, 2, 2, 0)
-	entry.ReviewCount = int(getNthElementAndCast[float64](darray, 4, 8))
 	entry.ReviewRating = getNthElementAndCast[float64](darray, 4, 7)
 	entry.Latitude = getNthElementAndCast[float64](darray, 9, 2)
 	entry.Longtitude = getNthElementAndCast[float64](darray, 9, 3)
@@ -376,6 +419,14 @@ func EntryFromJSON(raw []byte) (entry Entry, err error) {
 	}
 
 	reviewsI := getNthElementAndCast[[]any](darray, 175, 9, 0, 0)
+	entry.UserReviews = make([]Review, 0, len(reviewsI))
+
+	return entry, nil
+}
+
+func parseReviews(reviewsI []any) []Review {
+	ans := make([]Review, 0, len(reviewsI))
+
 	for i := range reviewsI {
 		el := getNthElementAndCast[[]any](reviewsI, i, 0)
 
@@ -413,10 +464,10 @@ func EntryFromJSON(raw []byte) (entry Entry, err error) {
 			}
 		}
 
-		entry.UserReviews = append(entry.UserReviews, review)
+		ans = append(ans, review)
 	}
 
-	return entry, nil
+	return ans
 }
 
 type getLinkSourceParams struct {
@@ -449,7 +500,9 @@ func getHours(darray []any) map[string][]string {
 	hours := make(map[string][]string, len(items))
 
 	for _, item := range items {
+		//nolint:errcheck // it's ok, I'm "sure" the indexes are correct
 		day := getNthElementAndCast[string](item.([]any), 0)
+		//nolint:errcheck // it's ok, I'm "sure" the indexes are correct
 		timesI := getNthElementAndCast[[]any](item.([]any), 1)
 		times := make([]string, len(timesI))
 

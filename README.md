@@ -396,10 +396,17 @@ When you use the fast mode ensure that you have provided:
 #### 32. `emails`
 - Email addresses associated with the business, if available.
 
+#### 33. `user_reviews_extended`
+- Collection of customer reviews, including text, rating, and timestamp. This includes all the
+  reviews that can be extracted (up to around 300)
+
 **Note**: email is empty by default (see Usage)
 
 **Note**: Input id is an ID that you can define per query. By default it's a UUID
 In order to define it you can have an input file like:
+
+**Note**: user_reviews_extended is empty by default. You need to start the program with the
+`-extra-reviews` command line flag to enabled this (see Usage)
 
 ```
 Matsuhisa Athens #!#MyIDentifier
@@ -417,10 +424,17 @@ file `results.csv` will contain the parsed results.
 
 **If you want emails use additionally the `-email` parameter**
 
+**All Reviews**
+You can fetch up to around 300 reviews instead of the first 8 by using the 
+command line parameter `--extra-reviews`. If you do that I recommend you use JSON
+output instead of CSV.
+
 
 ### On your host
 
 (tested only on Ubuntu 22.04)
+
+**make sure you use go version 1.24.3**
 
 
 ```
@@ -456,7 +470,7 @@ try `./google-maps-scraper -h` to see the command line options available:
   -aws-secret-key string
         AWS secret key
   -c int
-        sets the concurrency [default: half of CPU cores] (default 11)
+        sets the concurrency [default: half of CPU cores] (default 1)
   -cache string
         sets the cache directory [no effect at the moment] (default "cache")
   -data-folder string
@@ -465,12 +479,16 @@ try `./google-maps-scraper -h` to see the command line options available:
         enable headful crawl (opens browser window) [default: false]
   -depth int
         maximum scroll depth in search results [default: 10] (default 10)
+  -disable-page-reuse
+        disable page reuse in playwright
   -dsn string
         database connection string [only valid with database provider]
   -email
         extract emails from websites
   -exit-on-inactivity duration
         exit after inactivity duration (e.g., '5m')
+  -extra-reviews
+        enable extra reviews collection
   -fast-mode
         fast mode (reduced data collection)
   -function-name string
@@ -602,7 +620,7 @@ metadata:
 spec:
   selector:
     matchLabels:
-      app: google-maps-scraper
+      app: goohttps://www.scrapeless.com/gle-maps-scraper
   replicas: {NUM_OF_REPLICAS}
   template:
     metadata:
