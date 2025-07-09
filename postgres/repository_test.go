@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/gosom/google-maps-scraper/web"
+	"github.com/gosom/google-maps-scraper/models"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -67,7 +67,7 @@ func TestPostgresRepository(t *testing.T) {
 	// Test Select
 	t.Run("Select", func(t *testing.T) {
 		// By status
-		jobs, err := repo.Select(ctx, web.SelectParams{Status: job.Status})
+		jobs, err := repo.Select(ctx, models.SelectParams{Status: job.Status})
 		if err != nil {
 			t.Fatalf("Failed to select jobs by status: %v", err)
 		}
@@ -77,7 +77,7 @@ func TestPostgresRepository(t *testing.T) {
 		}
 
 		// By user ID
-		jobs, err = repo.Select(ctx, web.SelectParams{UserID: job.UserID})
+		jobs, err = repo.Select(ctx, models.SelectParams{UserID: job.UserID})
 		if err != nil {
 			t.Fatalf("Failed to select jobs by user ID: %v", err)
 		}
@@ -102,7 +102,7 @@ func TestPostgresRepository(t *testing.T) {
 	// Test Update
 	t.Run("Update", func(t *testing.T) {
 		// Update job status
-		job.Status = web.StatusWorking
+		job.Status = models.StatusWorking
 		job.Name = "Updated Test Job"
 
 		err := repo.Update(ctx, &job)
@@ -116,8 +116,8 @@ func TestPostgresRepository(t *testing.T) {
 			t.Fatalf("Failed to get updated job: %v", err)
 		}
 
-		if updatedJob.Status != web.StatusWorking {
-			t.Errorf("Expected job status %s, got %s", web.StatusWorking, updatedJob.Status)
+		if updatedJob.Status != models.StatusWorking {
+			t.Errorf("Expected job status %s, got %s", models.StatusWorking, updatedJob.Status)
 		}
 
 		if updatedJob.Name != "Updated Test Job" {
@@ -140,17 +140,17 @@ func TestPostgresRepository(t *testing.T) {
 	})
 }
 
-func createTestJob(t *testing.T) web.Job {
+func createTestJob(t *testing.T) models.Job {
 	jobID := uuid.New().String()
 	userID := uuid.New().String()
 
-	return web.Job{
+	return models.Job{
 		ID:     jobID,
 		UserID: userID,
 		Name:   "Test Job",
 		Date:   time.Now().UTC(),
-		Status: web.StatusPending,
-		Data: web.JobData{
+		Status: models.StatusPending,
+		Data: models.JobData{
 			Keywords: []string{"coffee", "shop"},
 			Lang:     "en",
 			Zoom:     15,

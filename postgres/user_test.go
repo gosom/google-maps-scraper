@@ -26,12 +26,6 @@ func TestUserRepository(t *testing.T) {
 	defer db.Close()
 
 	// Ensure database schema exists
-	repo, err := NewRepository(db)
-	if err != nil {
-		t.Fatalf("Failed to create repository: %v", err)
-	}
-
-	// Create user repository
 	userRepo := NewUserRepository(db)
 
 	// Create a test user
@@ -104,12 +98,6 @@ func TestUsageLimiter(t *testing.T) {
 	defer db.Close()
 
 	// Ensure database schema exists
-	repo, err := NewRepository(db)
-	if err != nil {
-		t.Fatalf("Failed to create repository: %v", err)
-	}
-
-	// Create user repository and usage limiter
 	userRepo := NewUserRepository(db)
 	limiter := NewUsageLimiter(db, 5) // 5 jobs per day limit
 
