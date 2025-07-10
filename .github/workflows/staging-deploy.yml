@@ -10,109 +10,373 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  DOCKER_COMPOSE_FILE: docker-compose.staging.yaml
+  CONTAINER_NAME: google-maps-scraper-brezel-api-1
 
 jobs:
   test:
     name: Run Tests
     runs-on: ubuntu-latest
-    
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.21'
-        cache: true
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Download dependencies
-      run: |
-        go mod download
-        go mod verify
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
 
-    - name: Run tests
-      run: |
-        go test -v -race ./...
+      - name: Download dependencies
+        run: |
+          go mod download
+          go mod verify
 
-    - name: Build application
-      run: |
-        go build -o brezel-api .
+      - name: Run tests
+        run: |
+          go test -v -race ./...
 
-  build-and-deploy:
-    name: Build and Deploy to Staging
+      - name: Build application
+        run: |
+          go build -o brezel-api .
+
+  build-and-push:
+    name: Build and Push Docker Image
     needs: [test]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    
+    if: |
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') && 
+      (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true))
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=staging,enable=${{ github.ref == 'refs/heads/develop' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+          build-args: |
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            GIT_COMMIT=${{ github.sha }}
+            VERSION=${{ github.ref_name }}
+
+  deploy-staging:
+    name: Deploy to Staging Environment
+    needs: [build-and-push]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop'
     environment:
       name: staging
       url: https://staging.brezel.ai
-
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      - name: Deploy to staging server
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          POSTGRES_PASSWORD: ${{ secrets.STAGING_POSTGRES_PASSWORD }}
+          CLERK_API_KEY: ${{ secrets.STAGING_CLERK_API_KEY }}
+          DOCKER_COMPOSE_FILE: ${{ env.DOCKER_COMPOSE_FILE }}
+          CONTAINER_NAME: ${{ env.CONTAINER_NAME }}
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          envs: REGISTRY,IMAGE_NAME,GITHUB_TOKEN,GITHUB_ACTOR,POSTGRES_PASSWORD,CLERK_API_KEY,DOCKER_COMPOSE_FILE,CONTAINER_NAME
+          script_stop: true
+          script: |
+            set -e
+            
+            # Colors for output (may not work in all SSH sessions)
+            RED='\033[0;31m'
+            GREEN='\033[0;32m'
+            YELLOW='\033[1;33m'
+            BLUE='\033[0;34m'
+            NC='\033[0m'
+            
+            print_status() {
+                echo -e "${GREEN}[INFO]${NC} $1"
+            }
+            
+            print_warning() {
+                echo -e "${YELLOW}[WARNING]${NC} $1"
+            }
+            
+            print_error() {
+                echo -e "${RED}[ERROR]${NC} $1"
+            }
+            
+            print_header() {
+                echo -e "${BLUE}[DEPLOY]${NC} $1"
+            }
+            
+            print_header "🚀 Starting deployment to staging environment"
+            
+            # Navigate to backend project directory
+            cd /home/${{ secrets.STAGING_USER }}/google-maps-scraper || exit 1
+            
+            # 1. Detect CPU configuration
+            CPU_CORES=$(nproc 2>/dev/null || echo "1")
+            OPTIMAL_CONCURRENCY=$((CPU_CORES / 2))
+            if [ $OPTIMAL_CONCURRENCY -lt 1 ]; then
+                OPTIMAL_CONCURRENCY=1
+            fi
+            
+            print_status "🔍 System Analysis:"
+            echo "   CPU Cores: $CPU_CORES"
+            echo "   Optimal Concurrency: $OPTIMAL_CONCURRENCY"
+            
+            # 2. Pull latest code from develop branch
+            print_status "📥 Pulling latest backend code from develop branch..."
+            git fetch origin
+            git checkout develop
+            git pull origin develop
+            
+            # 3. Update frontend code
+            print_status "📥 Pulling latest frontend code..."
+            FRONTEND_DIR="../scraper-webapp"
+            if [ ! -d "$FRONTEND_DIR" ]; then
+                FRONTEND_DIR="../google-maps-scraper-webapp"
+            fi
+            
+            if [ -d "$FRONTEND_DIR" ]; then
+                cd "$FRONTEND_DIR"
+                git fetch origin
+                git checkout develop || git checkout main
+                git pull
+                cd -
+            else
+                print_warning "Frontend directory not found, skipping frontend update"
+            fi
+            
+            # 4. Configure environment
+            print_status "📝 Configuring environment..."
+            if [ ! -f ".env" ]; then
+                print_warning ".env not found. Creating from .env.example..."
+                cp .env.example .env
+            fi
+            
+            # Backup current .env
+            cp .env .env.backup
+            
+            # Fix DSN for Linux if needed (maintain the scraper user and google_maps_scraper database)
+            if grep -q "host\.docker\.internal" .env; then
+                print_status "🔧 Fixing DSN for Linux compatibility..."
+                sed -i 's/DSN=postgres:\/\/scraper:strongpassword@host\.docker\.internal/DSN=postgres:\/\/scraper:strongpassword@172.17.0.1/g' .env
+            fi
+            
+            # Update PostgreSQL password if provided
+            if [ ! -z "$POSTGRES_PASSWORD" ]; then
+                sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$POSTGRES_PASSWORD/" .env
+                # Also update in DSN
+                sed -i "s/scraper:strongpassword/scraper:$POSTGRES_PASSWORD/g" .env
+            fi
+            
+            # Update Clerk API key if provided
+            if [ ! -z "$CLERK_API_KEY" ]; then
+                sed -i "s/^CLERK_API_KEY=.*/CLERK_API_KEY=$CLERK_API_KEY/" .env
+            fi
+            
+            # Configure concurrency based on CPU cores
+            if [ $CPU_CORES -eq 1 ]; then
+                print_status "🎯 Single-core server detected - setting explicit concurrency"
+                if grep -q "^CONCURRENCY=" .env; then
+                    sed -i "s/^CONCURRENCY=.*/CONCURRENCY=1/" .env
+                elif grep -q "^# CONCURRENCY=" .env; then
+                    sed -i "s/^# CONCURRENCY=.*/CONCURRENCY=1/" .env
+                else
+                    echo "" >> .env
+                    echo "# Single-core server configuration" >> .env
+                    echo "CONCURRENCY=1" >> .env
+                fi
+            else
+                print_status "🚀 Multi-core server detected - using auto-detection"
+                sed -i 's/^CONCURRENCY=/#CONCURRENCY=/' .env
+            fi
+            
+            # 5. Login to GitHub Container Registry
+            print_status "🔐 Logging in to GitHub Container Registry..."
+            echo $GITHUB_TOKEN | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+            
+            # 6. Build Docker images with no cache
+            print_status "🏗️ Building backend Docker image..."
+            docker build --no-cache -t brezel-staging-test .
+            
+            print_status "🏗️ Building frontend Docker image..."
+            if [ -d "$FRONTEND_DIR" ]; then
+                # Ensure frontend has staging env file
+                if [ ! -f "$FRONTEND_DIR/.env.staging" ] && [ -f "$FRONTEND_DIR/.env.example" ]; then
+                    cp "$FRONTEND_DIR/.env.example" "$FRONTEND_DIR/.env.staging"
+                    echo "NEXT_PUBLIC_API_URL=http://localhost:8080" >> "$FRONTEND_DIR/.env.staging"
+                fi
+                docker build --no-cache -t gmaps-webapp-staging "$FRONTEND_DIR"
+            fi
+            
+            # 7. Stop existing containers
+            print_status "🛑 Stopping existing containers..."
+            docker compose -f $DOCKER_COMPOSE_FILE down --remove-orphans 2>/dev/null || true
+            
+            # 8. Start application stack
+            print_status "🚀 Starting application stack with docker-compose..."
+            docker compose -f $DOCKER_COMPOSE_FILE --env-file .env up -d
+            
+            # 9. Wait for application startup
+            print_status "⏳ Waiting for services to start..."
+            sleep 10
+            
+            # 10. Health check for backend
+            print_status "🔍 Checking backend health..."
+            BACKEND_HEALTH_URL="http://localhost:8080/health"
+            MAX_ATTEMPTS=30
+            ATTEMPT=0
+            
+            while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+                ATTEMPT=$((ATTEMPT + 1))
+                
+                if curl -s -f $BACKEND_HEALTH_URL >/dev/null 2>&1; then
+                    print_status "✅ Backend API is healthy!"
+                    break
+                else
+                    if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+                        print_error "❌ Backend failed to start after $MAX_ATTEMPTS attempts"
+                        echo
+                        print_error "🔍 Debugging information:"
+                        echo "Container status:"
+                        docker ps -a
+                        echo
+                        echo "Backend logs:"
+                        docker compose -f $DOCKER_COMPOSE_FILE logs brezel-api --tail 50
+                        echo
+                        echo "Frontend logs:"
+                        docker compose -f $DOCKER_COMPOSE_FILE logs frontend --tail 20
+                        exit 1
+                    fi
+                    echo "   Backend startup attempt $ATTEMPT/$MAX_ATTEMPTS..."
+                    sleep 2
+                fi
+            done
+            
+            # 11. Check frontend health
+            print_status "🔍 Checking frontend health..."
+            FRONTEND_URL="http://localhost:3000"
+            if curl -s -f $FRONTEND_URL >/dev/null 2>&1; then
+                print_status "✅ Frontend is accessible!"
+            else
+                print_warning "⚠️ Frontend may still be building..."
+            fi
+            
+            # 12. Get deployment information
+            SERVER_IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "localhost")
+            CONTAINER_CPU_INFO=$(docker exec brezel-staging-test nproc 2>/dev/null || echo "unknown")
+            
+            print_header "🎉 Deployment Successful!"
+            echo
+            print_status "🖥️ Server Information:"
+            echo "   Server IP: $SERVER_IP"
+            echo "   Host CPUs: $CPU_CORES"
+            echo "   Container CPUs: $CONTAINER_CPU_INFO"
+            echo "   Git Commit: ${{ github.sha }}"
+            echo "   Deployment Time: $(date)"
+            echo
+            print_status "🌐 Application URLs:"
+            echo "   Frontend:       http://$SERVER_IP:3000"
+            echo "   Backend API:    http://$SERVER_IP:8080"
+            echo "   API Health:     http://$SERVER_IP:8080/health"
+            echo "   API Docs:       http://$SERVER_IP:8080/api/docs"
+            echo
+            print_status "📊 Container Status:"
+            docker compose -f $DOCKER_COMPOSE_FILE ps
 
-    - name: Log in to Container Registry
-      uses: docker/login-action@v3
-      with:
-        registry: ${{ env.REGISTRY }}
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run smoke tests
+        run: |
+          sleep 10
+          
+          # Test health endpoint
+          echo "Testing health endpoint..."
+          curl -f -s -o /dev/null -w "Health check: %{http_code}\n" https://staging.brezel.ai/health || \
+          curl -f -s -o /dev/null -w "Health check (via IP): %{http_code}\n" http://${{ secrets.STAGING_HOST }}:8080/health
+          
+          # Test API status endpoint
+          echo "Testing API status endpoint..."
+          curl -f -s https://staging.brezel.ai/api/v1/status | jq . || \
+          curl -f -s http://${{ secrets.STAGING_HOST }}:8080/api/v1/status | jq .
+          
+          echo "✅ All smoke tests passed!"
 
-    - name: Build and push Docker image
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        push: true
-        tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:staging
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
-        platforms: linux/amd64
+      - name: Notify deployment status
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const status = '${{ job.status }}';
+            const emoji = status === 'success' ? '✅' : '❌';
+            const message = status === 'success' 
+              ? 'Successfully deployed to staging environment' 
+              : 'Deployment to staging failed';
+            
+            github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: status === 'success' ? 'success' : 'failure',
+              description: message,
+              context: 'Staging Deployment'
+            });
 
-    - name: Deploy to staging server
-      uses: appleboy/ssh-action@v1.0.3
-      with:
-        host: ${{ secrets.STAGING_HOST }}
-        username: ${{ secrets.STAGING_USER }}
-        key: ${{ secrets.STAGING_SSH_KEY }}
-        script: |
-          cd /opt/brezel
-          
-          # Login to GitHub Container Registry
-          echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          
-          # Set environment variables
-          export DB_PASSWORD="${{ secrets.STAGING_DB_PASSWORD }}"
-          
-          # Pull latest image
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:staging
-          
-          # Stop existing container
-          docker stop brezel-staging-api || true
-          docker rm brezel-staging-api || true
-          
-          # Run new container
-          docker run -d \
-            --name brezel-staging-api \
-            --restart unless-stopped \
-            -p 8080:8080 \
-            -e WEB_ADDR=:8080 \
-            -e APP_ENV=staging \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:staging
-          
-          # Wait for health check
-          sleep 30
-          curl -f http://localhost:8080/health || exit 1
-          
-          echo "✅ Brezel.ai API deployed successfully to staging"
-
-    - name: Run smoke tests
-      run: |
-        sleep 10
-        curl -f https://staging.brezel.ai/health
-        curl -f https://staging.brezel.ai/api/v1/status
-        echo "✅ Smoke tests passed" 
+  cleanup-old-images:
+    name: Cleanup Old Docker Images
+    needs: [deploy-staging]
+    runs-on: ubuntu-latest
+    if: success()
+    steps:
+      - name: Cleanup old images on staging server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          script: |
+            # Remove unused Docker images older than 7 days
+            docker image prune -a --force --filter "until=168h"
+            
+            # Remove unused volumes
+            docker volume prune -f
+            
+            # Show disk usage
+            echo "Current disk usage:"
+            df -h | grep -E '^/dev/' || true
