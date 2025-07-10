@@ -1,5 +1,5 @@
 # Build stage for Playwright dependencies
-FROM golang:1.24-alpine  AS playwright-deps
+FROM golang:1.24-bullseye   AS playwright-deps
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/browsers
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && playwright install chromium --with-deps
 
 # Build stage
-FROM golang:1.24-alpine AS builder
+FROM golang:1.24-bullseye  AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
