@@ -3,12 +3,13 @@ version: '3.8'
 services:
   brezel-api:
     image: ghcr.io/yasseen-salama/google-maps-scraper:staging
+    container_name: gmaps-brezel-api
     environment:
       - DSN=${DSN}
       - DATA_FOLDER=${DATA_FOLDER:-/gmapsdata}
       - WEB_ADDR=${WEB_ADDR:-:8080}
       - LOG_LEVEL=${LOG_LEVEL:-info}
-      - CONCURRENCY=${CONCURRENCY}
+      - CONCURRENCY=${CONCURRENCY:-1}
       - CLERK_API_KEY=${CLERK_API_KEY}
       - DISABLE_TELEMETRY=${DISABLE_TELEMETRY:-0}
     command: ["-web"]
@@ -23,25 +24,45 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
-      start_period: 40s
-      retries: 3
+      start_period: 60s  # Increased for single-core server
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M  # Limit memory usage on single-core server
+        reservations:
+          memory: 256M
 
+  # Frontend service - Next.js webapp from separate repository
   frontend:
-    image: gmaps-webapp-staging
+    image: ghcr.io/yasseen-salama/google-maps-scraper-webapp:staging
     container_name: gmaps-webapp-staging
     ports:
       - "3000:3000"
-    env_file:
-      - ../google-maps-scraper-webapp/.env.staging
+    environment:
+      - NEXT_PUBLIC_API_URL=http://64.226.112.104:8080
+      - NEXT_PUBLIC_ENVIRONMENT=staging
+      - NODE_ENV=production
     restart: unless-stopped
     networks:
       - gmaps
     depends_on:
-      - brezel-api
+      brezel-api:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M  # Limit memory usage for frontend
+        reservations:
+          memory: 128M
 
 volumes:
   gmapsdata:
+    driver: local
 
 networks:
   gmaps:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
