@@ -1,6 +1,8 @@
+version: '3.8'
+
 services:
   brezel-api:
-    image: brezel-staging-test
+    image: ghcr.io/yasseen-salama/google-maps-scraper:staging
     environment:
       - DSN=${DSN}
       - DATA_FOLDER=${DATA_FOLDER:-/gmapsdata}
@@ -25,9 +27,6 @@ services:
       retries: 3
 
   frontend:
-    build:
-      context: ../google-maps-scraper-webapp
-      dockerfile: Dockerfile
     image: gmaps-webapp-staging
     container_name: gmaps-webapp-staging
     ports:
@@ -46,4 +45,3 @@ volumes:
 networks:
   gmaps:
     driver: bridge
- 

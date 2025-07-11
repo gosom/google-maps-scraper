@@ -1,6 +1,12 @@
 # Build stage for Playwright dependencies
-FROM golang:1.24-bullseye   AS playwright-deps
+FROM golang:1.24-bullseye AS playwright-deps
+
+# Use Go proxy for faster downloads
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=${GOPROXY}
+ENV GOSUMDB=sum.golang.org
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/browsers
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
@@ -13,10 +19,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && playwright install chromium --with-deps
 
 # Build stage
-FROM golang:1.24-bullseye  AS builder
+FROM golang:1.24-bullseye AS builder
+
+# Use Go proxy for faster downloads
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=${GOPROXY}
+ENV GOSUMDB=sum.golang.org
+
 WORKDIR /app
+
+# Copy go mod files first for better caching
 COPY go.mod go.sum ./
-RUN go mod download
+
+# Configure go env and download dependencies
+RUN go env -w GOPROXY=https://proxy.golang.org,direct \
+    && go mod download
+
+# Copy source code
 COPY . .
 
 # Build the binary with proper name for Brezel.ai
@@ -24,6 +43,7 @@ RUN CGO_ENABLED=0 go build -ldflags="-w -s" -o /usr/bin/brezel-api .
 
 # Final stage - optimized for API + scraping
 FROM debian:bullseye-slim
+
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/browsers
 ENV PLAYWRIGHT_DRIVER_PATH=/opt
 
