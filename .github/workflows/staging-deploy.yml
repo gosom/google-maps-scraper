@@ -219,26 +219,54 @@ jobs:
             # Setup environment
             echo "⚙️ Configuring environment variables..."
             if [ ! -f ".env" ]; then
-              echo "No .env file found, creating from template..."
-              cp .env.example .env
+              echo "No .env file found, creating from staging template..."
+              if [ -f ".env.staging" ]; then
+                cp .env.staging .env
+              else
+                cp .env.example .env
+              fi
             fi
             
             # Backup current configuration
-            cp .env .env.backup
+            cp .env .env.backup.$(date +%Y%m%d_%H%M%S)
             
             # Fix Docker networking for Linux
             sed -i 's/host\.docker\.internal/172.17.0.1/g' .env
             
-            # Update secrets from GitHub
+            # 🔐 INJECT SECRETS FROM GITHUB ACTIONS
+            echo "🔐 Injecting secrets from GitHub Actions..."
+            
+            # Database password
             if [ ! -z "${{ secrets.STAGING_POSTGRES_PASSWORD }}" ]; then
-              echo "Updating database password..."
+              echo "✅ Updating database password..."
               sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=${{ secrets.STAGING_POSTGRES_PASSWORD }}/" .env
               sed -i "s/scraper:strongpassword/scraper:${{ secrets.STAGING_POSTGRES_PASSWORD }}/" .env
             fi
             
+            # Clerk API key (for backend)
             if [ ! -z "${{ secrets.STAGING_CLERK_API_KEY }}" ]; then
-              echo "Updating Clerk API key..."
+              echo "✅ Updating Clerk API key..."
               sed -i "s/^CLERK_API_KEY=.*/CLERK_API_KEY=${{ secrets.STAGING_CLERK_API_KEY }}/" .env
+            fi
+            
+            # 🔑 Clerk Secret Key (for frontend middleware)
+            if [ ! -z "${{ secrets.STAGING_CLERK_SECRET_KEY }}" ]; then
+              echo "✅ Updating Clerk secret key..."
+              if grep -q "^CLERK_SECRET_KEY=" .env; then
+                sed -i "s/^CLERK_SECRET_KEY=.*/CLERK_SECRET_KEY=${{ secrets.STAGING_CLERK_SECRET_KEY }}/" .env
+              else
+                echo "CLERK_SECRET_KEY=${{ secrets.STAGING_CLERK_SECRET_KEY }}" >> .env
+              fi
+            fi
+            
+            # 🔑 Clerk Publishable Key (for frontend client)
+            if [ ! -z "${{ secrets.STAGING_CLERK_PUBLISHABLE_KEY }}" ]; then
+              echo "✅ Updating Clerk publishable key..."
+              if grep -q "^NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=" .env; then
+                sed -i "s/^NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=.*/NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ secrets.STAGING_CLERK_PUBLISHABLE_KEY }}/" .env
+              else
+                echo "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ secrets.STAGING_CLERK_PUBLISHABLE_KEY }}" >> .env
+              fi
             fi
             
             # Optimize for single-core server
@@ -251,6 +279,15 @@ jobs:
               else
                 echo "CONCURRENCY=1" >> .env
               fi
+            fi
+            
+            # Verify critical environment variables are set
+            echo "🔍 Verifying environment variables..."
+            if ! grep -q "^CLERK_SECRET_KEY=sk_" .env; then
+              echo "⚠️ WARNING: CLERK_SECRET_KEY not found or invalid"
+            fi
+            if ! grep -q "^NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_" .env; then
+              echo "⚠️ WARNING: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY not found or invalid"
             fi
             
             # Login to GitHub Container Registry
@@ -308,7 +345,12 @@ jobs:
                 echo "🔗 API documentation: http://64.226.112.104:8080/api/docs"
                 
                 if [ "$FRONTEND_AVAILABLE" = true ]; then
-                  echo "🔗 Frontend application: http://64.226.112.104:3000"
+                  # Check frontend health
+                  if curl -s -I http://localhost:3000 | grep -q "200\|301\|302"; then
+                    echo "🔗 Frontend application: http://64.226.112.104:3000 ✅"
+                  else
+                    echo "🔗 Frontend application: http://64.226.112.104:3000 ⚠️ (may still be starting)"
+                  fi
                 else
                   echo "⚠️  Frontend: Not deployed (image not available)"
                 fi
