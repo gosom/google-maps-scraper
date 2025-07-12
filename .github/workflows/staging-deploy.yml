@@ -10,6 +10,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  FRONTEND_IMAGE_NAME: brezel-ai/scraper-webapp
   DOCKER_COMPOSE_FILE: docker-compose.staging.yaml
   CONTAINER_NAME: google-maps-scraper-brezel-api-1
 
@@ -107,16 +108,17 @@ jobs:
         with:
           path: backend
 
-      - name: Check if frontend repo exists
+      - name: Checkout frontend repository
         id: check-frontend
         run: |
-          # Try to checkout the frontend repo
-          if git clone https://github.com/yasseen-salama/google-maps-scraper-webapp.git frontend 2>/dev/null; then
+          # Clone the correct frontend repository
+          if git clone https://github.com/brezel-ai/scraper-webapp.git frontend 2>/dev/null; then
             echo "frontend_exists=true" >> $GITHUB_OUTPUT
-            echo "✅ Frontend repository found"
-          elif git clone https://github.com/yasseen-salama/scraper-webapp.git frontend 2>/dev/null; then
-            echo "frontend_exists=true" >> $GITHUB_OUTPUT
-            echo "✅ Frontend repository found (alternative name)"
+            echo "✅ Frontend repository (brezel-ai/scraper-webapp) found"
+            cd frontend
+            echo "📋 Frontend repository info:"
+            echo "Current branch: $(git branch --show-current)"
+            echo "Latest commit: $(git log --oneline -1)"
           else
             echo "frontend_exists=false" >> $GITHUB_OUTPUT
             echo "⚠️ Frontend repository not found, skipping frontend build"
@@ -147,6 +149,8 @@ jobs:
           EOF
           
           echo "✅ Created frontend environment configuration"
+          echo "Frontend environment variables:"
+          cat .env.staging
 
       - name: Build and push Frontend Docker image
         if: steps.check-frontend.outputs.frontend_exists == 'true'
@@ -155,15 +159,15 @@ jobs:
           context: ./frontend
           push: true
           tags: |
-            ${{ env.REGISTRY }}/yasseen-salama/google-maps-scraper-webapp:staging
-            ${{ env.REGISTRY }}/yasseen-salama/google-maps-scraper-webapp:${{ github.sha }}
-            ${{ env.REGISTRY }}/yasseen-salama/google-maps-scraper-webapp:feature-${{ github.ref_name }}
+            ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE_NAME }}:staging
+            ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE_NAME }}:feature-${{ github.ref_name }}
           cache-from: |
             type=gha
-            type=registry,ref=${{ env.REGISTRY }}/yasseen-salama/google-maps-scraper-webapp:buildcache
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE_NAME }}:buildcache
           cache-to: |
             type=gha,mode=max
-            type=registry,ref=${{ env.REGISTRY }}/yasseen-salama/google-maps-scraper-webapp:buildcache,mode=max
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE_NAME }}:buildcache,mode=max
           platforms: linux/amd64
           build-args: |
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
@@ -271,8 +275,8 @@ jobs:
             # Pull pre-built frontend image
             echo "📦 Pulling pre-built frontend image..."
             FRONTEND_AVAILABLE=false
-            if docker pull ${{ env.REGISTRY }}/yasseen-salama/google-maps-scraper-webapp:staging 2>/dev/null; then
-              echo "✅ Frontend image pulled successfully"
+            if docker pull ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE_NAME }}:staging 2>/dev/null; then
+              echo "✅ Frontend image (brezel-ai/scraper-webapp) pulled successfully"
               FRONTEND_AVAILABLE=true
             else
               echo "⚠️ Frontend image not available, deploying backend only"

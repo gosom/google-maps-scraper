@@ -33,9 +33,9 @@ services:
         reservations:
           memory: 256M
 
-  # Frontend service - Next.js webapp from separate repository
+  # Frontend service - Next.js webapp from brezel-ai/scraper-webapp repository
   frontend:
-    image: ghcr.io/yasseen-salama/google-maps-scraper-webapp:staging
+    image: ghcr.io/brezel-ai/scraper-webapp:staging
     container_name: gmaps-webapp-staging
     ports:
       - "3000:3000"
