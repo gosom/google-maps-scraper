@@ -15,9 +15,11 @@ import (
 	"github.com/gosom/google-maps-scraper/runner/installplaywright"
 	"github.com/gosom/google-maps-scraper/runner/lambdaaws"
 	"github.com/gosom/google-maps-scraper/runner/webrunner"
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	_ = godotenv.Load() // Load .env file if present
 	ctx, cancel := context.WithCancel(context.Background())
 
 	runner.Banner()
