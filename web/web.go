@@ -115,6 +115,8 @@ func New(cfg ServerConfig) (*Server, error) {
 	apiRouter.HandleFunc("/jobs/{id}", ans.apiGetJob).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/{id}", ans.apiDeleteJob).Methods(http.MethodDelete)
 	apiRouter.HandleFunc("/jobs/{id}/download", ans.download).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/jobs/{id}/results", ans.apiGetJobResults).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/results", ans.apiGetUserResults).Methods(http.MethodGet)
 
 	// Usage tracking endpoints
 	apiRouter.HandleFunc("/usage", ans.apiGetUsage).Methods(http.MethodGet)
@@ -772,6 +774,261 @@ func (s *Server) apiDeleteJob(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	s.logger.Printf("Deleted job: %s", id)
+}
+
+// Result represents a single scraped result
+type Result struct {
+	ID          int       `json:"id"`
+	UserID      string    `json:"user_id"`
+	JobID       string    `json:"job_id"`
+	InputID     string    `json:"input_id"`
+	Link        string    `json:"link"`
+	Cid         string    `json:"cid"`
+	Title       string    `json:"title"`
+	Categories  string    `json:"categories"`
+	Category    string    `json:"category"`
+	Address     string    `json:"address"`
+	Website     string    `json:"website"`
+	Phone       string    `json:"phone"`
+	PlusCode    string    `json:"plus_code"`
+	ReviewCount int       `json:"review_count"`
+	Rating      float64   `json:"rating"`
+	Latitude    float64   `json:"latitude"`
+	Longitude   float64   `json:"longitude"`
+	Status      string    `json:"status"`
+	Description string    `json:"description"`
+	ReviewsLink string    `json:"reviews_link"`
+	Thumbnail   string    `json:"thumbnail"`
+	Timezone    string    `json:"timezone"`
+	PriceRange  string    `json:"price_range"`
+	DataID      string    `json:"data_id"`
+	Emails      string    `json:"emails"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// apiGetJobResults returns all results for a specific job
+func (s *Server) apiGetJobResults(w http.ResponseWriter, r *http.Request) {
+	s.logger.Printf("GET %s", r.URL.Path)
+
+	// Extract job ID from URL
+	vars := mux.Vars(r)
+	jobID := vars["id"]
+
+	if jobID == "" {
+		apiError := apiError{
+			Code:    http.StatusUnprocessableEntity,
+			Message: "Missing job ID",
+		}
+		renderJSON(w, http.StatusUnprocessableEntity, apiError)
+		s.logger.Printf("Missing job ID for get job results")
+		return
+	}
+
+	// Get user ID from context if authentication is enabled
+	var userID string
+	var err error
+
+	if s.authMiddleware != nil {
+		userID, err = auth.GetUserID(r.Context())
+		if err != nil {
+			apiError := apiError{
+				Code:    http.StatusUnauthorized,
+				Message: "User not authenticated",
+			}
+			renderJSON(w, http.StatusUnauthorized, apiError)
+			s.logger.Printf("User not authenticated for job results: %v", err)
+			return
+		}
+	} else {
+		userID = "default_user_id"
+	}
+
+	// Verify job belongs to user
+	job, err := s.svc.Get(r.Context(), jobID)
+	if err != nil {
+		apiError := apiError{
+			Code:    http.StatusNotFound,
+			Message: "Job not found",
+		}
+		renderJSON(w, http.StatusNotFound, apiError)
+		s.logger.Printf("Job %s not found: %v", jobID, err)
+		return
+	}
+
+	if job.UserID != userID {
+		apiError := apiError{
+			Code:    http.StatusForbidden,
+			Message: "Access denied",
+		}
+		renderJSON(w, http.StatusForbidden, apiError)
+		s.logger.Printf("User %s tried to access job %s owned by %s", userID, jobID, job.UserID)
+		return
+	}
+
+	// Get results from database
+	results, err := s.getJobResults(r.Context(), jobID)
+	if err != nil {
+		apiError := apiError{
+			Code:    http.StatusInternalServerError,
+			Message: "Failed to get results: " + err.Error(),
+		}
+		renderJSON(w, http.StatusInternalServerError, apiError)
+		s.logger.Printf("Failed to get results for job %s: %v", jobID, err)
+		return
+	}
+
+	renderJSON(w, http.StatusOK, results)
+	s.logger.Printf("Retrieved %d results for job %s", len(results), jobID)
+}
+
+// apiGetUserResults returns all results for the authenticated user
+func (s *Server) apiGetUserResults(w http.ResponseWriter, r *http.Request) {
+	s.logger.Printf("GET %s", r.URL.Path)
+
+	// Get user ID from context
+	var userID string
+	var err error
+
+	if s.authMiddleware != nil {
+		userID, err = auth.GetUserID(r.Context())
+		if err != nil {
+			apiError := apiError{
+				Code:    http.StatusUnauthorized,
+				Message: "User not authenticated",
+			}
+			renderJSON(w, http.StatusUnauthorized, apiError)
+			s.logger.Printf("User not authenticated for user results: %v", err)
+			return
+		}
+	} else {
+		userID = "default_user_id"
+	}
+
+	// Parse query parameters
+	limit := 50 // default limit
+	offset := 0 // default offset
+
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 && parsedLimit <= 1000 {
+			limit = parsedLimit
+		}
+	}
+
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		if parsedOffset, err := strconv.Atoi(offsetStr); err == nil && parsedOffset >= 0 {
+			offset = parsedOffset
+		}
+	}
+
+	// Get results from database
+	results, err := s.getUserResults(r.Context(), userID, limit, offset)
+	if err != nil {
+		apiError := apiError{
+			Code:    http.StatusInternalServerError,
+			Message: "Failed to get results: " + err.Error(),
+		}
+		renderJSON(w, http.StatusInternalServerError, apiError)
+		s.logger.Printf("Failed to get results for user %s: %v", userID, err)
+		return
+	}
+
+	renderJSON(w, http.StatusOK, results)
+	s.logger.Printf("Retrieved %d results for user %s", len(results), userID)
+}
+
+// getJobResults retrieves results for a specific job from database
+func (s *Server) getJobResults(ctx context.Context, jobID string) ([]Result, error) {
+	if s.db == nil {
+		return nil, fmt.Errorf("database not available")
+	}
+
+	query := `
+		SELECT 
+			id, user_id, job_id, input_id, link, cid, title, 
+			categories, category, address, website, phone, pluscode,
+			review_count, rating, latitude, longitude, status_info,
+			description, reviews_link, thumbnail, timezone, price_range,
+			data_id, emails, created_at
+		FROM results 
+		WHERE job_id = $1 
+		ORDER BY created_at DESC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query results: %w", err)
+	}
+	defer rows.Close()
+
+	var results []Result
+	for rows.Next() {
+		var r Result
+		err := rows.Scan(
+			&r.ID, &r.UserID, &r.JobID, &r.InputID, &r.Link, &r.Cid, &r.Title,
+			&r.Categories, &r.Category, &r.Address, &r.Website, &r.Phone, &r.PlusCode,
+			&r.ReviewCount, &r.Rating, &r.Latitude, &r.Longitude, &r.Status,
+			&r.Description, &r.ReviewsLink, &r.Thumbnail, &r.Timezone, &r.PriceRange,
+			&r.DataID, &r.Emails, &r.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan result: %w", err)
+		}
+		results = append(results, r)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
+	return results, nil
+}
+
+// getUserResults retrieves results for a specific user from database
+func (s *Server) getUserResults(ctx context.Context, userID string, limit, offset int) ([]Result, error) {
+	if s.db == nil {
+		return nil, fmt.Errorf("database not available")
+	}
+
+	query := `
+		SELECT 
+			id, user_id, job_id, input_id, link, cid, title, 
+			categories, category, address, website, phone, pluscode,
+			review_count, rating, latitude, longitude, status_info,
+			description, reviews_link, thumbnail, timezone, price_range,
+			data_id, emails, created_at
+		FROM results 
+		WHERE user_id = $1 
+		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, userID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query results: %w", err)
+	}
+	defer rows.Close()
+
+	var results []Result
+	for rows.Next() {
+		var r Result
+		err := rows.Scan(
+			&r.ID, &r.UserID, &r.JobID, &r.InputID, &r.Link, &r.Cid, &r.Title,
+			&r.Categories, &r.Category, &r.Address, &r.Website, &r.Phone, &r.PlusCode,
+			&r.ReviewCount, &r.Rating, &r.Latitude, &r.Longitude, &r.Status,
+			&r.Description, &r.ReviewsLink, &r.Thumbnail, &r.Timezone, &r.PriceRange,
+			&r.DataID, &r.Emails, &r.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan result: %w", err)
+		}
+		results = append(results, r)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
+	return results, nil
 }
 
 // apiGetUsage returns current usage statistics for the authenticated user
