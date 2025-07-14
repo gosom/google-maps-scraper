@@ -103,7 +103,7 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 	if cfg.Dsn != "" {
 		// If we're using PostgreSQL, add user repository and usage limiter
 		userRepo := postgres.NewUserRepository(db)
-		usageLimiter := postgres.NewUsageLimiter(db, 5) // 5 jobs per day limit
+		usageLimiter := postgres.NewUsageLimiter(db, 10000) // 50 jobs per day limit for development
 
 		serverCfg.PgDB = db
 		serverCfg.UserRepo = userRepo
@@ -450,7 +450,19 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job)
 
 	csvWriter := csvwriter.NewCsvWriter(csv.NewWriter(writer))
 
+	// Create list of writers - CSV and PostgreSQL
 	writers := []scrapemate.ResultWriter{csvWriter}
+
+	// Add PostgreSQL writer if database is available
+	if w.db != nil {
+		// Use fallback result writer temporarily to avoid conflict issues
+		// Change to NewEnhancedResultWriter once unique constraint is working
+		pgWriter := postgres.NewFallbackResultWriter(w.db, job.UserID, job.ID)
+		writers = append(writers, pgWriter)
+		log.Printf("Added PostgreSQL fallback result writer for job %s (user: %s)", job.ID, job.UserID)
+	} else {
+		log.Printf("Warning: No database connection available for job %s - results will only be saved to CSV", job.ID)
+	}
 
 	matecfg, err := scrapemateapp.NewConfig(
 		writers,

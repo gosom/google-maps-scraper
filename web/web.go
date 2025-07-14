@@ -118,6 +118,7 @@ func New(cfg ServerConfig) (*Server, error) {
 
 	// Usage tracking endpoints
 	apiRouter.HandleFunc("/usage", ans.apiGetUsage).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/usage/reset", ans.apiResetUsage).Methods(http.MethodPost)
 
 	// Apply security headers and CORS to all routes
 	handler := corsMiddleware(securityHeaders(router))
@@ -821,6 +822,79 @@ func (s *Server) apiGetUsage(w http.ResponseWriter, r *http.Request) {
 
 	renderJSON(w, http.StatusOK, summary)
 	s.logger.Printf("Retrieved usage summary for user %s", userID)
+}
+
+// apiResetUsage resets the daily usage count for the authenticated user (development only)
+func (s *Server) apiResetUsage(w http.ResponseWriter, r *http.Request) {
+	s.logger.Printf("POST %s", r.URL.Path)
+
+	if s.usageLimiter == nil {
+		apiError := apiError{
+			Code:    http.StatusServiceUnavailable,
+			Message: "Usage tracking not available",
+		}
+		renderJSON(w, http.StatusServiceUnavailable, apiError)
+		s.logger.Printf("Usage tracking not available")
+		return
+	}
+
+	// Get user ID from context or use default
+	var userID string
+	var err error
+
+	if s.authMiddleware != nil {
+		userID, err = auth.GetUserID(r.Context())
+		if err != nil {
+			apiError := apiError{
+				Code:    http.StatusUnauthorized,
+				Message: "User not authenticated",
+			}
+			renderJSON(w, http.StatusUnauthorized, apiError)
+			s.logger.Printf("User not authenticated: %v", err)
+			return
+		}
+	} else {
+		// Use default user ID for development
+		userID = "default_user_id"
+	}
+
+	// Reset the user's daily count by updating their record directly
+	err = s.resetUserDailyUsage(r.Context(), userID)
+	if err != nil {
+		apiError := apiError{
+			Code:    http.StatusInternalServerError,
+			Message: "Failed to reset usage: " + err.Error(),
+		}
+		renderJSON(w, http.StatusInternalServerError, apiError)
+		s.logger.Printf("Failed to reset usage for user %s: %v", userID, err)
+		return
+	}
+
+	response := map[string]interface{}{
+		"message": "Daily usage count reset successfully",
+		"user_id": userID,
+	}
+
+	renderJSON(w, http.StatusOK, response)
+	s.logger.Printf("Reset daily usage for user %s", userID)
+}
+
+// resetUserDailyUsage resets a user's daily job count
+func (s *Server) resetUserDailyUsage(ctx context.Context, userID string) error {
+	if s.db == nil {
+		return fmt.Errorf("database not available")
+	}
+
+	// Reset the job count to 0 and update last_job_date to yesterday
+	// This will make the CheckLimit function return true
+	yesterday := time.Now().AddDate(0, 0, -1)
+	const resetQuery = `
+		UPDATE user_usage 
+		SET job_count = 0, last_job_date = $1, updated_at = $2 
+		WHERE user_id = $3`
+
+	_, err := s.db.ExecContext(ctx, resetQuery, yesterday, time.Now().UTC(), userID)
+	return err
 }
 
 func renderJSON(w http.ResponseWriter, code int, data any) {

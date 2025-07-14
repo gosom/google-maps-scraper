@@ -147,7 +147,14 @@ func (m *AuthMiddleware) CheckUsageLimit(next http.Handler) http.Handler {
 		}
 
 		if !allowed {
-			http.Error(w, "Usage limit reached. Try again tomorrow.", http.StatusTooManyRequests)
+			// Get current usage to provide better error message
+			usage, err := m.usageLimiter.GetUsage(r.Context(), userID)
+			if err != nil {
+				http.Error(w, "Usage limit reached. Try again tomorrow.", http.StatusTooManyRequests)
+				return
+			}
+			errorMsg := fmt.Sprintf("Daily usage limit reached. You have used %d jobs today. Try again tomorrow or contact support.", usage.JobCount)
+			http.Error(w, errorMsg, http.StatusTooManyRequests)
 			return
 		}
 
