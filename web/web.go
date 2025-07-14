@@ -95,6 +95,10 @@ func New(cfg ServerConfig) (*Server, error) {
 
 	// Web UI routes
 	router.HandleFunc("/", ans.index).Methods(http.MethodGet)
+	router.HandleFunc("/jobs", ans.jobs).Methods(http.MethodGet)
+	router.HandleFunc("/scrape", ans.scrape).Methods(http.MethodPost)
+	router.HandleFunc("/delete", ans.delete).Methods(http.MethodDelete)
+	router.HandleFunc("/download", ans.download).Methods(http.MethodGet)
 
 	// API documentation (public access)
 	router.HandleFunc("/api/docs", ans.redocHandler).Methods(http.MethodGet)
@@ -269,6 +273,34 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 
 	_ = tmpl.Execute(w, data)
 	s.logger.Printf("Rendered index page")
+}
+
+func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
+	s.logger.Printf("GET %s", r.URL.Path)
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		s.logger.Printf("Method not allowed: %s %s", r.Method, r.URL.Path)
+		return
+	}
+
+	// Get all jobs (no user filtering for web UI)
+	jobs, err := s.svc.All(r.Context(), "")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.logger.Printf("Failed to get jobs: %v", err)
+		return
+	}
+
+	tmpl, ok := s.tmpl["static/templates/job_rows.html"]
+	if !ok {
+		http.Error(w, "missing tpl", http.StatusInternalServerError)
+		s.logger.Printf("Missing template: job_rows.html")
+		return
+	}
+
+	_ = tmpl.Execute(w, jobs)
+	s.logger.Printf("Rendered %d jobs", len(jobs))
 }
 
 func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
@@ -466,6 +498,8 @@ func (s *Server) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse ID from request (query parameter or path) and add to context
+	r = requestWithID(r)
 	deleteID, ok := getIDFromRequest(r)
 	if !ok {
 		http.Error(w, "Invalid ID", http.StatusUnprocessableEntity)
@@ -717,15 +751,28 @@ func (s *Server) apiGetUserJobs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiGetJob(w http.ResponseWriter, r *http.Request) {
 	s.logger.Printf("GET %s", r.URL.Path)
 
-	id, ok := getIDFromRequest(r)
-	if !ok {
+	// Extract ID directly from the URL path using Gorilla Mux
+	vars := mux.Vars(r)
+	idStr := vars["id"]
+
+	if idStr == "" {
 		apiError := apiError{
 			Code:    http.StatusUnprocessableEntity,
-			Message: "Invalid ID",
+			Message: "Missing job ID",
 		}
-
 		renderJSON(w, http.StatusUnprocessableEntity, apiError)
-		s.logger.Printf("Invalid ID for get job")
+		s.logger.Printf("Missing job ID for get")
+		return
+	}
+
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		apiError := apiError{
+			Code:    http.StatusUnprocessableEntity,
+			Message: "Invalid ID format",
+		}
+		renderJSON(w, http.StatusUnprocessableEntity, apiError)
+		s.logger.Printf("Invalid ID format for get: %v", err)
 		return
 	}
 
@@ -735,7 +782,6 @@ func (s *Server) apiGetJob(w http.ResponseWriter, r *http.Request) {
 			Code:    http.StatusNotFound,
 			Message: http.StatusText(http.StatusNotFound),
 		}
-
 		renderJSON(w, http.StatusNotFound, apiError)
 		s.logger.Printf("Failed to get job %s: %v", id, err)
 		return
@@ -748,25 +794,37 @@ func (s *Server) apiGetJob(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiDeleteJob(w http.ResponseWriter, r *http.Request) {
 	s.logger.Printf("DELETE %s", r.URL.Path)
 
-	id, ok := getIDFromRequest(r)
-	if !ok {
+	// Extract ID directly from the URL path using Gorilla Mux
+	vars := mux.Vars(r)
+	idStr := vars["id"]
+
+	if idStr == "" {
 		apiError := apiError{
 			Code:    http.StatusUnprocessableEntity,
-			Message: "Invalid ID",
+			Message: "Missing job ID",
 		}
-
 		renderJSON(w, http.StatusUnprocessableEntity, apiError)
-		s.logger.Printf("Invalid ID for delete job")
+		s.logger.Printf("Missing job ID for delete")
 		return
 	}
 
-	err := s.svc.Delete(r.Context(), id.String())
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		apiError := apiError{
+			Code:    http.StatusUnprocessableEntity,
+			Message: "Invalid ID format",
+		}
+		renderJSON(w, http.StatusUnprocessableEntity, apiError)
+		s.logger.Printf("Invalid ID format for delete: %v", err)
+		return
+	}
+
+	err = s.svc.Delete(r.Context(), id.String())
 	if err != nil {
 		apiError := apiError{
 			Code:    http.StatusInternalServerError,
 			Message: err.Error(),
 		}
-
 		renderJSON(w, http.StatusInternalServerError, apiError)
 		s.logger.Printf("Failed to delete job %s: %v", id, err)
 		return

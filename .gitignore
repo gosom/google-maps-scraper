@@ -2,6 +2,8 @@ cache/
 vendor
 bin
 webdata/
+gmapsdata/*.csv
+gmapsdata/*.json
 
 # Environment variables
 .env
