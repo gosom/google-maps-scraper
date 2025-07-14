@@ -33,6 +33,7 @@ type Server struct {
 	authMiddleware *auth.AuthMiddleware
 	userRepo       postgres.UserRepository
 	usageLimiter   postgres.UsageLimiter
+	usageTracker   *postgres.UsageTracker
 	db             *sql.DB
 	logger         *log.Logger
 }
@@ -62,6 +63,11 @@ func New(cfg ServerConfig) (*Server, error) {
 			IdleTimeout:       120 * time.Second,
 			MaxHeaderBytes:    1 << 20,
 		},
+	}
+
+	// Initialize usage tracker if database is available
+	if cfg.PgDB != nil {
+		ans.usageTracker = postgres.NewUsageTracker(cfg.PgDB)
 	}
 
 	// Initialize authentication middleware if Clerk API key is provided
@@ -109,6 +115,9 @@ func New(cfg ServerConfig) (*Server, error) {
 	apiRouter.HandleFunc("/jobs/{id}", ans.apiGetJob).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/{id}", ans.apiDeleteJob).Methods(http.MethodDelete)
 	apiRouter.HandleFunc("/jobs/{id}/download", ans.download).Methods(http.MethodGet)
+
+	// Usage tracking endpoints
+	apiRouter.HandleFunc("/usage", ans.apiGetUsage).Methods(http.MethodGet)
 
 	// Apply security headers and CORS to all routes
 	handler := corsMiddleware(securityHeaders(router))
@@ -762,6 +771,56 @@ func (s *Server) apiDeleteJob(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	s.logger.Printf("Deleted job: %s", id)
+}
+
+// apiGetUsage returns current usage statistics for the authenticated user
+func (s *Server) apiGetUsage(w http.ResponseWriter, r *http.Request) {
+	s.logger.Printf("GET %s", r.URL.Path)
+
+	if s.usageTracker == nil {
+		apiError := apiError{
+			Code:    http.StatusServiceUnavailable,
+			Message: "Usage tracking not available",
+		}
+		renderJSON(w, http.StatusServiceUnavailable, apiError)
+		s.logger.Printf("Usage tracking not available")
+		return
+	}
+
+	// Get user ID from context or use default
+	var userID string
+	var err error
+
+	if s.authMiddleware != nil {
+		userID, err = auth.GetUserID(r.Context())
+		if err != nil {
+			apiError := apiError{
+				Code:    http.StatusUnauthorized,
+				Message: "User not authenticated",
+			}
+			renderJSON(w, http.StatusUnauthorized, apiError)
+			s.logger.Printf("User not authenticated: %v", err)
+			return
+		}
+	} else {
+		// Use default user ID for development
+		userID = "default_user_id"
+	}
+
+	// Get usage summary
+	summary, err := s.usageTracker.GetUserUsageSummary(r.Context(), userID)
+	if err != nil {
+		apiError := apiError{
+			Code:    http.StatusInternalServerError,
+			Message: "Failed to get usage summary: " + err.Error(),
+		}
+		renderJSON(w, http.StatusInternalServerError, apiError)
+		s.logger.Printf("Failed to get usage summary for user %s: %v", userID, err)
+		return
+	}
+
+	renderJSON(w, http.StatusOK, summary)
+	s.logger.Printf("Retrieved usage summary for user %s", userID)
 }
 
 func renderJSON(w http.ResponseWriter, code int, data any) {

@@ -27,9 +27,11 @@ import (
 )
 
 type webrunner struct {
-	srv *web.Server
-	svc *web.Service
-	cfg *runner.Config
+	srv          *web.Server
+	svc          *web.Service
+	cfg          *runner.Config
+	db           *sql.DB // Add database connection for usage tracking
+	usageTracker *postgres.UsageTracker
 }
 
 func New(cfg *runner.Config) (runner.Runner, error) {
@@ -85,17 +87,21 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		Service: svc,
 		Addr:    cfg.Addr,
 	}
-	// Load application config
-	appConfig := web.LoadConfig()
+	// Load application config - handle if LoadConfig doesn't exist
+	var clerkAPIKey string
+	// Try to load config, but don't fail if it doesn't exist
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Warning: LoadConfig not available, continuing without Clerk: %v", r)
+		}
+	}()
+
+	// Check if LoadConfig exists by checking environment variable directly
+	clerkAPIKey = os.Getenv("CLERK_API_KEY")
 
 	// Add PostgreSQL and authentication if available
 	if cfg.Dsn != "" {
 		// If we're using PostgreSQL, add user repository and usage limiter
-		db, err := sql.Open("pgx", cfg.Dsn)
-		if err != nil {
-			return nil, fmt.Errorf("failed to initialize PostgreSQL connection: %w", err)
-		}
-
 		userRepo := postgres.NewUserRepository(db)
 		usageLimiter := postgres.NewUsageLimiter(db, 5) // 5 jobs per day limit
 
@@ -103,9 +109,9 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		serverCfg.UserRepo = userRepo
 		serverCfg.UsageLimiter = usageLimiter
 
-		// Use Clerk API key from config
-		if appConfig.ClerkAPIKey != "" {
-			serverCfg.ClerkAPIKey = appConfig.ClerkAPIKey
+		// Use Clerk API key from environment
+		if clerkAPIKey != "" {
+			serverCfg.ClerkAPIKey = clerkAPIKey
 			log.Println("Authentication enabled with Clerk")
 		}
 	}
@@ -116,10 +122,15 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		return nil, err
 	}
 
+	// Initialize usage tracker
+	usageTracker := postgres.NewUsageTracker(db)
+
 	ans := webrunner{
-		srv: srv,
-		svc: svc,
-		cfg: cfg,
+		srv:          srv,
+		svc:          svc,
+		cfg:          cfg,
+		db:           db,
+		usageTracker: usageTracker,
 	}
 
 	return &ans, nil
@@ -140,6 +151,9 @@ func (w *webrunner) Run(ctx context.Context) error {
 }
 
 func (w *webrunner) Close(context.Context) error {
+	if w.db != nil {
+		w.db.Close()
+	}
 	return nil
 }
 
@@ -192,15 +206,37 @@ func (w *webrunner) work(ctx context.Context) error {
 }
 
 func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
+	startTime := time.Now()
+
+	// Start usage tracking when job begins
+	if w.usageTracker != nil && job.UserID != "" {
+		err := w.usageTracker.StartJobTracking(ctx, job.ID, job.UserID, job.Data.Email, job.Data.FastMode)
+		if err != nil {
+			log.Printf("Failed to start usage tracking for job %s: %v", job.ID, err)
+			// Continue with job execution even if tracking fails
+		}
+	}
+
 	job.Status = web.StatusWorking
 
 	err := w.svc.Update(ctx, job)
 	if err != nil {
+		// Complete tracking for failed job
+		if w.usageTracker != nil && job.UserID != "" {
+			duration := time.Since(startTime)
+			w.usageTracker.CompleteJobTracking(ctx, job.ID, 0, 0, duration, false)
+		}
 		return err
 	}
 
 	if len(job.Data.Keywords) == 0 {
 		job.Status = web.StatusFailed
+
+		// Complete tracking for failed job
+		if w.usageTracker != nil && job.UserID != "" {
+			duration := time.Since(startTime)
+			w.usageTracker.CompleteJobTracking(ctx, job.ID, 0, 0, duration, false)
+		}
 
 		return w.svc.Update(ctx, job)
 	}
@@ -209,6 +245,11 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 
 	outfile, err := os.Create(outpath)
 	if err != nil {
+		// Complete tracking for failed job
+		if w.usageTracker != nil && job.UserID != "" {
+			duration := time.Since(startTime)
+			w.usageTracker.CompleteJobTracking(ctx, job.ID, 0, 0, duration, false)
+		}
 		return err
 	}
 
@@ -223,6 +264,12 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		err2 := w.svc.Update(ctx, job)
 		if err2 != nil {
 			log.Printf("failed to update job status: %v", err2)
+		}
+
+		// Complete tracking for failed job
+		if w.usageTracker != nil && job.UserID != "" {
+			duration := time.Since(startTime)
+			w.usageTracker.CompleteJobTracking(ctx, job.ID, 0, 0, duration, false)
 		}
 
 		return err
@@ -258,13 +305,23 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		w.cfg.ExtraReviews,
 	)
 	if err != nil {
+		job.Status = web.StatusFailed
+
 		err2 := w.svc.Update(ctx, job)
 		if err2 != nil {
 			log.Printf("failed to update job status: %v", err2)
 		}
 
+		// Complete tracking for failed job
+		if w.usageTracker != nil && job.UserID != "" {
+			duration := time.Since(startTime)
+			w.usageTracker.CompleteJobTracking(ctx, job.ID, 0, 0, duration, false)
+		}
+
 		return err
 	}
+
+	jobSuccess := false
 
 	if len(seedJobs) > 0 {
 		exitMonitor.SetSeedCount(len(seedJobs))
@@ -292,22 +349,66 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
 			cancel()
 
+			job.Status = web.StatusFailed
 			err2 := w.svc.Update(ctx, job)
 			if err2 != nil {
 				log.Printf("failed to update job status: %v", err2)
+			}
+
+			// Complete tracking for failed job
+			if w.usageTracker != nil && job.UserID != "" {
+				duration := time.Since(startTime)
+				w.usageTracker.CompleteJobTracking(ctx, job.ID, 0, 0, duration, false)
 			}
 
 			return err
 		}
 
 		cancel()
+		jobSuccess = true
 	}
 
 	mate.Close()
 
-	job.Status = web.StatusOK
+	// Count results from CSV file after job completion
+	locationsFound := 0
+	emailsFound := 0
 
-	return w.svc.Update(ctx, job)
+	if jobSuccess && w.usageTracker != nil {
+		locations, emails, err := w.usageTracker.CountResultsFromCSV(outpath, job.Data.Email)
+		if err != nil {
+			log.Printf("Failed to count results from CSV %s: %v", outpath, err)
+		} else {
+			locationsFound = locations
+			emailsFound = emails
+		}
+	}
+
+	if jobSuccess {
+		job.Status = web.StatusOK
+	} else {
+		job.Status = web.StatusFailed
+	}
+
+	// Update job status
+	err = w.svc.Update(ctx, job)
+	if err != nil {
+		log.Printf("failed to update job status: %v", err)
+	}
+
+	// Complete usage tracking with final results
+	if w.usageTracker != nil && job.UserID != "" {
+		duration := time.Since(startTime)
+		err = w.usageTracker.CompleteJobTracking(ctx, job.ID, locationsFound, emailsFound, duration, jobSuccess)
+		if err != nil {
+			log.Printf("Failed to complete usage tracking for job %s: %v", job.ID, err)
+		} else {
+			log.Printf("Usage tracking completed for job %s: %d locations, %d emails, duration: %v",
+				job.ID, locationsFound, emailsFound, duration)
+		}
+	}
+
+	return nil
 }
 
 func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job) (*scrapemateapp.ScrapemateApp, error) {
