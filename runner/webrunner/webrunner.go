@@ -98,6 +98,8 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 
 	// Check if LoadConfig exists by checking environment variable directly
 	clerkAPIKey = os.Getenv("CLERK_API_KEY")
+	stripeAPIKey := os.Getenv("STRIPE_SECRET_KEY")
+	stripeWebhookSecret := os.Getenv("STRIPE_WEBHOOK_SECRET")
 
 	// Add PostgreSQL and authentication if available
 	if cfg.Dsn != "" {
@@ -113,6 +115,13 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		if clerkAPIKey != "" {
 			serverCfg.ClerkAPIKey = clerkAPIKey
 			log.Println("Authentication enabled with Clerk")
+		}
+
+		// Use Stripe API key and webhook secret from environment
+		if stripeAPIKey != "" {
+			serverCfg.StripeAPIKey = stripeAPIKey
+			serverCfg.StripeWebhookSecret = stripeWebhookSecret
+			log.Println("Stripe subscription system enabled")
 		}
 	}
 

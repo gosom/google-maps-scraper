@@ -33,12 +33,12 @@ func NewUserRepository(db *sql.DB) UserRepository {
 
 // GetByID retrieves a user by ID
 func (repo *userRepository) GetByID(ctx context.Context, id string) (User, error) {
-	const q = `SELECT id, email, created_at, updated_at FROM users WHERE id = $1`
+	const q = `SELECT id, email, COALESCE(subscription_plan_id, 'free'), created_at, updated_at FROM users WHERE id = $1`
 
 	row := repo.db.QueryRowContext(ctx, q, id)
 
 	var user User
-	err := row.Scan(&user.ID, &user.Email, &user.CreatedAt, &user.UpdatedAt)
+	err := row.Scan(&user.ID, &user.Email, &user.SubscriptionPlanID, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return User{}, errors.New("user not found")
@@ -51,12 +51,12 @@ func (repo *userRepository) GetByID(ctx context.Context, id string) (User, error
 
 // GetByEmail retrieves a user by email
 func (repo *userRepository) GetByEmail(ctx context.Context, email string) (User, error) {
-	const q = `SELECT id, email, created_at, updated_at FROM users WHERE email = $1`
+	const q = `SELECT id, email, COALESCE(subscription_plan_id, 'free'), created_at, updated_at FROM users WHERE email = $1`
 
 	row := repo.db.QueryRowContext(ctx, q, email)
 
 	var user User
-	err := row.Scan(&user.ID, &user.Email, &user.CreatedAt, &user.UpdatedAt)
+	err := row.Scan(&user.ID, &user.Email, &user.SubscriptionPlanID, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return User{}, errors.New("user not found")
@@ -69,8 +69,8 @@ func (repo *userRepository) GetByEmail(ctx context.Context, email string) (User,
 
 // Create inserts a new user
 func (repo *userRepository) Create(ctx context.Context, user *User) error {
-	const q = `INSERT INTO users (id, email, created_at, updated_at) 
-	           VALUES ($1, $2, $3, $4)`
+	const q = `INSERT INTO users (id, email, subscription_plan_id, created_at, updated_at) 
+	           VALUES ($1, $2, $3, $4, $5)`
 
 	now := time.Now().UTC()
 	if user.CreatedAt.IsZero() {
@@ -79,8 +79,11 @@ func (repo *userRepository) Create(ctx context.Context, user *User) error {
 	if user.UpdatedAt.IsZero() {
 		user.UpdatedAt = now
 	}
+	if user.SubscriptionPlanID == "" {
+		user.SubscriptionPlanID = "free"
+	}
 
-	_, err := repo.db.ExecContext(ctx, q, user.ID, user.Email, user.CreatedAt, user.UpdatedAt)
+	_, err := repo.db.ExecContext(ctx, q, user.ID, user.Email, user.SubscriptionPlanID, user.CreatedAt, user.UpdatedAt)
 	if err != nil {
 		return err
 	}
@@ -112,6 +115,7 @@ func (repo *userRepository) Delete(ctx context.Context, id string) error {
 type usageLimiter struct {
 	db            *sql.DB
 	dailyJobLimit int
+	subRepo       models.SubscriptionRepository
 }
 
 // NewUsageLimiter creates a new UsageLimiter
@@ -119,6 +123,7 @@ func NewUsageLimiter(db *sql.DB, dailyJobLimit int) UsageLimiter {
 	return &usageLimiter{
 		db:            db,
 		dailyJobLimit: dailyJobLimit,
+		subRepo:       NewSubscriptionRepository(db),
 	}
 }
 
@@ -127,6 +132,27 @@ func (l *usageLimiter) CheckLimit(ctx context.Context, userID string) (bool, err
 	usage, err := l.GetUsage(ctx, userID)
 	if err != nil {
 		return false, err
+	}
+
+	// Get user's subscription to determine their limit
+	userSub, err := l.subRepo.GetUserSubscription(ctx, userID)
+	var dailyLimit int
+	if err != nil {
+		// If no subscription found, use default limit (free plan)
+		plan, err := l.subRepo.GetPlanByID(ctx, "free")
+		if err != nil {
+			dailyLimit = l.dailyJobLimit
+		} else {
+			dailyLimit = plan.DailyJobLimit
+		}
+	} else {
+		// Get plan limits
+		plan, err := l.subRepo.GetPlanByID(ctx, userSub.PlanID)
+		if err != nil {
+			dailyLimit = l.dailyJobLimit
+		} else {
+			dailyLimit = plan.DailyJobLimit
+		}
 	}
 
 	// Check if last job was today
@@ -139,7 +165,7 @@ func (l *usageLimiter) CheckLimit(ctx context.Context, userID string) (bool, err
 	}
 
 	// Otherwise, check against the daily limit
-	return usage.JobCount < l.dailyJobLimit, nil
+	return usage.JobCount < dailyLimit, nil
 }
 
 // IncrementUsage increases a user's usage count
@@ -219,4 +245,12 @@ func (l *usageLimiter) GetUsage(ctx context.Context, userID string) (UserUsage, 
 	}
 
 	return usage, nil
+}
+
+// UpdateUserSubscriptionPlan updates a user's subscription plan ID
+func (repo *userRepository) UpdateUserSubscriptionPlan(ctx context.Context, userID, planID string) error {
+	const q = `UPDATE users SET subscription_plan_id = $1, updated_at = $2 WHERE id = $3`
+	
+	_, err := repo.db.ExecContext(ctx, q, planID, time.Now().UTC(), userID)
+	return err
 }

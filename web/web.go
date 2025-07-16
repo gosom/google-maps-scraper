@@ -20,6 +20,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/gosom/google-maps-scraper/postgres"
+	stripeClient "github.com/gosom/google-maps-scraper/stripe"
+	"github.com/gosom/google-maps-scraper/subscription"
 	"github.com/gosom/google-maps-scraper/web/auth"
 )
 
@@ -27,24 +29,28 @@ import (
 var static embed.FS
 
 type Server struct {
-	tmpl           map[string]*template.Template
-	srv            *http.Server
-	svc            *Service
-	authMiddleware *auth.AuthMiddleware
-	userRepo       postgres.UserRepository
-	usageLimiter   postgres.UsageLimiter
-	usageTracker   *postgres.UsageTracker
-	db             *sql.DB
-	logger         *log.Logger
+	tmpl                map[string]*template.Template
+	srv                 *http.Server
+	svc                 *Service
+	authMiddleware      *auth.AuthMiddleware
+	userRepo            postgres.UserRepository
+	usageLimiter        postgres.UsageLimiter
+	usageTracker        *postgres.UsageTracker
+	subscriptionHandler *SubscriptionHandler
+	webhookHandler      *WebhookHandler
+	db                  *sql.DB
+	logger              *log.Logger
 }
 
 type ServerConfig struct {
-	Service      *Service
-	Addr         string
-	PgDB         *sql.DB // Optional PostgreSQL connection
-	UserRepo     postgres.UserRepository
-	UsageLimiter postgres.UsageLimiter
-	ClerkAPIKey  string // Optional Clerk API key for authentication
+	Service         *Service
+	Addr            string
+	PgDB            *sql.DB // Optional PostgreSQL connection
+	UserRepo        postgres.UserRepository
+	UsageLimiter    postgres.UsageLimiter
+	ClerkAPIKey     string // Optional Clerk API key for authentication
+	StripeAPIKey    string // Optional Stripe API key for subscriptions
+	StripeWebhookSecret string // Optional Stripe webhook secret
 }
 
 func New(cfg ServerConfig) (*Server, error) {
@@ -77,6 +83,23 @@ func New(cfg ServerConfig) (*Server, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize authentication: %w", err)
 		}
+	}
+
+	// Initialize subscription handlers if Stripe API key is provided
+	if cfg.StripeAPIKey != "" && cfg.PgDB != nil {
+		// Initialize repositories
+		subRepo := postgres.NewSubscriptionRepository(cfg.PgDB)
+		webhookRepo := postgres.NewWebhookRepository(cfg.PgDB)
+		
+		// Initialize Stripe client
+		stripe := stripeClient.NewClient(cfg.StripeAPIKey)
+		
+		// Initialize subscription service
+		subscriptionService := subscription.NewService(stripe, subRepo, cfg.UserRepo, webhookRepo, ans.logger)
+		
+		// Initialize handlers
+		ans.subscriptionHandler = NewSubscriptionHandler(subscriptionService, ans.logger)
+		ans.webhookHandler = NewWebhookHandler(stripe, subscriptionService, cfg.StripeWebhookSecret, ans.logger)
 	}
 
 	staticFS, err := fs.Sub(static, "static")
@@ -125,6 +148,16 @@ func New(cfg ServerConfig) (*Server, error) {
 	// Usage tracking endpoints
 	apiRouter.HandleFunc("/usage", ans.apiGetUsage).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/usage/reset", ans.apiResetUsage).Methods(http.MethodPost)
+
+	// Subscription endpoints (if subscription handler is available)
+	if ans.subscriptionHandler != nil {
+		ans.subscriptionHandler.RegisterRoutes(apiRouter)
+	}
+
+	// Webhook endpoints (public access, no authentication)
+	if ans.webhookHandler != nil {
+		router.HandleFunc("/webhooks/stripe", ans.webhookHandler.HandleStripeWebhook).Methods(http.MethodPost)
+	}
 
 	// Apply security headers and CORS to all routes
 	handler := corsMiddleware(securityHeaders(router))
