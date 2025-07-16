@@ -18,6 +18,7 @@ import (
 type ServiceInterface interface {
 	CreateSubscription(ctx context.Context, userID, planID string) (*models.UserSubscription, error)
 	GetUserSubscription(ctx context.Context, userID string) (*SubscriptionWithPlan, error)
+	GetUserSubscriptionStatus(ctx context.Context, userID string) (*UnifiedSubscriptionStatus, error)
 	CancelSubscription(ctx context.Context, userID string) error
 	GetPlans(ctx context.Context) ([]models.SubscriptionPlan, error)
 	CreateBillingPortalSession(ctx context.Context, userID, returnURL string) (string, error)
@@ -149,6 +150,39 @@ func (s *Service) GetUserSubscription(ctx context.Context, userID string) (*Subs
 		Subscription: sub,
 		Plan:         plan,
 	}, nil
+}
+
+// GetUserSubscriptionStatus retrieves a unified subscription status for both free and paid users
+func (s *Service) GetUserSubscriptionStatus(ctx context.Context, userID string) (*UnifiedSubscriptionStatus, error) {
+	// Get user information to determine their subscription plan
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+
+	// Get plan details from the user's subscription_plan_id
+	plan, err := s.subRepo.GetPlanByID(ctx, user.SubscriptionPlanID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get plan: %w", err)
+	}
+
+	// Create the unified response
+	status := &UnifiedSubscriptionStatus{
+		Plan:   plan,
+		IsPaid: user.SubscriptionPlanID != "free",
+	}
+
+	// If user is not on free plan, try to get their subscription details
+	if user.SubscriptionPlanID != "free" {
+		sub, err := s.subRepo.GetUserSubscription(ctx, userID)
+		if err == nil {
+			status.Subscription = &sub
+		}
+		// If error getting subscription, we still return the plan info
+		// This handles edge cases where user.subscription_plan_id is updated but subscription record doesn't exist
+	}
+
+	return status, nil
 }
 
 // CancelSubscription cancels a user's subscription
@@ -447,4 +481,18 @@ func (s *Service) updateSubscriptionFromStripe(ctx context.Context, stripeSubscr
 type SubscriptionWithPlan struct {
 	Subscription models.UserSubscription `json:"subscription"`
 	Plan         models.SubscriptionPlan  `json:"plan"`
+}
+
+// UnifiedSubscriptionStatus provides a consistent response for all users
+type UnifiedSubscriptionStatus struct {
+	Plan         models.SubscriptionPlan   `json:"plan"`
+	Subscription *models.UserSubscription  `json:"subscription,omitempty"`
+	IsPaid       bool                     `json:"is_paid"`
+	Usage        *UserUsageInfo           `json:"usage,omitempty"`
+}
+
+// UserUsageInfo provides usage information for the current user
+type UserUsageInfo struct {
+	CurrentUsage int `json:"current_usage"`
+	DailyLimit   int `json:"daily_limit"`
 }

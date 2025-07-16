@@ -96,14 +96,14 @@ func (h *SubscriptionHandler) apiGetSubscriptionStatus(w http.ResponseWriter, r 
 
 	h.logger.Printf("GET %s - user: %s - Fetching subscription status", r.URL.Path, userID)
 
-	subWithPlan, err := h.subscriptionService.GetUserSubscription(r.Context(), userID)
+	status, err := h.subscriptionService.GetUserSubscriptionStatus(r.Context(), userID)
 	if err != nil {
-		h.logger.Printf("ERROR %s - user: %s - Failed to get subscription: %v", r.URL.Path, userID, err)
-		h.renderError(w, http.StatusNotFound, "Subscription not found")
+		h.logger.Printf("ERROR %s - user: %s - Failed to get subscription status: %v", r.URL.Path, userID, err)
+		h.renderError(w, http.StatusInternalServerError, "Failed to get subscription status")
 		return
 	}
 
-	h.renderJSON(w, http.StatusOK, subWithPlan)
+	h.renderJSON(w, http.StatusOK, status)
 	h.logger.Printf("SUCCESS %s - user: %s - Retrieved subscription status", r.URL.Path, userID)
 }
 
