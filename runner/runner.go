@@ -58,6 +58,7 @@ type Config struct {
 	ProduceOnly              bool
 	ExitOnInactivityDuration time.Duration
 	Email                    bool
+	Images                   bool
 	CustomWriter             string
 	GeoCoordinates           string
 	Zoom                     int

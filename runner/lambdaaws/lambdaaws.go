@@ -79,15 +79,16 @@ func (l *lambdaAwsRunner) handler(ctx context.Context, input lInput) error {
 	exitMonitor := exiter.New()
 
 	seedJobs, err = runner.CreateSeedJobs(
-		false, // TODO supoort fast mode
+		false, // TODO support fast mode
 		input.Language,
 		in,
 		input.Depth,
-		false,
-		"",
-		0,
-		10000, // TODO support radius
-		nil,
+		false, // email
+		false, // images
+		"",   // geoCoordinates
+		15,    // zoom
+		10000, // radius
+		nil,   // deduper
 		exitMonitor,
 		input.ExtraReviews,
 	)

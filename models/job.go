@@ -11,6 +11,7 @@ type JobData struct {
 	Lang     string        `json:"lang"`
 	Depth    int           `json:"depth"`
 	Email    bool          `json:"email"`
+	Images   bool          `json:"images"`
 	Lat      string        `json:"lat"`
 	Lon      string        `json:"lon"`
 	Zoom     int           `json:"zoom"`

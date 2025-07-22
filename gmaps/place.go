@@ -1,5 +1,14 @@
 package gmaps
 
+// Enhanced Image Extraction Support
+// This package now supports multi-image extraction when ExtractImages is enabled.
+// Features:
+// - Multiple images per business (business, menu, user, street categories)
+// - Enhanced metadata (dimensions, alt text, attribution)
+// - Image categorization and organization
+// - Backward compatibility with legacy image format
+// - Performance optimized with concurrent processing
+
 import (
 	"context"
 	"fmt"
@@ -12,6 +21,7 @@ import (
 	"github.com/playwright-community/playwright-go"
 
 	"github.com/gosom/google-maps-scraper/exiter"
+	"github.com/gosom/google-maps-scraper/gmaps/images"
 )
 
 type PlaceJobOptions func(*PlaceJob)
@@ -21,11 +31,12 @@ type PlaceJob struct {
 
 	UsageInResultststs  bool
 	ExtractEmail        bool
+	ExtractImages       bool
 	ExitMonitor         exiter.Exiter
 	ExtractExtraReviews bool
 }
 
-func NewPlaceJob(parentID, langCode, u string, extractEmail, extraExtraReviews bool, opts ...PlaceJobOptions) *PlaceJob {
+func NewPlaceJob(parentID, langCode, u string, extractEmail, extractImages, extraExtraReviews bool, opts ...PlaceJobOptions) *PlaceJob {
 	const (
 		defaultPrio       = scrapemate.PriorityMedium
 		defaultMaxRetries = 3
@@ -45,6 +56,7 @@ func NewPlaceJob(parentID, langCode, u string, extractEmail, extraExtraReviews b
 
 	job.UsageInResultststs = true
 	job.ExtractEmail = extractEmail
+	job.ExtractImages = extractImages
 	job.ExtractExtraReviews = extraExtraReviews
 
 	for _, opt := range opts {
@@ -57,6 +69,65 @@ func NewPlaceJob(parentID, langCode, u string, extractEmail, extraExtraReviews b
 func WithPlaceJobExitMonitor(exitMonitor exiter.Exiter) PlaceJobOptions {
 	return func(j *PlaceJob) {
 		j.ExitMonitor = exitMonitor
+	}
+}
+
+// processExtractedImages converts and integrates extracted image data into the entry
+func (j *PlaceJob) processExtractedImages(entry *Entry, resp *scrapemate.Response) {
+	imageResult, imgOk := resp.Meta["images_data"].([]images.BusinessImage)
+	if !imgOk || len(imageResult) == 0 {
+		return
+	}
+
+	// Convert images package types to gmaps package types
+	enhancedImages := make([]BusinessImage, len(imageResult))
+	for i, img := range imageResult {
+		enhancedImages[i] = BusinessImage{
+			URL:          img.URL,
+			ThumbnailURL: img.ThumbnailURL,
+			AltText:      img.AltText,
+			Category:     img.Category,
+			Index:        img.Index,
+			Dimensions: ImageDimensions{
+				Width:  img.Dimensions.Width,
+				Height: img.Dimensions.Height,
+			},
+			Attribution: img.Attribution,
+		}
+	}
+	entry.EnhancedImages = enhancedImages
+
+	// Convert metadata if available
+	if imageMetadata, metaOk := resp.Meta["images_metadata"].(*images.ScrapingMetadata); metaOk {
+		entry.ImageExtractionMetadata = &ScrapingMetadata{
+			ScrapedAt:     imageMetadata.ScrapedAt,
+			ImageCount:    imageMetadata.ImageCount,
+			LoadTime:      imageMetadata.LoadTime,
+			ScrollActions: imageMetadata.ScrollActions,
+		}
+	}
+
+	// Convert enhanced images to legacy format for backward compatibility
+	legacyImages := make([]Image, 0, len(enhancedImages))
+	for _, img := range enhancedImages {
+		legacyImages = append(legacyImages, Image{
+			Title: img.Category,
+			Image: img.URL,
+		})
+	}
+	entry.Images = legacyImages
+
+	// Organize images by category for the ImageCategories field
+	categoryMap := make(map[string][]BusinessImage)
+	for _, img := range enhancedImages {
+		categoryMap[img.Category] = append(categoryMap[img.Category], img)
+	}
+
+	for category, imgs := range categoryMap {
+		entry.ImageCategories = append(entry.ImageCategories, ImageCategory{
+			Title:  category,
+			Images: imgs,
+		})
 	}
 }
 
@@ -76,6 +147,9 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 	if err != nil {
 		return nil, nil, err
 	}
+
+	// Integrate enhanced image data if available
+	j.processExtractedImages(&entry, resp)
 
 	entry.ID = j.ParentID
 
@@ -104,6 +178,33 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 	}
 
 	return &entry, nil, err
+}
+
+// extractImages performs enhanced image extraction if enabled
+func (j *PlaceJob) extractImages(ctx context.Context, page playwright.Page, resp *scrapemate.Response) {
+	if !j.ExtractImages {
+		return
+	}
+
+	log := scrapemate.GetLoggerFromContext(ctx)
+	log.Info(fmt.Sprintf("Multi-image extraction ENABLED for job %s", j.ID))
+
+	// Create a separate context for image extraction to avoid interference
+	imageCtx, imageCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer imageCancel()
+
+	imageExtractor := images.NewImageExtractor(page)
+	imageResult, err := imageExtractor.ExtractAllImages(imageCtx)
+	if err != nil {
+		// Log error but don't fail the entire operation
+		log.Warn(fmt.Sprintf("Image extraction failed: %v", err))
+		return
+	}
+
+	// Store images data and metadata for processing in Process method
+	resp.Meta["images_data"] = imageResult
+	resp.Meta["images_metadata"] = imageExtractor.GetMetadata()
+	log.Info(fmt.Sprintf("Successfully extracted %d images", len(imageResult)))
 }
 
 func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scrapemate.Response {
@@ -156,6 +257,9 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 	}
 
 	resp.Meta["json"] = raw
+
+	// Extract images using the enhanced approach (only if ExtractImages is enabled)
+	j.extractImages(ctx, page, &resp)
 
 	if j.ExtractExtraReviews {
 		reviewCount := j.getReviewCount(raw)

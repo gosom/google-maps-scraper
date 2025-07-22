@@ -81,6 +81,7 @@ func (r *fileRunner) Run(ctx context.Context) (err error) {
 		r.input,
 		r.cfg.MaxDepth,
 		r.cfg.Email,
+		r.cfg.Images,
 		r.cfg.GeoCoordinates,
 		r.cfg.Zoom,
 		r.cfg.Radius,

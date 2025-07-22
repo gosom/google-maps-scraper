@@ -102,6 +102,10 @@
                                 <input type="checkbox" id="email" name="email" {{if .Email}}checked{{end}}>
                                 <label for="email">Fetch Emails</label>
                             </div>
+                            <div class="form-group checkbox">
+                                <input type="checkbox" id="images" name="images" {{if .Images}}checked{{end}}>
+                                <label for="images">Extract Multiple Images (NEW)</label>
+                            </div>
                             <div class="form-group">
                                 <label for="maxtime">Max job time:</label>
                                 <input type="text" id="maxtime" name="maxtime" value="{{.MaxTime}}">
