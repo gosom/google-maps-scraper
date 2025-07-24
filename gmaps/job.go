@@ -111,6 +111,9 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 
 	log := scrapemate.GetLoggerFromContext(ctx)
 
+	// DEBUG: Log GmapJob flags
+	log.Info(fmt.Sprintf("DEBUG: GmapJob %s processing - ExtractImages: %v, ExtractEmail: %v", j.ID, j.ExtractImages, j.ExtractEmail))
+
 	doc, ok := resp.Document.(*goquery.Document)
 	if !ok {
 		return nil, nil, fmt.Errorf("could not convert to goquery document")
@@ -124,17 +127,20 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 			jopts = append(jopts, WithPlaceJobExitMonitor(j.ExitMonitor))
 		}
 
+		log.Info(fmt.Sprintf("DEBUG: Creating single PlaceJob from direct place URL with ExtractImages: %v", j.ExtractImages))
 		placeJob := NewPlaceJob(j.ID, j.LangCode, resp.URL, j.ExtractEmail, j.ExtractImages, j.ExtractExtraReviews, jopts...)
 
 		next = append(next, placeJob)
 	} else {
-		doc.Find(`div[role=feed] div[jsaction]>a`).Each(func(_ int, s *goquery.Selection) {
+		log.Info(fmt.Sprintf("DEBUG: Processing search results page - will create PlaceJobs with ExtractImages: %v", j.ExtractImages))
+		doc.Find(`div[role=feed] div[jsaction]>a`).Each(func(i int, s *goquery.Selection) {
 			if href := s.AttrOr("href", ""); href != "" {
 				jopts := []PlaceJobOptions{}
 				if j.ExitMonitor != nil {
 					jopts = append(jopts, WithPlaceJobExitMonitor(j.ExitMonitor))
 				}
 
+				log.Info(fmt.Sprintf("DEBUG: Creating PlaceJob %d from search result with ExtractImages: %v", i+1, j.ExtractImages))
 				nextJob := NewPlaceJob(j.ID, j.LangCode, href, j.ExtractEmail, j.ExtractImages, j.ExtractExtraReviews, jopts...)
 
 				if j.Deduper == nil || j.Deduper.AddIfNotExists(ctx, href) {
@@ -149,7 +155,7 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 		j.ExitMonitor.IncrSeedCompleted(1)
 	}
 
-	log.Info(fmt.Sprintf("%d places found", len(next)))
+	log.Info(fmt.Sprintf("DEBUG: Created %d PlaceJobs from GmapJob %s", len(next), j.ID))
 
 	return nil, next, nil
 }

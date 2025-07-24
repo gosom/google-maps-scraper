@@ -228,6 +228,14 @@ func (e *Entry) CsvHeaders() []string {
 }
 
 func (e *Entry) CsvRow() []string {
+	// DEBUG: Log final image count being written to CSV
+	if len(e.Images) > 0 {
+		fmt.Printf("DEBUG: Writing %d images to CSV for business: %s\n", len(e.Images), e.Title)
+		if len(e.EnhancedImages) > 0 {
+			fmt.Printf("DEBUG: Enhanced images available: %d, Image extraction metadata available: %v\n", len(e.EnhancedImages), e.ImageExtractionMetadata != nil)
+		}
+	}
+
 	return []string{
 		e.ID,
 		e.Link,
