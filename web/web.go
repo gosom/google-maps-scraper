@@ -982,20 +982,20 @@ func (s *Server) apiGetJobResults(w http.ResponseWriter, r *http.Request) {
 		s.logger.Printf("DEBUG: Skipping user verification (auth disabled) - allowing access to job %s", jobID)
 	}
 
-	// Get enhanced results from database
-	results, err := s.getEnhancedJobResults(r.Context(), jobID)
+	// Get results from database
+	results, err := s.getJobResults(r.Context(), jobID)
 	if err != nil {
 		apiError := apiError{
 			Code:    http.StatusInternalServerError,
 			Message: "Failed to get results: " + err.Error(),
 		}
 		renderJSON(w, http.StatusInternalServerError, apiError)
-		s.logger.Printf("Failed to get enhanced results for job %s: %v", jobID, err)
+		s.logger.Printf("Failed to get results for job %s: %v", jobID, err)
 		return
 	}
 
 	renderJSON(w, http.StatusOK, results)
-	s.logger.Printf("Retrieved %d enhanced results for job %s", len(results), jobID)
+	s.logger.Printf("Retrieved %d results for job %s", len(results), jobID)
 }
 
 // apiGetUserResults returns all results for the authenticated user
