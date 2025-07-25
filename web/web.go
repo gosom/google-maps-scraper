@@ -582,6 +582,18 @@ type apiScrapeResponse struct {
 	ID string `json:"id"`
 }
 
+// PaginatedResultsResponse represents a paginated response for job results
+type PaginatedResultsResponse struct {
+	Results    []EnhancedResult `json:"results"`
+	TotalCount int              `json:"total_count"`
+	Page       int              `json:"page"`
+	Limit      int              `json:"limit"`
+	Offset     int              `json:"offset"`
+	TotalPages int              `json:"total_pages"`
+	HasNext    bool             `json:"has_next"`
+	HasPrev    bool             `json:"has_prev"`
+}
+
 func (s *Server) redocHandler(w http.ResponseWriter, r *http.Request) {
 	s.logger.Printf("GET %s", r.URL.Path)
 
@@ -917,7 +929,7 @@ type Result struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-// apiGetJobResults returns all results for a specific job
+// apiGetJobResults returns paginated results for a specific job
 func (s *Server) apiGetJobResults(w http.ResponseWriter, r *http.Request) {
 	s.logger.Printf("GET %s", r.URL.Path)
 
@@ -934,6 +946,24 @@ func (s *Server) apiGetJobResults(w http.ResponseWriter, r *http.Request) {
 		s.logger.Printf("Missing job ID for get job results")
 		return
 	}
+
+	// Parse pagination parameters
+	page := 1
+	limit := 50 // default limit
+
+	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+		if parsedPage, err := strconv.Atoi(pageStr); err == nil && parsedPage > 0 {
+			page = parsedPage
+		}
+	}
+
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 && parsedLimit <= 1000 {
+			limit = parsedLimit
+		}
+	}
+
+	offset := (page - 1) * limit
 
 	// Get user ID from context if authentication is enabled
 	var userID string
@@ -982,8 +1012,8 @@ func (s *Server) apiGetJobResults(w http.ResponseWriter, r *http.Request) {
 		s.logger.Printf("DEBUG: Skipping user verification (auth disabled) - allowing access to job %s", jobID)
 	}
 
-	// Get enhanced results from database
-	results, err := s.getEnhancedJobResults(r.Context(), jobID)
+	// Get paginated enhanced results from database
+	results, totalCount, err := s.getEnhancedJobResultsPaginated(r.Context(), jobID, limit, offset)
 	if err != nil {
 		apiError := apiError{
 			Code:    http.StatusInternalServerError,
@@ -994,8 +1024,25 @@ func (s *Server) apiGetJobResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	renderJSON(w, http.StatusOK, results)
-	s.logger.Printf("Retrieved %d enhanced results for job %s", len(results), jobID)
+	// Calculate pagination metadata
+	totalPages := (totalCount + limit - 1) / limit // Ceiling division
+	if totalPages == 0 {
+		totalPages = 1
+	}
+
+	response := PaginatedResultsResponse{
+		Results:    results,
+		TotalCount: totalCount,
+		Page:       page,
+		Limit:      limit,
+		Offset:     offset,
+		TotalPages: totalPages,
+		HasNext:    page < totalPages,
+		HasPrev:    page > 1,
+	}
+
+	renderJSON(w, http.StatusOK, response)
+	s.logger.Printf("Retrieved %d of %d enhanced results for job %s (page %d/%d)", len(results), totalCount, jobID, page, totalPages)
 }
 
 // apiGetUserResults returns all results for the authenticated user
