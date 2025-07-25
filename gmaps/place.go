@@ -34,9 +34,10 @@ type PlaceJob struct {
 	ExtractImages       bool
 	ExitMonitor         exiter.Exiter
 	ExtractExtraReviews bool
+	ReviewsMax          int // Maximum number of reviews to extract
 }
 
-func NewPlaceJob(parentID, langCode, u string, extractEmail, extractImages, extraExtraReviews bool, opts ...PlaceJobOptions) *PlaceJob {
+func NewPlaceJob(parentID, langCode, u string, extractEmail, extractImages bool, reviewsMax int, opts ...PlaceJobOptions) *PlaceJob {
 	const (
 		defaultPrio       = scrapemate.PriorityMedium
 		defaultMaxRetries = 3
@@ -57,7 +58,8 @@ func NewPlaceJob(parentID, langCode, u string, extractEmail, extractImages, extr
 	job.UsageInResultststs = true
 	job.ExtractEmail = extractEmail
 	job.ExtractImages = extractImages
-	job.ExtractExtraReviews = extraExtraReviews
+	job.ExtractExtraReviews = reviewsMax > 0
+	job.ReviewsMax = reviewsMax
 
 	// DEBUG: Log the job creation with flags
 	log := scrapemate.GetLoggerFromContext(context.Background())
@@ -327,6 +329,7 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 				page:        page,
 				mapURL:      page.URL(),
 				reviewCount: reviewCount,
+				maxReviews:  j.ReviewsMax, // Pass the review limit
 			}
 
 			reviewFetcher := newReviewFetcher(params)

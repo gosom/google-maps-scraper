@@ -301,6 +301,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		job.Data.Depth,
 		job.Data.Email,
 		job.Data.Images,
+		job.Data.ReviewsMax, // Pass the actual review count
 		coords,
 		job.Data.Zoom,
 		func() float64 {
@@ -312,7 +313,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		}(),
 		dedup,
 		exitMonitor,
-		w.cfg.ExtraReviews,
+		job.Data.ReviewsMax > 0, // Keep extraReviews for backward compatibility
 	)
 	if err != nil {
 		job.Status = web.StatusFailed

@@ -29,6 +29,7 @@ type GmapJob struct {
 	Deduper             deduper.Deduper
 	ExitMonitor         exiter.Exiter
 	ExtractExtraReviews bool
+	ReviewsMax          int // Maximum number of reviews to extract
 }
 
 func NewGmapJob(
@@ -36,6 +37,7 @@ func NewGmapJob(
 	maxDepth int,
 	extractEmail bool,
 	extractImages bool,
+	reviewsMax int,
 	geoCoordinates string,
 	zoom int,
 	opts ...GmapJobOptions,
@@ -68,10 +70,12 @@ func NewGmapJob(
 			MaxRetries: maxRetries,
 			Priority:   prio,
 		},
-		MaxDepth:      maxDepth,
-		LangCode:      langCode,
-		ExtractEmail:  extractEmail,
-		ExtractImages: extractImages,
+		MaxDepth:            maxDepth,
+		LangCode:            langCode,
+		ExtractEmail:        extractEmail,
+		ExtractImages:       extractImages,
+		ExtractExtraReviews: reviewsMax > 0,
+		ReviewsMax:          reviewsMax,
 	}
 
 	for _, opt := range opts {
@@ -128,7 +132,7 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 		}
 
 		log.Info(fmt.Sprintf("DEBUG: Creating single PlaceJob from direct place URL with ExtractImages: %v", j.ExtractImages))
-		placeJob := NewPlaceJob(j.ID, j.LangCode, resp.URL, j.ExtractEmail, j.ExtractImages, j.ExtractExtraReviews, jopts...)
+		placeJob := NewPlaceJob(j.ID, j.LangCode, resp.URL, j.ExtractEmail, j.ExtractImages, j.ReviewsMax, jopts...)
 
 		next = append(next, placeJob)
 	} else {
@@ -141,7 +145,7 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 				}
 
 				log.Info(fmt.Sprintf("DEBUG: Creating PlaceJob %d from search result with ExtractImages: %v", i+1, j.ExtractImages))
-				nextJob := NewPlaceJob(j.ID, j.LangCode, href, j.ExtractEmail, j.ExtractImages, j.ExtractExtraReviews, jopts...)
+				nextJob := NewPlaceJob(j.ID, j.LangCode, href, j.ExtractEmail, j.ExtractImages, j.ReviewsMax, jopts...)
 
 				if j.Deduper == nil || j.Deduper.AddIfNotExists(ctx, href) {
 					next = append(next, nextJob)

@@ -7,18 +7,19 @@ import (
 
 // JobData contains the configurable options for a job
 type JobData struct {
-	Keywords []string      `json:"keywords"`
-	Lang     string        `json:"lang"`
-	Depth    int           `json:"depth"`
-	Email    bool          `json:"email"`
-	Images   bool          `json:"images"`
-	Lat      string        `json:"lat"`
-	Lon      string        `json:"lon"`
-	Zoom     int           `json:"zoom"`
-	Radius   int           `json:"radius"`
-	MaxTime  time.Duration `json:"max_time"`
-	FastMode bool          `json:"fast_mode"`
-	Proxies  []string      `json:"proxies"`
+	Keywords   []string      `json:"keywords"`
+	Lang       string        `json:"lang"`
+	Depth      int           `json:"depth"`
+	Email      bool          `json:"email"`
+	Images     bool          `json:"images"`
+	ReviewsMax int           `json:"reviews_max"` // Maximum number of reviews to scrape per location
+	Lat        string        `json:"lat"`
+	Lon        string        `json:"lon"`
+	Zoom       int           `json:"zoom"`
+	Radius     int           `json:"radius"`
+	MaxTime    time.Duration `json:"max_time"`
+	FastMode   bool          `json:"fast_mode"`
+	Proxies    []string      `json:"proxies"`
 }
 
 // Job represents a scraping job

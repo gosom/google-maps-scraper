@@ -20,6 +20,7 @@ type fetchReviewsParams struct {
 	page        playwright.Page
 	mapURL      string
 	reviewCount int
+	maxReviews  int // Maximum number of reviews to fetch
 }
 
 type fetchReviewsResponse struct {
@@ -47,7 +48,13 @@ func (f *fetcher) fetch(ctx context.Context) (fetchReviewsResponse, error) {
 		return fetchReviewsResponse{}, fmt.Errorf("failed to generate session request ID: %v", err)
 	}
 
-	reviewURL, err := f.generateURL(f.params.mapURL, "", 20, requestIDForSession)
+	// Calculate page size - don't fetch more than we need
+	pageSize := 20
+	if f.params.maxReviews > 0 && f.params.maxReviews < pageSize {
+		pageSize = f.params.maxReviews
+	}
+
+	reviewURL, err := f.generateURL(f.params.mapURL, "", pageSize, requestIDForSession)
 	if err != nil {
 		return fetchReviewsResponse{}, fmt.Errorf("failed to generate initial URL: %v", err)
 	}
@@ -60,10 +67,30 @@ func (f *fetcher) fetch(ctx context.Context) (fetchReviewsResponse, error) {
 	ans := fetchReviewsResponse{}
 	ans.pages = append(ans.pages, currentPageBody)
 
+	// Count reviews collected so far (approximate)
+	reviewsCollected := pageSize
+
 	nextPageToken := extractNextPageToken(currentPageBody)
 
 	for nextPageToken != "" {
-		reviewURL, err = f.generateURL(f.params.mapURL, nextPageToken, 20, requestIDForSession)
+		// Stop if we've reached the limit
+		if f.params.maxReviews > 0 && reviewsCollected >= f.params.maxReviews {
+			break
+		}
+
+		// Calculate remaining reviews needed
+		remainingNeeded := f.params.maxReviews - reviewsCollected
+		if remainingNeeded <= 0 {
+			break
+		}
+
+		// Adjust page size for remaining reviews
+		currentPageSize := pageSize
+		if f.params.maxReviews > 0 && remainingNeeded < pageSize {
+			currentPageSize = remainingNeeded
+		}
+
+		reviewURL, err = f.generateURL(f.params.mapURL, nextPageToken, currentPageSize, requestIDForSession)
 		if err != nil {
 			fmt.Printf("Error generating URL for token %s: %v\n", nextPageToken, err)
 			break
@@ -76,6 +103,7 @@ func (f *fetcher) fetch(ctx context.Context) (fetchReviewsResponse, error) {
 		}
 
 		ans.pages = append(ans.pages, currentPageBody)
+		reviewsCollected += currentPageSize
 		nextPageToken = extractNextPageToken(currentPageBody)
 	}
 

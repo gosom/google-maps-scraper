@@ -226,19 +226,20 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 type formData struct {
-	Name     string
-	MaxTime  string
-	Keywords []string
-	Language string
-	Zoom     int
-	FastMode bool
-	Radius   int
-	Lat      string
-	Lon      string
-	Depth    int
-	Email    bool
-	Images   bool
-	Proxies  []string
+	Name       string
+	MaxTime    string
+	Keywords   []string
+	Language   string
+	Zoom       int
+	FastMode   bool
+	Radius     int
+	Lat        string
+	Lon        string
+	Depth      int
+	Email      bool
+	Images     bool
+	ReviewsMax int
+	Proxies    []string
 }
 
 type ctxKey string
@@ -292,18 +293,19 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := formData{
-		Name:     "",
-		MaxTime:  "10m",
-		Keywords: []string{},
-		Language: "en",
-		Zoom:     15,
-		FastMode: false,
-		Radius:   10000,
-		Lat:      "0",
-		Lon:      "0",
-		Depth:    10,
-		Email:    false,
-		Images:   false,
+		Name:       "",
+		MaxTime:    "10m",
+		Keywords:   []string{},
+		Language:   "en",
+		Zoom:       15,
+		FastMode:   false,
+		Radius:     10000,
+		Lat:        "0",
+		Lon:        "0",
+		Depth:      10,
+		Email:      false,
+		Images:     false,
+		ReviewsMax: 1,
 	}
 
 	_ = tmpl.Execute(w, data)
@@ -428,6 +430,18 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 
 	newJob.Data.Email = r.Form.Get("email") == "on"
 	newJob.Data.Images = r.Form.Get("images") == "on"
+
+	// Parse reviews_max field
+	if reviewsMaxStr := r.Form.Get("reviews_max"); reviewsMaxStr != "" {
+		newJob.Data.ReviewsMax, err = strconv.Atoi(reviewsMaxStr)
+		if err != nil {
+			http.Error(w, "invalid reviews_max", http.StatusUnprocessableEntity)
+			s.logger.Printf("Invalid reviews_max: %s", reviewsMaxStr)
+			return
+		}
+	} else {
+		newJob.Data.ReviewsMax = 1 // default value
+	}
 
 	proxies := strings.Split(r.Form.Get("proxies"), "\n")
 	if len(proxies) > 0 {
