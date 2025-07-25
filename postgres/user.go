@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log"
 	"time"
 
 	"github.com/gosom/google-maps-scraper/models"
@@ -141,9 +142,11 @@ func (l *usageLimiter) CheckLimit(ctx context.Context, userID string) (bool, err
 		// If no subscription found, use default limit (free plan)
 		plan, err := l.subRepo.GetPlanByID(ctx, "free")
 		if err != nil {
+			// If free plan query fails, use the configured daily limit (which is 10000 in development)
 			dailyLimit = l.dailyJobLimit
 		} else {
-			dailyLimit = plan.DailyJobLimit
+			// Use the larger of the plan limit or configured limit for development flexibility
+			dailyLimit = max(plan.DailyJobLimit, l.dailyJobLimit)
 		}
 	} else {
 		// Get plan limits
@@ -151,7 +154,8 @@ func (l *usageLimiter) CheckLimit(ctx context.Context, userID string) (bool, err
 		if err != nil {
 			dailyLimit = l.dailyJobLimit
 		} else {
-			dailyLimit = plan.DailyJobLimit
+			// Use the larger of the plan limit or configured limit for development flexibility
+			dailyLimit = max(plan.DailyJobLimit, l.dailyJobLimit)
 		}
 	}
 
@@ -163,6 +167,10 @@ func (l *usageLimiter) CheckLimit(ctx context.Context, userID string) (bool, err
 	if !lastJobDate.Equal(today) {
 		return true, nil
 	}
+
+	// DEBUG: Log usage check details for troubleshooting
+	log.Printf("DEBUG: CheckLimit for user %s - JobCount: %d, DailyLimit: %d, LastJobDate: %v, Today: %v",
+		userID, usage.JobCount, dailyLimit, lastJobDate, today)
 
 	// Otherwise, check against the daily limit
 	return usage.JobCount < dailyLimit, nil
@@ -250,7 +258,15 @@ func (l *usageLimiter) GetUsage(ctx context.Context, userID string) (UserUsage, 
 // UpdateUserSubscriptionPlan updates a user's subscription plan ID
 func (repo *userRepository) UpdateUserSubscriptionPlan(ctx context.Context, userID, planID string) error {
 	const q = `UPDATE users SET subscription_plan_id = $1, updated_at = $2 WHERE id = $3`
-	
+
 	_, err := repo.db.ExecContext(ctx, q, planID, time.Now().UTC(), userID)
 	return err
+}
+
+// max returns the larger of two integers
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

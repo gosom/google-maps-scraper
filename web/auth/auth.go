@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 
@@ -60,12 +61,24 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 		}
 		token := parts[1]
 
+		// DEBUG: Log token verification attempt
+		log.Printf("DEBUG: Attempting to verify token for request %s %s (first 20 chars: %s...)", r.Method, r.URL.Path,
+			func() string {
+				if len(token) > 20 {
+					return token[:20]
+				}
+				return token
+			}())
+
 		// Verify token with Clerk
 		claims, err := m.client.VerifyToken(token)
 		if err != nil {
+			log.Printf("DEBUG: Token verification failed for %s %s: %v", r.Method, r.URL.Path, err)
 			http.Error(w, "Unauthorized: invalid token", http.StatusUnauthorized)
 			return
 		}
+
+		log.Printf("DEBUG: Token verification successful for user %s on %s %s", claims.Subject, r.Method, r.URL.Path)
 
 		// Get user ID from verified claims
 		userID := claims.Subject
@@ -128,6 +141,7 @@ func (m *AuthMiddleware) CheckUsageLimit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Skip usage check for GET requests
 		if r.Method == http.MethodGet {
+			log.Printf("DEBUG: Skipping usage check for GET request %s %s", r.Method, r.URL.Path)
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -135,29 +149,38 @@ func (m *AuthMiddleware) CheckUsageLimit(next http.Handler) http.Handler {
 		// Get user ID from context
 		userID, ok := r.Context().Value(UserIDKey).(string)
 		if !ok {
+			log.Printf("DEBUG: User not authenticated in CheckUsageLimit for %s %s", r.Method, r.URL.Path)
 			http.Error(w, "Unauthorized: user not authenticated", http.StatusUnauthorized)
 			return
 		}
 
+		log.Printf("DEBUG: Checking usage limit for user %s on %s %s", userID, r.Method, r.URL.Path)
+
 		// Check if user has reached their limit
 		allowed, err := m.usageLimiter.CheckLimit(r.Context(), userID)
 		if err != nil {
+			log.Printf("DEBUG: Error checking usage limit for user %s: %v", userID, err)
 			http.Error(w, "Failed to check usage limit", http.StatusInternalServerError)
 			return
 		}
+
+		log.Printf("DEBUG: Usage limit check result for user %s: allowed=%v", userID, allowed)
 
 		if !allowed {
 			// Get current usage to provide better error message
 			usage, err := m.usageLimiter.GetUsage(r.Context(), userID)
 			if err != nil {
+				log.Printf("DEBUG: Failed to get usage details for limit exceeded message: %v", err)
 				http.Error(w, "Usage limit reached. Try again tomorrow.", http.StatusTooManyRequests)
 				return
 			}
 			errorMsg := fmt.Sprintf("Daily usage limit reached. You have used %d jobs today. Try again tomorrow or contact support.", usage.JobCount)
+			log.Printf("DEBUG: Usage limit exceeded for user %s: %s", userID, errorMsg)
 			http.Error(w, errorMsg, http.StatusTooManyRequests)
 			return
 		}
 
+		log.Printf("DEBUG: Usage limit check passed for user %s, proceeding with request", userID)
 		// User is under their limit, proceed
 		next.ServeHTTP(w, r)
 	})
