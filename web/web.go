@@ -43,13 +43,13 @@ type Server struct {
 }
 
 type ServerConfig struct {
-	Service         *Service
-	Addr            string
-	PgDB            *sql.DB // Optional PostgreSQL connection
-	UserRepo        postgres.UserRepository
-	UsageLimiter    postgres.UsageLimiter
-	ClerkAPIKey     string // Optional Clerk API key for authentication
-	StripeAPIKey    string // Optional Stripe API key for subscriptions
+	Service             *Service
+	Addr                string
+	PgDB                *sql.DB // Optional PostgreSQL connection
+	UserRepo            postgres.UserRepository
+	UsageLimiter        postgres.UsageLimiter
+	ClerkAPIKey         string // Optional Clerk API key for authentication
+	StripeAPIKey        string // Optional Stripe API key for subscriptions
 	StripeWebhookSecret string // Optional Stripe webhook secret
 }
 
@@ -90,13 +90,13 @@ func New(cfg ServerConfig) (*Server, error) {
 		// Initialize repositories
 		subRepo := postgres.NewSubscriptionRepository(cfg.PgDB)
 		webhookRepo := postgres.NewWebhookRepository(cfg.PgDB)
-		
+
 		// Initialize Stripe client
 		stripe := stripeClient.NewClient(cfg.StripeAPIKey)
-		
+
 		// Initialize subscription service
 		subscriptionService := subscription.NewService(stripe, subRepo, cfg.UserRepo, webhookRepo, ans.logger)
-		
+
 		// Initialize handlers
 		ans.subscriptionHandler = NewSubscriptionHandler(subscriptionService, ans.logger)
 		ans.webhookHandler = NewWebhookHandler(stripe, subscriptionService, cfg.StripeWebhookSecret, ans.logger)
@@ -650,6 +650,9 @@ func (s *Server) apiScrape(w http.ResponseWriter, r *http.Request) {
 		Data:   req.JobData,
 	}
 
+	// DEBUG: Log job creation with user ID for troubleshooting
+	s.logger.Printf("DEBUG: Creating job %s for user: '%s'", newJob.ID, userID)
+
 	// convert to seconds
 	newJob.Data.MaxTime *= time.Second
 
@@ -949,7 +952,11 @@ func (s *Server) apiGetJobResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if job.UserID != userID {
+	// DEBUG: Log user ID comparison for troubleshooting
+	s.logger.Printf("DEBUG: Job %s - Job.UserID: '%s', Request.UserID: '%s'", jobID, job.UserID, userID)
+
+	// TEMPORARY: Skip user verification if auth is disabled (for development)
+	if s.authMiddleware != nil && job.UserID != userID {
 		apiError := apiError{
 			Code:    http.StatusForbidden,
 			Message: "Access denied",
@@ -957,6 +964,8 @@ func (s *Server) apiGetJobResults(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusForbidden, apiError)
 		s.logger.Printf("User %s tried to access job %s owned by %s", userID, jobID, job.UserID)
 		return
+	} else if s.authMiddleware == nil {
+		s.logger.Printf("DEBUG: Skipping user verification (auth disabled) - allowing access to job %s", jobID)
 	}
 
 	// Get results from database

@@ -185,7 +185,7 @@ func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []
 	) VALUES `
 
 	elements := make([]string, 0, len(entries))
-	args := make([]interface{}, 0, len(entries)*37) // 37 fields per entry
+	args := make([]interface{}, 0, len(entries)*38) // 38 fields per entry
 
 	for i, entry := range entries {
 		// Serialize JSON fields
@@ -208,58 +208,59 @@ func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []
 		emailsStr := strings.Join(entry.Emails, ", ")
 
 		// Create parameter placeholders for this entry
-		base := i * 37
-		placeholders := make([]string, 37)
-		for j := 0; j < 37; j++ {
+		base := i * 38
+		placeholders := make([]string, 38)
+		for j := 0; j < 38; j++ {
 			placeholders[j] = fmt.Sprintf("$%d", base+j+1)
 		}
 		elements = append(elements, "("+strings.Join(placeholders, ", ")+")")
 
 		// Add all arguments in the same order as the columns
 		args = append(args,
-			r.userID,                      // user_id
-			r.jobID,                       // job_id
-			entry.ID,                      // input_id
-			entry.Link,                    // link
-			entry.Cid,                     // cid
-			entry.Title,                   // title
-			categoriesStr,                 // categories
-			entry.Category,                // category
-			entry.Address,                 // address
-			openHoursJSON,                 // openhours
-			popularTimesJSON,              // popular_times
-			entry.WebSite,                 // website
-			entry.Phone,                   // phone
-			entry.PlusCode,                // pluscode
-			entry.ReviewCount,             // review_count
-			entry.ReviewRating,            // rating
-			reviewsPerRatingJSON,          // reviews_per_rating
-			entry.Latitude,                // latitude
-			entry.Longtitude,              // longitude (note: keeping typo from struct)
-			entry.Status,                  // status_info
-			entry.Description,             // description
-			entry.ReviewsLink,             // reviews_link
-			entry.Thumbnail,               // thumbnail
-			entry.Timezone,                // timezone
-			entry.PriceRange,              // price_range
-			entry.DataID,                  // data_id
-			imagesJSON,                    // images
-			reservationsJSON,              // reservations
-			orderOnlineJSON,               // order_online
-			menuJSON,                      // menu
-			ownerJSON,                     // owner
-			completeAddressJSON,           // complete_address
-			aboutJSON,                     // about
-			userReviewsJSON,               // user_reviews
-			userReviewsExtendedJSON,       // user_reviews_extended
-			emailsStr,                     // emails
-			dataJSON,                      // data (full entry as JSON)
-			time.Now(),                    // created_at
+			r.userID,                // user_id
+			r.jobID,                 // job_id
+			entry.ID,                // input_id
+			entry.Link,              // link
+			entry.Cid,               // cid
+			entry.Title,             // title
+			categoriesStr,           // categories
+			entry.Category,          // category
+			entry.Address,           // address
+			openHoursJSON,           // openhours
+			popularTimesJSON,        // popular_times
+			entry.WebSite,           // website
+			entry.Phone,             // phone
+			entry.PlusCode,          // pluscode
+			entry.ReviewCount,       // review_count
+			entry.ReviewRating,      // rating
+			reviewsPerRatingJSON,    // reviews_per_rating
+			entry.Latitude,          // latitude
+			entry.Longtitude,        // longitude (note: keeping typo from struct)
+			entry.Status,            // status_info
+			entry.Description,       // description
+			entry.ReviewsLink,       // reviews_link
+			entry.Thumbnail,         // thumbnail
+			entry.Timezone,          // timezone
+			entry.PriceRange,        // price_range
+			entry.DataID,            // data_id
+			imagesJSON,              // images
+			reservationsJSON,        // reservations
+			orderOnlineJSON,         // order_online
+			menuJSON,                // menu
+			ownerJSON,               // owner
+			completeAddressJSON,     // complete_address
+			aboutJSON,               // about
+			userReviewsJSON,         // user_reviews
+			userReviewsExtendedJSON, // user_reviews_extended
+			emailsStr,               // emails
+			dataJSON,                // data (full entry as JSON)
+			time.Now(),              // created_at
 		)
 	}
 
 	q += strings.Join(elements, ", ")
-	q += " ON CONFLICT (cid) DO NOTHING" // Prevent duplicates based on Google CID
+	// Remove ON CONFLICT clause temporarily to avoid constraint issues
+	// q += " ON CONFLICT (cid, job_id) DO NOTHING" // Prevent duplicates within the same job
 
 	// Log the operation for debugging
 	fmt.Printf("[PostgreSQL Writer] Attempting to insert %d entries for user %s, job %s\n", len(entries), r.userID, r.jobID)

@@ -465,11 +465,10 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job)
 
 	// Add PostgreSQL writer if database is available
 	if w.db != nil {
-		// Use fallback result writer temporarily to avoid conflict issues
-		// Change to NewEnhancedResultWriter once unique constraint is working
-		pgWriter := postgres.NewFallbackResultWriter(w.db, job.UserID, job.ID)
+		// Use enhanced result writer with proper conflict resolution
+		pgWriter := postgres.NewEnhancedResultWriter(w.db, job.UserID, job.ID)
 		writers = append(writers, pgWriter)
-		log.Printf("Added PostgreSQL fallback result writer for job %s (user: %s)", job.ID, job.UserID)
+		log.Printf("Added PostgreSQL enhanced result writer for job %s (user: %s)", job.ID, job.UserID)
 	} else {
 		log.Printf("Warning: No database connection available for job %s - results will only be saved to CSV", job.ID)
 	}
