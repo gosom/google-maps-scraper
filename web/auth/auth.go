@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/clerkinc/clerk-sdk-go/clerk"
 	"github.com/gosom/google-maps-scraper/postgres"
@@ -70,15 +71,29 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 				return token
 			}())
 
-		// Verify token with Clerk
+		// Verify token with Clerk - retry once if clock skew error
 		claims, err := m.client.VerifyToken(token)
 		if err != nil {
-			log.Printf("DEBUG: Token verification failed for %s %s: %v", r.Method, r.URL.Path, err)
-			http.Error(w, "Unauthorized: invalid token", http.StatusUnauthorized)
-			return
+			// Check if it's a clock skew error and retry after a brief moment
+			if strings.Contains(err.Error(), "token issued in the future") {
+				log.Printf("DEBUG: Clock skew detected, retrying token verification in 2 seconds...")
+				// Wait 2 seconds and try again
+				time.Sleep(2 * time.Second)
+				claims, err = m.client.VerifyToken(token)
+				if err != nil {
+					log.Printf("DEBUG: Token verification failed after retry for %s %s: %v", r.Method, r.URL.Path, err)
+					http.Error(w, "Unauthorized: invalid token", http.StatusUnauthorized)
+					return
+				}
+				log.Printf("DEBUG: Token verification successful after retry for user %s on %s %s", claims.Subject, r.Method, r.URL.Path)
+			} else {
+				log.Printf("DEBUG: Token verification failed for %s %s: %v", r.Method, r.URL.Path, err)
+				http.Error(w, "Unauthorized: invalid token", http.StatusUnauthorized)
+				return
+			}
+		} else {
+			log.Printf("DEBUG: Token verification successful for user %s on %s %s", claims.Subject, r.Method, r.URL.Path)
 		}
-
-		log.Printf("DEBUG: Token verification successful for user %s on %s %s", claims.Subject, r.Method, r.URL.Path)
 
 		// Get user ID from verified claims
 		userID := claims.Subject
