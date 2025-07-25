@@ -48,12 +48,12 @@ type About struct {
 }
 
 type Review struct {
-	Name           string
-	ProfilePicture string
-	Rating         int
-	Description    string
-	Images         []string
-	When           string
+	Name           string   `json:"name"`
+	ProfilePicture string   `json:"profile_picture"`
+	Rating         int      `json:"rating"`
+	Description    string   `json:"description"`
+	Images         []string `json:"images"`
+	When           string   `json:"when"`
 }
 
 type Entry struct {

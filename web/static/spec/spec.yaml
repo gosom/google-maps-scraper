@@ -198,6 +198,10 @@ components:
           type: array
           items:
             type: string
+        review_limit:
+          type: integer
+          default: 10
+          description: Maximum number of reviews per business
 
     ApiScrapeResponse:
       type: object

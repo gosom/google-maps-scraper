@@ -32,6 +32,34 @@ vuln: ## runs vulnerability checks
 lint: ## runs the linter
 	go tool golangci-lint -v run ./...
 
+build: ## builds the main binary
+	go build -o google-maps-scraper
+
+build-plugin: ## builds the streaming plugin
+	@mkdir -p streaming_plugin
+	@echo '//go:build plugin' > streaming_plugin/streaming_duplicate_filter.go
+	@echo '' >> streaming_plugin/streaming_duplicate_filter.go
+	@echo 'package main' >> streaming_plugin/streaming_duplicate_filter.go
+	@echo '' >> streaming_plugin/streaming_duplicate_filter.go
+	@echo 'import (' >> streaming_plugin/streaming_duplicate_filter.go
+	@echo '	"github.com/gosom/google-maps-scraper/plugins"' >> streaming_plugin/streaming_duplicate_filter.go
+	@echo '	"github.com/gosom/scrapemate"' >> streaming_plugin/streaming_duplicate_filter.go
+	@echo ')' >> streaming_plugin/streaming_duplicate_filter.go
+	@echo '' >> streaming_plugin/streaming_duplicate_filter.go
+	@echo '// StreamingDuplicateFilterWriterFactory creates a new instance of the streaming duplicate filter' >> streaming_plugin/streaming_duplicate_filter.go
+	@echo 'func StreamingDuplicateFilterWriterFactory() scrapemate.ResultWriter {' >> streaming_plugin/streaming_duplicate_filter.go
+	@echo '	return plugins.NewStreamingDuplicateFilterWriter()' >> streaming_plugin/streaming_duplicate_filter.go
+	@echo '}' >> streaming_plugin/streaming_duplicate_filter.go
+	go build -buildmode=plugin -tags=plugin -o plugins/streaming_plugin.so streaming_plugin/streaming_duplicate_filter.go
+
+build-all: build build-plugin ## builds both main binary and plugin
+
+clean: ## removes build artifacts
+	rm -f google-maps-scraper
+	rm -f plugins/streaming_plugin.so
+	rm -rf streaming_plugin/
+	@echo "Build artifacts cleaned"
+
 cross-compile: ## cross compiles the application
 	GOOS=linux GOARCH=amd64 go build -o bin/$(APP_NAME)-${VERSION}-linux-amd64
 	GOOS=darwin GOARCH=amd64 go build -o bin/$(APP_NAME)-${VERSION}-darwin-amd64

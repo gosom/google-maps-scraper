@@ -2,3 +2,23 @@ cache/
 vendor
 bin
 webdata/
+# Personal development files
+docs/
+python-client/
+CLAUDE.md
+deploy/
+docker-compose.yml
+docker-compose.prod.yml
+nginx.conf
+setup.sh
+.env.example
+gmapsdata/
+google-maps-scraper
+.claude/
+.cursor/
+.vscode/
+
+# Compiled plugins (built from source, not tracked)
+*.so
+plugins/*.so
+
