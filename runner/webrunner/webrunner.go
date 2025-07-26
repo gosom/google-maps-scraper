@@ -314,6 +314,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		dedup,
 		exitMonitor,
 		job.Data.ReviewsMax > 0, // Keep extraReviews for backward compatibility
+		job.Data.MaxResults,     // Pass max results limit
 	)
 	if err != nil {
 		job.Status = web.StatusFailed
@@ -347,36 +348,54 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			}
 		}
 
-		log.Printf("running job %s with %d seed jobs and %d allowed seconds", job.ID, len(seedJobs), allowedSeconds)
+		log.Printf("running job %s with %d seed jobs, %d allowed seconds, max results: %d", job.ID, len(seedJobs), allowedSeconds, job.Data.MaxResults)
 
 		mateCtx, cancel := context.WithTimeout(ctx, time.Duration(allowedSeconds)*time.Second)
 		defer cancel()
 
+		// Set up exit monitor with max results tracking
+		if job.Data.MaxResults > 0 {
+			exitMonitor.SetMaxResults(job.Data.MaxResults)
+			log.Printf("DEBUG: Job %s - Set max results limit to %d", job.ID, job.Data.MaxResults)
+		}
 		exitMonitor.SetCancelFunc(cancel)
 
 		go exitMonitor.Run(mateCtx)
 
 		err = mate.Start(mateCtx, seedJobs...)
-		if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-			cancel()
 
-			job.Status = web.StatusFailed
-			err2 := w.svc.Update(ctx, job)
-			if err2 != nil {
-				log.Printf("failed to update job status: %v", err2)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				log.Printf("DEBUG: Job %s - Context canceled (likely max results reached)", job.ID)
+				jobSuccess = true
+			} else if errors.Is(err, context.DeadlineExceeded) {
+				log.Printf("DEBUG: Job %s - Context deadline exceeded (timeout)", job.ID)
+				jobSuccess = true
+			} else {
+				// This is a real error
+				log.Printf("DEBUG: Job %s - Real error occurred: %v", job.ID, err)
+				cancel()
+
+				job.Status = web.StatusFailed
+				err2 := w.svc.Update(ctx, job)
+				if err2 != nil {
+					log.Printf("failed to update job status: %v", err2)
+				}
+
+				// Complete tracking for failed job
+				if w.usageTracker != nil && job.UserID != "" {
+					duration := time.Since(startTime)
+					w.usageTracker.CompleteJobTracking(ctx, job.ID, 0, 0, duration, false)
+				}
+
+				return err
 			}
-
-			// Complete tracking for failed job
-			if w.usageTracker != nil && job.UserID != "" {
-				duration := time.Since(startTime)
-				w.usageTracker.CompleteJobTracking(ctx, job.ID, 0, 0, duration, false)
-			}
-
-			return err
+		} else {
+			log.Printf("DEBUG: Job %s - No error, normal completion", job.ID)
+			jobSuccess = true
 		}
 
 		cancel()
-		jobSuccess = true
 	}
 
 	mate.Close()

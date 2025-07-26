@@ -2,6 +2,7 @@ package gmaps
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
@@ -60,6 +61,7 @@ func (j *EmailExtractJob) Process(ctx context.Context, resp *scrapemate.Response
 
 	defer func() {
 		if j.ExitMonitor != nil {
+			fmt.Printf("DEBUG: EmailJob %s completed (parent: %s)\n", j.ID, j.ParentID)
 			j.ExitMonitor.IncrPlacesCompleted(1)
 		}
 	}()

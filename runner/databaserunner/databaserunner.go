@@ -159,6 +159,7 @@ func (d *dbrunner) produceSeedJobs(ctx context.Context) error {
 		nil,
 		nil,
 		d.cfg.ExtraReviews,
+		0, // No max results limit for database runner (unlimited)
 	)
 	if err != nil {
 		return err

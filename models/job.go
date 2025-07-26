@@ -13,6 +13,7 @@ type JobData struct {
 	Email      bool          `json:"email"`
 	Images     bool          `json:"images"`
 	ReviewsMax int           `json:"reviews_max"` // Maximum number of reviews to scrape per location
+	MaxResults int           `json:"max_results"` // Maximum number of locations to scrape (0 = unlimited)
 	Lat        string        `json:"lat"`
 	Lon        string        `json:"lon"`
 	Zoom       int           `json:"zoom"`

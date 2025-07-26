@@ -443,6 +443,18 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 		newJob.Data.ReviewsMax = 1 // default value
 	}
 
+	// Parse max_results field
+	if maxResultsStr := r.Form.Get("max_results"); maxResultsStr != "" {
+		newJob.Data.MaxResults, err = strconv.Atoi(maxResultsStr)
+		if err != nil {
+			http.Error(w, "invalid max_results", http.StatusUnprocessableEntity)
+			s.logger.Printf("Invalid max_results: %s", maxResultsStr)
+			return
+		}
+	} else {
+		newJob.Data.MaxResults = 0 // default value (unlimited)
+	}
+
 	proxies := strings.Split(r.Form.Get("proxies"), "\n")
 	if len(proxies) > 0 {
 		for _, p := range proxies {

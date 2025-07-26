@@ -79,5 +79,9 @@ func ValidateJobData(d *JobData) error {
 		return errors.New("missing geo coordinates")
 	}
 
+	if d.MaxResults < 0 {
+		return errors.New("max results cannot be negative")
+	}
+
 	return nil
 }

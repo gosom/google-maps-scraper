@@ -30,6 +30,7 @@ func CreateSeedJobs(
 	dedup deduper.Deduper,
 	exitMonitor exiter.Exiter,
 	extraReviews bool,
+	maxResults int,
 ) (jobs []scrapemate.IJob, err error) {
 	var lat, lon float64
 
@@ -68,6 +69,11 @@ func CreateSeedJobs(
 		if radius < 0 {
 			return nil, fmt.Errorf("invalid radius: %f", radius)
 		}
+	}
+
+	// Set max results limit on the exit monitor if provided
+	if exitMonitor != nil && maxResults > 0 {
+		exitMonitor.SetMaxResults(maxResults)
 	}
 
 	scanner := bufio.NewScanner(r)

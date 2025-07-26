@@ -97,6 +97,7 @@ func (l *lambdaAwsRunner) handler(ctx context.Context, input lInput) error {
 		nil,   // deduper
 		exitMonitor,
 		input.ExtraReviews,
+		0, // No max results limit for lambda runner (unlimited)
 	)
 	if err != nil {
 		return err
