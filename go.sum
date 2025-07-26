@@ -374,8 +374,6 @@ github.com/gordonklaus/ineffassign v0.1.0 h1:y2Gd/9I7MdY1oEIt+n+rowjBNDcLQq3RsH5
 github.com/gordonklaus/ineffassign v0.1.0/go.mod h1:Qcp2HIAYhR7mNUVSIxZww3Guk4it82ghYcEXIAk+QT0=
 github.com/gosom/kit v0.0.0-20230309082109-543b32ac686a h1:5tcB33GTXm0pFUiEFpmE91tMsHQj+I+W7zubT8J/ugI=
 github.com/gosom/kit v0.0.0-20230309082109-543b32ac686a/go.mod h1:ngnWSsuBEpCA5Y43kZRa3x8RBYZZ4LDtvZHO4N5dHZ0=
-github.com/gosom/scrapemate v0.9.4 h1:IuyJJhKUj0xAWu7rWdj1qm1L6sQPF4Bo9ExTfeKzzOc=
-github.com/gosom/scrapemate v0.9.4/go.mod h1:p1sYz9zdpbMGC04ZclBB4sLOE/2bKZ4BYbe/UohEvpU=
 github.com/gosom/scrapemate v0.9.5 h1:/9iVmouqVgYv1AO8Y/0uIzUS7cq+8FpJRvPOZii0PQM=
 github.com/gosom/scrapemate v0.9.5/go.mod h1:DJeNiDzLcalZ9f1PjJITf/AOj8BbvqGMQxCc7LoDJl8=
 github.com/gostaticanalysis/analysisutil v0.7.1 h1:ZMCjoue3DtDWQ5WyU16YbjbQEQ3VuzwxALrpYd+HeKk=
