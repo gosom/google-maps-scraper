@@ -101,7 +101,7 @@ func TestSSEEventBroadcasting(t *testing.T) {
 		// Create test repository and server
 		repo := newMockSSEJobRepository()
 		service := web.NewService(repo, "testdata")
-		server, err := web.New(service, ":0")
+		server, err := web.New(service, ":0", "")
 		require.NoError(t, err)
 
 		// Create test job
@@ -129,7 +129,7 @@ func TestSSEEventBroadcasting(t *testing.T) {
 		// Create test repository and server
 		repo := newMockSSEJobRepository()
 		service := web.NewService(repo, "testdata")
-		server, err := web.New(service, ":0")
+		server, err := web.New(service, ":0", "")
 		require.NoError(t, err)
 
 		// Create test job
@@ -192,7 +192,7 @@ func TestSSEHeartbeatFunctionality(t *testing.T) {
 		// Create test repository and server
 		repo := newMockSSEJobRepository()
 		service := web.NewService(repo, "testdata")
-		server, err := web.New(service, ":0")
+		server, err := web.New(service, ":0", "")
 		require.NoError(t, err)
 
 		// Create test job
@@ -231,7 +231,7 @@ func TestSSEConnectionManagement(t *testing.T) {
 		// Create test repository and server
 		repo := newMockSSEJobRepository()
 		service := web.NewService(repo, "testdata")
-		server, err := web.New(service, ":0")
+		server, err := web.New(service, ":0", "")
 		require.NoError(t, err)
 
 		// Test that server was created successfully
@@ -245,7 +245,7 @@ func TestSSEConnectionManagement(t *testing.T) {
 		// Create test repository and server
 		repo := newMockSSEJobRepository()
 		service := web.NewService(repo, "testdata")
-		server, err := web.New(service, ":0")
+		server, err := web.New(service, ":0", "")
 		require.NoError(t, err)
 
 		// Create test job
@@ -285,7 +285,7 @@ func TestSSEErrorHandling(t *testing.T) {
 		// Create test repository and server
 		repo := newMockSSEJobRepository()
 		service := web.NewService(repo, "testdata")
-		server, err := web.New(service, ":0")
+		server, err := web.New(service, ":0", "")
 		require.NoError(t, err)
 
 		// Create test job
@@ -392,7 +392,7 @@ func TestSSEServerInitialization(t *testing.T) {
 		service := web.NewService(repo, "testdata")
 
 		// Test server creation
-		server, err := web.New(service, ":0")
+		server, err := web.New(service, ":0", "")
 		require.NoError(t, err)
 		assert.NotNil(t, server)
 
@@ -404,7 +404,7 @@ func TestSSEServerInitialization(t *testing.T) {
 		// Create test repository and service
 		repo := newMockSSEJobRepository()
 		service := web.NewService(repo, "testdata")
-		server, err := web.New(service, ":0")
+		server, err := web.New(service, ":0", "")
 		require.NoError(t, err)
 
 		// Create multiple test jobs

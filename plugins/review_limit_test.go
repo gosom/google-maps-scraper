@@ -126,8 +126,6 @@ func TestReviewLimitIntegration(t *testing.T) {
 
 		// Create test entry with many reviews
 		entry := &gmaps.Entry{
-			Cid:   "test-cid-123",
-			Title: "Test Restaurant",
 			UserReviews: []gmaps.Review{
 				{When: "2024-1-1", Name: "Alice", Rating: 5},
 				{When: "2024-2-1", Name: "Bob", Rating: 4},

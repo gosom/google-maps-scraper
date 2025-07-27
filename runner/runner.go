@@ -79,6 +79,7 @@ type Config struct {
 	Addr                     string
 	DisablePageReuse         bool
 	ExtraReviews             bool
+	APIKey                   string
 }
 
 func ParseConfig() *Config {
@@ -125,6 +126,7 @@ func ParseConfig() *Config {
 	flag.StringVar(&cfg.Addr, "addr", ":8080", "address to listen on for web server")
 	flag.BoolVar(&cfg.DisablePageReuse, "disable-page-reuse", false, "disable page reuse in playwright")
 	flag.BoolVar(&cfg.ExtraReviews, "extra-reviews", false, "enable extra reviews collection")
+	flag.StringVar(&cfg.APIKey, "api-key", "", "API key for authentication (env: GMAPS_API_KEY)")
 
 	flag.Parse()
 
@@ -138,6 +140,10 @@ func ParseConfig() *Config {
 
 	if cfg.AwsRegion == "" {
 		cfg.AwsRegion = os.Getenv("MY_AWS_REGION")
+	}
+
+	if cfg.APIKey == "" {
+		cfg.APIKey = os.Getenv("GMAPS_API_KEY")
 	}
 
 	if cfg.AwsLambdaInvoker && cfg.FunctionName == "" {

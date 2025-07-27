@@ -63,7 +63,7 @@ func (m *mockJobRepository) Update(_ context.Context, _ *web.Job) error {
 func TestServerCreation(t *testing.T) {
 	mockRepo := newMockJobRepository()
 	mockSvc := web.NewService(mockRepo, "/tmp")
-	server, err := web.New(mockSvc, ":0")
+	server, err := web.New(mockSvc, ":0", "")
 	require.NoError(t, err)
 
 	assert.NotNil(t, server)

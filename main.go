@@ -15,9 +15,15 @@ import (
 	"github.com/gosom/google-maps-scraper/runner/installplaywright"
 	"github.com/gosom/google-maps-scraper/runner/lambdaaws"
 	"github.com/gosom/google-maps-scraper/runner/webrunner"
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	// Load .env file if it exists (optional - don't fail if missing)
+	if err := godotenv.Load(); err != nil {
+		log.Printf("No .env file found or error loading it: %v", err)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	runner.Banner()

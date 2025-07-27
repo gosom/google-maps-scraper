@@ -20,15 +20,17 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gosom/google-maps-scraper/plugins"
+	"github.com/gosom/google-maps-scraper/runner/auth"
 )
 
 //go:embed static
 var static embed.FS
 
 type Server struct {
-	tmpl map[string]*template.Template
-	srv  *http.Server
-	svc  *Service
+	tmpl   map[string]*template.Template
+	srv    *http.Server
+	svc    *Service
+	apiKey string
 
 	// Stream client management
 	streamMu      sync.RWMutex
@@ -38,12 +40,13 @@ type Server struct {
 	eventHistory map[string][]plugins.StreamEvent // jobID -> recent events
 }
 
-func New(svc *Service, addr string) (*Server, error) {
+func New(svc *Service, addr, apiKey string) (*Server, error) {
 	ans := Server{
 		svc:           svc,
 		tmpl:          make(map[string]*template.Template),
 		streamClients: make(map[string][]chan plugins.StreamEvent),
 		eventHistory:  make(map[string][]plugins.StreamEvent),
+		apiKey:        apiKey,
 		srv: &http.Server{
 			Addr:              addr,
 			ReadHeaderTimeout: 10 * time.Second,
@@ -62,6 +65,7 @@ func New(svc *Service, addr string) (*Server, error) {
 	fileServer := http.FileServer(http.FS(staticFS))
 	mux := http.NewServeMux()
 
+	// Public routes (no authentication required)
 	mux.Handle("/static/", http.StripPrefix("/static/", fileServer))
 	mux.HandleFunc("/scrape", ans.scrape)
 	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
@@ -77,9 +81,12 @@ func New(svc *Service, addr string) (*Server, error) {
 	mux.HandleFunc("/jobs", ans.getJobs)
 	mux.HandleFunc("/", ans.index)
 
-	// api routes
+	// API documentation (public)
 	mux.HandleFunc("/api/docs", ans.redocHandler)
-	mux.HandleFunc("/api/v1/jobs", func(w http.ResponseWriter, r *http.Request) {
+
+	// Create API router with auth middleware
+	apiMux := http.NewServeMux()
+	apiMux.HandleFunc("/jobs", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPost:
 			ans.apiScrape(w, r)
@@ -95,7 +102,7 @@ func New(svc *Service, addr string) (*Server, error) {
 		}
 	})
 
-	mux.HandleFunc("/api/v1/jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
+	apiMux.HandleFunc("/jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
 		r = requestWithID(r)
 
 		switch r.Method {
@@ -113,7 +120,7 @@ func New(svc *Service, addr string) (*Server, error) {
 		}
 	})
 
-	mux.HandleFunc("/api/v1/jobs/{id}/download", func(w http.ResponseWriter, r *http.Request) {
+	apiMux.HandleFunc("/jobs/{id}/download", func(w http.ResponseWriter, r *http.Request) {
 		r = requestWithID(r)
 
 		if r.Method != http.MethodGet {
@@ -130,7 +137,7 @@ func New(svc *Service, addr string) (*Server, error) {
 		ans.download(w, r)
 	})
 
-	mux.HandleFunc("/api/v1/jobs/{id}/stream", func(w http.ResponseWriter, r *http.Request) {
+	apiMux.HandleFunc("/jobs/{id}/stream", func(w http.ResponseWriter, r *http.Request) {
 		r = requestWithID(r)
 
 		if r.Method != http.MethodGet {
@@ -146,6 +153,10 @@ func New(svc *Service, addr string) (*Server, error) {
 
 		ans.streamEvents(w, r)
 	})
+
+	// Apply auth middleware to API routes and mount them
+	authMiddleware := auth.BearerTokenMiddleware(apiKey)
+	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", authMiddleware(apiMux)))
 
 	handler := securityHeaders(mux)
 	ans.srv.Handler = handler

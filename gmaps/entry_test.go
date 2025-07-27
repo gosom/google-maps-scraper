@@ -5,25 +5,10 @@ import (
 	"os"
 	"testing"
 
-	"github.com/PuerkitoBio/goquery"
 	"github.com/stretchr/testify/require"
 
 	"github.com/gosom/google-maps-scraper/gmaps"
 )
-
-func createGoQueryFromFile(t *testing.T, path string) *goquery.Document {
-	t.Helper()
-
-	fd, err := os.Open(path)
-	require.NoError(t, err)
-
-	defer fd.Close()
-
-	doc, err := goquery.NewDocumentFromReader(fd)
-	require.NoError(t, err)
-
-	return doc
-}
 
 func Test_EntryFromJSON(t *testing.T) {
 	expected := gmaps.Entry{

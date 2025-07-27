@@ -53,7 +53,7 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 
 	svc := web.NewService(repo, cfg.DataFolder)
 
-	srv, err := web.New(svc, cfg.Addr)
+	srv, err := web.New(svc, cfg.Addr, cfg.APIKey)
 	if err != nil {
 		return nil, err
 	}

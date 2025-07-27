@@ -2,6 +2,9 @@ cache/
 vendor
 bin
 webdata/
+# Environment files
+.env
+.env.local
 # Personal development files
 docs/
 python-client/

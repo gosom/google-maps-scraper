@@ -93,12 +93,6 @@ type mockEventJobRepository struct {
 	mu   sync.RWMutex
 }
 
-func newMockEventJobRepository() *mockEventJobRepository {
-	return &mockEventJobRepository{
-		jobs: make(map[string]web.Job),
-	}
-}
-
 func (m *mockEventJobRepository) Get(_ context.Context, id string) (web.Job, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -145,24 +139,6 @@ func (m *mockEventJobRepository) Update(_ context.Context, job *web.Job) error {
 	m.jobs[job.ID] = *job
 
 	return nil
-}
-
-func createTestEventJob(repo *mockEventJobRepository, name string) *web.Job {
-	job := &web.Job{
-		ID:     uuid.New().String(),
-		Name:   name,
-		Date:   time.Now(),
-		Status: web.StatusPending,
-		Data: web.JobData{
-			Keywords: []string{"test"},
-			Lang:     "en",
-			Depth:    1,
-			MaxTime:  5 * time.Minute,
-		},
-	}
-	_ = repo.Create(context.Background(), job) // Error intentionally ignored for test setup
-
-	return job
 }
 
 // TestEventTranslatorJobIDCorrection tests our job ID correction logic
