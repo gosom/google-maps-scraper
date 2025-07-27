@@ -49,12 +49,15 @@ type JobRepository interface {
 	Delete(ctx context.Context, id string) error
 	Select(ctx context.Context, params SelectParams) ([]Job, error)
 	Update(ctx context.Context, job *Job) error
+	Cancel(ctx context.Context, id string) error
 }
 
 // Common status constants
 const (
-	StatusPending = "pending"
-	StatusWorking = "working"
-	StatusOK      = "ok"
-	StatusFailed  = "failed"
+	StatusPending   = "pending"
+	StatusWorking   = "working"
+	StatusOK        = "ok"
+	StatusFailed    = "failed"
+	StatusCancelled = "cancelled"
+	StatusAborting  = "aborting"
 )

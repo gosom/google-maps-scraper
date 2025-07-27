@@ -113,6 +113,13 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 		resp.Body = nil
 	}()
 
+	// Check for cancellation before processing
+	select {
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	default:
+	}
+
 	log := scrapemate.GetLoggerFromContext(ctx)
 
 	// DEBUG: Log GmapJob flags
@@ -126,6 +133,13 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 	var next []scrapemate.IJob
 
 	if strings.Contains(resp.URL, "/maps/place/") {
+		// Check for cancellation before creating place job
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		default:
+		}
+
 		jopts := []PlaceJobOptions{}
 		if j.ExitMonitor != nil {
 			jopts = append(jopts, WithPlaceJobExitMonitor(j.ExitMonitor))
@@ -146,6 +160,13 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 		}
 
 		doc.Find(`div[role=feed] div[jsaction]>a`).Each(func(i int, s *goquery.Selection) {
+			// Check for cancellation during processing
+			select {
+			case <-ctx.Done():
+				return // Exit the Each loop early
+			default:
+			}
+
 			if href := s.AttrOr("href", ""); href != "" {
 				// Note: Removed early termination logic - let exit monitor handle max results
 				// based on actual successful results, not PlaceJobs created
@@ -165,6 +186,13 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 		})
 	}
 
+	// Check for cancellation after processing
+	select {
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	default:
+	}
+
 	if j.ExitMonitor != nil {
 		j.ExitMonitor.IncrPlacesFound(len(next))
 		j.ExitMonitor.IncrSeedCompleted(1)
@@ -178,19 +206,33 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scrapemate.Response {
 	var resp scrapemate.Response
 
+	// Check for cancellation before starting
+	select {
+	case <-ctx.Done():
+		resp.Error = ctx.Err()
+		return resp
+	default:
+	}
+
 	pageResponse, err := page.Goto(j.GetFullURL(), playwright.PageGotoOptions{
 		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
 	})
 
 	if err != nil {
 		resp.Error = err
-
 		return resp
+	}
+
+	// Check for cancellation after navigation
+	select {
+	case <-ctx.Done():
+		resp.Error = ctx.Err()
+		return resp
+	default:
 	}
 
 	if err = clickRejectCookiesIfRequired(page); err != nil {
 		resp.Error = err
-
 		return resp
 	}
 
@@ -203,8 +245,15 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 
 	if err != nil {
 		resp.Error = err
-
 		return resp
+	}
+
+	// Check for cancellation after waiting
+	select {
+	case <-ctx.Done():
+		resp.Error = ctx.Err()
+		return resp
+	default:
 	}
 
 	resp.URL = pageResponse.URL()
@@ -235,6 +284,14 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 		waitCancel()
 	}
 
+	// Check for cancellation before processing single place
+	select {
+	case <-ctx.Done():
+		resp.Error = ctx.Err()
+		return resp
+	default:
+	}
+
 	if singlePlace {
 		resp.URL = page.URL()
 
@@ -256,8 +313,15 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 	_, err = scroll(ctx, page, j.MaxDepth, scrollSelector)
 	if err != nil {
 		resp.Error = err
-
 		return resp
+	}
+
+	// Final cancellation check before getting content
+	select {
+	case <-ctx.Done():
+		resp.Error = ctx.Err()
+		return resp
+	default:
 	}
 
 	body, err := page.Content()
@@ -337,6 +401,13 @@ func scroll(ctx context.Context,
 	)
 
 	for i := 0; i < maxDepth; i++ {
+		// Check for cancellation before each scroll
+		select {
+		case <-ctx.Done():
+			return cnt, ctx.Err()
+		default:
+		}
+
 		cnt++
 		waitTime2 := timeout * cnt
 
@@ -361,9 +432,10 @@ func scroll(ctx context.Context,
 
 		currentScrollHeight = height
 
+		// Check for cancellation after scroll
 		select {
 		case <-ctx.Done():
-			return currentScrollHeight, nil
+			return cnt, ctx.Err()
 		default:
 		}
 

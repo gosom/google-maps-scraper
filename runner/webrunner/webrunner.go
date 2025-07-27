@@ -217,6 +217,12 @@ func (w *webrunner) work(ctx context.Context) error {
 func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	startTime := time.Now()
 
+	// Check if job has been cancelled before starting
+	if job.Status == web.StatusCancelled || job.Status == web.StatusAborting {
+		log.Printf("DEBUG: Job %s already cancelled/aborting, skipping execution", job.ID)
+		return nil
+	}
+
 	// Start usage tracking when job begins
 	if w.usageTracker != nil && job.UserID != "" {
 		err := w.usageTracker.StartJobTracking(ctx, job.ID, job.UserID, job.Data.Email, job.Data.FastMode)
@@ -226,14 +232,48 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		}
 	}
 
+	// Create a cancellable context for this job
+	jobCtx, jobCancel := context.WithCancel(ctx)
+	defer jobCancel()
+
+	// Start a goroutine to monitor for cancellation
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-jobCtx.Done():
+				log.Printf("DEBUG: Job %s monitoring stopped - context done", job.ID)
+				return
+			case <-ticker.C:
+				// Check current job status in database
+				currentJob, err := w.svc.Get(jobCtx, job.ID)
+				if err != nil {
+					log.Printf("DEBUG: Job %s - failed to get status: %v", job.ID, err)
+					continue
+				}
+
+				log.Printf("DEBUG: Job %s status check - current status: %s", job.ID, currentJob.Status)
+
+				// If job was cancelled, cancel the context
+				if currentJob.Status == web.StatusAborting || currentJob.Status == web.StatusCancelled {
+					log.Printf("DEBUG: Job %s cancellation detected, stopping execution", job.ID)
+					jobCancel()
+					return
+				}
+			}
+		}
+	}()
+
 	job.Status = web.StatusWorking
 
-	err := w.svc.Update(ctx, job)
+	err := w.svc.Update(jobCtx, job)
 	if err != nil {
 		// Complete tracking for failed job
 		if w.usageTracker != nil && job.UserID != "" {
 			duration := time.Since(startTime)
-			w.usageTracker.CompleteJobTracking(ctx, job.ID, 0, 0, duration, false)
+			w.usageTracker.CompleteJobTracking(jobCtx, job.ID, 0, 0, duration, false)
 		}
 		return err
 	}
@@ -244,10 +284,10 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		// Complete tracking for failed job
 		if w.usageTracker != nil && job.UserID != "" {
 			duration := time.Since(startTime)
-			w.usageTracker.CompleteJobTracking(ctx, job.ID, 0, 0, duration, false)
+			w.usageTracker.CompleteJobTracking(jobCtx, job.ID, 0, 0, duration, false)
 		}
 
-		return w.svc.Update(ctx, job)
+		return w.svc.Update(jobCtx, job)
 	}
 
 	outpath := filepath.Join(w.cfg.DataFolder, job.ID+".csv")
@@ -257,7 +297,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		// Complete tracking for failed job
 		if w.usageTracker != nil && job.UserID != "" {
 			duration := time.Since(startTime)
-			w.usageTracker.CompleteJobTracking(ctx, job.ID, 0, 0, duration, false)
+			w.usageTracker.CompleteJobTracking(context.Background(), job.ID, 0, 0, duration, false)
 		}
 		return err
 	}
@@ -270,11 +310,11 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	dedup := deduper.New()
 	exitMonitor := exiter.New()
 
-	mate, err := w.setupMate(ctx, outfile, job, exitMonitor)
+	mate, err := w.setupMate(jobCtx, outfile, job, exitMonitor)
 	if err != nil {
 		job.Status = web.StatusFailed
 
-		err2 := w.svc.Update(ctx, job)
+		err2 := w.svc.Update(context.Background(), job)
 		if err2 != nil {
 			log.Printf("failed to update job status: %v", err2)
 		}
@@ -282,7 +322,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		// Complete tracking for failed job
 		if w.usageTracker != nil && job.UserID != "" {
 			duration := time.Since(startTime)
-			w.usageTracker.CompleteJobTracking(ctx, job.ID, 0, 0, duration, false)
+			w.usageTracker.CompleteJobTracking(context.Background(), job.ID, 0, 0, duration, false)
 		}
 
 		return err
@@ -320,7 +360,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	if err != nil {
 		job.Status = web.StatusFailed
 
-		err2 := w.svc.Update(ctx, job)
+		err2 := w.svc.Update(context.Background(), job)
 		if err2 != nil {
 			log.Printf("failed to update job status: %v", err2)
 		}
@@ -328,7 +368,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		// Complete tracking for failed job
 		if w.usageTracker != nil && job.UserID != "" {
 			duration := time.Since(startTime)
-			w.usageTracker.CompleteJobTracking(ctx, job.ID, 0, 0, duration, false)
+			w.usageTracker.CompleteJobTracking(context.Background(), job.ID, 0, 0, duration, false)
 		}
 
 		return err
@@ -351,24 +391,36 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 
 		log.Printf("running job %s with %d seed jobs, %d allowed seconds, max results: %d", job.ID, len(seedJobs), allowedSeconds, job.Data.MaxResults)
 
-		mateCtx, cancel := context.WithTimeout(ctx, time.Duration(allowedSeconds)*time.Second)
+		mateCtx, cancel := context.WithTimeout(jobCtx, time.Duration(allowedSeconds)*time.Second)
 		defer cancel()
 
 		// Set up exit monitor with max results tracking
 		if job.Data.MaxResults > 0 {
 			exitMonitor.SetMaxResults(job.Data.MaxResults)
 			log.Printf("DEBUG: Job %s - Set max results limit to %d", job.ID, job.Data.MaxResults)
+		} else {
+			log.Printf("DEBUG: Job %s - No max results limit (unlimited)", job.ID)
 		}
 		exitMonitor.SetCancelFunc(cancel)
+		log.Printf("DEBUG: Job %s - Starting exit monitor", job.ID)
 
 		go exitMonitor.Run(mateCtx)
 
 		err = mate.Start(mateCtx, seedJobs...)
+		log.Printf("DEBUG: Job %s - mate.Start completed with error: %v", job.ID, err)
 
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
-				log.Printf("DEBUG: Job %s - Context canceled (likely max results reached)", job.ID)
-				jobSuccess = true
+				log.Printf("DEBUG: Job %s - Context canceled (likely cancelled or max results reached)", job.ID)
+				// Check if it was actually cancelled
+				currentJob, getErr := w.svc.Get(context.Background(), job.ID)
+				if getErr == nil && (currentJob.Status == web.StatusAborting || currentJob.Status == web.StatusCancelled) {
+					job.Status = web.StatusCancelled
+					log.Printf("DEBUG: Job %s - Marked as cancelled (user initiated)", job.ID)
+				} else {
+					jobSuccess = true
+					log.Printf("DEBUG: Job %s - Context cancelled but not by user (likely max results or normal completion)", job.ID)
+				}
 			} else if errors.Is(err, context.DeadlineExceeded) {
 				log.Printf("DEBUG: Job %s - Context deadline exceeded (timeout)", job.ID)
 				jobSuccess = true
@@ -378,7 +430,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 				cancel()
 
 				job.Status = web.StatusFailed
-				err2 := w.svc.Update(ctx, job)
+				err2 := w.svc.Update(context.Background(), job)
 				if err2 != nil {
 					log.Printf("failed to update job status: %v", err2)
 				}
@@ -386,7 +438,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 				// Complete tracking for failed job
 				if w.usageTracker != nil && job.UserID != "" {
 					duration := time.Since(startTime)
-					w.usageTracker.CompleteJobTracking(ctx, job.ID, 0, 0, duration, false)
+					w.usageTracker.CompleteJobTracking(context.Background(), job.ID, 0, 0, duration, false)
 				}
 
 				return err
@@ -422,7 +474,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	}
 
 	// Update job status
-	err = w.svc.Update(ctx, job)
+	err = w.svc.Update(context.Background(), job)
 	if err != nil {
 		log.Printf("failed to update job status: %v", err)
 	}
@@ -430,7 +482,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	// Complete usage tracking with final results
 	if w.usageTracker != nil && job.UserID != "" {
 		duration := time.Since(startTime)
-		err = w.usageTracker.CompleteJobTracking(ctx, job.ID, locationsFound, emailsFound, duration, jobSuccess)
+		err = w.usageTracker.CompleteJobTracking(context.Background(), job.ID, locationsFound, emailsFound, duration, jobSuccess)
 		if err != nil {
 			log.Printf("Failed to complete usage tracking for job %s: %v", job.ID, err)
 		} else {

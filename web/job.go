@@ -10,10 +10,12 @@ var jobs []models.Job
 
 // Use the status constants from models package
 const (
-	StatusPending = models.StatusPending
-	StatusWorking = models.StatusWorking
-	StatusOK      = models.StatusOK
-	StatusFailed  = models.StatusFailed
+	StatusPending   = models.StatusPending
+	StatusWorking   = models.StatusWorking
+	StatusOK        = models.StatusOK
+	StatusFailed    = models.StatusFailed
+	StatusCancelled = models.StatusCancelled
+	StatusAborting  = models.StatusAborting
 )
 
 // JobRepository is now an alias to the models.JobRepository interface

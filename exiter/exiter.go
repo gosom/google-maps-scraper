@@ -8,6 +8,14 @@ import (
 	"time"
 )
 
+// max returns the maximum of two integers
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 type Exiter interface {
 	SetSeedCount(int)
 	SetMaxResults(int)
@@ -177,29 +185,31 @@ func (e *exiter) isDone() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	// If we have a max results limit and reached it, we're done immediately
+	// Simple and reliable exit logic:
+	// 1. If max results is set and we've written enough results, we're done
 	if e.maxResults > 0 && e.resultsWritten >= e.maxResults {
-		fmt.Printf("DEBUG: isDone() returning true - max results reached (written: %d, limit: %d)\n", e.resultsWritten, e.maxResults)
+		fmt.Printf("DEBUG: isDone() - max results reached (written: %d >= limit: %d)\n", e.resultsWritten, e.maxResults)
 		return true
 	}
 
-	// Check if all seeds are complete
-	if e.seedCompleted != e.seedCount {
+	// 2. Check if all seeds are complete - if not, keep going
+	if e.seedCompleted < e.seedCount {
+		fmt.Printf("DEBUG: isDone() - seeds not complete (%d/%d)\n", e.seedCompleted, e.seedCount)
 		return false
 	}
 
-	// If we have max results set, wait for actual work completion, not just seed completion
-	// The key insight: seed completion just means PlaceJobs were created, not that they're done
-	if e.maxResults > 0 {
-		// Only consider done if places found equals places completed
-		// This means all PlaceJobs have finished (successfully or failed)
-		if e.placesFound != e.placesCompleted {
-			return false
+	// 3. For unlimited results (maxResults = 0), check if all places are processed
+	if e.maxResults == 0 {
+		if e.placesFound > 0 && e.placesCompleted >= e.placesFound {
+			fmt.Printf("DEBUG: isDone() - unlimited mode, all places complete (%d/%d)\n", e.placesCompleted, e.placesFound)
+			return true
 		}
+		fmt.Printf("DEBUG: isDone() - unlimited mode, waiting for places (%d/%d)\n", e.placesCompleted, e.placesFound)
+		return false
 	}
 
-	// All work is complete
-	fmt.Printf("DEBUG: isDone() returning true - all work completed (seeds: %d/%d, places: %d/%d, results: %d, max: %d)\n",
-		e.seedCompleted, e.seedCount, e.placesCompleted, e.placesFound, e.resultsWritten, e.maxResults)
-	return true
+	// 4. For limited results, we're done if seeds are complete
+	// (results will be capped by IncrResultsWritten)
+	fmt.Printf("DEBUG: isDone() - limited mode, seeds complete, continuing to collect results\n")
+	return false
 }

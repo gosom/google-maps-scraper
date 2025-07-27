@@ -141,6 +141,7 @@ func New(cfg ServerConfig) (*Server, error) {
 	apiRouter.HandleFunc("/jobs", ans.apiScrape).Methods(http.MethodPost)
 	apiRouter.HandleFunc("/jobs/{id}", ans.apiGetJob).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/{id}", ans.apiDeleteJob).Methods(http.MethodDelete)
+	apiRouter.HandleFunc("/jobs/{id}/cancel", ans.apiCancelJob).Methods(http.MethodPost)
 	apiRouter.HandleFunc("/jobs/{id}/download", ans.download).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/{id}/results", ans.apiGetJobResults).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/results", ans.apiGetUserResults).Methods(http.MethodGet)
@@ -909,6 +910,90 @@ func (s *Server) apiDeleteJob(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	s.logger.Printf("Deleted job: %s", id)
+}
+
+func (s *Server) apiCancelJob(w http.ResponseWriter, r *http.Request) {
+	s.logger.Printf("POST %s", r.URL.Path)
+
+	// Extract ID directly from the URL path using Gorilla Mux
+	vars := mux.Vars(r)
+	idStr := vars["id"]
+
+	if idStr == "" {
+		apiError := apiError{
+			Code:    http.StatusUnprocessableEntity,
+			Message: "Missing job ID",
+		}
+		renderJSON(w, http.StatusUnprocessableEntity, apiError)
+		s.logger.Printf("Missing job ID for cancel")
+		return
+	}
+
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		apiError := apiError{
+			Code:    http.StatusUnprocessableEntity,
+			Message: "Invalid ID format",
+		}
+		renderJSON(w, http.StatusUnprocessableEntity, apiError)
+		s.logger.Printf("Invalid ID format for cancel: %v", err)
+		return
+	}
+
+	// Get user ID from context for authorization if authentication is enabled
+	if s.authMiddleware != nil {
+		userID, err := auth.GetUserID(r.Context())
+		if err != nil {
+			apiError := apiError{
+				Code:    http.StatusUnauthorized,
+				Message: "User not authenticated",
+			}
+			renderJSON(w, http.StatusUnauthorized, apiError)
+			s.logger.Printf("User not authenticated for cancel: %v", err)
+			return
+		}
+
+		// Verify job belongs to user
+		job, err := s.svc.Get(r.Context(), id.String())
+		if err != nil {
+			apiError := apiError{
+				Code:    http.StatusNotFound,
+				Message: "Job not found",
+			}
+			renderJSON(w, http.StatusNotFound, apiError)
+			s.logger.Printf("Job %s not found for cancel: %v", id, err)
+			return
+		}
+
+		if job.UserID != userID {
+			apiError := apiError{
+				Code:    http.StatusForbidden,
+				Message: "Access denied",
+			}
+			renderJSON(w, http.StatusForbidden, apiError)
+			s.logger.Printf("User %s tried to cancel job %s owned by %s", userID, id, job.UserID)
+			return
+		}
+	}
+
+	err = s.svc.Cancel(r.Context(), id.String())
+	if err != nil {
+		apiError := apiError{
+			Code:    http.StatusInternalServerError,
+			Message: err.Error(),
+		}
+		renderJSON(w, http.StatusInternalServerError, apiError)
+		s.logger.Printf("Failed to cancel job %s: %v", id, err)
+		return
+	}
+
+	response := map[string]interface{}{
+		"message": "Job cancellation initiated",
+		"job_id":  id.String(),
+	}
+
+	renderJSON(w, http.StatusOK, response)
+	s.logger.Printf("Cancelled job: %s", id)
 }
 
 // Result represents a single scraped result

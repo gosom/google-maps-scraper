@@ -152,6 +152,46 @@ func (repo *repository) Update(ctx context.Context, job *models.Job) error {
 	return nil
 }
 
+// Cancel marks a job for cancellation
+func (repo *repository) Cancel(ctx context.Context, id string) error {
+	// First check if job exists and is in a cancellable state
+	var currentStatus string
+	err := repo.db.QueryRowContext(ctx, "SELECT status FROM jobs WHERE id = $1 AND deleted_at IS NULL", id).Scan(&currentStatus)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("job with id %s not found", id)
+		}
+		return fmt.Errorf("failed to get job status: %w", err)
+	}
+
+	// Check if job can be cancelled
+	if currentStatus == models.StatusOK || currentStatus == models.StatusFailed || currentStatus == models.StatusCancelled {
+		return fmt.Errorf("job with status '%s' cannot be cancelled", currentStatus)
+	}
+
+	// Set status to cancelling/aborting
+	newStatus := models.StatusAborting
+	if currentStatus == models.StatusPending {
+		// If job is pending, mark it as cancelled immediately
+		newStatus = models.StatusCancelled
+	}
+
+	const q = `UPDATE jobs SET status = $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL`
+
+	result, err := repo.db.ExecContext(ctx, q, newStatus, id)
+	if err != nil {
+		return fmt.Errorf("failed to cancel job: %w", err)
+	}
+
+	// Check if the job actually existed and wasn't already deleted
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return fmt.Errorf("job with id %s not found or already deleted", id)
+	}
+
+	return nil
+}
+
 type scannable interface {
 	Scan(dest ...any) error
 }

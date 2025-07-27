@@ -11,6 +11,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/gosom/google-maps-scraper/exiter"
+	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/runner"
 	"github.com/gosom/google-maps-scraper/tlmt"
@@ -25,6 +26,7 @@ type dbrunner struct {
 	app         *scrapemateapp.ScrapemateApp
 	conn        *sql.DB
 	exitMonitor exiter.Exiter
+	jobRepo     models.JobRepository
 }
 
 func New(cfg *runner.Config) (runner.Runner, error) {
@@ -45,12 +47,19 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		fmt.Printf("DEBUG: Database runner - Max results limit set to %d\n", cfg.MaxResults)
 	}
 
+	// Initialize job repository for tracking job status
+	jobRepo, err := postgres.NewRepository(conn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create job repository: %w", err)
+	}
+
 	ans := dbrunner{
 		cfg:         cfg,
 		provider:    postgres.NewProvider(conn),
 		produce:     cfg.ProduceOnly,
 		conn:        conn,
 		exitMonitor: exitMonitor,
+		jobRepo:     jobRepo,
 	}
 
 	if ans.produce {
@@ -128,6 +137,8 @@ func (d *dbrunner) Run(ctx context.Context) error {
 	if d.produce {
 		return d.produceSeedJobs(ctx)
 	}
+
+	// Note: Job cancellation is handled by the webrunner when using web interface
 
 	// Set up context cancellation for max results if exit monitor is enabled
 	if d.exitMonitor != nil {

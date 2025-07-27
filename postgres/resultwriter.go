@@ -64,10 +64,15 @@ func (r *resultWriter) Run(ctx context.Context, in <-chan scrapemate.Result) err
 	buff := make([]*gmaps.Entry, 0, 50)
 	lastSave := time.Now().UTC()
 
-	// Use background context for database operations to avoid cancellation issues
-	dbCtx := context.Background()
-
+	// Use the provided context for cancellation support
 	for result := range in {
+		// Check for cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		entry, ok := result.Data.(*gmaps.Entry)
 
 		if !ok {
@@ -77,7 +82,7 @@ func (r *resultWriter) Run(ctx context.Context, in <-chan scrapemate.Result) err
 		buff = append(buff, entry)
 
 		if len(buff) >= maxBatchSize || time.Now().UTC().Sub(lastSave) >= time.Minute {
-			err := r.batchSave(dbCtx, buff)
+			err := r.batchSave(ctx, buff)
 			if err != nil {
 				return err
 			}
@@ -88,7 +93,7 @@ func (r *resultWriter) Run(ctx context.Context, in <-chan scrapemate.Result) err
 	}
 
 	if len(buff) > 0 {
-		err := r.batchSave(dbCtx, buff)
+		err := r.batchSave(ctx, buff)
 		if err != nil {
 			return err
 		}
@@ -103,10 +108,15 @@ func (r *enhancedResultWriter) Run(ctx context.Context, in <-chan scrapemate.Res
 	buff := make([]*gmaps.Entry, 0, 50)
 	lastSave := time.Now().UTC()
 
-	// Use background context for database operations to avoid cancellation issues
-	dbCtx := context.Background()
-
+	// Use the provided context for cancellation support
 	for result := range in {
+		// Check for cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		entry, ok := result.Data.(*gmaps.Entry)
 
 		if !ok {
@@ -116,7 +126,7 @@ func (r *enhancedResultWriter) Run(ctx context.Context, in <-chan scrapemate.Res
 		buff = append(buff, entry)
 
 		if len(buff) >= maxBatchSize || time.Now().UTC().Sub(lastSave) >= time.Minute {
-			err := r.batchSaveEnhanced(dbCtx, buff)
+			err := r.batchSaveEnhanced(ctx, buff)
 			if err != nil {
 				return err
 			}
@@ -127,7 +137,7 @@ func (r *enhancedResultWriter) Run(ctx context.Context, in <-chan scrapemate.Res
 	}
 
 	if len(buff) > 0 {
-		err := r.batchSaveEnhanced(dbCtx, buff)
+		err := r.batchSaveEnhanced(ctx, buff)
 		if err != nil {
 			return err
 		}
@@ -141,10 +151,16 @@ func (r *enhancedResultWriterWithExiter) Run(ctx context.Context, in <-chan scra
 
 	buff := make([]*gmaps.Entry, 0, 1)
 
-	// Use background context for database operations to avoid cancellation issues
-	dbCtx := context.Background()
-
+	// Use the provided context for cancellation support
 	for result := range in {
+		// Check for cancellation first
+		select {
+		case <-ctx.Done():
+			fmt.Printf("DEBUG: Result writer stopped due to cancellation\n")
+			return ctx.Err()
+		default:
+		}
+
 		entry, ok := result.Data.(*gmaps.Entry)
 
 		if !ok {
@@ -181,7 +197,7 @@ func (r *enhancedResultWriterWithExiter) Run(ctx context.Context, in <-chan scra
 
 		// Process immediately for precise control (batch size = 1)
 		if len(buff) >= maxBatchSize {
-			insertedCount, err := r.batchSaveEnhancedWithCount(dbCtx, buff)
+			insertedCount, err := r.batchSaveEnhancedWithCount(ctx, buff)
 			if err != nil {
 				return err
 			}
@@ -197,7 +213,7 @@ func (r *enhancedResultWriterWithExiter) Run(ctx context.Context, in <-chan scra
 	}
 
 	if len(buff) > 0 {
-		insertedCount, err := r.batchSaveEnhancedWithCount(dbCtx, buff)
+		insertedCount, err := r.batchSaveEnhancedWithCount(ctx, buff)
 		if err != nil {
 			return err
 		}
@@ -217,8 +233,8 @@ func (r *resultWriter) batchSave(ctx context.Context, entries []*gmaps.Entry) er
 		return nil
 	}
 
-	// Use a timeout context to prevent hanging but avoid immediate cancellation
-	dbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Use a timeout context that respects cancellation but allows time for database operations
+	dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	q := `INSERT INTO results
@@ -265,8 +281,8 @@ func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []
 		return nil
 	}
 
-	// Use a timeout context to prevent hanging but avoid immediate cancellation
-	dbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Use a timeout context that respects cancellation but allows time for database operations
+	dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	// Build the SQL query for all columns - use existing column names where they exist
@@ -392,8 +408,8 @@ func (r *enhancedResultWriterWithExiter) batchSaveEnhancedWithCount(ctx context.
 		return 0, nil
 	}
 
-	// Use a timeout context to prevent hanging but avoid immediate cancellation
-	dbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Use a timeout context that respects cancellation but allows time for database operations
+	dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	// Build the SQL query for all columns - use existing column names where they exist

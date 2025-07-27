@@ -37,6 +37,19 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("invalid file name")
 	}
 
+	// First check the current job status
+	job, err := s.repo.Get(ctx, id)
+	if err == nil {
+		// If job is still running, cancel it first
+		if job.Status == StatusWorking || job.Status == StatusPending {
+			// Try to cancel the job first
+			if cancelErr := s.repo.Cancel(ctx, id); cancelErr != nil {
+				// Log the error but continue with deletion
+				fmt.Printf("Warning: Failed to cancel job %s before deletion: %v\n", id, cancelErr)
+			}
+		}
+	}
+
 	datapath := filepath.Join(s.dataFolder, id+".csv")
 
 	if _, err := os.Stat(datapath); err == nil {
@@ -71,4 +84,8 @@ func (s *Service) GetCSV(_ context.Context, id string) (string, error) {
 	}
 
 	return datapath, nil
+}
+
+func (s *Service) Cancel(ctx context.Context, id string) error {
+	return s.repo.Cancel(ctx, id)
 }
