@@ -10,6 +10,7 @@ import (
 	// postgres driver
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/runner"
 	"github.com/gosom/google-maps-scraper/tlmt"
@@ -18,11 +19,12 @@ import (
 )
 
 type dbrunner struct {
-	cfg      *runner.Config
-	provider scrapemate.JobProvider
-	produce  bool
-	app      *scrapemateapp.ScrapemateApp
-	conn     *sql.DB
+	cfg         *runner.Config
+	provider    scrapemate.JobProvider
+	produce     bool
+	app         *scrapemateapp.ScrapemateApp
+	conn        *sql.DB
+	exitMonitor exiter.Exiter
 }
 
 func New(cfg *runner.Config) (runner.Runner, error) {
@@ -35,18 +37,37 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		return nil, err
 	}
 
+	// Create exit monitor if max results are specified
+	var exitMonitor exiter.Exiter
+	if cfg.MaxResults > 0 {
+		exitMonitor = exiter.New()
+		exitMonitor.SetMaxResults(cfg.MaxResults)
+		fmt.Printf("DEBUG: Database runner - Max results limit set to %d\n", cfg.MaxResults)
+	}
+
 	ans := dbrunner{
-		cfg:      cfg,
-		provider: postgres.NewProvider(conn),
-		produce:  cfg.ProduceOnly,
-		conn:     conn,
+		cfg:         cfg,
+		provider:    postgres.NewProvider(conn),
+		produce:     cfg.ProduceOnly,
+		conn:        conn,
+		exitMonitor: exitMonitor,
 	}
 
 	if ans.produce {
 		return &ans, nil
 	}
 
-	psqlWriter := postgres.NewResultWriter(conn)
+	// Choose result writer based on whether max results are enabled
+	var psqlWriter scrapemate.ResultWriter
+	if cfg.MaxResults > 0 && exitMonitor != nil {
+		// Use enhanced result writer with exit monitor for max results support
+		psqlWriter = postgres.NewEnhancedResultWriterWithExiter(conn, "cli-user", "cli-job", exitMonitor)
+		fmt.Printf("DEBUG: Using enhanced result writer with max results: %d\n", cfg.MaxResults)
+	} else {
+		// Use basic result writer for unlimited results
+		psqlWriter = postgres.NewResultWriter(conn)
+		fmt.Printf("DEBUG: Using basic result writer (unlimited results)\n")
+	}
 
 	writers := []scrapemate.ResultWriter{
 		psqlWriter,
@@ -108,6 +129,20 @@ func (d *dbrunner) Run(ctx context.Context) error {
 		return d.produceSeedJobs(ctx)
 	}
 
+	// Set up context cancellation for max results if exit monitor is enabled
+	if d.exitMonitor != nil {
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
+		// Set the cancel function on the exit monitor
+		d.exitMonitor.SetCancelFunc(cancel)
+
+		// Start the exit monitor in a goroutine
+		go d.exitMonitor.Run(ctx)
+
+		fmt.Printf("DEBUG: Exit monitor started for max results: %d\n", d.cfg.MaxResults)
+	}
+
 	return d.app.Start(ctx)
 }
 
@@ -157,9 +192,9 @@ func (d *dbrunner) produceSeedJobs(ctx context.Context) error {
 		d.cfg.Zoom,
 		d.cfg.Radius,
 		nil,
-		nil,
+		d.exitMonitor, // Pass exit monitor for max results support
 		d.cfg.ExtraReviews,
-		0, // No max results limit for database runner (unlimited)
+		d.cfg.MaxResults, // Pass max results limit from config
 	)
 	if err != nil {
 		return err

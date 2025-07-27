@@ -137,8 +137,19 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 		next = append(next, placeJob)
 	} else {
 		log.Info(fmt.Sprintf("DEBUG: Processing search results page - will create PlaceJobs with ExtractImages: %v", j.ExtractImages))
+
+		// Get max results limit from ExitMonitor if available
+		maxResults := 0
+		if j.ExitMonitor != nil {
+			maxResults = j.ExitMonitor.GetMaxResults()
+			log.Info(fmt.Sprintf("DEBUG: Max results limit set to: %d", maxResults))
+		}
+
 		doc.Find(`div[role=feed] div[jsaction]>a`).Each(func(i int, s *goquery.Selection) {
 			if href := s.AttrOr("href", ""); href != "" {
+				// Note: Removed early termination logic - let exit monitor handle max results
+				// based on actual successful results, not PlaceJobs created
+
 				jopts := []PlaceJobOptions{}
 				if j.ExitMonitor != nil {
 					jopts = append(jopts, WithPlaceJobExitMonitor(j.ExitMonitor))

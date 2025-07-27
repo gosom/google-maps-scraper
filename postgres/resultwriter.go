@@ -11,6 +11,7 @@ import (
 
 	"github.com/gosom/scrapemate"
 
+	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/google-maps-scraper/gmaps"
 )
 
@@ -29,6 +30,17 @@ func NewEnhancedResultWriter(db *sql.DB, userID, jobID string) scrapemate.Result
 	}
 }
 
+// NewEnhancedResultWriterWithExiter creates an enhanced result writer that saves all fields,
+// associates results with user and job, and reports results to the exiter
+func NewEnhancedResultWriterWithExiter(db *sql.DB, userID, jobID string, exiter exiter.Exiter) scrapemate.ResultWriter {
+	return &enhancedResultWriterWithExiter{
+		db:          db,
+		userID:      userID,
+		jobID:       jobID,
+		exitMonitor: exiter,
+	}
+}
+
 type resultWriter struct {
 	db *sql.DB
 }
@@ -37,6 +49,13 @@ type enhancedResultWriter struct {
 	db     *sql.DB
 	userID string
 	jobID  string
+}
+
+type enhancedResultWriterWithExiter struct {
+	db          *sql.DB
+	userID      string
+	jobID       string
+	exitMonitor exiter.Exiter
 }
 
 func (r *resultWriter) Run(ctx context.Context, in <-chan scrapemate.Result) error {
@@ -117,6 +136,80 @@ func (r *enhancedResultWriter) Run(ctx context.Context, in <-chan scrapemate.Res
 	return nil
 }
 
+func (r *enhancedResultWriterWithExiter) Run(ctx context.Context, in <-chan scrapemate.Result) error {
+	const maxBatchSize = 1 // Changed from 5 to 1 for precise max results control
+
+	buff := make([]*gmaps.Entry, 0, 1)
+
+	// Use background context for database operations to avoid cancellation issues
+	dbCtx := context.Background()
+
+	for result := range in {
+		entry, ok := result.Data.(*gmaps.Entry)
+
+		if !ok {
+			return errors.New("invalid data type")
+		}
+
+		// PRE-EMPTIVE LIMIT CHECK: Stop processing if we've reached the limit
+		if r.exitMonitor != nil {
+			maxResults := r.exitMonitor.GetMaxResults()
+			if maxResults > 0 {
+				currentCount := r.exitMonitor.GetCurrentResultCount()
+				if currentCount >= maxResults {
+					fmt.Printf("DEBUG: Pre-emptive limit check - stopping processing (current: %d, limit: %d)\n", currentCount, maxResults)
+					return nil // Exit gracefully
+				}
+			}
+		}
+
+		// Only validate for logging purposes - don't count yet
+		isValidResult := entry.Title != ""
+
+		// DEBUG: Log detailed result validation
+		if !isValidResult {
+			fmt.Printf("DEBUG: Skipping invalid result - Title: '%s' (empty title)\n", entry.Title)
+		} else {
+			fmt.Printf("DEBUG: Valid result received - %s (will count after DB save)\n", entry.Title)
+			// Additional debug info
+			fmt.Printf("DEBUG: Result details - Link: '%s', Cid: '%s'\n", entry.Link, entry.Cid)
+		}
+
+		buff = append(buff, entry)
+
+		// Process immediately for precise control (batch size = 1)
+		if len(buff) >= maxBatchSize {
+			insertedCount, err := r.batchSaveEnhancedWithCount(dbCtx, buff)
+			if err != nil {
+				return err
+			}
+
+			// NOW count only actually inserted results
+			if r.exitMonitor != nil && insertedCount > 0 {
+				fmt.Printf("DEBUG: Successfully inserted %d results, notifying exit monitor\n", insertedCount)
+				r.exitMonitor.IncrResultsWritten(insertedCount)
+			}
+
+			buff = buff[:0]
+		}
+	}
+
+	if len(buff) > 0 {
+		insertedCount, err := r.batchSaveEnhancedWithCount(dbCtx, buff)
+		if err != nil {
+			return err
+		}
+
+		// NOW count only actually inserted results
+		if r.exitMonitor != nil && insertedCount > 0 {
+			fmt.Printf("DEBUG: Final batch - Successfully inserted %d results, notifying exit monitor\n", insertedCount)
+			r.exitMonitor.IncrResultsWritten(insertedCount)
+		}
+	}
+
+	return nil
+}
+
 func (r *resultWriter) batchSave(ctx context.Context, entries []*gmaps.Entry) error {
 	if len(entries) == 0 {
 		return nil
@@ -144,7 +237,7 @@ func (r *resultWriter) batchSave(ctx context.Context, entries []*gmaps.Entry) er
 	}
 
 	q += strings.Join(elements, ", ")
-	q += " ON CONFLICT DO NOTHING"
+	// Note: Removed ON CONFLICT clause - no unique constraint exists on cid column
 
 	tx, err := r.db.BeginTx(dbCtx, nil)
 	if err != nil {
@@ -289,4 +382,139 @@ func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []
 
 	fmt.Printf("[PostgreSQL Writer] Successfully inserted %d entries for user %s, job %s\n", len(entries), r.userID, r.jobID)
 	return nil
+}
+
+// batchSaveEnhancedWithCount is similar to batchSaveEnhanced but returns the number of rows actually inserted
+func (r *enhancedResultWriterWithExiter) batchSaveEnhancedWithCount(ctx context.Context, entries []*gmaps.Entry) (int, error) {
+	if len(entries) == 0 {
+		return 0, nil
+	}
+
+	// Use a timeout context to prevent hanging but avoid immediate cancellation
+	dbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Build the SQL query for all columns - use existing column names where they exist
+	q := `INSERT INTO results (
+		user_id, job_id, input_id, link, cid, title, categories, category, address,
+		openhours, popular_times, website, phone, pluscode, review_count, rating,
+		reviews_per_rating, latitude, longitude, status_info, description,
+		reviews_link, thumbnail, timezone, price_range, data_id, images,
+		reservations, order_online, menu, owner, complete_address, about,
+		user_reviews, user_reviews_extended, emails, data, created_at
+	) VALUES `
+
+	elements := make([]string, 0, len(entries))
+	args := make([]interface{}, 0, len(entries)*38) // 38 fields per entry
+
+	for i, entry := range entries {
+		// Serialize JSON fields
+		openHoursJSON, _ := json.Marshal(entry.OpenHours)
+		popularTimesJSON, _ := json.Marshal(entry.PopularTimes)
+		reviewsPerRatingJSON, _ := json.Marshal(entry.ReviewsPerRating)
+		imagesJSON, _ := json.Marshal(entry.Images)
+		reservationsJSON, _ := json.Marshal(entry.Reservations)
+		orderOnlineJSON, _ := json.Marshal(entry.OrderOnline)
+		menuJSON, _ := json.Marshal(entry.Menu)
+		ownerJSON, _ := json.Marshal(entry.Owner)
+		completeAddressJSON, _ := json.Marshal(entry.CompleteAddress)
+		aboutJSON, _ := json.Marshal(entry.About)
+		userReviewsJSON, _ := json.Marshal(entry.UserReviews)
+		userReviewsExtendedJSON, _ := json.Marshal(entry.UserReviewsExtended)
+		dataJSON, _ := json.Marshal(entry)
+
+		// Convert categories slice to comma-separated string
+		categoriesStr := strings.Join(entry.Categories, ", ")
+		emailsStr := strings.Join(entry.Emails, ", ")
+
+		// Create parameter placeholders for this entry
+		base := i * 38
+		placeholders := make([]string, 38)
+		for j := 0; j < 38; j++ {
+			placeholders[j] = fmt.Sprintf("$%d", base+j+1)
+		}
+		elements = append(elements, "("+strings.Join(placeholders, ", ")+")")
+
+		// Add all arguments in the same order as the columns
+		args = append(args,
+			r.userID,                // user_id
+			r.jobID,                 // job_id
+			entry.ID,                // input_id
+			entry.Link,              // link
+			entry.Cid,               // cid
+			entry.Title,             // title
+			categoriesStr,           // categories
+			entry.Category,          // category
+			entry.Address,           // address
+			openHoursJSON,           // openhours
+			popularTimesJSON,        // popular_times
+			entry.WebSite,           // website
+			entry.Phone,             // phone
+			entry.PlusCode,          // pluscode
+			entry.ReviewCount,       // review_count
+			entry.ReviewRating,      // rating
+			reviewsPerRatingJSON,    // reviews_per_rating
+			entry.Latitude,          // latitude
+			entry.Longtitude,        // longitude (note: keeping typo from struct)
+			entry.Status,            // status_info
+			entry.Description,       // description
+			entry.ReviewsLink,       // reviews_link
+			entry.Thumbnail,         // thumbnail
+			entry.Timezone,          // timezone
+			entry.PriceRange,        // price_range
+			entry.DataID,            // data_id
+			imagesJSON,              // images
+			reservationsJSON,        // reservations
+			orderOnlineJSON,         // order_online
+			menuJSON,                // menu
+			ownerJSON,               // owner
+			completeAddressJSON,     // complete_address
+			aboutJSON,               // about
+			userReviewsJSON,         // user_reviews
+			userReviewsExtendedJSON, // user_reviews_extended
+			emailsStr,               // emails
+			dataJSON,                // data (full entry as JSON)
+			time.Now(),              // created_at
+		)
+	}
+
+	q += strings.Join(elements, ", ")
+	// Note: Removed ON CONFLICT clause - no unique constraint exists on cid column
+
+	// Log the operation for debugging
+	fmt.Printf("[PostgreSQL Writer WITH EXITER] Attempting to insert %d entries for user %s, job %s\n", len(entries), r.userID, r.jobID)
+
+	tx, err := r.db.BeginTx(dbCtx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	result, err := tx.ExecContext(dbCtx, q, args...)
+	if err != nil {
+		fmt.Printf("[PostgreSQL Writer WITH EXITER] ERROR: Failed to execute insert: %v\n", err)
+		return 0, fmt.Errorf("failed to insert results: %w", err)
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		fmt.Printf("[PostgreSQL Writer WITH EXITER] ERROR: Failed to commit transaction: %v\n", err)
+		return 0, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	// Get the number of rows affected (inserted)
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		fmt.Printf("[PostgreSQL Writer WITH EXITER] Warning: Could not get rows affected: %v\n", err)
+		// Assume all entries were inserted if we can't get the count
+		rowsAffected = int64(len(entries))
+	}
+
+	insertedCount := int(rowsAffected)
+	fmt.Printf("[PostgreSQL Writer WITH EXITER] Successfully inserted %d entries for user %s, job %s\n", insertedCount, r.userID, r.jobID)
+
+	return insertedCount, nil
 }

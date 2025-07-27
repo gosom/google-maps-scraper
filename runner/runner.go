@@ -81,6 +81,7 @@ type Config struct {
 	Addr                     string
 	DisablePageReuse         bool
 	ExtraReviews             bool
+	MaxResults               int
 }
 
 func ParseConfig() *Config {
@@ -131,6 +132,7 @@ func ParseConfig() *Config {
 	flag.StringVar(&cfg.Addr, "addr", ":8080", "address to listen on for web server")
 	flag.BoolVar(&cfg.DisablePageReuse, "disable-page-reuse", false, "disable page reuse in playwright")
 	flag.BoolVar(&cfg.ExtraReviews, "extra-reviews", false, "enable extra reviews collection")
+	flag.IntVar(&cfg.MaxResults, "max-results", 0, "maximum number of results to collect (0 = unlimited)")
 
 	flag.Parse()
 

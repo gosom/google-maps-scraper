@@ -225,7 +225,7 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 
 		return nil, []scrapemate.IJob{emailJob}, nil
 	} else if j.ExitMonitor != nil {
-		fmt.Printf("DEBUG: PlaceJob %s completed directly (no email extraction)\n", j.ID)
+		// Note: Count completed jobs for exit detection, but results are counted separately
 		j.ExitMonitor.IncrPlacesCompleted(1)
 	}
 

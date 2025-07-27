@@ -266,7 +266,11 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		_ = outfile.Close()
 	}()
 
-	mate, err := w.setupMate(ctx, outfile, job)
+	// Initialize deduper and exitMonitor before use
+	dedup := deduper.New()
+	exitMonitor := exiter.New()
+
+	mate, err := w.setupMate(ctx, outfile, job, exitMonitor)
 	if err != nil {
 		job.Status = web.StatusFailed
 
@@ -290,9 +294,6 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	if job.Data.Lat != "" && job.Data.Lon != "" {
 		coords = job.Data.Lat + "," + job.Data.Lon
 	}
-
-	dedup := deduper.New()
-	exitMonitor := exiter.New()
 
 	seedJobs, err := runner.CreateSeedJobs(
 		job.Data.FastMode,
@@ -441,7 +442,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	return nil
 }
 
-func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job) (*scrapemateapp.ScrapemateApp, error) {
+func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job, exitMonitor exiter.Exiter) (*scrapemateapp.ScrapemateApp, error) {
 	opts := []func(*scrapemateapp.Config) error{
 		scrapemateapp.WithConcurrency(w.cfg.Concurrency),
 		scrapemateapp.WithExitOnInactivity(time.Minute * 3),
@@ -485,10 +486,10 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job)
 
 	// Add PostgreSQL writer if database is available
 	if w.db != nil {
-		// Use enhanced result writer with proper conflict resolution
-		pgWriter := postgres.NewEnhancedResultWriter(w.db, job.UserID, job.ID)
+		// Use enhanced result writer with exiter to count actual results
+		pgWriter := postgres.NewEnhancedResultWriterWithExiter(w.db, job.UserID, job.ID, exitMonitor)
 		writers = append(writers, pgWriter)
-		log.Printf("Added PostgreSQL enhanced result writer for job %s (user: %s)", job.ID, job.UserID)
+		log.Printf("Added PostgreSQL enhanced result writer with exiter for job %s (user: %s)", job.ID, job.UserID)
 	} else {
 		log.Printf("Warning: No database connection available for job %s - results will only be saved to CSV", job.ID)
 	}
