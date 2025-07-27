@@ -167,12 +167,17 @@ func rowToJob(row scannable) (models.Job, error) {
 		return models.Job{}, fmt.Errorf("failed to scan job: %w", err)
 	}
 
+	createdAt := time.Unix(int64(j.CreatedAt), 0).UTC()
+	updatedAt := time.Unix(int64(j.UpdatedAt), 0).UTC()
+
 	ans := models.Job{
-		ID:     j.ID,
-		UserID: j.UserID,
-		Name:   j.Name,
-		Status: j.Status,
-		Date:   time.Unix(int64(j.CreatedAt), 0).UTC(),
+		ID:        j.ID,
+		UserID:    j.UserID,
+		Name:      j.Name,
+		Status:    j.Status,
+		Date:      createdAt,
+		CreatedAt: &createdAt,
+		UpdatedAt: &updatedAt,
 	}
 
 	err = json.Unmarshal([]byte(j.Data), &ans.Data)

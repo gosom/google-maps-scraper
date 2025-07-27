@@ -25,12 +25,14 @@ type JobData struct {
 
 // Job represents a scraping job
 type Job struct {
-	ID     string
-	UserID string
-	Name   string
-	Status string
-	Data   JobData
-	Date   time.Time
+	ID        string
+	UserID    string
+	Name      string
+	Status    string
+	Data      JobData
+	Date      time.Time
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
 // SelectParams defines parameters for filtering job selection
