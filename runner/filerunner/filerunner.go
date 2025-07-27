@@ -149,7 +149,7 @@ func (r *fileRunner) setWriters() error {
 
 		dir, pluginName := parts[0], parts[1]
 
-		customWriter, err := runner.LoadCustomWriter(dir, pluginName)
+		customWriter, err := runner.CreateCustomWriter(dir, pluginName)
 		if err != nil {
 			return err
 		}

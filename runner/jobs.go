@@ -130,7 +130,7 @@ func CreateSeedJobs(
 	return jobs, scanner.Err()
 }
 
-func LoadCustomWriter(pluginDir, pluginName string) (scrapemate.ResultWriter, error) {
+func CreateCustomWriter(pluginDir, pluginName string) (scrapemate.ResultWriter, error) {
 	files, err := os.ReadDir(pluginDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read plugin directory: %w", err)
@@ -152,17 +152,22 @@ func LoadCustomWriter(pluginDir, pluginName string) (scrapemate.ResultWriter, er
 			return nil, fmt.Errorf("failed to open plugin %s: %w", file.Name(), err)
 		}
 
-		symWriter, err := p.Lookup(pluginName)
+		// Look up factory function instead of singleton instance
+		factoryName := pluginName + "Factory"
+
+		symFactory, err := p.Lookup(factoryName)
 		if err != nil {
-			return nil, fmt.Errorf("failed to lookup symbol %s: %w", pluginName, err)
+			return nil, fmt.Errorf("failed to lookup factory function %s: %w", factoryName, err)
 		}
 
-		writer, ok := symWriter.(*scrapemate.ResultWriter)
+		// Verify factory function signature
+		factory, ok := symFactory.(func() scrapemate.ResultWriter)
 		if !ok {
-			return nil, fmt.Errorf("unexpected type %T from writer symbol in plugin %s", symWriter, file.Name())
+			return nil, fmt.Errorf("unexpected factory type %T, expected func() scrapemate.ResultWriter", symFactory)
 		}
 
-		return *writer, nil
+		// Create new instance using factory
+		return factory(), nil
 	}
 
 	return nil, fmt.Errorf("no plugin found in %s", pluginDir)

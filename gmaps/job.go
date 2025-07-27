@@ -127,6 +127,43 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 	} else {
 		doc.Find(`div[role=feed] div[jsaction]>a`).Each(func(_ int, s *goquery.Selection) {
 			if href := s.AttrOr("href", ""); href != "" {
+				// Extract business name for enhanced logging
+				businessName := s.Find("div[role='img']").AttrOr("aria-label", "Unknown Business")
+				if businessName == "Unknown Business" {
+					// Fallback: try to extract from URL path
+					if parts := strings.Split(href, "/place/"); len(parts) > 1 {
+						if nameEnd := strings.Index(parts[1], "/data="); nameEnd > 0 {
+							businessName = strings.ReplaceAll(parts[1][:nameEnd], "+", " ")
+						}
+					}
+				}
+
+				// Pre-filtering with DataID extraction for intelligent duplicate skipping
+				dataID := ExtractDataIDFromURL(href)
+				if dataID != "" {
+					// Extract the second hex part (CID portion) from DataID
+					parts := strings.Split(dataID, ":")
+					if len(parts) == 2 {
+						secondHex := parts[1] // This is the CID portion
+
+						// Check if this CID hex is already in our deduper
+						if j.Deduper != nil && !j.Deduper.AddIfNotExists(ctx, secondHex) {
+							log.Info(fmt.Sprintf("🚫 SKIPPED DUPLICATE: %s (CID already exists)", businessName))
+							return // Skip PlaceJob creation entirely - duplicate detected
+						}
+					}
+
+					// Also store the full DataID for comprehensive deduplication
+					if j.Deduper != nil && !j.Deduper.AddIfNotExists(ctx, dataID) {
+						log.Info(fmt.Sprintf("🚫 SKIPPED DUPLICATE: %s (DataID already processed)", businessName))
+						return // Skip PlaceJob creation entirely - duplicate detected
+					}
+
+					log.Info(fmt.Sprintf("✅ NEW BUSINESS: %s", businessName))
+				} else {
+					log.Info(fmt.Sprintf("⚠️  NO DATAID: %s - using URL fallback", businessName))
+				}
+
 				jopts := []PlaceJobOptions{}
 				if j.ExitMonitor != nil {
 					jopts = append(jopts, WithPlaceJobExitMonitor(j.ExitMonitor))
@@ -134,6 +171,7 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 
 				nextJob := NewPlaceJob(j.ID, j.LangCode, href, j.ExtractEmail, j.ExtractExtraReviews, jopts...)
 
+				// Fallback URL-based deduplication (for URLs without DataID or additional safety)
 				if j.Deduper == nil || j.Deduper.AddIfNotExists(ctx, href) {
 					next = append(next, nextJob)
 				}
@@ -146,7 +184,7 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 		j.ExitMonitor.IncrSeedCompleted(1)
 	}
 
-	log.Info(fmt.Sprintf("%d places found", len(next)))
+	log.Info(fmt.Sprintf("📊 Search complete: %d places will be scraped", len(next)))
 
 	return nil, next, nil
 }

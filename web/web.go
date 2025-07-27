@@ -1,3 +1,4 @@
+// Package web provides HTTP server and API endpoints for the Google Maps Scraper.
 package web
 
 import (
@@ -14,9 +15,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/gosom/google-maps-scraper/plugins"
 )
 
 //go:embed static
@@ -26,12 +29,21 @@ type Server struct {
 	tmpl map[string]*template.Template
 	srv  *http.Server
 	svc  *Service
+
+	// Stream client management
+	streamMu      sync.RWMutex
+	streamClients map[string][]chan plugins.StreamEvent // jobID -> client channels
+
+	// Event history for late-connecting clients
+	eventHistory map[string][]plugins.StreamEvent // jobID -> recent events
 }
 
 func New(svc *Service, addr string) (*Server, error) {
 	ans := Server{
-		svc:  svc,
-		tmpl: make(map[string]*template.Template),
+		svc:           svc,
+		tmpl:          make(map[string]*template.Template),
+		streamClients: make(map[string][]chan plugins.StreamEvent),
+		eventHistory:  make(map[string][]plugins.StreamEvent),
 		srv: &http.Server{
 			Addr:              addr,
 			ReadHeaderTimeout: 10 * time.Second,
@@ -116,6 +128,23 @@ func New(svc *Service, addr string) (*Server, error) {
 		}
 
 		ans.download(w, r)
+	})
+
+	mux.HandleFunc("/api/v1/jobs/{id}/stream", func(w http.ResponseWriter, r *http.Request) {
+		r = requestWithID(r)
+
+		if r.Method != http.MethodGet {
+			ans := apiError{
+				Code:    http.StatusMethodNotAllowed,
+				Message: "Method not allowed",
+			}
+
+			renderJSON(w, http.StatusMethodNotAllowed, ans)
+
+			return
+		}
+
+		ans.streamEvents(w, r)
 	})
 
 	handler := securityHeaders(mux)
@@ -540,12 +569,12 @@ func (s *Server) apiScrape(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiGetJobs(w http.ResponseWriter, r *http.Request) {
 	jobs, err := s.svc.All(r.Context())
 	if err != nil {
-		apiError := apiError{
+		errResp := apiError{
 			Code:    http.StatusInternalServerError,
 			Message: err.Error(),
 		}
 
-		renderJSON(w, http.StatusInternalServerError, apiError)
+		renderJSON(w, http.StatusInternalServerError, errResp)
 
 		return
 	}
@@ -556,24 +585,24 @@ func (s *Server) apiGetJobs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiGetJob(w http.ResponseWriter, r *http.Request) {
 	id, ok := getIDFromRequest(r)
 	if !ok {
-		apiError := apiError{
+		errResp := apiError{
 			Code:    http.StatusUnprocessableEntity,
 			Message: "Invalid ID",
 		}
 
-		renderJSON(w, http.StatusUnprocessableEntity, apiError)
+		renderJSON(w, http.StatusUnprocessableEntity, errResp)
 
 		return
 	}
 
 	job, err := s.svc.Get(r.Context(), id.String())
 	if err != nil {
-		apiError := apiError{
+		errResp := apiError{
 			Code:    http.StatusNotFound,
 			Message: http.StatusText(http.StatusNotFound),
 		}
 
-		renderJSON(w, http.StatusNotFound, apiError)
+		renderJSON(w, http.StatusNotFound, errResp)
 
 		return
 	}
@@ -584,24 +613,24 @@ func (s *Server) apiGetJob(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiDeleteJob(w http.ResponseWriter, r *http.Request) {
 	id, ok := getIDFromRequest(r)
 	if !ok {
-		apiError := apiError{
+		errResp := apiError{
 			Code:    http.StatusUnprocessableEntity,
 			Message: "Invalid ID",
 		}
 
-		renderJSON(w, http.StatusUnprocessableEntity, apiError)
+		renderJSON(w, http.StatusUnprocessableEntity, errResp)
 
 		return
 	}
 
 	err := s.svc.Delete(r.Context(), id.String())
 	if err != nil {
-		apiError := apiError{
+		errResp := apiError{
 			Code:    http.StatusInternalServerError,
 			Message: err.Error(),
 		}
 
-		renderJSON(w, http.StatusInternalServerError, apiError)
+		renderJSON(w, http.StatusInternalServerError, errResp)
 
 		return
 	}
@@ -609,15 +638,250 @@ func (s *Server) apiDeleteJob(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// streamEvents handles Server-Sent Events (SSE) streaming for real-time job updates.
+func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
+	// Get job ID from request
+	id, ok := getIDFromRequest(r)
+	if !ok {
+		errResp := apiError{
+			Code:    http.StatusUnprocessableEntity,
+			Message: "Invalid ID",
+		}
+		renderJSON(w, http.StatusUnprocessableEntity, errResp)
+
+		return
+	}
+
+	// Verify job exists
+	job, err := s.svc.Get(r.Context(), id.String())
+	if err != nil {
+		errResp := apiError{
+			Code:    http.StatusNotFound,
+			Message: "Job not found",
+		}
+		renderJSON(w, http.StatusNotFound, errResp)
+
+		return
+	}
+
+	// Set headers for SSE
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no") // Disable Nginx buffering
+
+	// Create flusher
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		errResp := apiError{
+			Code:    http.StatusInternalServerError,
+			Message: "Streaming not supported",
+		}
+		renderJSON(w, http.StatusInternalServerError, errResp)
+
+		return
+	}
+
+	// Create a channel to receive events for this job
+	eventChan := make(chan plugins.StreamEvent, 100)
+	defer close(eventChan)
+
+	// Register this connection to receive events for the job
+	s.registerStreamClient(job.ID, eventChan)
+	defer s.unregisterStreamClient(job.ID, eventChan)
+
+	// Connection established, wait for real events from plugin
+	flusher.Flush()
+
+	// Disable WriteTimeout for this SSE connection to prevent premature closure
+	if rc := http.NewResponseController(w); rc != nil {
+		err := rc.SetWriteDeadline(time.Time{}) // Zero time = no deadline
+		if err != nil {
+			log.Printf("⚠️ Failed to disable write timeout for job %s: %v", job.ID, err)
+		} else {
+			log.Printf("✅ Disabled write timeout for SSE connection %s", job.ID)
+		}
+	}
+
+	// Setup heartbeat for additional connection stability (proxy/load balancer protection)
+	heartbeat := time.NewTicker(30 * time.Second) // Keep connection alive through intermediaries
+	defer heartbeat.Stop()
+
+	// Send initial heartbeat to establish connection
+	log.Printf("💓 Sending initial heartbeat for job %s", job.ID)
+	fmt.Fprintf(w, ": initial heartbeat\n\n")
+	flusher.Flush()
+
+	// Stream events until client disconnects
+	for {
+		select {
+		case event := <-eventChan:
+			if err := s.sendSSEEvent(w, event); err != nil {
+				return
+			}
+
+			flusher.Flush()
+
+		case <-heartbeat.C:
+			// Send heartbeat as actual SSE event (not comment) to ensure it reaches client
+			log.Printf("💓 Sending heartbeat for job %s", job.ID)
+
+			heartbeatEvent := plugins.StreamEvent{
+				Type:      "HEARTBEAT",
+				Timestamp: time.Now(),
+				JobID:     job.ID,
+				Data:      map[string]interface{}{"message": "keepalive"},
+			}
+
+			if err := s.sendSSEEvent(w, heartbeatEvent); err != nil {
+				log.Printf("❌ Heartbeat failed for job %s: %v", job.ID, err)
+				return // Client disconnected
+			}
+
+			flusher.Flush()
+			log.Printf("✅ Heartbeat sent successfully for job %s", job.ID)
+
+		case <-r.Context().Done():
+			// Client disconnected
+			return
+		}
+	}
+}
+
+// sendSSEEvent formats and sends a single SSE event.
+func (s *Server) sendSSEEvent(w io.Writer, event plugins.StreamEvent) error {
+	data, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("failed to marshal event: %w", err)
+	}
+
+	_, err = fmt.Fprintf(w, "id: %s\n", event.JobID)
+	if err != nil {
+		return err
+	}
+
+	_, err = fmt.Fprintf(w, "event: %s\n", event.Type)
+	if err != nil {
+		return err
+	}
+
+	_, err = fmt.Fprintf(w, "data: %s\n\n", data)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// registerStreamClient registers a client to receive events for a specific job.
+func (s *Server) registerStreamClient(jobID string, eventChan chan plugins.StreamEvent) {
+	s.streamMu.Lock()
+
+	if s.streamClients[jobID] == nil {
+		s.streamClients[jobID] = make([]chan plugins.StreamEvent, 0)
+	}
+
+	s.streamClients[jobID] = append(s.streamClients[jobID], eventChan)
+
+	// Replay buffered events to new client
+	history := s.eventHistory[jobID]
+	s.streamMu.Unlock()
+
+	if len(history) > 0 {
+		log.Printf("⏪ Replaying %d buffered events for job %s", len(history), jobID)
+
+		go func() {
+			for _, event := range history {
+				select {
+				case eventChan <- event:
+					// Event replayed successfully
+				default:
+					// Client channel is full, stop replay
+					log.Printf("⚠️ Client channel full during replay for job %s", jobID)
+					return
+				}
+			}
+		}()
+	}
+
+	log.Printf("📡 Registered stream client for job %s (total clients: %d)", jobID, len(s.streamClients[jobID]))
+}
+
+// unregisterStreamClient removes a client from receiving events for a specific job.
+func (s *Server) unregisterStreamClient(jobID string, eventChan chan plugins.StreamEvent) {
+	s.streamMu.Lock()
+	defer s.streamMu.Unlock()
+
+	clients := s.streamClients[jobID]
+	if clients == nil {
+		return
+	}
+
+	// Remove the channel from the slice
+	for i, client := range clients {
+		if client == eventChan {
+			s.streamClients[jobID] = append(clients[:i], clients[i+1:]...)
+			break
+		}
+	}
+
+	// Clean up empty job entries and event history
+	if len(s.streamClients[jobID]) == 0 {
+		delete(s.streamClients, jobID)
+		// Also clean up event history when no more clients
+		delete(s.eventHistory, jobID)
+		log.Printf("🧹 Cleaned up event history for completed job %s", jobID)
+	}
+
+	log.Printf("📡 Unregistered stream client for job %s (remaining clients: %d)", jobID, len(s.streamClients[jobID]))
+}
+
+// BroadcastEvent sends an event to all registered clients for a specific job (public interface).
+func (s *Server) BroadcastEvent(jobID string, event plugins.StreamEvent) {
+	s.broadcastEvent(jobID, event)
+}
+
+// broadcastEvent sends an event to all registered clients for a specific job.
+func (s *Server) broadcastEvent(jobID string, event plugins.StreamEvent) {
+	s.streamMu.Lock()
+
+	// Store event in history buffer (keep last 50 events)
+	const maxHistorySize = 50
+	if s.eventHistory[jobID] == nil {
+		s.eventHistory[jobID] = make([]plugins.StreamEvent, 0, maxHistorySize)
+	}
+
+	history := s.eventHistory[jobID]
+	if len(history) >= maxHistorySize {
+		// Remove oldest event
+		history = history[1:]
+	}
+
+	history = append(history, event)
+	s.eventHistory[jobID] = history
+
+	clients := s.streamClients[jobID]
+	s.streamMu.Unlock()
+
+	// Send event to all currently connected clients
+	for _, client := range clients {
+		select {
+		case client <- event:
+			// Event sent successfully
+		default:
+			// Client channel is full, skip this client
+			log.Printf("⚠️ Stream client channel full for job %s, dropping event", jobID)
+		}
+	}
+
+	log.Printf("📦 Stored %s event for job %s (history size: %d)", event.Type, jobID, len(history))
+}
+
 func renderJSON(w http.ResponseWriter, code int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 
 	_ = json.NewEncoder(w).Encode(data)
-}
-
-func formatDate(t time.Time) string {
-	return t.Format("Jan 02, 2006 15:04:05")
 }
 
 func securityHeaders(next http.Handler) http.Handler {
