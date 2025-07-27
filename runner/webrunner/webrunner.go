@@ -479,9 +479,8 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 
 	log.Printf("job %s has proxy: %v", job.ID, hasProxy)
 
-	csvWriter := csvwriter.NewCsvWriter(csv.NewWriter(writer))
-
 	// Create list of writers - CSV and PostgreSQL
+	csvWriter := csvwriter.NewCsvWriter(csv.NewWriter(writer))
 	writers := []scrapemate.ResultWriter{csvWriter}
 
 	// Add PostgreSQL writer if database is available

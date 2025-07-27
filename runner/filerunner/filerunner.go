@@ -94,7 +94,7 @@ func (r *fileRunner) Run(ctx context.Context) (err error) {
 		dedup,
 		exitMonitor,
 		r.cfg.ExtraReviews,
-		0, // No max results limit for file runner (unlimited)
+		r.cfg.MaxResults, // Use MaxResults from config instead of hardcoded 0
 	)
 	if err != nil {
 		return err

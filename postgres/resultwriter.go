@@ -151,14 +151,16 @@ func (r *enhancedResultWriterWithExiter) Run(ctx context.Context, in <-chan scra
 			return errors.New("invalid data type")
 		}
 
-		// PRE-EMPTIVE LIMIT CHECK: Stop processing if we've reached the limit
+		// SIMPLE LIMIT CHECK: Stop if we already have enough results
 		if r.exitMonitor != nil {
 			maxResults := r.exitMonitor.GetMaxResults()
 			if maxResults > 0 {
-				currentCount := r.exitMonitor.GetCurrentResultCount()
-				if currentCount >= maxResults {
-					fmt.Printf("DEBUG: Pre-emptive limit check - stopping processing (current: %d, limit: %d)\n", currentCount, maxResults)
-					return nil // Exit gracefully
+				// Simple database count check
+				var currentCount int
+				err := r.db.QueryRow("SELECT COUNT(*) FROM results WHERE job_id = $1", r.jobID).Scan(&currentCount)
+				if err == nil && currentCount >= maxResults {
+					fmt.Printf("DEBUG: PostgreSQL Writer - already at limit (%d/%d), stopping\n", currentCount, maxResults)
+					return nil
 				}
 			}
 		}

@@ -12,7 +12,6 @@ type Exiter interface {
 	SetSeedCount(int)
 	SetMaxResults(int)
 	GetMaxResults() int
-	GetCurrentResultCount() int // Add method to get current result count
 	SetCancelFunc(context.CancelFunc)
 	IncrSeedCompleted(int)
 	IncrPlacesFound(int)
@@ -60,13 +59,6 @@ func (e *exiter) GetMaxResults() int {
 	defer e.mu.Unlock()
 
 	return e.maxResults
-}
-
-func (e *exiter) GetCurrentResultCount() int {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	return e.resultsWritten
 }
 
 func (e *exiter) SetCancelFunc(fn context.CancelFunc) {
@@ -117,43 +109,25 @@ func (e *exiter) IncrResultsWritten(val int) {
 		return
 	}
 
-	// Check if we would exceed the limit BEFORE incrementing
-	if e.maxResults > 0 && e.resultsWritten+val > e.maxResults && !e.cancellationTriggered {
-		// Only increment to exactly the limit
-		allowedIncrement := e.maxResults - e.resultsWritten
-		if allowedIncrement > 0 {
-			e.resultsWritten += allowedIncrement
-			fmt.Printf("DEBUG: Partial increment to reach exact limit - written: %d, limit: %d\n", e.resultsWritten, e.maxResults)
-		}
-
-		// Trigger cancellation immediately
-		e.cancellationTriggered = true
-		fmt.Printf("DEBUG: MAX RESULTS LIMIT REACHED! Triggering cancellation - written: %d, limit: %d\n", e.resultsWritten, e.maxResults)
-		if e.cancelFunc != nil {
-			fmt.Printf("DEBUG: Calling cancel function to stop job execution\n")
-			go e.cancelFunc() // Keep it async to avoid potential deadlocks
-		} else {
-			fmt.Printf("DEBUG: WARNING - cancelFunc is nil, cannot trigger cancellation\n")
-		}
-		return
-	}
-
-	// Normal increment
+	// Increment even if we're at the limit (for accurate counting)
 	e.resultsWritten += val
 
 	// DEBUG: Log the current state
 	fmt.Printf("DEBUG: IncrResultsWritten - resultsWritten: %d, maxResults: %d, cancellationTriggered: %v\n", e.resultsWritten, e.maxResults, e.cancellationTriggered)
 
-	// Check if we've reached the max results limit after normal increment
+	// Check if we've reached the max results limit and trigger early exit
 	if e.maxResults > 0 && e.resultsWritten >= e.maxResults && !e.cancellationTriggered {
 		e.cancellationTriggered = true
 		fmt.Printf("DEBUG: MAX RESULTS LIMIT REACHED! Triggering cancellation - written: %d, limit: %d\n", e.resultsWritten, e.maxResults)
 		if e.cancelFunc != nil {
 			fmt.Printf("DEBUG: Calling cancel function to stop job execution\n")
+			// Trigger cancellation - we've written enough results
 			go e.cancelFunc() // Keep it async to avoid potential deadlocks
 		} else {
 			fmt.Printf("DEBUG: WARNING - cancelFunc is nil, cannot trigger cancellation\n")
 		}
+	} else {
+		fmt.Printf("DEBUG: Not triggering cancellation - written: %d, limit: %d, triggered: %v\n", e.resultsWritten, e.maxResults, e.cancellationTriggered)
 	}
 }
 
