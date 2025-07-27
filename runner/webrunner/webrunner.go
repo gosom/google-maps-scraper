@@ -259,7 +259,9 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 				// If job was cancelled, cancel the context
 				if currentJob.Status == web.StatusAborting || currentJob.Status == web.StatusCancelled {
 					log.Printf("DEBUG: Job %s cancellation detected, stopping execution", job.ID)
+					log.Printf("DEBUG: Job %s calling jobCancel() to stop mate.Start()", job.ID)
 					jobCancel()
+					log.Printf("DEBUG: Job %s monitoring goroutine exiting after cancellation", job.ID)
 					return
 				}
 			}
@@ -405,24 +407,70 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		log.Printf("DEBUG: Job %s - Starting exit monitor", job.ID)
 
 		go exitMonitor.Run(mateCtx)
+		log.Printf("DEBUG: Job %s - About to call mate.Start() with %d seed jobs", job.ID, len(seedJobs))
 
-		err = mate.Start(mateCtx, seedJobs...)
-		log.Printf("DEBUG: Job %s - mate.Start completed with error: %v", job.ID, err)
+		// Add a backup timeout mechanism to prevent jobs from hanging
+		// when max results are reached but mate.Start() doesn't return
+		var mateErr error
+		done := make(chan struct{})
+
+		go func() {
+			defer close(done)
+			mateErr = mate.Start(mateCtx, seedJobs...)
+			log.Printf("DEBUG: Job %s - mate.Start goroutine completed with error: %v", job.ID, mateErr)
+		}()
+
+		// Wait for mate.Start to complete or for a backup timeout
+		backupTimeout := time.NewTimer(time.Duration(allowedSeconds+30) * time.Second)
+		defer backupTimeout.Stop()
+
+		select {
+		case <-done:
+			// mate.Start completed normally
+			err = mateErr
+			log.Printf("DEBUG: Job %s - mate.Start completed normally with error: %v", job.ID, err)
+		case <-backupTimeout.C:
+			// Backup timeout - force completion
+			log.Printf("DEBUG: Job %s - Backup timeout triggered, forcing completion", job.ID)
+			cancel() // Cancel the mate context
+			<-done   // Wait for mate.Start to actually finish
+			err = mateErr
+			log.Printf("DEBUG: Job %s - Forced completion with error: %v", job.ID, err)
+		}
+
+		log.Printf("DEBUG: Job %s - Context after mate.Start - Done: %v", job.ID, mateCtx.Err())
 
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
-				log.Printf("DEBUG: Job %s - Context canceled (likely cancelled or max results reached)", job.ID)
-				// Check if it was actually cancelled
+				log.Printf("DEBUG: Job %s - Context canceled (checking reason)", job.ID)
+
+				// Check if it was user cancellation
 				currentJob, getErr := w.svc.Get(context.Background(), job.ID)
-				if getErr == nil && (currentJob.Status == web.StatusAborting || currentJob.Status == web.StatusCancelled) {
+				if getErr != nil {
+					log.Printf("DEBUG: Job %s - Failed to get current status after cancellation: %v", job.ID, getErr)
+					// Assume it was cancelled if we can't get status
 					job.Status = web.StatusCancelled
-					log.Printf("DEBUG: Job %s - Marked as cancelled (user initiated)", job.ID)
+					jobSuccess = false
 				} else {
-					jobSuccess = true
-					log.Printf("DEBUG: Job %s - Context cancelled but not by user (likely max results or normal completion)", job.ID)
+					log.Printf("DEBUG: Job %s - Current status after context cancellation: %s", job.ID, currentJob.Status)
+
+					if currentJob.Status == web.StatusAborting || currentJob.Status == web.StatusCancelled {
+						job.Status = web.StatusCancelled
+						log.Printf("DEBUG: Job %s - Marked as cancelled (user initiated)", job.ID)
+						jobSuccess = false // Explicitly mark as not successful for user cancellation
+					} else {
+						// Check if max results were reached
+						if job.Data.MaxResults > 0 {
+							log.Printf("DEBUG: Job %s - Context cancelled with max results set (%d), treating as successful completion", job.ID, job.Data.MaxResults)
+							jobSuccess = true
+						} else {
+							log.Printf("DEBUG: Job %s - Context cancelled without max results, treating as normal completion", job.ID)
+							jobSuccess = true
+						}
+					}
 				}
 			} else if errors.Is(err, context.DeadlineExceeded) {
-				log.Printf("DEBUG: Job %s - Context deadline exceeded (timeout)", job.ID)
+				log.Printf("DEBUG: Job %s - Context deadline exceeded (timeout), treating as successful", job.ID)
 				jobSuccess = true
 			} else {
 				// This is a real error
@@ -467,16 +515,26 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		}
 	}
 
-	if jobSuccess {
+	// Determine final job status
+	log.Printf("DEBUG: Job %s - Determining final status: jobSuccess=%v, current status=%s", job.ID, jobSuccess, job.Status)
+
+	if job.Status == web.StatusCancelled {
+		log.Printf("DEBUG: Job %s - Keeping cancelled status", job.ID)
+		// Keep the cancelled status
+	} else if jobSuccess {
 		job.Status = web.StatusOK
+		log.Printf("DEBUG: Job %s - Setting status to OK (successful completion)", job.ID)
 	} else {
 		job.Status = web.StatusFailed
+		log.Printf("DEBUG: Job %s - Setting status to FAILED", job.ID)
 	}
 
 	// Update job status
 	err = w.svc.Update(context.Background(), job)
 	if err != nil {
 		log.Printf("failed to update job status: %v", err)
+	} else {
+		log.Printf("DEBUG: Job %s - Final status update successful: %s", job.ID, job.Status)
 	}
 
 	// Complete usage tracking with final results

@@ -87,5 +87,33 @@ func (s *Service) GetCSV(_ context.Context, id string) (string, error) {
 }
 
 func (s *Service) Cancel(ctx context.Context, id string) error {
-	return s.repo.Cancel(ctx, id)
+	fmt.Printf("DEBUG: Service.Cancel called for job %s\n", id)
+
+	// Get current job status before cancellation
+	job, err := s.repo.Get(ctx, id)
+	if err != nil {
+		fmt.Printf("DEBUG: Failed to get job %s before cancellation: %v\n", id, err)
+		return err
+	}
+
+	fmt.Printf("DEBUG: Job %s current status before cancel: %s\n", id, job.Status)
+
+	// Call repository Cancel method
+	err = s.repo.Cancel(ctx, id)
+	if err != nil {
+		fmt.Printf("DEBUG: Failed to cancel job %s: %v\n", id, err)
+		return err
+	}
+
+	fmt.Printf("DEBUG: Job %s cancel operation completed\n", id)
+
+	// Verify the status was updated
+	updatedJob, err := s.repo.Get(ctx, id)
+	if err != nil {
+		fmt.Printf("DEBUG: Failed to get job %s after cancellation: %v\n", id, err)
+	} else {
+		fmt.Printf("DEBUG: Job %s status after cancel: %s\n", id, updatedJob.Status)
+	}
+
+	return nil
 }
