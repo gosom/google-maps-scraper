@@ -123,6 +123,16 @@ func (repo *repo) Update(ctx context.Context, job *web.Job) error {
 	return err
 }
 
+// Cancel marks a job as aborting
+func (repo *repo) Cancel(ctx context.Context, id string) error {
+	const q = `UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?`
+
+	updatedAt := time.Now().UTC().Unix()
+	_, err := repo.db.ExecContext(ctx, q, web.StatusAborting, updatedAt, id)
+
+	return err
+}
+
 type scannable interface {
 	Scan(dest ...any) error
 }
