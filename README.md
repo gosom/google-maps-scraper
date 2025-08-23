@@ -69,6 +69,7 @@ A no-code Google Maps scraper that pulls business leads from Google Maps in one 
 
 - 📇 **Includes** emails, social profiles, phone numbers, addresses, reviews, images and more.
 - 📥 **Export** to CSV · Excel · JSON  
+- 🔌 **API** Support: Extract data via [API](https://gmapsextractor.com/google-maps-api?utm_source=github&utm_medium=banner&utm_campaign=gosom)
 - 🎁 **Free**: Get your first **1,000 leads** today  
 [Get Started for Free](https://gmapsextractor.com?utm_source=github&utm_medium=banner&utm_campaign=gosom)
 
@@ -701,3 +702,4 @@ Please use this scraper responsibly and in accordance with all applicable laws a
 
 banner is generated using OpenAI's DALL-E
 > **Note:** If you register via the links on my page, I may get a commission. This is another way to support my work
+
