@@ -358,6 +358,42 @@ The results are written when they arrive in the `results` file you specified
 
 **If you want emails use additionally the `-email` parameter**
 
+### Using a Proxy
+
+#### UI
+From the UI set the url, username and password
+
+#### Command line
+
+Use the `-proxies` option like:
+
+```
+./google-maps-scraper -input example-queries.txt -results random.txt -proxies '<proxy1>,<proxy2>' -depth 1 -c 2
+```
+
+where `<proxy1>,...<proxyN>` is a valid proxy url like:
+
+```
+'scheme://username:password@host:port
+```
+
+if your proxy does not require authentication:
+
+```
+scheme://host:port
+```
+
+Supported schemes:
+
+- socks5
+- socks5h
+- http
+- https
+
+I encourange you to buy a proxy service from one of our sponsors.
+They are reliable and help me to maintain the project.
+
+
 ### Command line options
 
 try `./google-maps-scraper -h` to see the command line options available:
