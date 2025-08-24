@@ -256,12 +256,19 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 
 				log.Printf("DEBUG: Job %s status check - current status: %s", job.ID, currentJob.Status)
 
-				// If job was cancelled, cancel the context
-				if currentJob.Status == web.StatusAborting || currentJob.Status == web.StatusCancelled {
-					log.Printf("DEBUG: Job %s cancellation detected, stopping execution", job.ID)
-					log.Printf("DEBUG: Job %s calling jobCancel() to stop mate.Start()", job.ID)
-					jobCancel()
-					log.Printf("DEBUG: Job %s monitoring goroutine exiting after cancellation", job.ID)
+				// Stop monitoring if job has completed (any final status)
+				if currentJob.Status == web.StatusAborting || currentJob.Status == web.StatusCancelled ||
+					currentJob.Status == web.StatusOK || currentJob.Status == web.StatusFailed {
+					log.Printf("DEBUG: Job %s final status detected (%s), stopping monitoring", job.ID, currentJob.Status)
+
+					// Only cancel execution for user-initiated cancellation
+					if currentJob.Status == web.StatusAborting || currentJob.Status == web.StatusCancelled {
+						log.Printf("DEBUG: Job %s user cancellation detected, stopping execution", job.ID)
+						log.Printf("DEBUG: Job %s calling jobCancel() to stop mate.Start()", job.ID)
+						jobCancel()
+					}
+
+					log.Printf("DEBUG: Job %s monitoring goroutine exiting after final status", job.ID)
 					return
 				}
 			}
@@ -555,11 +562,13 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job, exitMonitor exiter.Exiter) (*scrapemateapp.ScrapemateApp, error) {
 	opts := []func(*scrapemateapp.Config) error{
 		scrapemateapp.WithConcurrency(w.cfg.Concurrency),
-		scrapemateapp.WithExitOnInactivity(time.Minute * 3),
+		scrapemateapp.WithExitOnInactivity(time.Minute * 10), // Increased timeout for Google Maps
 	}
 
+	// Always use stealth mode for Google Maps to avoid detection
 	if !job.Data.FastMode {
 		opts = append(opts,
+			scrapemateapp.WithStealth("firefox"), // Enable stealth for better compatibility
 			scrapemateapp.WithJS(scrapemateapp.DisableImages()),
 		)
 	} else {
@@ -587,7 +596,7 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 		)
 	}
 
-	log.Printf("job %s has proxy: %v", job.ID, hasProxy)
+	log.Printf("job %s configured with stealth mode and proxy: %v", job.ID, hasProxy)
 
 	// Create list of writers - CSV and PostgreSQL
 	csvWriter := csvwriter.NewCsvWriter(csv.NewWriter(writer))

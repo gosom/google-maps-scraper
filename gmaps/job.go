@@ -216,6 +216,7 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 
 	pageResponse, err := page.Goto(j.GetFullURL(), playwright.PageGotoOptions{
 		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
+		Timeout:   playwright.Float(30000), // Increased timeout
 	})
 
 	if err != nil {
@@ -231,12 +232,16 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 	default:
 	}
 
+	// Wait a bit before handling cookies to let page load
+	page.WaitForTimeout(3000)
+
 	if err = clickRejectCookiesIfRequired(page); err != nil {
 		resp.Error = err
 		return resp
 	}
 
-	const defaultTimeout = 5000
+	// Wait for main content to be ready
+	const defaultTimeout = 10000
 
 	err = page.WaitForURL(page.URL(), playwright.PageWaitForURLOptions{
 		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
@@ -292,8 +297,13 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 	default:
 	}
 
+	// Debug: log the current URL to see if we're being redirected
+	log := scrapemate.GetLoggerFromContext(ctx)
+	log.Info(fmt.Sprintf("DEBUG: Current page URL after navigation: %s", page.URL()))
+
 	if singlePlace {
 		resp.URL = page.URL()
+		log.Info(fmt.Sprintf("DEBUG: Detected single place redirect to: %s", resp.URL))
 
 		var body string
 
@@ -304,8 +314,18 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 		}
 
 		resp.Body = []byte(body)
+		log.Info(fmt.Sprintf("DEBUG: Single place content length: %d", len(resp.Body)))
 
 		return resp
+	}
+
+	// Debug: Check if the feed selector exists
+	log.Info("DEBUG: Looking for search results feed...")
+	_, feedErr := page.QuerySelector(`div[role='feed']`)
+	if feedErr != nil {
+		log.Info(fmt.Sprintf("DEBUG: Feed selector not found: %v", feedErr))
+	} else {
+		log.Info("DEBUG: Feed selector found successfully")
 	}
 
 	scrollSelector := `div[role='feed']`

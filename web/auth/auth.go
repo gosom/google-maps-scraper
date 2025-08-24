@@ -105,9 +105,12 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 		// Check if user exists in our database
 		user, err := m.userRepo.GetByID(r.Context(), userID)
 		if err != nil {
+			log.Printf("DEBUG: User %s not found in local database, attempting to create from Clerk", userID)
+
 			// If user doesn't exist, get their email and create them
 			clerkUser, err := m.client.Users().Read(userID)
 			if err != nil {
+				log.Printf("ERROR: Failed to retrieve user %s from Clerk: %v", userID, err)
 				http.Error(w, "Failed to retrieve user information", http.StatusInternalServerError)
 				return
 			}
@@ -129,9 +132,12 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 			}
 
 			if email == "" {
+				log.Printf("ERROR: User %s has no email address in Clerk", userID)
 				http.Error(w, "User has no email address", http.StatusBadRequest)
 				return
 			}
+
+			log.Printf("DEBUG: Creating new user %s with email %s", userID, email)
 
 			// Create a new user in our database
 			user = postgres.User{
@@ -140,9 +146,14 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 			}
 			err = m.userRepo.Create(r.Context(), &user)
 			if err != nil {
-				http.Error(w, "Failed to create user record", http.StatusInternalServerError)
+				log.Printf("ERROR: Failed to create user %s in local database: %v", userID, err)
+				http.Error(w, "Failed to create user record: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
+
+			log.Printf("SUCCESS: Created user %s in local database", userID)
+		} else {
+			log.Printf("DEBUG: User %s found in local database", userID)
 		}
 
 		// Add user ID to request context

@@ -359,10 +359,30 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 
 	newJob := Job{
 		ID:     uuid.New().String(),
+		UserID: "default_user_id", // Set default user for web UI
 		Name:   r.Form.Get("name"),
 		Date:   time.Now().UTC(),
 		Status: StatusPending,
 		Data:   JobData{},
+	}
+
+	// Ensure default user exists for web UI
+	if s.userRepo != nil {
+		_, err := s.userRepo.GetByID(r.Context(), "default_user_id")
+		if err != nil {
+			// Create default user
+			defaultUser := postgres.User{
+				ID:    "default_user_id",
+				Email: "webui@example.com",
+			}
+			err = s.userRepo.Create(r.Context(), &defaultUser)
+			if err != nil {
+				http.Error(w, "Failed to create default user: "+err.Error(), http.StatusInternalServerError)
+				s.logger.Printf("Failed to create default user for web UI: %v", err)
+				return
+			}
+			s.logger.Printf("Created default user for web UI")
+		}
 	}
 
 	maxTimeStr := r.Form.Get("maxtime")
