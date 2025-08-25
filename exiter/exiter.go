@@ -33,9 +33,10 @@ type exiter struct {
 	seedCompleted         int
 	placesFound           int
 	placesCompleted       int
-	resultsWritten        int  // New field to track actual results written
-	maxResults            int  // Maximum number of places to find (0 = unlimited)
-	cancellationTriggered bool // Track if cancellation has been triggered
+	resultsWritten        int       // New field to track actual results written
+	maxResults            int       // Maximum number of places to find (0 = unlimited)
+	cancellationTriggered bool      // Track if cancellation has been triggered
+	lastProgressTime      time.Time // Track last time we made progress
 
 	mu         *sync.Mutex
 	cancelFunc context.CancelFunc
@@ -43,7 +44,8 @@ type exiter struct {
 
 func New() Exiter {
 	return &exiter{
-		mu: &sync.Mutex{},
+		mu:               &sync.Mutex{},
+		lastProgressTime: time.Now(),
 	}
 }
 
@@ -88,6 +90,7 @@ func (e *exiter) IncrPlacesFound(val int) {
 	defer e.mu.Unlock()
 
 	e.placesFound += val
+	e.lastProgressTime = time.Now() // Update progress time when new places are found
 
 	// Note: We don't cancel here anymore - we wait for places to be completed
 	// The cancellation logic is moved to IncrPlacesCompleted
@@ -101,6 +104,7 @@ func (e *exiter) IncrPlacesCompleted(val int) {
 	// Note: This counts ALL completed jobs (success + failed) for exit timing
 	// Actual result counting happens separately in IncrResultsWritten
 	e.placesCompleted += val
+	e.lastProgressTime = time.Now() // Update progress time
 
 	// DEBUG: Log the current state
 	fmt.Printf("DEBUG: IncrPlacesCompleted - placesCompleted: %d, resultsWritten: %d, maxResults: %d\n",
@@ -119,6 +123,7 @@ func (e *exiter) IncrResultsWritten(val int) {
 
 	// Increment even if we're at the limit (for accurate counting)
 	e.resultsWritten += val
+	e.lastProgressTime = time.Now() // Update progress time
 
 	// DEBUG: Log the current state
 	fmt.Printf("DEBUG: IncrResultsWritten - resultsWritten: %d, maxResults: %d, cancellationTriggered: %v\n", e.resultsWritten, e.maxResults, e.cancellationTriggered)
@@ -204,7 +209,26 @@ func (e *exiter) isDone() bool {
 			fmt.Printf("DEBUG: isDone() - unlimited mode, all places complete (%d/%d)\n", e.placesCompleted, e.placesFound)
 			return true
 		}
-		fmt.Printf("DEBUG: isDone() - unlimited mode, waiting for places (%d/%d)\n", e.placesCompleted, e.placesFound)
+		// Add timeout protection - if we've been waiting too long for the last place
+		// and we have results, consider it done (handles stuck/failed jobs)
+		if e.placesFound > 0 && e.resultsWritten > 0 {
+			// Check for inactivity timeout (30 seconds without progress)
+			inactivityDuration := time.Since(e.lastProgressTime)
+			const maxInactivity = 30 * time.Second
+
+			// If we're missing only 1-2 places and haven't made progress, exit
+			missingPlaces := e.placesFound - e.placesCompleted
+			if (missingPlaces <= 2 && missingPlaces > 0) || (inactivityDuration > maxInactivity && missingPlaces > 0) {
+				if inactivityDuration > maxInactivity {
+					fmt.Printf("DEBUG: isDone() - unlimited mode, inactivity timeout after %v with %d missing places\n", inactivityDuration, missingPlaces)
+				} else {
+					fmt.Printf("DEBUG: isDone() - unlimited mode, accepting completion with %d missing places (likely failed jobs)\n", missingPlaces)
+				}
+				return true
+			}
+		}
+		inactivityDuration := time.Since(e.lastProgressTime)
+		fmt.Printf("DEBUG: isDone() - unlimited mode, waiting for places (%d/%d), inactive for %v\n", e.placesCompleted, e.placesFound, inactivityDuration)
 		return false
 	}
 
