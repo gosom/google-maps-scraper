@@ -22,6 +22,100 @@ import (
 	"github.com/gosom/google-maps-scraper/tlmt/goposthog"
 )
 
+// parseConcurrency parses dynamic concurrency values including percentages, fractions, and keywords
+func parseConcurrency(value string) (int, error) {
+	if value == "" {
+		return 0, fmt.Errorf("empty value")
+	}
+
+	cpuCores := runtime.NumCPU()
+	fmt.Printf("DEBUG: System CPU cores detected: %d\n", cpuCores)
+
+	value = strings.TrimSpace(strings.ToLower(value))
+
+	// Handle keywords
+	switch value {
+	case "auto":
+		result := cpuCores / 2
+		if result < 1 {
+			result = 1
+		}
+		fmt.Printf("DEBUG: CONCURRENCY=auto -> %d (50%% of %d cores)\n", result, cpuCores)
+		return result, nil
+	case "max":
+		fmt.Printf("DEBUG: CONCURRENCY=max -> %d (100%% of %d cores)\n", cpuCores, cpuCores)
+		return cpuCores, nil
+	case "conservative":
+		result := cpuCores / 4
+		if result < 1 {
+			result = 1
+		}
+		fmt.Printf("DEBUG: CONCURRENCY=conservative -> %d (25%% of %d cores)\n", result, cpuCores)
+		return result, nil
+	case "aggressive":
+		result := (cpuCores * 3) / 4
+		if result < 1 {
+			result = 1
+		}
+		fmt.Printf("DEBUG: CONCURRENCY=aggressive -> %d (75%% of %d cores)\n", result, cpuCores)
+		return result, nil
+	}
+
+	// Handle percentages (e.g., "75%")
+	if strings.HasSuffix(value, "%") {
+		percentStr := strings.TrimSuffix(value, "%")
+		percent, err := strconv.ParseFloat(percentStr, 64)
+		if err != nil {
+			return 0, fmt.Errorf("invalid percentage format: %s", value)
+		}
+		if percent < 0 || percent > 100 {
+			return 0, fmt.Errorf("percentage must be between 0 and 100: %.1f", percent)
+		}
+		result := int((float64(cpuCores) * percent) / 100.0)
+		if result < 1 {
+			result = 1
+		}
+		fmt.Printf("DEBUG: CONCURRENCY=%s -> %d (%.1f%% of %d cores)\n", value, result, percent, cpuCores)
+		return result, nil
+	}
+
+	// Handle fractions (e.g., "3/4")
+	if strings.Contains(value, "/") {
+		parts := strings.Split(value, "/")
+		if len(parts) != 2 {
+			return 0, fmt.Errorf("invalid fraction format: %s", value)
+		}
+		numerator, err := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+		if err != nil {
+			return 0, fmt.Errorf("invalid fraction numerator: %s", parts[0])
+		}
+		denominator, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+		if err != nil {
+			return 0, fmt.Errorf("invalid fraction denominator: %s", parts[1])
+		}
+		if denominator == 0 {
+			return 0, fmt.Errorf("fraction denominator cannot be zero")
+		}
+		result := int((float64(cpuCores) * numerator) / denominator)
+		if result < 1 {
+			result = 1
+		}
+		fmt.Printf("DEBUG: CONCURRENCY=%s -> %d (%.1f/%.1f of %d cores)\n", value, result, numerator, denominator, cpuCores)
+		return result, nil
+	}
+
+	// Handle direct numbers
+	number, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid number format: %s", value)
+	}
+	if number < 1 {
+		return 0, fmt.Errorf("concurrency must be at least 1: %d", number)
+	}
+	fmt.Printf("DEBUG: CONCURRENCY=%s -> %d (direct number)\n", value, number)
+	return number, nil
+}
+
 const (
 	RunModeFile = iota + 1
 	RunModeDatabase
@@ -101,7 +195,7 @@ func ParseConfig() *Config {
 	if defaultConcurrency < 1 {
 		defaultConcurrency = 1
 	}
-	flag.IntVar(&cfg.Concurrency, "c", defaultConcurrency, "sets the concurrency [default: half of CPU cores]")
+	flag.IntVar(&cfg.Concurrency, "c", defaultConcurrency, "sets the concurrency [default: half of CPU cores]. Also accepts CONCURRENCY env var with: numbers, percentages (75%), fractions (3/4), or keywords (auto, max, conservative, aggressive)")
 	flag.StringVar(&cfg.CacheDir, "cache", "cache", "sets the cache directory [no effect at the moment]")
 	flag.IntVar(&cfg.MaxDepth, "depth", 10, "maximum scroll depth in search results [default: 10]")
 	flag.StringVar(&cfg.ResultsFile, "results", "stdout", "path to the results file [default: stdout]")
@@ -152,11 +246,17 @@ func ParseConfig() *Config {
 		cfg.Dsn = os.Getenv("DSN")
 	}
 
-	// Allow concurrency override via environment variable
+	// Allow concurrency override via environment variable with dynamic parsing
 	if concurrencyEnv := os.Getenv("CONCURRENCY"); concurrencyEnv != "" {
-		if c, err := strconv.Atoi(concurrencyEnv); err == nil && c > 0 {
+		if c, err := parseConcurrency(concurrencyEnv); err == nil {
 			cfg.Concurrency = c
+			fmt.Printf("DEBUG: Final concurrency set to: %d\n", cfg.Concurrency)
+		} else {
+			fmt.Printf("WARNING: Invalid CONCURRENCY value '%s': %v. Using default: %d\n", concurrencyEnv, err, cfg.Concurrency)
 		}
+	} else {
+		cpuCores := runtime.NumCPU()
+		fmt.Printf("DEBUG: Using default concurrency: %d (no CONCURRENCY env var set, system has %d cores)\n", cfg.Concurrency, cpuCores)
 	}
 
 	if cfg.AwsLambdaInvoker && cfg.FunctionName == "" {
