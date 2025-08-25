@@ -170,6 +170,23 @@ func (w *webrunner) work(ctx context.Context) error {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
+	// Create a semaphore to limit concurrent jobs
+	// Use CONCURRENCY env var or default to 1 for job concurrency
+	maxConcurrentJobs := 1
+	if w.cfg.Concurrency > 1 {
+		// Allow up to half of the concurrency for job-level parallelism
+		// This leaves resources for URL-level concurrency within each job
+		maxConcurrentJobs = w.cfg.Concurrency / 2
+		if maxConcurrentJobs < 1 {
+			maxConcurrentJobs = 1
+		}
+	}
+
+	log.Printf("Starting job worker with max concurrent jobs: %d (total concurrency: %d)", maxConcurrentJobs, w.cfg.Concurrency)
+
+	// Use buffered channel as semaphore
+	jobSemaphore := make(chan struct{}, maxConcurrentJobs)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -184,30 +201,37 @@ func (w *webrunner) work(ctx context.Context) error {
 				select {
 				case <-ctx.Done():
 					return nil
+				case jobSemaphore <- struct{}{}: // Acquire semaphore
+					// Launch job in goroutine for concurrent execution
+					go func(job web.Job) {
+						defer func() { <-jobSemaphore }() // Release semaphore when done
+
+						t0 := time.Now().UTC()
+						if err := w.scrapeJob(ctx, &job); err != nil {
+							params := map[string]any{
+								"job_count": len(job.Data.Keywords),
+								"duration":  time.Now().UTC().Sub(t0).String(),
+								"error":     err.Error(),
+							}
+
+							evt := tlmt.NewEvent("web_runner", params)
+							_ = runner.Telemetry().Send(ctx, evt)
+
+							log.Printf("error scraping job %s: %v", job.ID, err)
+						} else {
+							params := map[string]any{
+								"job_count": len(job.Data.Keywords),
+								"duration":  time.Now().UTC().Sub(t0).String(),
+							}
+
+							_ = runner.Telemetry().Send(ctx, tlmt.NewEvent("web_runner", params))
+
+							log.Printf("job %s scraped successfully", job.ID)
+						}
+					}(jobs[i]) // Pass by value to avoid race condition
 				default:
-					t0 := time.Now().UTC()
-					if err := w.scrapeJob(ctx, &jobs[i]); err != nil {
-						params := map[string]any{
-							"job_count": len(jobs[i].Data.Keywords),
-							"duration":  time.Now().UTC().Sub(t0).String(),
-							"error":     err.Error(),
-						}
-
-						evt := tlmt.NewEvent("web_runner", params)
-
-						_ = runner.Telemetry().Send(ctx, evt)
-
-						log.Printf("error scraping job %s: %v", jobs[i].ID, err)
-					} else {
-						params := map[string]any{
-							"job_count": len(jobs[i].Data.Keywords),
-							"duration":  time.Now().UTC().Sub(t0).String(),
-						}
-
-						_ = runner.Telemetry().Send(ctx, tlmt.NewEvent("web_runner", params))
-
-						log.Printf("job %s scraped successfully", jobs[i].ID)
-					}
+					// Semaphore full, skip this job for now (will be picked up in next tick)
+					log.Printf("Job %s skipped - max concurrent jobs (%d) reached", jobs[i].ID, maxConcurrentJobs)
 				}
 			}
 		}
@@ -410,7 +434,22 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		} else {
 			log.Printf("DEBUG: Job %s - No max results limit (unlimited)", job.ID)
 		}
-		exitMonitor.SetCancelFunc(cancel)
+
+		// Channel to monitor exit monitor completion - only trigger forced completion
+		// if exit monitor actually detected completion (not just timeout)
+		exitMonitorCompleted := make(chan struct{})
+
+		// Create a wrapper cancel function that signals exit monitor completion
+		wrapperCancel := func() {
+			log.Printf("DEBUG: Job %s - Exit monitor detected completion, signaling forced completion monitor", job.ID)
+			select {
+			case exitMonitorCompleted <- struct{}{}:
+			default:
+				// Channel already closed or full, ignore
+			}
+			cancel() // Call the original cancel function
+		}
+		exitMonitor.SetCancelFunc(wrapperCancel)
 		log.Printf("DEBUG: Job %s - Starting exit monitor", job.ID)
 
 		go exitMonitor.Run(mateCtx)
@@ -428,8 +467,23 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		}()
 
 		// Wait for mate.Start to complete or for a backup timeout
-		backupTimeout := time.NewTimer(time.Duration(allowedSeconds+30) * time.Second)
+		backupTimeout := time.NewTimer(time.Duration(allowedSeconds+60) * time.Second) // Increased buffer
 		defer backupTimeout.Stop()
+
+		// Add a longer forced completion timeout specifically for exit monitor completion
+		forcedCompletionTimeout := time.NewTimer(24 * time.Hour) // Start disabled
+		defer forcedCompletionTimeout.Stop()
+
+		go func() {
+			select {
+			case <-exitMonitorCompleted:
+				log.Printf("DEBUG: Job %s - Exit monitor completion detected, starting forced completion timer (30s)", job.ID)
+				forcedCompletionTimeout.Reset(30 * time.Second)
+			case <-mateCtx.Done():
+				// Context cancelled but not by exit monitor completion (probably timeout)
+				log.Printf("DEBUG: Job %s - Context cancelled but not by exit monitor completion", job.ID)
+			}
+		}()
 
 		select {
 		case <-done:
@@ -443,6 +497,29 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			<-done   // Wait for mate.Start to actually finish
 			err = mateErr
 			log.Printf("DEBUG: Job %s - Forced completion with error: %v", job.ID, err)
+		case <-forcedCompletionTimeout.C:
+			// Exit monitor triggered cancellation, but mate.Start is taking too long to respond
+			log.Printf("DEBUG: Job %s - Forced completion timeout after exit monitor cancellation", job.ID)
+			cancel() // Ensure mate context is cancelled
+
+			// Wait up to 15 more seconds for mate.Start to finish gracefully
+			finalWait := time.NewTimer(15 * time.Second) // Increased from 5s
+			select {
+			case <-done:
+				err = mateErr
+				log.Printf("DEBUG: Job %s - mate.Start finished after forced completion with error: %v", job.ID, err)
+			case <-finalWait.C:
+				// mate.Start is completely stuck, proceed with job completion
+				log.Printf("DEBUG: Job %s - mate.Start completely unresponsive, proceeding with job completion", job.ID)
+				err = context.Canceled // Treat as successful cancellation
+
+				// Force close mate to ensure resources are cleaned up
+				go func() {
+					log.Printf("DEBUG: Job %s - Force closing mate due to unresponsive mate.Start()", job.ID)
+					mate.Close()
+				}()
+			}
+			finalWait.Stop()
 		}
 
 		log.Printf("DEBUG: Job %s - Context after mate.Start - Done: %v", job.ID, mateCtx.Err())
@@ -560,8 +637,31 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 }
 
 func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job, exitMonitor exiter.Exiter) (*scrapemateapp.ScrapemateApp, error) {
+	// Calculate per-job concurrency based on total concurrency and max concurrent jobs
+	// This ensures we don't overwhelm the system when running multiple jobs simultaneously
+	maxConcurrentJobs := 1
+	if w.cfg.Concurrency > 1 {
+		maxConcurrentJobs = w.cfg.Concurrency / 2
+		if maxConcurrentJobs < 1 {
+			maxConcurrentJobs = 1
+		}
+	}
+
+	// Adjust per-job concurrency to be resource-friendly when running multiple jobs
+	perJobConcurrency := w.cfg.Concurrency
+	if maxConcurrentJobs > 1 {
+		// When running multiple jobs, reduce per-job concurrency to avoid resource contention
+		perJobConcurrency = w.cfg.Concurrency / maxConcurrentJobs
+		if perJobConcurrency < 1 {
+			perJobConcurrency = 1
+		}
+	}
+
+	log.Printf("job %s configured with per-job concurrency: %d (total system concurrency: %d, max concurrent jobs: %d)",
+		job.ID, perJobConcurrency, w.cfg.Concurrency, maxConcurrentJobs)
+
 	opts := []func(*scrapemateapp.Config) error{
-		scrapemateapp.WithConcurrency(w.cfg.Concurrency),
+		scrapemateapp.WithConcurrency(perJobConcurrency),     // Use calculated per-job concurrency
 		scrapemateapp.WithExitOnInactivity(time.Minute * 10), // Increased timeout for Google Maps
 	}
 
@@ -577,16 +677,12 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 		)
 	}
 
-	hasProxy := false
-
 	if len(w.cfg.Proxies) > 0 {
 		opts = append(opts, scrapemateapp.WithProxies(w.cfg.Proxies))
-		hasProxy = true
 	} else if len(job.Data.Proxies) > 0 {
 		opts = append(opts,
 			scrapemateapp.WithProxies(job.Data.Proxies),
 		)
-		hasProxy = true
 	}
 
 	if !w.cfg.DisablePageReuse {
@@ -596,7 +692,7 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 		)
 	}
 
-	log.Printf("job %s configured with stealth mode and proxy: %v", job.ID, hasProxy)
+	// log.Printf("job %s configured with stealth mode and proxy: %v", job.ID, hasProxy)
 
 	// Create list of writers - CSV and PostgreSQL
 	csvWriter := csvwriter.NewCsvWriter(csv.NewWriter(writer))

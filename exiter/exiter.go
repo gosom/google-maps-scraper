@@ -176,7 +176,9 @@ func (e *exiter) Run(ctx context.Context) {
 				fmt.Printf("DEBUG: Final state - seeds: %d/%d, places: %d/%d, results: %d/%d\n",
 					seedCompleted, seedCount, placesCompleted, placesFound, e.resultsWritten, maxResults)
 				if e.cancelFunc != nil {
+					fmt.Printf("DEBUG: Exit monitor calling cancel function to terminate mate.Start()\n")
 					e.cancelFunc()
+					fmt.Printf("DEBUG: Exit monitor cancel function called successfully\n")
 				} else {
 					fmt.Printf("DEBUG: WARNING - cancelFunc is nil in Run()\n")
 				}
@@ -218,13 +220,16 @@ func (e *exiter) isDone() bool {
 
 			// If we're missing only 1-2 places and haven't made progress, exit
 			missingPlaces := e.placesFound - e.placesCompleted
-			if (missingPlaces <= 2 && missingPlaces > 0) || (inactivityDuration > maxInactivity && missingPlaces > 0) {
-				if inactivityDuration > maxInactivity {
-					fmt.Printf("DEBUG: isDone() - unlimited mode, inactivity timeout after %v with %d missing places\n", inactivityDuration, missingPlaces)
-				} else {
-					fmt.Printf("DEBUG: isDone() - unlimited mode, accepting completion with %d missing places (likely failed jobs)\n", missingPlaces)
-				}
+			if (missingPlaces <= 2 && missingPlaces > 0) && inactivityDuration > maxInactivity {
+				fmt.Printf("DEBUG: isDone() - unlimited mode, inactivity timeout after %v with %d missing places\n", inactivityDuration, missingPlaces)
 				return true
+			} else if missingPlaces <= 1 && missingPlaces > 0 {
+				// Only exit for 1 missing place if we have a decent number of results
+				// AND we haven't had recent activity
+				if e.resultsWritten >= 10 && inactivityDuration > (10*time.Second) {
+					fmt.Printf("DEBUG: isDone() - unlimited mode, accepting completion with %d missing place (have %d results)\n", missingPlaces, e.resultsWritten)
+					return true
+				}
 			}
 		}
 		inactivityDuration := time.Since(e.lastProgressTime)
