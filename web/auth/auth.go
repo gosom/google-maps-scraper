@@ -15,9 +15,8 @@ import (
 
 // AuthMiddleware handles Clerk authentication and adds user info to the request context
 type AuthMiddleware struct {
-	client       clerk.Client
-	userRepo     postgres.UserRepository
-	usageLimiter postgres.UsageLimiter
+	client   clerk.Client
+	userRepo postgres.UserRepository
 }
 
 // ContextKey is used to store user information in the request context
@@ -31,16 +30,15 @@ const (
 )
 
 // NewAuthMiddleware creates a new AuthMiddleware
-func NewAuthMiddleware(clerkAPIKey string, userRepo postgres.UserRepository, usageLimiter postgres.UsageLimiter) (*AuthMiddleware, error) {
+func NewAuthMiddleware(clerkAPIKey string, userRepo postgres.UserRepository) (*AuthMiddleware, error) {
 	client, err := clerk.NewClient(clerkAPIKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Clerk client: %w", err)
 	}
 
 	return &AuthMiddleware{
-		client:       client,
-		userRepo:     userRepo,
-		usageLimiter: usageLimiter,
+		client:   client,
+		userRepo: userRepo,
 	}, nil
 }
 
@@ -151,56 +149,6 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 	})
 }
 
-// CheckUsageLimit is middleware to enforce usage limits
-func (m *AuthMiddleware) CheckUsageLimit(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Skip usage check for GET requests
-		if r.Method == http.MethodGet {
-			log.Printf("DEBUG: Skipping usage check for GET request %s %s", r.Method, r.URL.Path)
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		// Get user ID from context
-		userID, ok := r.Context().Value(UserIDKey).(string)
-		if !ok {
-			log.Printf("DEBUG: User not authenticated in CheckUsageLimit for %s %s", r.Method, r.URL.Path)
-			http.Error(w, "Unauthorized: user not authenticated", http.StatusUnauthorized)
-			return
-		}
-
-		log.Printf("DEBUG: Checking usage limit for user %s on %s %s", userID, r.Method, r.URL.Path)
-
-		// Check if user has reached their limit
-		allowed, err := m.usageLimiter.CheckLimit(r.Context(), userID)
-		if err != nil {
-			log.Printf("DEBUG: Error checking usage limit for user %s: %v", userID, err)
-			http.Error(w, "Failed to check usage limit", http.StatusInternalServerError)
-			return
-		}
-
-		log.Printf("DEBUG: Usage limit check result for user %s: allowed=%v", userID, allowed)
-
-		if !allowed {
-			// Get current usage to provide better error message
-			usage, err := m.usageLimiter.GetUsage(r.Context(), userID)
-			if err != nil {
-				log.Printf("DEBUG: Failed to get usage details for limit exceeded message: %v", err)
-				http.Error(w, "Usage limit reached. Try again tomorrow.", http.StatusTooManyRequests)
-				return
-			}
-			errorMsg := fmt.Sprintf("Daily usage limit reached. You have used %d jobs today. Try again tomorrow or contact support.", usage.JobCount)
-			log.Printf("DEBUG: Usage limit exceeded for user %s: %s", userID, errorMsg)
-			http.Error(w, errorMsg, http.StatusTooManyRequests)
-			return
-		}
-
-		log.Printf("DEBUG: Usage limit check passed for user %s, proceeding with request", userID)
-		// User is under their limit, proceed
-		next.ServeHTTP(w, r)
-	})
-}
-
 // GetUserID extracts the user ID from the request context
 func GetUserID(ctx context.Context) (string, error) {
 	userID, ok := ctx.Value(UserIDKey).(string)
@@ -208,13 +156,4 @@ func GetUserID(ctx context.Context) (string, error) {
 		return "", errors.New("user not authenticated")
 	}
 	return userID, nil
-}
-
-// IncrementUsage increases the usage count for a user
-func (m *AuthMiddleware) IncrementUsage(ctx context.Context) error {
-	userID, err := GetUserID(ctx)
-	if err != nil {
-		return err
-	}
-	return m.usageLimiter.IncrementUsage(ctx, userID)
 }

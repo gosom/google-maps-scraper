@@ -19,9 +19,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	"github.com/gosom/google-maps-scraper/billing"
+	"github.com/gosom/google-maps-scraper/config"
 	"github.com/gosom/google-maps-scraper/postgres"
-	stripeClient "github.com/gosom/google-maps-scraper/stripe"
-	"github.com/gosom/google-maps-scraper/subscription"
 	"github.com/gosom/google-maps-scraper/web/auth"
 )
 
@@ -29,17 +29,14 @@ import (
 var static embed.FS
 
 type Server struct {
-	tmpl                map[string]*template.Template
-	srv                 *http.Server
-	svc                 *Service
-	authMiddleware      *auth.AuthMiddleware
-	userRepo            postgres.UserRepository
-	usageLimiter        postgres.UsageLimiter
-	usageTracker        *postgres.UsageTracker
-	subscriptionHandler *SubscriptionHandler
-	webhookHandler      *WebhookHandler
-	db                  *sql.DB
-	logger              *log.Logger
+	tmpl           map[string]*template.Template
+	srv            *http.Server
+	svc            *Service
+	authMiddleware *auth.AuthMiddleware
+	userRepo       postgres.UserRepository
+	billingSvc     *billing.Service
+	db             *sql.DB
+	logger         *log.Logger
 }
 
 type ServerConfig struct {
@@ -47,7 +44,6 @@ type ServerConfig struct {
 	Addr                string
 	PgDB                *sql.DB // Optional PostgreSQL connection
 	UserRepo            postgres.UserRepository
-	UsageLimiter        postgres.UsageLimiter
 	ClerkAPIKey         string // Optional Clerk API key for authentication
 	StripeAPIKey        string // Optional Stripe API key for subscriptions
 	StripeWebhookSecret string // Optional Stripe webhook secret
@@ -55,12 +51,11 @@ type ServerConfig struct {
 
 func New(cfg ServerConfig) (*Server, error) {
 	ans := Server{
-		svc:          cfg.Service,
-		tmpl:         make(map[string]*template.Template),
-		db:           cfg.PgDB,
-		userRepo:     cfg.UserRepo,
-		usageLimiter: cfg.UsageLimiter,
-		logger:       log.New(os.Stdout, "[API] ", log.LstdFlags),
+		svc:      cfg.Service,
+		tmpl:     make(map[string]*template.Template),
+		db:       cfg.PgDB,
+		userRepo: cfg.UserRepo,
+		logger:   log.New(os.Stdout, "[API] ", log.LstdFlags),
 		srv: &http.Server{
 			Addr:              cfg.Addr,
 			ReadHeaderTimeout: 10 * time.Second,
@@ -71,35 +66,19 @@ func New(cfg ServerConfig) (*Server, error) {
 		},
 	}
 
-	// Initialize usage tracker if database is available
-	if cfg.PgDB != nil {
-		ans.usageTracker = postgres.NewUsageTracker(cfg.PgDB)
-	}
-
 	// Initialize authentication middleware if Clerk API key is provided
-	if cfg.ClerkAPIKey != "" && cfg.UserRepo != nil && cfg.UsageLimiter != nil {
+	if cfg.ClerkAPIKey != "" && cfg.UserRepo != nil {
 		var err error
-		ans.authMiddleware, err = auth.NewAuthMiddleware(cfg.ClerkAPIKey, cfg.UserRepo, cfg.UsageLimiter)
+		ans.authMiddleware, err = auth.NewAuthMiddleware(cfg.ClerkAPIKey, cfg.UserRepo)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize authentication: %w", err)
 		}
 	}
 
-	// Initialize subscription handlers if Stripe API key is provided
+	// Initialize billing service if Stripe API key is provided
 	if cfg.StripeAPIKey != "" && cfg.PgDB != nil {
-		// Initialize repositories
-		subRepo := postgres.NewSubscriptionRepository(cfg.PgDB)
-		webhookRepo := postgres.NewWebhookRepository(cfg.PgDB)
-
-		// Initialize Stripe client
-		stripe := stripeClient.NewClient(cfg.StripeAPIKey)
-
-		// Initialize subscription service
-		subscriptionService := subscription.NewService(stripe, subRepo, cfg.UserRepo, webhookRepo, ans.logger)
-
-		// Initialize handlers
-		ans.subscriptionHandler = NewSubscriptionHandler(subscriptionService, ans.logger)
-		ans.webhookHandler = NewWebhookHandler(stripe, subscriptionService, cfg.StripeWebhookSecret, ans.logger)
+		cfgSvc := config.New(cfg.PgDB)
+		ans.billingSvc = billing.New(cfg.PgDB, cfgSvc, cfg.StripeAPIKey, cfg.StripeWebhookSecret)
 	}
 
 	staticFS, err := fs.Sub(static, "static")
@@ -132,7 +111,6 @@ func New(cfg ServerConfig) (*Server, error) {
 	// Apply authentication middleware if available
 	if ans.authMiddleware != nil {
 		apiRouter.Use(ans.authMiddleware.Authenticate)
-		apiRouter.Use(ans.authMiddleware.CheckUsageLimit)
 	}
 
 	// API endpoints (these are protected by middleware if enabled)
@@ -146,18 +124,19 @@ func New(cfg ServerConfig) (*Server, error) {
 	apiRouter.HandleFunc("/jobs/{id}/results", ans.apiGetJobResults).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/results", ans.apiGetUserResults).Methods(http.MethodGet)
 
-	// Usage tracking endpoints
-	apiRouter.HandleFunc("/usage", ans.apiGetUsage).Methods(http.MethodGet)
-	apiRouter.HandleFunc("/usage/reset", ans.apiResetUsage).Methods(http.MethodPost)
-
-	// Subscription endpoints (if subscription handler is available)
-	if ans.subscriptionHandler != nil {
-		ans.subscriptionHandler.RegisterRoutes(apiRouter)
+	// Credit endpoints (if billing service is available)
+	if ans.billingSvc != nil {
+		apiRouter.HandleFunc("/credits/balance", ans.apiGetCreditBalance).Methods(http.MethodGet)
+		apiRouter.HandleFunc("/credits/checkout-session", ans.apiCreateCheckoutSession).Methods(http.MethodPost)
+		apiRouter.HandleFunc("/credits/reconcile", ans.apiReconcile).Methods(http.MethodPost)
 	}
 
 	// Webhook endpoints (public access, no authentication)
-	if ans.webhookHandler != nil {
-		router.HandleFunc("/webhooks/stripe", ans.webhookHandler.HandleStripeWebhook).Methods(http.MethodPost)
+	if ans.billingSvc != nil {
+		// Primary webhook path
+		router.HandleFunc("/webhooks/stripe", ans.handleStripeWebhook).Methods(http.MethodPost)
+		// Backward-compatible alias used by some Stripe CLI setups
+		router.HandleFunc("/api/stripe/webhook", ans.handleStripeWebhook).Methods(http.MethodPost)
 	}
 
 	// Apply security headers and CORS to all routes
@@ -181,6 +160,105 @@ func New(cfg ServerConfig) (*Server, error) {
 	}
 
 	return &ans, nil
+}
+
+// --- Billing (credits) HTTP handlers ---
+
+type creditBalanceResponse struct {
+	UserID                string `json:"user_id"`
+	CreditBalance         int    `json:"credit_balance"`
+	TotalCreditsPurchased int    `json:"total_credits_purchased"`
+}
+
+func (s *Server) apiGetCreditBalance(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		renderJSON(w, http.StatusServiceUnavailable, apiError{Code: http.StatusServiceUnavailable, Message: "database not available"})
+		return
+	}
+	if s.authMiddleware == nil {
+		renderJSON(w, http.StatusUnauthorized, apiError{Code: http.StatusUnauthorized, Message: "Authentication not configured"})
+		return
+	}
+	userID, err := auth.GetUserID(r.Context())
+	if err != nil || userID == "" {
+		renderJSON(w, http.StatusUnauthorized, apiError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
+		return
+	}
+	const q = `SELECT id, credit_balance, total_credits_purchased FROM users WHERE id=$1`
+	var resp creditBalanceResponse
+	if err := s.db.QueryRowContext(r.Context(), q, userID).Scan(&resp.UserID, &resp.CreditBalance, &resp.TotalCreditsPurchased); err != nil {
+		// If no row, return zero balance for authenticated user
+		resp = creditBalanceResponse{UserID: userID, CreditBalance: 0, TotalCreditsPurchased: 0}
+	}
+	renderJSON(w, http.StatusOK, resp)
+}
+
+type checkoutSessionRequest struct {
+	Credits  int    `json:"credits"`
+	Currency string `json:"currency"`
+}
+
+func (s *Server) apiCreateCheckoutSession(w http.ResponseWriter, r *http.Request) {
+	if s.billingSvc == nil {
+		renderJSON(w, http.StatusServiceUnavailable, apiError{Code: http.StatusServiceUnavailable, Message: "billing not configured"})
+		return
+	}
+	if s.authMiddleware == nil {
+		renderJSON(w, http.StatusUnauthorized, apiError{Code: http.StatusUnauthorized, Message: "Authentication not configured"})
+		return
+	}
+	userID, err := auth.GetUserID(r.Context())
+	if err != nil || userID == "" {
+		renderJSON(w, http.StatusUnauthorized, apiError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
+		return
+	}
+	var req checkoutSessionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		renderJSON(w, http.StatusUnprocessableEntity, apiError{Code: http.StatusUnprocessableEntity, Message: "invalid payload"})
+		return
+	}
+	out, err := s.billingSvc.CreateCheckoutSession(r.Context(), billing.CheckoutRequest{UserID: userID, Credits: req.Credits, Currency: req.Currency})
+	if err != nil {
+		renderJSON(w, http.StatusBadRequest, apiError{Code: http.StatusBadRequest, Message: err.Error()})
+		return
+	}
+	renderJSON(w, http.StatusOK, out)
+}
+
+type reconcileRequest struct {
+	SessionID string `json:"session_id"`
+}
+
+func (s *Server) apiReconcile(w http.ResponseWriter, r *http.Request) {
+	if s.billingSvc == nil {
+		renderJSON(w, http.StatusServiceUnavailable, apiError{Code: http.StatusServiceUnavailable, Message: "billing not configured"})
+		return
+	}
+	var req reconcileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.SessionID == "" {
+		renderJSON(w, http.StatusUnprocessableEntity, apiError{Code: http.StatusUnprocessableEntity, Message: "invalid payload"})
+		return
+	}
+	if err := s.billingSvc.ReconcileSession(r.Context(), req.SessionID); err != nil {
+		renderJSON(w, http.StatusBadRequest, apiError{Code: http.StatusBadRequest, Message: err.Error()})
+		return
+	}
+	renderJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) {
+	if s.billingSvc == nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	payload, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	sig := r.Header.Get("Stripe-Signature")
+	code, _ := s.billingSvc.HandleWebhook(r.Context(), payload, sig)
+	w.WriteHeader(code)
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
@@ -638,51 +716,23 @@ func (s *Server) apiScrape(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get user ID from context if authentication is enabled
-	var userID string
-	if s.authMiddleware != nil {
-		userID, err = auth.GetUserID(r.Context())
-		if err != nil {
-			ans := apiError{
-				Code:    http.StatusUnauthorized,
-				Message: "User not authenticated",
-			}
-			renderJSON(w, http.StatusUnauthorized, ans)
-			s.logger.Printf("User not authenticated: %v", err)
-			return
-		}
-	} else {
-		// If auth middleware is not enabled but we're using a DB that requires user_id
-		// Use a default user ID for development/testing without auth
-		// This is useful when running locally without Clerk authentication
-		userID = "default_user_id"
+	// Require authentication
+	if s.authMiddleware == nil {
+		ans := apiError{Code: http.StatusUnauthorized, Message: "Authentication not configured"}
+		renderJSON(w, http.StatusUnauthorized, ans)
+		return
+	}
 
-		// Check if the default user exists, create it if not
-		if s.userRepo != nil {
-			_, err := s.userRepo.GetByID(r.Context(), userID)
-			if err != nil {
-				// Create default user
-				defaultUser := postgres.User{
-					ID:    userID,
-					Email: "default@example.com",
-				}
-				err = s.userRepo.Create(r.Context(), &defaultUser)
-				if err != nil {
-					ans := apiError{
-						Code:    http.StatusInternalServerError,
-						Message: "Failed to create default user: " + err.Error(),
-					}
-					renderJSON(w, http.StatusInternalServerError, ans)
-					s.logger.Printf("Failed to create default user: %v", err)
-					return
-				}
-			}
-		}
+	userID, err := auth.GetUserID(r.Context())
+	if err != nil || userID == "" {
+		ans := apiError{Code: http.StatusUnauthorized, Message: "User not authenticated"}
+		renderJSON(w, http.StatusUnauthorized, ans)
+		return
 	}
 
 	newJob := Job{
 		ID:     uuid.New().String(),
-		UserID: userID, // Set the user ID from authenticated context or default
+		UserID: userID,
 		Name:   req.Name,
 		Date:   time.Now().UTC(),
 		Status: StatusPending,
@@ -717,14 +767,6 @@ func (s *Server) apiScrape(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusInternalServerError, ans)
 		s.logger.Printf("Failed to create job: %v", err)
 		return
-	}
-
-	// Increment usage if authentication is enabled
-	if s.authMiddleware != nil {
-		if err := s.authMiddleware.IncrementUsage(r.Context()); err != nil {
-			s.logger.Printf("Failed to increment usage for user %s: %v", userID, err)
-			// Continue anyway - the job was created successfully
-		}
 	}
 
 	ans := apiScrapeResponse{
@@ -1063,22 +1105,15 @@ func (s *Server) apiGetJobResults(w http.ResponseWriter, r *http.Request) {
 	offset := (page - 1) * limit
 
 	// Get user ID from context if authentication is enabled
-	var userID string
-	var err error
-
-	if s.authMiddleware != nil {
-		userID, err = auth.GetUserID(r.Context())
-		if err != nil {
-			apiError := apiError{
-				Code:    http.StatusUnauthorized,
-				Message: "User not authenticated",
-			}
-			renderJSON(w, http.StatusUnauthorized, apiError)
-			s.logger.Printf("User not authenticated for job results: %v", err)
-			return
+	userID, err := auth.GetUserID(r.Context())
+	if err != nil {
+		apiError := apiError{
+			Code:    http.StatusUnauthorized,
+			Message: "User not authenticated",
 		}
-	} else {
-		userID = "default_user_id"
+		renderJSON(w, http.StatusUnauthorized, apiError)
+		s.logger.Printf("User not authenticated for job results: %v", err)
+		return
 	}
 
 	// Verify job belongs to user
@@ -1147,22 +1182,15 @@ func (s *Server) apiGetUserResults(w http.ResponseWriter, r *http.Request) {
 	s.logger.Printf("GET %s", r.URL.Path)
 
 	// Get user ID from context
-	var userID string
-	var err error
-
-	if s.authMiddleware != nil {
-		userID, err = auth.GetUserID(r.Context())
-		if err != nil {
-			apiError := apiError{
-				Code:    http.StatusUnauthorized,
-				Message: "User not authenticated",
-			}
-			renderJSON(w, http.StatusUnauthorized, apiError)
-			s.logger.Printf("User not authenticated for user results: %v", err)
-			return
+	userID, err := auth.GetUserID(r.Context())
+	if err != nil {
+		apiError := apiError{
+			Code:    http.StatusUnauthorized,
+			Message: "User not authenticated",
 		}
-	} else {
-		userID = "default_user_id"
+		renderJSON(w, http.StatusUnauthorized, apiError)
+		s.logger.Printf("User not authenticated for user results: %v", err)
+		return
 	}
 
 	// Parse query parameters
@@ -1290,129 +1318,6 @@ func (s *Server) getUserResults(ctx context.Context, userID string, limit, offse
 	}
 
 	return results, nil
-}
-
-// apiGetUsage returns current usage statistics for the authenticated user
-func (s *Server) apiGetUsage(w http.ResponseWriter, r *http.Request) {
-	s.logger.Printf("GET %s", r.URL.Path)
-
-	if s.usageTracker == nil {
-		apiError := apiError{
-			Code:    http.StatusServiceUnavailable,
-			Message: "Usage tracking not available",
-		}
-		renderJSON(w, http.StatusServiceUnavailable, apiError)
-		s.logger.Printf("Usage tracking not available")
-		return
-	}
-
-	// Get user ID from context or use default
-	var userID string
-	var err error
-
-	if s.authMiddleware != nil {
-		userID, err = auth.GetUserID(r.Context())
-		if err != nil {
-			apiError := apiError{
-				Code:    http.StatusUnauthorized,
-				Message: "User not authenticated",
-			}
-			renderJSON(w, http.StatusUnauthorized, apiError)
-			s.logger.Printf("User not authenticated: %v", err)
-			return
-		}
-	} else {
-		// Use default user ID for development
-		userID = "default_user_id"
-	}
-
-	// Get usage summary
-	summary, err := s.usageTracker.GetUserUsageSummary(r.Context(), userID)
-	if err != nil {
-		apiError := apiError{
-			Code:    http.StatusInternalServerError,
-			Message: "Failed to get usage summary: " + err.Error(),
-		}
-		renderJSON(w, http.StatusInternalServerError, apiError)
-		s.logger.Printf("Failed to get usage summary for user %s: %v", userID, err)
-		return
-	}
-
-	renderJSON(w, http.StatusOK, summary)
-	s.logger.Printf("Retrieved usage summary for user %s", userID)
-}
-
-// apiResetUsage resets the daily usage count for the authenticated user (development only)
-func (s *Server) apiResetUsage(w http.ResponseWriter, r *http.Request) {
-	s.logger.Printf("POST %s", r.URL.Path)
-
-	if s.usageLimiter == nil {
-		apiError := apiError{
-			Code:    http.StatusServiceUnavailable,
-			Message: "Usage tracking not available",
-		}
-		renderJSON(w, http.StatusServiceUnavailable, apiError)
-		s.logger.Printf("Usage tracking not available")
-		return
-	}
-
-	// Get user ID from context or use default
-	var userID string
-	var err error
-
-	if s.authMiddleware != nil {
-		userID, err = auth.GetUserID(r.Context())
-		if err != nil {
-			apiError := apiError{
-				Code:    http.StatusUnauthorized,
-				Message: "User not authenticated",
-			}
-			renderJSON(w, http.StatusUnauthorized, apiError)
-			s.logger.Printf("User not authenticated: %v", err)
-			return
-		}
-	} else {
-		// Use default user ID for development
-		userID = "default_user_id"
-	}
-
-	// Reset the user's daily count by updating their record directly
-	err = s.resetUserDailyUsage(r.Context(), userID)
-	if err != nil {
-		apiError := apiError{
-			Code:    http.StatusInternalServerError,
-			Message: "Failed to reset usage: " + err.Error(),
-		}
-		renderJSON(w, http.StatusInternalServerError, apiError)
-		s.logger.Printf("Failed to reset usage for user %s: %v", userID, err)
-		return
-	}
-
-	response := map[string]interface{}{
-		"message": "Daily usage count reset successfully",
-		"user_id": userID,
-	}
-
-	renderJSON(w, http.StatusOK, response)
-	s.logger.Printf("Reset daily usage for user %s", userID)
-}
-
-// resetUserDailyUsage resets a user's daily job count
-func (s *Server) resetUserDailyUsage(ctx context.Context, userID string) error {
-	if s.db == nil {
-		return fmt.Errorf("database not available")
-	}
-
-	// Reset the job count to 0 and update last_job_date to yesterday
-	// This will make the CheckLimit function return true
-	yesterday := time.Now().AddDate(0, 0, -1)
-	const resetQuery = `
-		UPDATE user_usage 
-		SET job_count = 0, last_job_date = $1, updated_at = $2 
-		WHERE user_id = $3`
-
-	_, err := s.db.ExecContext(ctx, resetQuery, yesterday, time.Now().UTC(), userID)
-	return err
 }
 
 func renderJSON(w http.ResponseWriter, code int, data any) {
