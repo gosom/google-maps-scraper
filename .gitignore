@@ -4,3 +4,9 @@ bin
 webdata/
 CLAUDE.md
 prompt-googlesheets-plugin.md
+google-maps-scraper
+plugins/googlesheets/*.so
+webdata/*.db
+webdata/*.csv
+webdata/*.db-shm
+webdata/*.db-wal
