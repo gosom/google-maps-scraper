@@ -679,3 +679,18 @@ func filterAndSortEntriesWithinRadius(entries []*Entry, lat, lon, radius float64
 
 	return slices.Collect(iter.Seq[*Entry](resultIterator))
 }
+
+func (e *Entry) AddReview(name, profilePicture string, rating float64, when, description string) {
+	intRating := int(math.Round(rating))
+	
+	review := Review{
+		Name:           name,
+		ProfilePicture: profilePicture,
+		Rating:         intRating,
+		Description:    description,
+		When:           when,
+		Images:         []string{}, 
+	}
+	
+	e.UserReviewsExtended = append(e.UserReviewsExtended, review)
+}
