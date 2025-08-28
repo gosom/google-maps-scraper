@@ -1,0 +1,62 @@
+function doPost(e) {
+  try {
+    var body = e.postData && e.postData.contents ? JSON.parse(e.postData.contents) : {};
+  } catch (err) {
+    return ContentService.createTextOutput('Invalid JSON').setMimeType(ContentService.MimeType.TEXT);
+  }
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet(); // pas besoin de sheetId
+  var sheetName = body.sheet || 'scraping';
+  var sh = ss.getSheetByName(sheetName) || ss.insertSheet(sheetName);
+
+  var schema = Array.isArray(body.schema) && body.schema.length ? body.schema : defaultSchema();
+  var entry = body.entry || body; // permet d'envoyer soit {entry:{...}}, soit directement {...}
+
+  // Écrire l'entête si feuille vide
+  if (sh.getLastRow() === 0) {
+    sh.getRange(1, 1, 1, schema.length).setValues([schema]);
+  }
+
+  // Construire la ligne selon le schéma
+  var row = schema.map(function(field) { return toCellValue(getFieldValue(entry, field)); });
+
+  if (titleExists(sh, entry.title)) {
+  return ContentService.createTextOutput('Duplicate title').setMimeType(ContentService.MimeType.TEXT);
+}
+
+  sh.appendRow(row);
+
+  return ContentService.createTextOutput('OK').setMimeType(ContentService.MimeType.TEXT);
+}
+
+function defaultSchema() {
+  return [
+    'input_id','link','title','category','address','open_hours','popular_times','website','phone','plus_code',
+    'review_count','review_rating','reviews_per_rating','latitude','longitude','cid','status','descriptions',
+    'reviews_link','thumbnail','timezone','price_range','data_id','images','reservations','order_online','menu',
+    'owner','complete_address','about','user_reviews','user_reviews_extended','emails'
+  ];
+}
+
+//CHECK EXISTING DOUBLON
+function titleExists(sh, title) {
+  var titles = sh.getRange(2, 3, sh.getLastRow()-1, 1).getValues().flat(); // colonne 3 = title
+  return titles.includes(title);
+}
+
+// Mapping des noms CSV -> champs réels de l'objet 'entry'
+function getFieldValue(entry, field) {
+  switch (field) {
+    case 'website': return entry.web_site;        // source: web_site
+    case 'longitude': return entry.longtitude;    // source: longtitude (typo côté source)
+    case 'descriptions': return entry.description;// source: description
+    case 'phone': return entry.phone ? entry.phone.replace(/^\+/, '') : ''; 
+    default: return entry[field];
+  }
+}
+
+function toCellValue(v) {
+  if (v == null) return '';
+  if (Array.isArray(v) || typeof v === 'object') return JSON.stringify(v);
+  return v;
+}

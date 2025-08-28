@@ -2,3 +2,5 @@ cache/
 vendor
 bin
 webdata/
+CLAUDE.md
+prompt-googlesheets-plugin.md
