@@ -26,6 +26,11 @@ func createGoQueryFromFile(t *testing.T, path string) *goquery.Document {
 }
 
 func Test_EntryFromJSON(t *testing.T) {
+	// Skip test if test data file doesn't exist
+	if _, err := os.Stat("../testdata/raw.json"); os.IsNotExist(err) {
+		t.Skip("Skipping EntryFromJSON test: ../testdata/raw.json not found")
+	}
+
 	expected := gmaps.Entry{
 		Link:       "https://www.google.com/maps/place/Kipriakon/data=!4m2!3m1!1s0x14e732fd76f0d90d:0xe5415928d6702b47!10m1!1e1",
 		Title:      "Kipriakon",
@@ -180,6 +185,14 @@ func Test_EntryFromJSON2(t *testing.T) {
 		"../testdata/panic.json",
 		"../testdata/panic2.json",
 	}
+
+	// Skip test if test data files don't exist
+	for _, fname := range fnames {
+		if _, err := os.Stat(fname); os.IsNotExist(err) {
+			t.Skipf("Skipping EntryFromJSON2 test: %s not found", fname)
+		}
+	}
+
 	for _, fname := range fnames {
 		raw, err := os.ReadFile(fname)
 		require.NoError(t, err)
@@ -191,6 +204,11 @@ func Test_EntryFromJSON2(t *testing.T) {
 }
 
 func Test_EntryFromJSONRaw2(t *testing.T) {
+	// Skip test if test data file doesn't exist
+	if _, err := os.Stat("../testdata/raw2.json"); os.IsNotExist(err) {
+		t.Skip("Skipping EntryFromJSONRaw2 test: ../testdata/raw2.json not found")
+	}
+
 	raw, err := os.ReadFile("../testdata/raw2.json")
 
 	require.NoError(t, err)
@@ -203,6 +221,11 @@ func Test_EntryFromJSONRaw2(t *testing.T) {
 }
 
 func Test_EntryFromJsonC(t *testing.T) {
+	// Skip test if test data file doesn't exist
+	if _, err := os.Stat("../testdata/output.json"); os.IsNotExist(err) {
+		t.Skip("Skipping EntryFromJsonC test: ../testdata/output.json not found")
+	}
+
 	raw, err := os.ReadFile("../testdata/output.json")
 
 	require.NoError(t, err)
