@@ -406,22 +406,6 @@ func createSchema(db *sql.DB) error {
 		return fmt.Errorf("failed to create users table: %w", err)
 	}
 
-	// Create user_usage table
-	_, err = db.Exec(`
-		CREATE TABLE IF NOT EXISTS user_usage (
-			id SERIAL PRIMARY KEY,
-			user_id TEXT NOT NULL,
-			job_count INTEGER NOT NULL DEFAULT 0,
-			last_job_date TIMESTAMP,
-			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-			updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-			CONSTRAINT fk_user_id FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to create user_usage table: %w", err)
-	}
-
 	// Add foreign key constraint for jobs to users if not exists
 	_, err = db.Exec(`
 		DO $$

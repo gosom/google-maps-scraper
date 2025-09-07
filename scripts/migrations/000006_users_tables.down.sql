@@ -8,5 +8,4 @@ ALTER TABLE jobs DROP COLUMN IF EXISTS user_id;
 DROP INDEX IF EXISTS idx_jobs_user_id;
 
 -- Drop tables
-DROP TABLE IF EXISTS user_usage;
 DROP TABLE IF EXISTS users;

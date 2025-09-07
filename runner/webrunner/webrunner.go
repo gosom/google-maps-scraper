@@ -27,11 +27,10 @@ import (
 )
 
 type webrunner struct {
-	srv          *web.Server
-	svc          *web.Service
-	cfg          *runner.Config
-	db           *sql.DB // Add database connection for usage tracking
-	usageTracker *postgres.UsageTracker
+	srv *web.Server
+	svc *web.Service
+	cfg *runner.Config
+	db  *sql.DB // Add database connection for usage tracking
 }
 
 func New(cfg *runner.Config) (runner.Runner, error) {
@@ -103,13 +102,11 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 
 	// Add PostgreSQL and authentication if available
 	if cfg.Dsn != "" {
-		// If we're using PostgreSQL, add user repository and usage limiter
+		// If we're using PostgreSQL, add user repository
 		userRepo := postgres.NewUserRepository(db)
-		usageLimiter := postgres.NewUsageLimiter(db, 10000) // 50 jobs per day limit for development
 
 		serverCfg.PgDB = db
 		serverCfg.UserRepo = userRepo
-		serverCfg.UsageLimiter = usageLimiter
 
 		// Use Clerk API key from environment
 		if clerkAPIKey != "" {
@@ -131,15 +128,11 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		return nil, err
 	}
 
-	// Initialize usage tracker
-	usageTracker := postgres.NewUsageTracker(db)
-
 	ans := webrunner{
-		srv:          srv,
-		svc:          svc,
-		cfg:          cfg,
-		db:           db,
-		usageTracker: usageTracker,
+		srv: srv,
+		svc: svc,
+		cfg: cfg,
+		db:  db,
 	}
 
 	return &ans, nil
@@ -239,21 +232,11 @@ func (w *webrunner) work(ctx context.Context) error {
 }
 
 func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
-	startTime := time.Now()
 
 	// Check if job has been cancelled before starting
 	if job.Status == web.StatusCancelled || job.Status == web.StatusAborting {
 		log.Printf("DEBUG: Job %s already cancelled/aborting, skipping execution", job.ID)
 		return nil
-	}
-
-	// Start usage tracking when job begins
-	if w.usageTracker != nil && job.UserID != "" {
-		err := w.usageTracker.StartJobTracking(ctx, job.ID, job.UserID, job.Data.Email, job.Data.FastMode)
-		if err != nil {
-			log.Printf("Failed to start usage tracking for job %s: %v", job.ID, err)
-			// Continue with job execution even if tracking fails
-		}
 	}
 
 	// Create a cancellable context for this job
@@ -303,22 +286,11 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 
 	err := w.svc.Update(jobCtx, job)
 	if err != nil {
-		// Complete tracking for failed job
-		if w.usageTracker != nil && job.UserID != "" {
-			duration := time.Since(startTime)
-			w.usageTracker.CompleteJobTracking(jobCtx, job.ID, 0, 0, duration, false)
-		}
 		return err
 	}
 
 	if len(job.Data.Keywords) == 0 {
 		job.Status = web.StatusFailed
-
-		// Complete tracking for failed job
-		if w.usageTracker != nil && job.UserID != "" {
-			duration := time.Since(startTime)
-			w.usageTracker.CompleteJobTracking(jobCtx, job.ID, 0, 0, duration, false)
-		}
 
 		return w.svc.Update(jobCtx, job)
 	}
@@ -327,11 +299,6 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 
 	outfile, err := os.Create(outpath)
 	if err != nil {
-		// Complete tracking for failed job
-		if w.usageTracker != nil && job.UserID != "" {
-			duration := time.Since(startTime)
-			w.usageTracker.CompleteJobTracking(context.Background(), job.ID, 0, 0, duration, false)
-		}
 		return err
 	}
 
@@ -350,12 +317,6 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		err2 := w.svc.Update(context.Background(), job)
 		if err2 != nil {
 			log.Printf("failed to update job status: %v", err2)
-		}
-
-		// Complete tracking for failed job
-		if w.usageTracker != nil && job.UserID != "" {
-			duration := time.Since(startTime)
-			w.usageTracker.CompleteJobTracking(context.Background(), job.ID, 0, 0, duration, false)
 		}
 
 		return err
@@ -396,12 +357,6 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		err2 := w.svc.Update(context.Background(), job)
 		if err2 != nil {
 			log.Printf("failed to update job status: %v", err2)
-		}
-
-		// Complete tracking for failed job
-		if w.usageTracker != nil && job.UserID != "" {
-			duration := time.Since(startTime)
-			w.usageTracker.CompleteJobTracking(context.Background(), job.ID, 0, 0, duration, false)
 		}
 
 		return err
@@ -567,12 +522,6 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 					log.Printf("failed to update job status: %v", err2)
 				}
 
-				// Complete tracking for failed job
-				if w.usageTracker != nil && job.UserID != "" {
-					duration := time.Since(startTime)
-					w.usageTracker.CompleteJobTracking(context.Background(), job.ID, 0, 0, duration, false)
-				}
-
 				return err
 			}
 		} else {
@@ -584,20 +533,6 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	}
 
 	mate.Close()
-
-	// Count results from CSV file after job completion
-	locationsFound := 0
-	emailsFound := 0
-
-	if jobSuccess && w.usageTracker != nil {
-		locations, emails, err := w.usageTracker.CountResultsFromCSV(outpath, job.Data.Email)
-		if err != nil {
-			log.Printf("Failed to count results from CSV %s: %v", outpath, err)
-		} else {
-			locationsFound = locations
-			emailsFound = emails
-		}
-	}
 
 	// Determine final job status
 	log.Printf("DEBUG: Job %s - Determining final status: jobSuccess=%v, current status=%s", job.ID, jobSuccess, job.Status)
@@ -620,19 +555,6 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	} else {
 		log.Printf("DEBUG: Job %s - Final status update successful: %s", job.ID, job.Status)
 	}
-
-	// Complete usage tracking with final results
-	if w.usageTracker != nil && job.UserID != "" {
-		duration := time.Since(startTime)
-		err = w.usageTracker.CompleteJobTracking(context.Background(), job.ID, locationsFound, emailsFound, duration, jobSuccess)
-		if err != nil {
-			log.Printf("Failed to complete usage tracking for job %s: %v", job.ID, err)
-		} else {
-			log.Printf("Usage tracking completed for job %s: %d locations, %d emails, duration: %v",
-				job.ID, locationsFound, emailsFound, duration)
-		}
-	}
-
 	return nil
 }
 

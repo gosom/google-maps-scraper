@@ -11,6 +11,10 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - CONCURRENCY=${CONCURRENCY:-1}
       - CLERK_API_KEY=${CLERK_API_KEY}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+      - STRIPE_SUCCESS_URL=${STRIPE_SUCCESS_URL:-https://staging.brezel.ai/dashboard/credits?session_id={CHECKOUT_SESSION_ID}}
+      - STRIPE_CANCEL_URL=${STRIPE_CANCEL_URL:-https://staging.brezel.ai/dashboard/credits}
       - DISABLE_TELEMETRY=${DISABLE_TELEMETRY:-0}
     command: ["-web"]
     ports:
