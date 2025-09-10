@@ -12,7 +12,15 @@
         <header>
             <h1>Google Maps Scraper</h1>
             <nav>
-                <a href="/api/docs" target="_blank" rel="noopener noreferrer">API Documentation</a>
+                <div class="nav-links">
+                    <a href="/api/docs" target="_blank" rel="noopener noreferrer">API Documentation</a>
+                </div>
+                <div class="language-selector">
+                    <select id="language-select" onchange="changeLanguage(this.value)">
+                        <option value="en">English</option>
+                        <option value="zh">中文</option>
+                    </select>
+                </div>
             </nav>
             <div class="github-section">
                 <p>If you find this tool useful, please consider starring our repository: </p>
@@ -154,6 +162,214 @@ function hideSponsor() {
         sponsorSection.style.display = 'none';
     }
 }
+
+// Ensure English is the default language
+function ensureDefaultLanguage() {
+    // Check if language cookie exists
+    const cookies = document.cookie.split(';');
+    let languageCookieExists = false;
+    let currentLanguage = '';
+    
+    for (let i = 0; i < cookies.length; i++) {
+        const cookie = cookies[i].trim();
+        if (cookie.startsWith('language=')) {
+            languageCookieExists = true;
+            currentLanguage = cookie.substring('language='.length);
+            break;
+        }
+    }
+    
+    // If no language cookie exists, or language is invalid, set to English
+    if (!languageCookieExists || (currentLanguage !== 'en' && currentLanguage !== 'zh')) {
+        document.cookie = "language=en; path=/; max-age=31536000"; // 1 year expiration
+    }
+}
+
+// Call function when page loads
+ensureDefaultLanguage();
+
+function changeLanguage(lang) {
+    // Set a cookie to store the language preference
+    document.cookie = "language=" + lang + "; path=/; max-age=31536000"; // 1 year expiration
+    // Reload the page to apply the language change
+    window.location.reload();
+}
+
+// Translations for UI elements
+const translations = {
+    en: {
+        "title": "Google Maps Scraper",
+        "apiDocs": "API Documentation",
+        "starGithub": "If you find this tool useful, please consider starring our repository:",
+        "starButton": "Star on GitHub",
+        "sponsorText": "Support the ongoing maintenance and development of this project by becoming a sponsor. Your contribution helps ensure the tool's continued improvement and reliability.",
+        "sponsorButton": "Sponsor on GitHub",
+        "jobDetails": "Job Details",
+        "jobName": "Job Name:",
+        "keywords": "Keywords:",
+        "language": "Language:",
+        "locationSettings": "Location Settings",
+        "zoom": "Zoom:",
+        "latitude": "Latitude:",
+        "longitude": "Longitude:",
+        "advancedOptions": "Advanced Options",
+        "fastMode": "Fast Mode (BETA):",
+        "radius": "Radius (BETA):",
+        "depth": "Depth:",
+        "fetchEmails": "Fetch Emails",
+        "maxJobTime": "Max job time:",
+        "proxies": "Proxies:(one per line)",
+        "proxyExamples": "Examples:",
+        "httpsProxyExample": "HTTPS proxy with username/password: https://username:password@myproxy.local:443",
+        "httpProxyExample": "HTTP proxy with username/password: http://username:password@myproxy.local:443",
+        "socksProxyExample": "SOCKS5 proxy without auth: socks5://127.0.0.1:8000",
+        "startScraping": "Start Scraping",
+        "jobID": "Job ID",
+        "jobName": "Job Name",
+        "jobDate": "Job Date",
+        "status": "Status",
+        "actions": "Actions"
+    },
+    zh: {
+        "title": "谷歌地图数据抓取工具",
+        "apiDocs": "API文档",
+        "starGithub": "如果您觉得此工具有用，请考虑为我们的仓库点赞：",
+        "starButton": "在GitHub上点赞",
+        "sponsorText": "通过成为赞助商来支持这个项目的持续维护和开发。您的贡献有助于确保工具的持续改进和可靠性。",
+        "sponsorButton": "在GitHub上赞助",
+        "jobDetails": "任务详情",
+        "jobName": "任务名称：",
+        "keywords": "关键词：",
+        "language": "语言：",
+        "locationSettings": "位置设置",
+        "zoom": "缩放级别：",
+        "latitude": "纬度：",
+        "longitude": "经度：",
+        "advancedOptions": "高级选项",
+        "fastMode": "快速模式（测试版）：",
+        "radius": "半径（测试版）：",
+        "depth": "深度：",
+        "fetchEmails": "获取电子邮件",
+        "maxJobTime": "最长任务时间：",
+        "proxies": "代理服务器：（每行一个）",
+        "proxyExamples": "示例：",
+        "httpsProxyExample": "带用户名/密码的HTTPS代理: https://username:password@myproxy.local:443",
+        "httpProxyExample": "带用户名/密码的HTTP代理: http://username:password@myproxy.local:443",
+        "socksProxyExample": "不带验证的SOCKS5代理: socks5://127.0.0.1:8000",
+        "startScraping": "开始抓取",
+        "jobID": "任务ID",
+        "jobName": "任务名称",
+        "jobDate": "任务日期",
+        "status": "状态",
+        "actions": "操作"
+    }
+};
+
+// Set the language selector to match the current language and update UI text
+document.addEventListener('DOMContentLoaded', function() {
+    // Try to get the language from the cookie
+    const cookies = document.cookie.split(';');
+    let currentLang = 'en'; // Default to English
+    
+    for (let i = 0; i < cookies.length; i++) {
+        const cookie = cookies[i].trim();
+        if (cookie.startsWith('language=')) {
+            const cookieLang = cookie.substring('language='.length);
+            // Only accept valid languages, otherwise default to English
+            if (cookieLang === 'zh' || cookieLang === 'en') {
+                currentLang = cookieLang;
+            }
+            break;
+        }
+    }
+    
+    // Update the select element to show the current language
+    const languageSelect = document.getElementById('language-select');
+    if (languageSelect) {
+        languageSelect.value = currentLang;
+    }
+    
+    // Update text elements with translations
+    updateUIText(currentLang);
+});
+
+function updateUIText(lang) {
+    // Get the translations for the selected language
+    const trans = translations[lang] || translations.en;
+    
+    // Update the document title
+    document.title = trans.title;
+    
+    // Update header elements
+    document.querySelector('header h1').textContent = trans.title;
+    document.querySelector('header nav a').textContent = trans.apiDocs;
+    document.querySelector('.github-section p').textContent = trans.starGithub;
+    document.querySelector('.github-button').textContent = trans.starButton;
+    document.querySelector('.sponsor-text').textContent = trans.sponsorText;
+    document.querySelector('.sponsor-button').textContent = trans.sponsorButton;
+    
+    // Update form elements
+    document.querySelector('legend').textContent = trans.jobDetails;
+    document.querySelector('label[for="name"]').textContent = trans.jobName;
+    document.querySelector('label[for="keywords"]').textContent = trans.keywords;
+    document.querySelector('label[for="lang"]').textContent = trans.language;
+    
+    // Update expandable sections
+    const summaries = document.querySelectorAll('summary');
+    summaries[0].textContent = trans.locationSettings;
+    summaries[1].textContent = trans.advancedOptions;
+    
+    // Update location settings
+    document.querySelector('label[for="zoom"]').textContent = trans.zoom;
+    document.querySelector('label[for="latitude"]').textContent = trans.latitude;
+    document.querySelector('label[for="longitude"]').textContent = trans.longitude;
+    
+    // Update advanced options
+    document.querySelector('label[for="fastmode"]').textContent = trans.fastMode;
+    document.querySelector('label[for="radius"]').textContent = trans.radius;
+    document.querySelector('label[for="depth"]').textContent = trans.depth;
+    document.querySelector('label[for="email"]').textContent = trans.fetchEmails;
+    document.querySelector('label[for="maxtime"]').textContent = trans.maxJobTime;
+    
+    // Update proxies section
+    document.querySelector('label[for="proxies"]').textContent = trans.proxies;
+    document.querySelector('.text-muted small').textContent = trans.proxyExamples;
+    
+    // Update proxy examples
+    const proxyExampleParagraphs = document.querySelectorAll('.text-muted p');
+    if (proxyExampleParagraphs.length >= 3) {
+        proxyExampleParagraphs[0].textContent = trans.httpsProxyExample;
+        proxyExampleParagraphs[1].textContent = trans.httpProxyExample;
+        proxyExampleParagraphs[2].textContent = trans.socksProxyExample;
+    }
+    
+    // Update button text
+    document.querySelector('button[type="submit"]').textContent = trans.startScraping;
+    
+    // Update table headers
+    const tableHeaders = document.querySelectorAll('#job-table th');
+    tableHeaders[0].textContent = trans.jobID;
+    tableHeaders[1].textContent = trans.jobName;
+    tableHeaders[2].textContent = trans.jobDate;
+    tableHeaders[3].textContent = trans.status;
+    tableHeaders[4].textContent = trans.actions;
+}
 </script>
+
+<style>
+.language-selector {
+    display: inline-block;
+    margin-left: 15px;
+}
+
+.language-selector select {
+    padding: 5px;
+    border-radius: 4px;
+    border: 1px solid #ccc;
+    background-color: #fff;
+    font-size: 14px;
+    cursor: pointer;
+}
+</style>
 </body>
 </html>
