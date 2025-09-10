@@ -98,7 +98,19 @@ A no-code Google Maps scraper that pulls business leads from Google Maps in one 
 
 ![Scrapeless](./img/scrapeless_light.png#gh-light-mode-only)
 
+<hr>
 
+[Decodo's proxies](https://visit.decodo.com/APVbbx) with #1 response time in the market
+
+Collect data without facing CAPTCHAs, IP bans, or geo-restrictions
+- ● 125M+ IP pool
+- ● 195+ locations worldwide  
+- ● 24/7 tech support
+- ● Extensive documentation
+
+**[Start your 3-day free trial with 100MB →](https://visit.decodo.com/APVbbx)**
+
+![Decodo](./img/decodo.png)
 
 <hr>
 
@@ -613,6 +625,20 @@ Thank you for considering support for the project. Every bit of assistance helps
 ## Sponsors
 
 ### Special Thanks to:
+
+[Decodo's proxies](https://visit.decodo.com/APVbbx) with #1 response time in the market
+
+Collect data without facing CAPTCHAs, IP bans, or geo-restrictions
+- ● 125M+ IP pool
+- ● 195+ locations worldwide  
+- ● 24/7 tech support
+- ● Extensive documentation
+
+**[Start your 3-day free trial with 100MB →](https://visit.decodo.com/APVbbx)**
+
+![Decodo](./img/decodo.png)
+
+<br>
 
 [Scrapeless](https://www.scrapeless.com/): One-click to scrape Google search results, supporting 15+ SERP scenarios such as Google Maps/Scholars/Jobs, $0.1/thousand queries, 0.2s response.
 
