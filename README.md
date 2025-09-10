@@ -406,6 +406,16 @@ Supported schemes:
 I encourange you to buy a proxy service from one of our sponsors.
 They are reliable and help me to maintain the project.
 
+#### Example with Decodo Proxies
+
+[Decodo](https://visit.decodo.com/APVbbx) offers high-performance proxies with #1 response time in the market:
+
+```bash
+./google-maps-scraper -input example-queries.txt -results restaurants.csv -proxies 'http://username:password@proxy.decodo.com:8080' -depth 1 -c 2
+```
+
+**[Get your Decodo proxy credentials →](https://visit.decodo.com/APVbbx)** | **[View detailed Decodo integration guide →](decodo.md)**
+
 
 ### Command line options
 
