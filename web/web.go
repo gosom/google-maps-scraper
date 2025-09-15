@@ -23,6 +23,9 @@ import (
 	"github.com/gosom/google-maps-scraper/config"
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/web/auth"
+	webhandlers "github.com/gosom/google-maps-scraper/web/handlers"
+	webmiddleware "github.com/gosom/google-maps-scraper/web/middleware"
+	webservices "github.com/gosom/google-maps-scraper/web/services"
 )
 
 //go:embed static
@@ -89,21 +92,33 @@ func New(cfg ServerConfig) (*Server, error) {
 	fileServer := http.FileServer(http.FS(staticFS))
 	router := mux.NewRouter()
 
+	// Initialize modular handler group (incremental migration)
+	deps := webhandlers.Dependencies{
+		Logger:     ans.logger,
+		DB:         ans.db,
+		BillingSvc: ans.billingSvc,
+		Templates:  ans.tmpl,
+		Auth:       ans.authMiddleware,
+		App:        ans.svc,
+		ResultsSvc: webservices.NewResultsService(ans.db),
+	}
+	hg := webhandlers.NewHandlerGroup(deps)
+
 	// Health check endpoint (no authentication needed)
-	router.HandleFunc("/health", ans.healthCheck).Methods(http.MethodGet)
+	router.HandleFunc("/health", hg.Web.HealthCheck).Methods(http.MethodGet)
 
 	// Static files
 	router.PathPrefix("/static/").Handler(http.StripPrefix("/static/", fileServer))
 
 	// Web UI routes
-	router.HandleFunc("/", ans.index).Methods(http.MethodGet)
-	router.HandleFunc("/jobs", ans.jobs).Methods(http.MethodGet)
-	router.HandleFunc("/scrape", ans.scrape).Methods(http.MethodPost)
-	router.HandleFunc("/delete", ans.delete).Methods(http.MethodDelete)
-	router.HandleFunc("/download", ans.download).Methods(http.MethodGet)
+	router.HandleFunc("/", hg.Web.Index).Methods(http.MethodGet)
+	router.HandleFunc("/jobs", hg.Web.Jobs).Methods(http.MethodGet)
+	router.HandleFunc("/scrape", hg.Web.Scrape).Methods(http.MethodPost)
+	router.HandleFunc("/delete", hg.Web.Delete).Methods(http.MethodDelete)
+	router.HandleFunc("/download", hg.Web.Download).Methods(http.MethodGet)
 
 	// API documentation (public access)
-	router.HandleFunc("/api/docs", ans.redocHandler).Methods(http.MethodGet)
+	router.HandleFunc("/api/docs", hg.Web.Redoc).Methods(http.MethodGet)
 
 	// API routes with authentication if available
 	apiRouter := router.PathPrefix("/api/v1").Subrouter()
@@ -114,33 +129,33 @@ func New(cfg ServerConfig) (*Server, error) {
 	}
 
 	// API endpoints (these are protected by middleware if enabled)
-	apiRouter.HandleFunc("/jobs", ans.apiGetJobs).Methods(http.MethodGet)
-	apiRouter.HandleFunc("/jobs/user", ans.apiGetUserJobs).Methods(http.MethodGet)
-	apiRouter.HandleFunc("/jobs", ans.apiScrape).Methods(http.MethodPost)
-	apiRouter.HandleFunc("/jobs/{id}", ans.apiGetJob).Methods(http.MethodGet)
-	apiRouter.HandleFunc("/jobs/{id}", ans.apiDeleteJob).Methods(http.MethodDelete)
-	apiRouter.HandleFunc("/jobs/{id}/cancel", ans.apiCancelJob).Methods(http.MethodPost)
-	apiRouter.HandleFunc("/jobs/{id}/download", ans.download).Methods(http.MethodGet)
-	apiRouter.HandleFunc("/jobs/{id}/results", ans.apiGetJobResults).Methods(http.MethodGet)
-	apiRouter.HandleFunc("/results", ans.apiGetUserResults).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/jobs", hg.API.GetJobs).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/jobs/user", hg.API.GetUserJobs).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/jobs", hg.API.Scrape).Methods(http.MethodPost)
+	apiRouter.HandleFunc("/jobs/{id}", hg.API.GetJob).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/jobs/{id}", hg.API.DeleteJob).Methods(http.MethodDelete)
+	apiRouter.HandleFunc("/jobs/{id}/cancel", hg.API.CancelJob).Methods(http.MethodPost)
+	apiRouter.HandleFunc("/jobs/{id}/download", hg.Web.Download).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/jobs/{id}/results", hg.API.GetJobResults).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/results", hg.API.GetUserResults).Methods(http.MethodGet)
 
 	// Credit endpoints (if billing service is available)
 	if ans.billingSvc != nil {
-		apiRouter.HandleFunc("/credits/balance", ans.apiGetCreditBalance).Methods(http.MethodGet)
-		apiRouter.HandleFunc("/credits/checkout-session", ans.apiCreateCheckoutSession).Methods(http.MethodPost)
-		apiRouter.HandleFunc("/credits/reconcile", ans.apiReconcile).Methods(http.MethodPost)
+		apiRouter.HandleFunc("/credits/balance", hg.Billing.GetCreditBalance).Methods(http.MethodGet)
+		apiRouter.HandleFunc("/credits/checkout-session", hg.Billing.CreateCheckoutSession).Methods(http.MethodPost)
+		apiRouter.HandleFunc("/credits/reconcile", hg.Billing.Reconcile).Methods(http.MethodPost)
 	}
 
 	// Webhook endpoints (public access, no authentication)
 	if ans.billingSvc != nil {
 		// Primary webhook path
-		router.HandleFunc("/webhooks/stripe", ans.handleStripeWebhook).Methods(http.MethodPost)
+		router.HandleFunc("/webhooks/stripe", hg.Billing.HandleStripeWebhook).Methods(http.MethodPost)
 		// Backward-compatible alias used by some Stripe CLI setups
-		router.HandleFunc("/api/stripe/webhook", ans.handleStripeWebhook).Methods(http.MethodPost)
+		router.HandleFunc("/api/stripe/webhook", hg.Billing.HandleStripeWebhook).Methods(http.MethodPost)
 	}
 
-	// Apply security headers and CORS to all routes
-	handler := corsMiddleware(securityHeaders(router))
+	// Apply security headers and CORS to all routes via middleware chain
+	handler := webmiddleware.Chain(router, webmiddleware.SecurityHeaders, webmiddleware.CORS)
 	ans.srv.Handler = handler
 
 	tmplsKeys := []string{
@@ -166,8 +181,8 @@ func New(cfg ServerConfig) (*Server, error) {
 
 type creditBalanceResponse struct {
 	UserID                string `json:"user_id"`
-	CreditBalance         int    `json:"credit_balance"`
-	TotalCreditsPurchased int    `json:"total_credits_purchased"`
+	CreditBalance         string `json:"credit_balance"`
+	TotalCreditsPurchased string `json:"total_credits_purchased"`
 }
 
 func (s *Server) apiGetCreditBalance(w http.ResponseWriter, r *http.Request) {
@@ -184,17 +199,17 @@ func (s *Server) apiGetCreditBalance(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusUnauthorized, apiError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
 		return
 	}
-	const q = `SELECT id, credit_balance, total_credits_purchased FROM users WHERE id=$1`
+	const q = `SELECT id, credit_balance::text, total_credits_purchased::text FROM users WHERE id=$1`
 	var resp creditBalanceResponse
 	if err := s.db.QueryRowContext(r.Context(), q, userID).Scan(&resp.UserID, &resp.CreditBalance, &resp.TotalCreditsPurchased); err != nil {
 		// If no row, return zero balance for authenticated user
-		resp = creditBalanceResponse{UserID: userID, CreditBalance: 0, TotalCreditsPurchased: 0}
+		resp = creditBalanceResponse{UserID: userID, CreditBalance: "0", TotalCreditsPurchased: "0"}
 	}
 	renderJSON(w, http.StatusOK, resp)
 }
 
 type checkoutSessionRequest struct {
-	Credits  int    `json:"credits"`
+	Credits  string `json:"credits"`
 	Currency string `json:"currency"`
 }
 
@@ -326,7 +341,10 @@ type ctxKey string
 const idCtxKey ctxKey = "id"
 
 func requestWithID(r *http.Request) *http.Request {
-	id := r.PathValue("id")
+	var id string
+	if vars := mux.Vars(r); vars != nil {
+		id = vars["id"]
+	}
 	if id == "" {
 		id = r.URL.Query().Get("id")
 	}

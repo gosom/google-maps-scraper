@@ -1,5 +1,5 @@
 -- Run this script as a database superuser to set up the database and permissions correctly
--- Example: psql -U postgres -f scripts/setup_db.sql
+-- Example: psql -h localhost -p 5432 -U postgres -f setup_db.sql
 
 -- Create database if it doesn't exist
 SELECT 'CREATE DATABASE google_maps_scraper' 
@@ -21,6 +21,14 @@ END $$;
 GRANT ALL PRIVILEGES ON SCHEMA public TO scraper;
 ALTER SCHEMA public OWNER TO scraper;
 
+-- === Install required extensions (superuser only) ===
+CREATE EXTENSION IF NOT EXISTS pgcrypto;  -- for gen_random_uuid()
+CREATE EXTENSION IF NOT EXISTS btree_gist; -- for exclusion constraints
+
+-- Grant privileges to scraper for using extension functions
+GRANT USAGE ON SCHEMA public TO scraper;
+GRANT EXECUTE ON FUNCTION gen_random_uuid() TO scraper;
+
 -- Clean existing migrations table if it exists (let golang-migrate create a fresh one)
 DROP TABLE IF EXISTS schema_migrations;
 
@@ -34,8 +42,6 @@ GRANT ALL PRIVILEGES ON SEQUENCES TO scraper;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public 
 GRANT ALL PRIVILEGES ON FUNCTIONS TO scraper;
 
--- Now the database is set up for the scraper user to run migrations and use the application
-SELECT 'Database setup complete. You can now run the application with:'
-\gexec
-SELECT './google-maps-scraper -web -dsn "postgres://scraper:strongpassword@localhost:5432/google_maps_scraper?sslmode=disable"'
-\gexec
+-- Confirmation message
+\echo 'Database setup complete. You can now run the application with:'
+\echo './google-maps-scraper -web -dsn "postgres://scraper:strongpassword@localhost:5432/google_maps_scraper?sslmode=disable"'

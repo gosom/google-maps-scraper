@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gosom/google-maps-scraper/billing"
+	"github.com/gosom/google-maps-scraper/config"
 	"github.com/gosom/google-maps-scraper/deduper"
 	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/google-maps-scraper/postgres"
@@ -27,10 +29,11 @@ import (
 )
 
 type webrunner struct {
-	srv *web.Server
-	svc *web.Service
-	cfg *runner.Config
-	db  *sql.DB // Add database connection for usage tracking
+	srv        *web.Server
+	svc        *web.Service
+	cfg        *runner.Config
+	db         *sql.DB
+	billingSvc *billing.Service
 }
 
 func New(cfg *runner.Config) (runner.Runner, error) {
@@ -95,7 +98,7 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		}
 	}()
 
-	// Check if LoadConfig exists by checking environment variable directly
+	// Check environment for optional integrations
 	clerkAPIKey = os.Getenv("CLERK_API_KEY")
 	stripeAPIKey := os.Getenv("STRIPE_SECRET_KEY")
 	stripeWebhookSecret := os.Getenv("STRIPE_WEBHOOK_SECRET")
@@ -128,11 +131,16 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		return nil, err
 	}
 
+	// Initialize billing service for event charging (no Stripe required here)
+	cfgSvc := config.New(db)
+	billSvc := billing.New(db, cfgSvc, "", "")
+
 	ans := webrunner{
-		srv: srv,
-		svc: svc,
-		cfg: cfg,
-		db:  db,
+		srv:        srv,
+		svc:        svc,
+		cfg:        cfg,
+		db:         db,
+		billingSvc: billSvc,
 	}
 
 	return &ans, nil
@@ -232,6 +240,15 @@ func (w *webrunner) work(ctx context.Context) error {
 }
 
 func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
+	// Charge actor_start at job start (requires sufficient balance)
+	if w.billingSvc != nil {
+		if err := w.billingSvc.ChargeActorStart(context.Background(), job.UserID, job.ID); err != nil {
+			log.Printf("billing: actor_start charge failed for job %s: %v", job.ID, err)
+			job.Status = web.StatusFailed
+			_ = w.svc.Update(context.Background(), job)
+			return err
+		}
+	}
 
 	// Check if job has been cancelled before starting
 	if job.Status == web.StatusCancelled || job.Status == web.StatusAborting {
@@ -546,6 +563,18 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	} else {
 		job.Status = web.StatusFailed
 		log.Printf("DEBUG: Job %s - Setting status to FAILED", job.ID)
+	}
+
+	// Only charge places if job succeeded
+	if w.db != nil && w.billingSvc != nil && job.Status == web.StatusOK {
+		var count int
+		if err := w.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM results WHERE job_id=$1`, job.ID).Scan(&count); err != nil {
+			log.Printf("billing: failed to count results for job %s: %v", job.ID, err)
+		} else if count > 0 {
+			if err := w.billingSvc.ChargePlaces(context.Background(), job.UserID, job.ID, count); err != nil {
+				log.Printf("billing: place_scraped charge failed for job %s: %v", job.ID, err)
+			}
+		}
 	}
 
 	// Update job status

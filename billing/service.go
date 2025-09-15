@@ -22,7 +22,7 @@ type Service struct {
 
 type CheckoutRequest struct {
 	UserID   string
-	Credits  int
+	Credits  string
 	Currency string
 }
 
@@ -40,7 +40,7 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, req CheckoutRequest
 	if req.UserID == "" {
 		return CheckoutResponse{}, fmt.Errorf("missing user id")
 	}
-	if req.Credits <= 0 {
+	if req.Credits == "" || req.Credits == "0" {
 		return CheckoutResponse{}, fmt.Errorf("credits must be > 0")
 	}
 	if req.Currency != "USD" && req.Currency != "EUR" {
@@ -61,6 +61,12 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, req CheckoutRequest
 	successURL, _ := s.cfg.GetString(ctx, "stripe_success_url", "https://example.com/success?session_id={CHECKOUT_SESSION_ID}")
 	cancelURL, _ := s.cfg.GetString(ctx, "stripe_cancel_url", "https://example.com/cancel")
 
+	// For Stripe MVP: accept only whole credits as quantity
+	var creditsInt int
+	if _, err := fmt.Sscan(req.Credits, &creditsInt); err != nil || creditsInt <= 0 {
+		return CheckoutResponse{}, fmt.Errorf("only whole credits supported for checkout in MVP")
+	}
+
 	// Use price_data with unit_amount = price per credit and quantity = credits
 	params := &stripe.CheckoutSessionParams{
 		Mode:       stripe.String(string(stripe.CheckoutSessionModePayment)),
@@ -75,12 +81,12 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, req CheckoutRequest
 					},
 					UnitAmount: stripe.Int64(int64(unitPriceCents)),
 				},
-				Quantity: stripe.Int64(int64(req.Credits)),
+				Quantity: stripe.Int64(int64(creditsInt)),
 			},
 		},
 		Metadata: map[string]string{
 			"user_id":  req.UserID,
-			"credits":  fmt.Sprintf("%d", req.Credits),
+			"credits":  fmt.Sprintf("%d", creditsInt),
 			"currency": req.Currency,
 		},
 	}
@@ -93,7 +99,7 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, req CheckoutRequest
 	// Persist pending payment
 	const ins = `INSERT INTO stripe_payments (user_id, stripe_checkout_session_id, amount_cents, currency, credits_purchased, status)
                  VALUES ($1, $2, $3, $4, $5, 'pending') ON CONFLICT (stripe_checkout_session_id) DO NOTHING`
-	_, _ = s.db.ExecContext(ctx, ins, req.UserID, sess.ID, unitPriceCents*req.Credits, req.Currency, req.Credits)
+	_, _ = s.db.ExecContext(ctx, ins, req.UserID, sess.ID, unitPriceCents*creditsInt, req.Currency, creditsInt)
 
 	return CheckoutResponse{SessionID: sess.ID, URL: sess.URL}, nil
 }
@@ -139,25 +145,19 @@ func (s *Service) HandleWebhook(ctx context.Context, payload []byte, signatureHe
 		}
 		defer tx.Rollback()
 
-		// Lock user row
-		var balanceBefore int
-		const selBal = `SELECT credit_balance FROM users WHERE id=$1 FOR UPDATE`
-		if err := tx.QueryRowContext(ctx, selBal, userID).Scan(&balanceBefore); err != nil {
+		// Lock user row and update using NUMERIC arithmetic
+		const updUser = `UPDATE users SET credit_balance = credit_balance + $1::numeric, total_credits_purchased = total_credits_purchased + $1::numeric, updated_at=NOW() WHERE id=$2`
+		if _, err := tx.ExecContext(ctx, updUser, credits, userID); err != nil {
 			return 500, err
 		}
 
-		balanceAfter := balanceBefore + credits
-
-		// Update user balances
-		const updUser = `UPDATE users SET credit_balance=$1, total_credits_purchased = total_credits_purchased + $2, updated_at=NOW() WHERE id=$3`
-		if _, err := tx.ExecContext(ctx, updUser, balanceAfter, credits, userID); err != nil {
-			return 500, err
-		}
-
-		// Insert credit transaction
+		// Insert credit transaction with computed balances
 		const insTxn = `INSERT INTO credit_transactions (user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
-                         VALUES ($1,'purchase',$2,$3,$4,$5,$6,'payment')`
-		if _, err := tx.ExecContext(ctx, insTxn, userID, credits, balanceBefore, balanceAfter, "Stripe purchase", session.ID); err != nil {
+                         VALUES ($1,'purchase',$2,
+                                 (SELECT credit_balance - $2::numeric FROM users WHERE id=$1),
+                                 (SELECT credit_balance FROM users WHERE id=$1),
+                                 $3,$4,'payment')`
+		if _, err := tx.ExecContext(ctx, insTxn, userID, credits, "Stripe purchase", session.ID); err != nil {
 			return 500, err
 		}
 
@@ -219,19 +219,93 @@ func (s *Service) ReconcileSession(ctx context.Context, sessionID string) error 
 	}
 	defer tx.Rollback()
 
-	var balanceBefore int
-	if err := tx.QueryRowContext(ctx, `SELECT credit_balance FROM users WHERE id=$1 FOR UPDATE`, userID).Scan(&balanceBefore); err != nil {
+	// Update balances using SQL arithmetic
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET credit_balance = credit_balance + $1::numeric, total_credits_purchased = total_credits_purchased + $1::numeric, updated_at=NOW() WHERE id=$2`, credits, userID); err != nil {
 		return err
 	}
-	balanceAfter := balanceBefore + credits
-	if _, err := tx.ExecContext(ctx, `UPDATE users SET credit_balance=$1, total_credits_purchased = total_credits_purchased + $2, updated_at=NOW() WHERE id=$3`, balanceAfter, credits, userID); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO credit_transactions (user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type) VALUES ($1,'purchase',$2,$3,$4,$5,$6,'payment')`, userID, credits, balanceBefore, balanceAfter, "Stripe purchase (reconcile)", sessionID); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO credit_transactions (user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type) VALUES ($1,'purchase',$2,(SELECT credit_balance - $2::numeric FROM users WHERE id=$1),(SELECT credit_balance FROM users WHERE id=$1),$3,$4,'payment')`, userID, credits, "Stripe purchase (reconcile)", sessionID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE stripe_payments SET status='succeeded', completed_at=NOW() WHERE stripe_checkout_session_id=$1`, sessionID); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// ChargeEvent inserts a billing event and atomically deducts credits based on resolved pricing.
+// It enforces non-negative balances and uses idempotency via metadata.idempotency_key.
+func (s *Service) ChargeEvent(ctx context.Context, userID, jobID, eventType string, quantity int, idempotencyKey string, metadata map[string]any) error {
+	if s.db == nil {
+		return fmt.Errorf("db not configured")
+	}
+	if userID == "" || jobID == "" || eventType == "" || quantity <= 0 {
+		return fmt.Errorf("invalid charge params")
+	}
+	// Merge idempotency key into metadata
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	if idempotencyKey != "" {
+		metadata["idempotency_key"] = idempotencyKey
+	}
+	metaJSON, _ := json.Marshal(metadata)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Insert billing event; trigger resolves pricing and totals
+	var (
+		eventID               string
+		unitPrice, totalPrice string // scan as text to preserve precision
+	)
+	const insEvent = `INSERT INTO billing_events (user_id, job_id, event_type_code, quantity, metadata)
+	                  VALUES ($1,$2,$3,$4,$5::jsonb)
+	                  RETURNING id, unit_price_credits::text, total_price_credits::text`
+	if err := tx.QueryRowContext(ctx, insEvent, userID, jobID, eventType, quantity, string(metaJSON)).Scan(&eventID, &unitPrice, &totalPrice); err != nil {
+		return fmt.Errorf("insert billing event: %w", err)
+	}
+
+	// Decrement user balance atomically, ensuring non-negative balance
+	// If insufficient credits, no row is updated -> error
+	const decBal = `UPDATE users
+		SET credit_balance = credit_balance - $1::numeric,
+		    total_credits_consumed = total_credits_consumed + $1::numeric,
+		    updated_at = NOW()
+		WHERE id = $2 AND credit_balance >= $1::numeric
+		RETURNING credit_balance::text`
+	var newBalance string
+	if err := tx.QueryRowContext(ctx, decBal, totalPrice, userID).Scan(&newBalance); err != nil {
+		return fmt.Errorf("insufficient credits or update failed: %w", err)
+	}
+
+	// Insert credit transaction (consumption), linking to billing event via metadata reference_id
+	const insTxn = `INSERT INTO credit_transactions (
+		user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type, metadata
+	) VALUES (
+		$1,'consumption', -$2::numeric,
+		(SELECT ($3::numeric) + $2::numeric),
+		$3::numeric,
+		$4, $5, 'job', jsonb_build_object('billing_event_id',$6)
+	)`
+	if _, err := tx.ExecContext(ctx, insTxn, userID, totalPrice, newBalance, fmt.Sprintf("Billing charge: %s", eventType), jobID, eventID); err != nil {
+		return fmt.Errorf("insert credit transaction: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+// ChargeActorStart charges a flat actor_start event (quantity=1) for a job.
+func (s *Service) ChargeActorStart(ctx context.Context, userID, jobID string) error {
+	return s.ChargeEvent(ctx, userID, jobID, "actor_start", 1, "job:"+jobID+":actor_start", map[string]any{})
+}
+
+// ChargePlaces charges place_scraped for N places for a job.
+func (s *Service) ChargePlaces(ctx context.Context, userID, jobID string, places int) error {
+	if places <= 0 {
+		return nil
+	}
+	return s.ChargeEvent(ctx, userID, jobID, "place_scraped", places, "job:"+jobID+":place_scraped", map[string]any{})
 }
