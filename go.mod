@@ -1,6 +1,6 @@
 module github.com/gosom/google-maps-scraper
 
-go 1.24.4
+go 1.25.1
 
 require (
 	github.com/PuerkitoBio/goquery v1.10.3
@@ -25,7 +25,7 @@ require (
 	github.com/posthog/posthog-go v1.5.2
 	github.com/shirou/gopsutil/v4 v4.25.4
 	github.com/stretchr/testify v1.10.0
-	github.com/stripe/stripe-go/v81 v81.4.0
+	github.com/stripe/stripe-go/v82 v82.5.0
 	golang.org/x/sync v0.14.0
 	golang.org/x/term v0.32.0
 	modernc.org/sqlite v1.37.0
