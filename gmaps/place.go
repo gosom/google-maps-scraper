@@ -191,11 +191,17 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 
 	raw, ok := resp.Meta["json"].([]byte)
 	if !ok {
+		if j.ExitMonitor != nil {
+			j.ExitMonitor.IncrPlacesCompleted(1)
+		}
 		return nil, nil, fmt.Errorf("could not convert to []byte")
 	}
 
 	entry, err := EntryFromJSON(raw)
 	if err != nil {
+		if j.ExitMonitor != nil {
+			j.ExitMonitor.IncrPlacesCompleted(1)
+		}
 		return nil, nil, err
 	}
 
@@ -277,13 +283,17 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 	})
 	if err != nil {
 		resp.Error = err
-
+		if j.ExitMonitor != nil {
+			j.ExitMonitor.IncrPlacesCompleted(1)
+		}
 		return resp
 	}
 
 	if err = clickRejectCookiesIfRequired(page); err != nil {
 		resp.Error = err
-
+		if j.ExitMonitor != nil {
+			j.ExitMonitor.IncrPlacesCompleted(1)
+		}
 		return resp
 	}
 
@@ -295,7 +305,9 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 	})
 	if err != nil {
 		resp.Error = err
-
+		if j.ExitMonitor != nil {
+			j.ExitMonitor.IncrPlacesCompleted(1)
+		}
 		return resp
 	}
 
@@ -310,7 +322,9 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 	raw, err := j.extractJSON(page)
 	if err != nil {
 		resp.Error = err
-
+		if j.ExitMonitor != nil {
+			j.ExitMonitor.IncrPlacesCompleted(1)
+		}
 		return resp
 	}
 

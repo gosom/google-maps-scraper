@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 
 	"github.com/gosom/google-maps-scraper/billing"
@@ -92,16 +93,24 @@ func (h *BillingHandlers) Reconcile(w http.ResponseWriter, r *http.Request) {
 
 func (h *BillingHandlers) HandleStripeWebhook(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.BillingSvc == nil {
+		log.Printf("ERROR: BillingSvc is nil in webhook handler")
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 	payload, err := io.ReadAll(r.Body)
 	if err != nil {
+		log.Printf("ERROR: Failed to read webhook payload: %v", err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	sig := r.Header.Get("Stripe-Signature")
+	log.Printf("DEBUG: Webhook received - payload length: %d, signature present: %t", len(payload), sig != "")
+
 	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc)
-	code, _ := cs.HandleWebhook(r.Context(), payload, sig)
+	code, err := cs.HandleWebhook(r.Context(), payload, sig)
+	if err != nil {
+		log.Printf("ERROR: Webhook processing failed: %v", err)
+	}
+	log.Printf("DEBUG: Webhook response code: %d", code)
 	w.WriteHeader(code)
 }

@@ -16,7 +16,7 @@ type Config struct {
 	DBPassword string
 	DBName     string
 	DBSSLMode  string
-	
+
 	// Full DSN string (overrides individual DB settings if provided)
 	DatabaseURL string
 
@@ -50,7 +50,7 @@ func LoadConfig() Config {
 		DBPassword: getEnv("DB_PASSWORD", "strongpassword"),
 		DBName:     getEnv("DB_NAME", "google_maps_scraper"),
 		DBSSLMode:  getEnv("DB_SSL_MODE", "disable"),
-		
+
 		// Full DSN
 		DatabaseURL: getEnv("DATABASE_URL", ""),
 
@@ -78,7 +78,7 @@ func (c *Config) GetDBConnectionString() string {
 	if c.DatabaseURL != "" {
 		return c.DatabaseURL
 	}
-	
+
 	// Otherwise build from individual components
 	return "host=" + c.DBHost +
 		" port=" + c.DBPort +

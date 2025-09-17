@@ -74,23 +74,17 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 		if err != nil {
 			// Check if it's a clock skew error and retry after a brief moment
 			if strings.Contains(err.Error(), "token issued in the future") {
-				log.Printf("DEBUG: Clock skew detected, retrying token verification in 2 seconds...")
 				// Wait 2 seconds and try again
 				time.Sleep(2 * time.Second)
 				claims, err = m.client.VerifyToken(token)
 				if err != nil {
-					log.Printf("DEBUG: Token verification failed after retry for %s %s: %v", r.Method, r.URL.Path, err)
 					http.Error(w, "Unauthorized: invalid token", http.StatusUnauthorized)
 					return
 				}
-				log.Printf("DEBUG: Token verification successful after retry for user %s on %s %s", claims.Subject, r.Method, r.URL.Path)
 			} else {
-				log.Printf("DEBUG: Token verification failed for %s %s: %v", r.Method, r.URL.Path, err)
 				http.Error(w, "Unauthorized: invalid token", http.StatusUnauthorized)
 				return
 			}
-		} else {
-			log.Printf("DEBUG: Token verification successful for user %s on %s %s", claims.Subject, r.Method, r.URL.Path)
 		}
 
 		// Get user ID from verified claims
@@ -103,8 +97,6 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 		// Check if user exists in our database
 		user, err := m.userRepo.GetByID(r.Context(), userID)
 		if err != nil {
-			log.Printf("DEBUG: User %s not found in local database, attempting to create from Clerk", userID)
-
 			// If user doesn't exist, get their email and create them
 			clerkUser, err := m.client.Users().Read(userID)
 			if err != nil {
@@ -135,8 +127,6 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 				return
 			}
 
-			log.Printf("DEBUG: Creating new user %s with email %s", userID, email)
-
 			// Create a new user in our database
 			user = postgres.User{
 				ID:    userID,
@@ -148,10 +138,6 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 				http.Error(w, "Failed to create user record: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
-
-			log.Printf("SUCCESS: Created user %s in local database", userID)
-		} else {
-			log.Printf("DEBUG: User %s found in local database", userID)
 		}
 
 		// Add user ID to request context

@@ -155,7 +155,7 @@ func New(cfg ServerConfig) (*Server, error) {
 	}
 
 	// Apply security headers and CORS to all routes via middleware chain
-	handler := webmiddleware.Chain(router, webmiddleware.SecurityHeaders, webmiddleware.CORS)
+	handler := webmiddleware.Chain(router, webmiddleware.RequestLogger, webmiddleware.SecurityHeaders, webmiddleware.CORS)
 	ans.srv.Handler = handler
 
 	tmplsKeys := []string{

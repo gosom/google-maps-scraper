@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"strconv" // ADDED: Required for strconv.Atoi on line 195
 
 	"github.com/gosom/google-maps-scraper/config"
-	"github.com/stripe/stripe-go/v81"
-	checkoutsession "github.com/stripe/stripe-go/v81/checkout/session"
-	"github.com/stripe/stripe-go/v81/webhook"
+	"github.com/stripe/stripe-go/v82"
+	checkoutsession "github.com/stripe/stripe-go/v82/checkout/session"
+	"github.com/stripe/stripe-go/v82/webhook"
 )
 
 type Service struct {
@@ -43,28 +45,25 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, req CheckoutRequest
 	if req.Credits == "" || req.Credits == "0" {
 		return CheckoutResponse{}, fmt.Errorf("credits must be > 0")
 	}
-	if req.Currency != "USD" && req.Currency != "EUR" {
-		return CheckoutResponse{}, fmt.Errorf("unsupported currency")
+	// MVP: USD-only
+	if req.Currency != "USD" {
+		return CheckoutResponse{}, fmt.Errorf("unsupported currency; only USD is enabled in MVP")
 	}
 
-	// Fetch price per credit from currency_pricing
-	var unitPriceCents int
-	const priceQ = `SELECT unit_price_cents FROM currency_pricing WHERE currency=$1 AND is_active=TRUE`
-	if err := s.db.QueryRowContext(ctx, priceQ, req.Currency).Scan(&unitPriceCents); err != nil {
-		return CheckoutResponse{}, fmt.Errorf("failed to get pricing: %w", err)
-	}
+	// MVP: fixed $1 per credit
+	unitPriceCents := 100
 
 	// Prepare Stripe client
 	stripe.Key = s.stripeSecretKey
 
 	// Build success/cancel URLs from config (env overrides allowed)
-	successURL, _ := s.cfg.GetString(ctx, "stripe_success_url", "https://example.com/success?session_id={CHECKOUT_SESSION_ID}")
+	successURL, _ := s.cfg.GetString(ctx, "stripe_success_url", "https://example.com/success")
 	cancelURL, _ := s.cfg.GetString(ctx, "stripe_cancel_url", "https://example.com/cancel")
 
 	// For Stripe MVP: accept only whole credits as quantity
 	var creditsInt int
 	if _, err := fmt.Sscan(req.Credits, &creditsInt); err != nil || creditsInt <= 0 {
-		return CheckoutResponse{}, fmt.Errorf("only whole credits supported for checkout in MVP")
+		return CheckoutResponse{}, fmt.Errorf("only whole credits are supported")
 	}
 
 	// Use price_data with unit_amount = price per credit and quantity = credits
@@ -104,88 +103,251 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, req CheckoutRequest
 	return CheckoutResponse{SessionID: sess.ID, URL: sess.URL}, nil
 }
 
-// HandleWebhook verifies and processes Stripe events, crediting user accounts on successful payment.
 func (s *Service) HandleWebhook(ctx context.Context, payload []byte, signatureHeader string) (int, error) {
 	if s.webhookSigningKey == "" {
+		log.Printf("ERROR: Webhook signing key not configured")
 		return 400, errors.New("webhook signing key not configured")
 	}
+
 	event, err := webhook.ConstructEvent(payload, signatureHeader, s.webhookSigningKey)
 	if err != nil {
+		log.Printf("ERROR: Invalid webhook signature: %v", err)
 		return 400, fmt.Errorf("invalid signature: %w", err)
+	}
+
+	log.Printf("BILLING: Webhook signature verified successfully, event type: %s, event ID: %s", event.Type, event.ID)
+
+	// Idempotency check - prevent duplicate processing
+	if s.hasProcessedEvent(ctx, event.ID) {
+		log.Printf("BILLING: Event %s already processed, skipping", event.ID)
+		return 200, nil
 	}
 
 	switch event.Type {
 	case "checkout.session.completed":
-		// Parse object into CheckoutSession
-		var session stripe.CheckoutSession
-		if err := json.Unmarshal(event.Data.Raw, &session); err != nil {
-			return 400, fmt.Errorf("failed to parse session: %w", err)
-		}
-		// Get user/credits from DB row for this session if available
-		userID := ""
-		credits := 0
-		currency := ""
-		{
-			const sel = `SELECT user_id, credits_purchased, currency FROM stripe_payments WHERE stripe_checkout_session_id=$1 LIMIT 1`
-			_ = s.db.QueryRowContext(ctx, sel, session.ID).Scan(&userID, &credits, &currency)
-		}
-		// Fallback to metadata
-		if userID == "" && session.Metadata != nil {
-			userID = session.Metadata["user_id"]
-			fmt.Sscan(session.Metadata["credits"], &credits)
-			currency = session.Metadata["currency"]
-		}
-		if userID == "" || credits <= 0 || (currency != "USD" && currency != "EUR") {
-			return 200, nil
-		}
-		// Credit the user in a transaction idempotently
-		tx, err := s.db.BeginTx(ctx, nil)
-		if err != nil {
-			return 500, err
-		}
-		defer tx.Rollback()
-
-		// Lock user row and update using NUMERIC arithmetic
-		const updUser = `UPDATE users SET credit_balance = credit_balance + $1::numeric, total_credits_purchased = total_credits_purchased + $1::numeric, updated_at=NOW() WHERE id=$2`
-		if _, err := tx.ExecContext(ctx, updUser, credits, userID); err != nil {
-			return 500, err
-		}
-
-		// Insert credit transaction with computed balances
-		const insTxn = `INSERT INTO credit_transactions (user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
-                         VALUES ($1,'purchase',$2,
-                                 (SELECT credit_balance - $2::numeric FROM users WHERE id=$1),
-                                 (SELECT credit_balance FROM users WHERE id=$1),
-                                 $3,$4,'payment')`
-		if _, err := tx.ExecContext(ctx, insTxn, userID, credits, "Stripe purchase", session.ID); err != nil {
-			return 500, err
-		}
-
-		// Mark stripe payment as succeeded
-		const updPay = `UPDATE stripe_payments SET status='succeeded', completed_at=NOW() WHERE stripe_checkout_session_id=$1`
-		if _, err := tx.ExecContext(ctx, updPay, session.ID); err != nil {
-			return 500, err
-		}
-
-		if err := tx.Commit(); err != nil {
-			return 500, err
-		}
-
-		return 200, nil
+		return s.handleCheckoutSessionCompleted(ctx, event)
 	case "checkout.session.expired":
-		var session stripe.CheckoutSession
-		if err := json.Unmarshal(event.Data.Raw, &session); err != nil {
-			return 400, fmt.Errorf("failed to parse session: %w", err)
-		}
-		const upd = `UPDATE stripe_payments SET status='canceled', updated_at=NOW() WHERE stripe_checkout_session_id=$1`
-		_, _ = s.db.ExecContext(ctx, upd, session.ID)
-		return 200, nil
+		return s.handleCheckoutSessionExpired(ctx, event)
 	default:
+		log.Printf("BILLING: Unhandled event type: %s", event.Type)
 		return 200, nil
 	}
 }
 
+// hasProcessedEvent checks if we've already processed this webhook event
+func (s *Service) hasProcessedEvent(ctx context.Context, eventID string) bool {
+	var exists bool
+	err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM processed_webhook_events WHERE event_id = $1)", eventID).Scan(&exists)
+	if err != nil {
+		log.Printf("ERROR: Failed to check event processing status: %v", err)
+		return false // Fail open to allow processing
+	}
+	return exists
+}
+
+// markEventProcessed records that we've processed this webhook event
+func (s *Service) markEventProcessed(ctx context.Context, tx *sql.Tx, eventID string) error {
+	_, err := tx.ExecContext(ctx, // FIXED: Use passed context instead of context.Background()
+		"INSERT INTO processed_webhook_events (event_id, processed_at) VALUES ($1, NOW()) ON CONFLICT (event_id) DO NOTHING",
+		eventID)
+	return err
+}
+
+func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stripe.Event) (int, error) {
+	var session stripe.CheckoutSession
+	if err := json.Unmarshal(event.Data.Raw, &session); err != nil {
+		log.Printf("ERROR: Failed to parse checkout session: %v", err)
+		return 400, fmt.Errorf("failed to parse session: %w", err)
+	}
+
+	log.Printf("BILLING: Processing checkout.session.completed for session: %s", session.ID)
+
+	// Verify payment status before processing
+	if session.PaymentStatus != "paid" {
+		log.Printf("BILLING: Session %s completed but payment status is %s, skipping credit", session.ID, session.PaymentStatus)
+		return 200, nil
+	}
+
+	// Check if this session was already processed (additional idempotency check)
+	var exists bool
+	err := s.db.QueryRowContext(ctx,
+		"SELECT EXISTS(SELECT 1 FROM credit_transactions WHERE reference_id=$1 AND reference_type='payment')",
+		session.ID).Scan(&exists)
+	if err != nil {
+		log.Printf("ERROR: Failed to check transaction existence: %v", err)
+		return 500, fmt.Errorf("failed to check transaction existence: %w", err)
+	}
+	if exists {
+		log.Printf("BILLING: Session %s already processed (found in credit_transactions), skipping", session.ID)
+		return 200, nil // Already processed
+	}
+
+	userID := ""
+	credits := 0
+	currency := ""
+
+	// First try to get data from database
+	const sel = `SELECT user_id, (credits_purchased)::int, currency FROM stripe_payments WHERE stripe_checkout_session_id=$1 LIMIT 1`
+	err = s.db.QueryRowContext(ctx, sel, session.ID).Scan(&userID, &credits, &currency)
+
+	if err != nil && err != sql.ErrNoRows {
+		log.Printf("ERROR: Database query failed: %v", err)
+		return 500, fmt.Errorf("database query failed: %w", err)
+	}
+
+	// Fallback to metadata with proper error handling
+	if userID == "" && session.Metadata != nil {
+		userID = session.Metadata["user_id"]
+
+		// Safe conversion of credits with error handling
+		if creditsStr, exists := session.Metadata["credits"]; exists {
+			if parsedCredits, err := strconv.Atoi(creditsStr); err == nil {
+				credits = parsedCredits
+			} else {
+				log.Printf("WARNING: Invalid credits value in metadata: %s", creditsStr)
+			}
+		}
+
+		currency = session.Metadata["currency"]
+	}
+
+	// Validate required data
+	if userID == "" {
+		log.Printf("WARNING: No user_id found for session %s", session.ID)
+		return 200, nil
+	}
+	if credits <= 0 {
+		log.Printf("WARNING: Invalid credits amount %d for session %s", credits, session.ID)
+		return 200, nil
+	}
+	if currency != "USD" {
+		log.Printf("WARNING: Unsupported currency %s for session %s", currency, session.ID)
+		return 200, nil
+	}
+
+	// Process the payment in a transaction with proper isolation level
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
+		Isolation: sql.LevelSerializable,
+	})
+	if err != nil {
+		log.Printf("ERROR: Failed to begin transaction: %v", err)
+		return 500, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Get current balance before update for accurate transaction records
+	// IMPROVED: Handle potential NULL values with COALESCE
+	var currentBalance float64
+	err = tx.QueryRowContext(ctx, "SELECT COALESCE(credit_balance, 0) FROM users WHERE id = $1 FOR UPDATE", userID).Scan(&currentBalance)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			log.Printf("WARNING: User %s not found", userID)
+			return 400, fmt.Errorf("user not found: %s", userID)
+		}
+		log.Printf("ERROR: Failed to get current user balance: %v", err)
+		return 500, fmt.Errorf("failed to get user balance: %w", err)
+	}
+
+	// Update user credit balance
+	const updUser = `UPDATE users SET 
+		credit_balance = COALESCE(credit_balance, 0) + $1::numeric, 
+		total_credits_purchased = COALESCE(total_credits_purchased, 0) + $1::numeric, 
+		updated_at=NOW() 
+		WHERE id=$2`
+	result, err := tx.ExecContext(ctx, updUser, credits, userID)
+	if err != nil {
+		log.Printf("ERROR: Failed to update user credits: %v", err)
+		return 500, fmt.Errorf("failed to update user credits: %w", err)
+	}
+
+	// Check if user exists
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		log.Printf("ERROR: Failed to get rows affected: %v", err)
+		return 500, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		log.Printf("WARNING: No user found with ID %s", userID)
+		return 400, fmt.Errorf("user not found: %s", userID)
+	}
+
+	// Insert credit transaction with accurate balances
+	const insTxn = `INSERT INTO credit_transactions (user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
+					VALUES ($1, 'purchase', $2, $3, $4, $5, $6, 'payment')`
+	_, err = tx.ExecContext(ctx, insTxn, userID, credits, currentBalance, currentBalance+float64(credits), "Stripe purchase", session.ID)
+	if err != nil {
+		log.Printf("ERROR: Failed to insert credit transaction: %v", err)
+		return 500, fmt.Errorf("failed to insert credit transaction: %w", err)
+	}
+
+	// Mark stripe payment as succeeded
+	const updPay = `UPDATE stripe_payments SET status='succeeded', completed_at=NOW() WHERE stripe_checkout_session_id=$1`
+	_, err = tx.ExecContext(ctx, updPay, session.ID)
+	if err != nil {
+		log.Printf("ERROR: Failed to update payment status: %v", err)
+		return 500, fmt.Errorf("failed to update payment status: %w", err)
+	}
+
+	// Mark event as processed for idempotency
+	if err := s.markEventProcessed(ctx, tx, event.ID); err != nil {
+		log.Printf("ERROR: Failed to mark event as processed: %v", err)
+		return 500, fmt.Errorf("failed to mark event as processed: %w", err)
+	}
+
+	// Commit transaction
+	if err := tx.Commit(); err != nil {
+		log.Printf("ERROR: Failed to commit transaction: %v", err)
+		return 500, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	log.Printf("BILLING: Successfully processed checkout.session.completed for user %s, credits: %d, session: %s", userID, credits, session.ID)
+	return 200, nil
+}
+
+func (s *Service) handleCheckoutSessionExpired(ctx context.Context, event stripe.Event) (int, error) {
+	var session stripe.CheckoutSession
+	if err := json.Unmarshal(event.Data.Raw, &session); err != nil {
+		log.Printf("ERROR: Failed to parse expired session: %v", err)
+		return 400, fmt.Errorf("failed to parse session: %w", err)
+	}
+
+	log.Printf("BILLING: Processing checkout.session.expired for session: %s", session.ID)
+
+	// Begin transaction for consistency and idempotency
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
+		Isolation: sql.LevelReadCommitted, // Less strict isolation for expired sessions
+	})
+	if err != nil {
+		log.Printf("ERROR: Failed to begin transaction for expired session: %v", err)
+		return 500, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Update payment status to canceled
+	const upd = `UPDATE stripe_payments SET status='canceled', updated_at=NOW() WHERE stripe_checkout_session_id=$1`
+	_, err = tx.ExecContext(ctx, upd, session.ID)
+	if err != nil {
+		log.Printf("ERROR: Failed to update expired payment status: %v", err)
+		return 500, fmt.Errorf("failed to update expired payment status: %w", err)
+	}
+
+	// Mark event as processed
+	if err := s.markEventProcessed(ctx, tx, event.ID); err != nil {
+		log.Printf("ERROR: Failed to mark expired event as processed: %v", err)
+		return 500, fmt.Errorf("failed to mark event as processed: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		log.Printf("ERROR: Failed to commit expired session transaction: %v", err)
+		return 500, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	log.Printf("BILLING: Successfully processed checkout.session.expired for session %s", session.ID)
+	return 200, nil
+}
+
 // ReconcileSession fetches a Checkout Session from Stripe and applies credits if paid.
+// This can be used as a fallback mechanism if webhooks fail.
 func (s *Service) ReconcileSession(ctx context.Context, sessionID string) error {
 	if sessionID == "" {
 		return fmt.Errorf("missing session id")
@@ -195,6 +357,7 @@ func (s *Service) ReconcileSession(ctx context.Context, sessionID string) error 
 	if err != nil {
 		return fmt.Errorf("failed to fetch session: %w", err)
 	}
+
 	// Fetch payment row
 	var (
 		userID   string
@@ -202,33 +365,73 @@ func (s *Service) ReconcileSession(ctx context.Context, sessionID string) error 
 		currency string
 		status   string
 	)
-	const sel = `SELECT user_id, credits_purchased, currency, status FROM stripe_payments WHERE stripe_checkout_session_id=$1 LIMIT 1`
+	const sel = `SELECT user_id, (credits_purchased)::int, currency, status FROM stripe_payments WHERE stripe_checkout_session_id=$1 LIMIT 1`
 	if err := s.db.QueryRowContext(ctx, sel, sessionID).Scan(&userID, &credits, &currency, &status); err != nil {
 		return fmt.Errorf("payment row not found: %w", err)
 	}
+
+	// Skip if already succeeded
 	if status == "succeeded" {
 		return nil
 	}
+
+	// Check if session is paid
 	if sess.PaymentStatus != stripe.CheckoutSessionPaymentStatusPaid {
 		return fmt.Errorf("session not paid")
 	}
+
+	// Check if already processed in credit_transactions (idempotency)
+	var exists bool
+	err = s.db.QueryRowContext(ctx,
+		"SELECT EXISTS(SELECT 1 FROM credit_transactions WHERE reference_id=$1 AND reference_type='payment')",
+		sessionID).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("failed to check transaction existence: %w", err)
+	}
+	if exists {
+		// Update stripe_payments status even if credits already applied
+		_, _ = s.db.ExecContext(ctx, `UPDATE stripe_payments SET status='succeeded', completed_at=NOW() WHERE stripe_checkout_session_id=$1`, sessionID)
+		return nil
+	}
+
 	// Apply credits transactionally
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
+		Isolation: sql.LevelSerializable,
+	})
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	// Update balances using SQL arithmetic
-	if _, err := tx.ExecContext(ctx, `UPDATE users SET credit_balance = credit_balance + $1::numeric, total_credits_purchased = total_credits_purchased + $1::numeric, updated_at=NOW() WHERE id=$2`, credits, userID); err != nil {
-		return err
+	// Get current balance with row lock
+	var currentBalance float64
+	err = tx.QueryRowContext(ctx, "SELECT COALESCE(credit_balance, 0) FROM users WHERE id = $1 FOR UPDATE", userID).Scan(&currentBalance)
+	if err != nil {
+		return fmt.Errorf("failed to get user balance: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO credit_transactions (user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type) VALUES ($1,'purchase',$2,(SELECT credit_balance - $2::numeric FROM users WHERE id=$1),(SELECT credit_balance FROM users WHERE id=$1),$3,$4,'payment')`, userID, credits, "Stripe purchase (reconcile)", sessionID); err != nil {
-		return err
+
+	// Update balances using SQL arithmetic with NULL safety
+	const updUser = `UPDATE users SET 
+		credit_balance = COALESCE(credit_balance, 0) + $1::numeric, 
+		total_credits_purchased = COALESCE(total_credits_purchased, 0) + $1::numeric, 
+		updated_at=NOW() 
+		WHERE id=$2`
+	if _, err := tx.ExecContext(ctx, updUser, credits, userID); err != nil {
+		return fmt.Errorf("failed to update user credits: %w", err)
 	}
+
+	// Insert credit transaction with accurate balances
+	const insTxn = `INSERT INTO credit_transactions (user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type) 
+		VALUES ($1, 'purchase', $2, $3, $4, $5, $6, 'payment')`
+	if _, err := tx.ExecContext(ctx, insTxn, userID, credits, currentBalance, currentBalance+float64(credits), "Stripe purchase (reconcile)", sessionID); err != nil {
+		return fmt.Errorf("failed to insert credit transaction: %w", err)
+	}
+
+	// Update payment status
 	if _, err := tx.ExecContext(ctx, `UPDATE stripe_payments SET status='succeeded', completed_at=NOW() WHERE stripe_checkout_session_id=$1`, sessionID); err != nil {
-		return err
+		return fmt.Errorf("failed to update payment status: %w", err)
 	}
+
 	return tx.Commit()
 }
 
@@ -241,6 +444,7 @@ func (s *Service) ChargeEvent(ctx context.Context, userID, jobID, eventType stri
 	if userID == "" || jobID == "" || eventType == "" || quantity <= 0 {
 		return fmt.Errorf("invalid charge params")
 	}
+
 	// Merge idempotency key into metadata
 	if metadata == nil {
 		metadata = map[string]any{}
@@ -250,7 +454,9 @@ func (s *Service) ChargeEvent(ctx context.Context, userID, jobID, eventType stri
 	}
 	metaJSON, _ := json.Marshal(metadata)
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
+		Isolation: sql.LevelSerializable,
+	})
 	if err != nil {
 		return err
 	}
@@ -263,32 +469,37 @@ func (s *Service) ChargeEvent(ctx context.Context, userID, jobID, eventType stri
 	)
 	const insEvent = `INSERT INTO billing_events (user_id, job_id, event_type_code, quantity, metadata)
 	                  VALUES ($1,$2,$3,$4,$5::jsonb)
+	                  ON CONFLICT (job_id, event_type_code, (metadata->>'idempotency_key'))
+	                  WHERE (metadata ? 'idempotency_key')
+	                  DO UPDATE SET quantity = billing_events.quantity
 	                  RETURNING id, unit_price_credits::text, total_price_credits::text`
 	if err := tx.QueryRowContext(ctx, insEvent, userID, jobID, eventType, quantity, string(metaJSON)).Scan(&eventID, &unitPrice, &totalPrice); err != nil {
 		return fmt.Errorf("insert billing event: %w", err)
 	}
 
 	// Decrement user balance atomically, ensuring non-negative balance
-	// If insufficient credits, no row is updated -> error
 	const decBal = `UPDATE users
 		SET credit_balance = credit_balance - $1::numeric,
-		    total_credits_consumed = total_credits_consumed + $1::numeric,
+		    total_credits_consumed = COALESCE(total_credits_consumed, 0) + $1::numeric,
 		    updated_at = NOW()
 		WHERE id = $2 AND credit_balance >= $1::numeric
 		RETURNING credit_balance::text`
 	var newBalance string
 	if err := tx.QueryRowContext(ctx, decBal, totalPrice, userID).Scan(&newBalance); err != nil {
-		return fmt.Errorf("insufficient credits or update failed: %w", err)
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("insufficient credits")
+		}
+		return fmt.Errorf("failed to update balance: %w", err)
 	}
 
 	// Insert credit transaction (consumption), linking to billing event via metadata reference_id
 	const insTxn = `INSERT INTO credit_transactions (
 		user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type, metadata
 	) VALUES (
-		$1,'consumption', -$2::numeric,
-		(SELECT ($3::numeric) + $2::numeric),
+		$1, 'consumption', -$2::numeric,
+		($3::numeric + $2::numeric),
 		$3::numeric,
-		$4, $5, 'job', jsonb_build_object('billing_event_id',$6)
+		$4, $5, 'job', jsonb_build_object('billing_event_id', $6::text)
 	)`
 	if _, err := tx.ExecContext(ctx, insTxn, userID, totalPrice, newBalance, fmt.Sprintf("Billing charge: %s", eventType), jobID, eventID); err != nil {
 		return fmt.Errorf("insert credit transaction: %w", err)

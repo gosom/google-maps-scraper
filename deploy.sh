@@ -1,11 +1,7 @@
 #!/bin/bash
 
-# 🧠 Smart Deployment Script for Any CPU Configuration
-# Automatically detects CPU cores and configures concurrency appropriately
-
 set -e
 
-# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -28,7 +24,7 @@ print_header() {
     echo -e "${BLUE}[SMART-DEPLOY]${NC} $1"
 }
 
-print_header "🧠 Smart Deployment for Multi-Core Compatibility"
+print_header "Starting deploy.sh script..."
 
 # 1. Detect CPU configuration
 CPU_CORES=$(nproc 2>/dev/null || echo "1")
@@ -37,62 +33,62 @@ if [ $OPTIMAL_CONCURRENCY -lt 1 ]; then
     OPTIMAL_CONCURRENCY=1
 fi
 
-print_status "🔍 System Analysis:"
+print_status "System Analysis:"
 echo "   CPU Cores: $CPU_CORES"
 echo "   Optimal Concurrency: $OPTIMAL_CONCURRENCY"
 echo
 
 # 2. Check and fix .env.staging
-print_status "📝 Configuring environment..."
-if [ ! -f ".env" ]; then
-    print_warning ".env not found. Creating from .env.example..."
-    cp .env.example .env
+print_status "Configuring environment..."
+if [ ! -f ".env.staging" ]; then
+    print_warning ".env.staging not found. Creating from example..."
+    cp .env.staging.example .env.staging
 fi
 
 # Fix DSN for Linux if needed
-if grep -q "host\.docker\.internal" .env; then
-    print_status "🔧 Fixing DSN for Linux compatibility..."
-    sed -i 's/host\.docker\.internal/172.17.0.1/g' .env
+if grep -q "host\.docker\.internal" .env.staging; then
+    print_status "Fixing DSN for Linux compatibility..."
+    sed -i 's/host\.docker\.internal/172.17.0.1/g' .env.staging
 fi
 
 # Add or update CONCURRENCY setting if on single core
 if [ $CPU_CORES -eq 1 ]; then
-    print_status "🎯 Single-core server detected - setting explicit concurrency"
-    if grep -q "^CONCURRENCY=" .env; then
-        sed -i "s/^CONCURRENCY=.*/CONCURRENCY=1/" .env
-    elif grep -q "^# CONCURRENCY=" .env; then
-        sed -i "s/^# CONCURRENCY=.*/CONCURRENCY=1/" .env
+    print_status "Single core server detected - setting explicit concurrency"
+    if grep -q "^CONCURRENCY=" .env.staging; then
+        sed -i "s/^CONCURRENCY=.*/CONCURRENCY=1/" .env.staging
+    elif grep -q "^# CONCURRENCY=" .env.staging; then
+        sed -i "s/^# CONCURRENCY=.*/CONCURRENCY=1/" .env.staging
     else
-        echo "" >> .env
-        echo "# Single-core server configuration" >> .env
-        echo "CONCURRENCY=1" >> .env
+        echo "" >> .env.staging
+        echo "# Single-core server configuration" >> .env.staging
+        echo "CONCURRENCY=1" >> .env.staging
     fi
 else
     print_status "🚀 Multi-core server detected - using auto-detection"
     # Remove explicit CONCURRENCY setting to use auto-detection
-    sed -i '/^CONCURRENCY=/d' .env
+    sed -i '/^CONCURRENCY=/d' .env.staging
 fi
 
-print_status "📋 Current configuration:"
-echo "   Database: $(grep "^DSN=" .env | cut -d'@' -f2 | cut -d':' -f1)"
-if grep -q "^CONCURRENCY=" .env; then
-    echo "   Concurrency: $(grep "^CONCURRENCY=" .env | cut -d'=' -f2) (explicit)"
+print_status "Current configuration:"
+echo "   Database: $(grep "^DSN=" .env.staging | cut -d'@' -f2 | cut -d':' -f1)"
+if grep -q "^CONCURRENCY=" .env.staging; then
+    echo "   Concurrency: $(grep "^CONCURRENCY=" .env.staging | cut -d'=' -f2) (explicit)"
 else
     echo "   Concurrency: Auto-detected ($OPTIMAL_CONCURRENCY)"
 fi
 echo
 
 # 3. Build with no cache to ensure latest fixes
-print_status "🏗️ Building Docker image with CPU optimizations..."
+print_status "Building Docker image with CPU optimizations..."
 docker build --no-cache -t brezel-staging-test .
 
 # 4. Stop existing containers
-print_status "🛑 Stopping existing containers..."
+print_status "Stopping existing containers..."
 docker compose -f docker-compose.staging.yaml down --remove-orphans 2>/dev/null || true
 
 # 5. Start application
-print_status "🚀 Starting application..."
-docker compose -f docker-compose.staging.yaml --env-file .env up -d
+print_status "Starting app..."
+docker compose -f docker-compose.staging.yaml --env-file .env.staging up -d
 
 # 6. Wait and monitor
 print_status "⏳ Waiting for application startup..."

@@ -55,28 +55,21 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		return nil, fmt.Errorf("failed to connect to PostgreSQL: %w", err)
 	}
 
-	// Set connection pool settings
+	// connection pool settings
 	db.SetMaxOpenConns(25)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(5 * time.Minute)
 
-	// Ping the database to verify connection
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("failed to ping PostgreSQL: %w", err)
 	}
 
-	log.Println("Running database migrations...")
-
-	migrationRunner := postgres.NewMigrationRunner(cfg.Dsn)
-
-	if err := migrationRunner.RunMigrations(); err != nil {
-		log.Printf("Warning: failed to run migrations: %v", err)
-		//TODO: handle migration error
-	} else {
-		log.Println("Database migrations completed.")
+	// Run database migrations automatically on startup with meaningful logs
+	mr := postgres.NewMigrationRunner(cfg.Dsn)
+	if err := mr.RunMigrations(); err != nil {
+		return nil, fmt.Errorf("failed to run database migrations: %w", err)
 	}
 
-	// Create PostgreSQL repository
 	repo, err = postgres.NewRepository(db)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PostgreSQL repository: %w", err)
@@ -114,17 +107,16 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		// Use Clerk API key from environment
 		if clerkAPIKey != "" {
 			serverCfg.ClerkAPIKey = clerkAPIKey
-			log.Println("Authentication enabled with Clerk")
+			log.Println("[WebRunner] Authentication enabled with Clerk")
 		}
 
 		// Use Stripe API key and webhook secret from environment
 		if stripeAPIKey != "" {
 			serverCfg.StripeAPIKey = stripeAPIKey
 			serverCfg.StripeWebhookSecret = stripeWebhookSecret
-			log.Println("Stripe subscription system enabled")
+			log.Println("[WebRunner] Payment enabled with Stripe")
 		}
 	}
-
 	// Create web server
 	srv, err := web.New(serverCfg)
 	if err != nil {
@@ -240,12 +232,20 @@ func (w *webrunner) work(ctx context.Context) error {
 }
 
 func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
+	// Always persist the final job status on exit
+	defer func() {
+		if err := w.svc.Update(context.Background(), job); err != nil {
+			log.Printf("failed to persist final job status for %s: %v", job.ID, err)
+		} else {
+			log.Printf("DEBUG: Job %s - Final status persisted: %s", job.ID, job.Status)
+		}
+	}()
+
 	// Charge actor_start at job start (requires sufficient balance)
 	if w.billingSvc != nil {
 		if err := w.billingSvc.ChargeActorStart(context.Background(), job.UserID, job.ID); err != nil {
 			log.Printf("billing: actor_start charge failed for job %s: %v", job.ID, err)
 			job.Status = web.StatusFailed
-			_ = w.svc.Update(context.Background(), job)
 			return err
 		}
 	}
@@ -308,8 +308,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 
 	if len(job.Data.Keywords) == 0 {
 		job.Status = web.StatusFailed
-
-		return w.svc.Update(jobCtx, job)
+		return err
 	}
 
 	outpath := filepath.Join(w.cfg.DataFolder, job.ID+".csv")
@@ -330,12 +329,6 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	mate, err := w.setupMate(jobCtx, outfile, job, exitMonitor)
 	if err != nil {
 		job.Status = web.StatusFailed
-
-		err2 := w.svc.Update(context.Background(), job)
-		if err2 != nil {
-			log.Printf("failed to update job status: %v", err2)
-		}
-
 		return err
 	}
 
@@ -370,12 +363,6 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	)
 	if err != nil {
 		job.Status = web.StatusFailed
-
-		err2 := w.svc.Update(context.Background(), job)
-		if err2 != nil {
-			log.Printf("failed to update job status: %v", err2)
-		}
-
 		return err
 	}
 
@@ -515,29 +502,47 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 						log.Printf("DEBUG: Job %s - Marked as cancelled (user initiated)", job.ID)
 						jobSuccess = false // Explicitly mark as not successful for user cancellation
 					} else {
-						// Check if max results were reached
-						if job.Data.MaxResults > 0 {
-							log.Printf("DEBUG: Job %s - Context cancelled with max results set (%d), treating as successful completion", job.ID, job.Data.MaxResults)
+						// Check if we actually produced results before marking as successful
+						var resultCount int
+						if w.db != nil {
+							if err := w.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM results WHERE job_id=$1`, job.ID).Scan(&resultCount); err != nil {
+								log.Printf("DEBUG: Job %s - Failed to count results after cancellation: %v", job.ID, err)
+								resultCount = 0
+							}
+						}
+
+						if resultCount > 0 {
+							log.Printf("DEBUG: Job %s - Context cancelled but produced %d results, treating as successful completion", job.ID, resultCount)
 							jobSuccess = true
 						} else {
-							log.Printf("DEBUG: Job %s - Context cancelled without max results, treating as normal completion", job.ID)
-							jobSuccess = true
+							log.Printf("DEBUG: Job %s - Context cancelled with 0 results, treating as failed completion", job.ID)
+							jobSuccess = false
 						}
 					}
 				}
 			} else if errors.Is(err, context.DeadlineExceeded) {
-				log.Printf("DEBUG: Job %s - Context deadline exceeded (timeout), treating as successful", job.ID)
-				jobSuccess = true
+				// Check if we actually produced results before marking as successful
+				var resultCount int
+				if w.db != nil {
+					if err := w.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM results WHERE job_id=$1`, job.ID).Scan(&resultCount); err != nil {
+						log.Printf("DEBUG: Job %s - Failed to count results after timeout: %v", job.ID, err)
+						resultCount = 0
+					}
+				}
+
+				if resultCount > 0 {
+					log.Printf("DEBUG: Job %s - Context deadline exceeded but produced %d results, treating as successful", job.ID, resultCount)
+					jobSuccess = true
+				} else {
+					log.Printf("DEBUG: Job %s - Context deadline exceeded with 0 results, treating as failed", job.ID)
+					jobSuccess = false
+				}
 			} else {
 				// This is a real error
 				log.Printf("DEBUG: Job %s - Real error occurred: %v", job.ID, err)
 				cancel()
 
 				job.Status = web.StatusFailed
-				err2 := w.svc.Update(context.Background(), job)
-				if err2 != nil {
-					log.Printf("failed to update job status: %v", err2)
-				}
 
 				return err
 			}
@@ -577,13 +582,6 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		}
 	}
 
-	// Update job status
-	err = w.svc.Update(context.Background(), job)
-	if err != nil {
-		log.Printf("failed to update job status: %v", err)
-	} else {
-		log.Printf("DEBUG: Job %s - Final status update successful: %s", job.ID, job.Status)
-	}
 	return nil
 }
 

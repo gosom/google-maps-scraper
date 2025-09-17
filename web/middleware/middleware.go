@@ -1,6 +1,12 @@
 package middleware
 
-import "net/http"
+import (
+	"log"
+	"net/http"
+	"time"
+
+	"github.com/gosom/google-maps-scraper/web/auth"
+)
 
 // Chain applies middlewares in order to a handler.
 func Chain(h http.Handler, mws ...func(http.Handler) http.Handler) http.Handler {
@@ -40,5 +46,29 @@ func SecurityHeaders(next http.Handler) http.Handler {
 				"font-src 'self' fonts.gstatic.com; "+
 				"connect-src 'self'")
 		next.ServeHTTP(w, r)
+	})
+}
+
+// RequestLogger logs method, path, status, duration, userID (if any) and UA.
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (lrw *loggingResponseWriter) WriteHeader(code int) {
+	lrw.status = code
+	lrw.ResponseWriter.WriteHeader(code)
+}
+
+func RequestLogger(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		lrw := &loggingResponseWriter{ResponseWriter: w, status: 200}
+		next.ServeHTTP(lrw, r)
+		dur := time.Since(start)
+
+		userID, _ := auth.GetUserID(r.Context())
+		ua := r.UserAgent()
+		log.Printf("%s %s %d %s user_id=%s ua=\"%s\"", r.Method, r.URL.Path, lrw.status, dur.String(), userID, ua)
 	})
 }

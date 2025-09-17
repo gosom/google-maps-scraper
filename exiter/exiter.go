@@ -239,6 +239,10 @@ func (e *exiter) isDone() bool {
 
 	// 4. For limited results, we're done if seeds are complete
 	// (results will be capped by IncrResultsWritten)
+	if e.placesFound > 0 && e.placesCompleted >= e.placesFound {
+		fmt.Printf("DEBUG: isDone() - limited mode, all places complete (%d/%d)\n", e.placesCompleted, e.placesFound)
+		return true
+	}
 	fmt.Printf("DEBUG: isDone() - limited mode, seeds complete, continuing to collect results\n")
 	return false
 }
