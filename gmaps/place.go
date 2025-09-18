@@ -11,6 +11,7 @@ package gmaps
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -362,21 +363,48 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 }
 
 func (j *PlaceJob) extractJSON(page playwright.Page) ([]byte, error) {
-	rawI, err := page.Evaluate(js)
-	if err != nil {
-		return nil, err
+	const (
+		maxAttempts   = 15
+		retryInterval = 200 * time.Millisecond
+	)
+
+	var lastErr error
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		rawI, err := page.Evaluate(js)
+		if err != nil {
+			lastErr = err
+			time.Sleep(retryInterval)
+			continue
+		}
+
+		switch v := rawI.(type) {
+		case string:
+			const prefix = ")]}'"
+			v = strings.TrimSpace(strings.TrimPrefix(v, prefix))
+			if v != "" && (strings.HasPrefix(v, "[") || strings.HasPrefix(v, "{")) {
+				return []byte(v), nil
+			}
+		case []byte:
+			if len(v) > 0 {
+				return v, nil
+			}
+		case nil:
+			// keep retrying
+		default:
+			// Try to marshal complex types
+			if b, mErr := json.Marshal(v); mErr == nil && len(b) > 0 && string(b) != "null" {
+				return b, nil
+			}
+		}
+
+		time.Sleep(retryInterval)
 	}
 
-	raw, ok := rawI.(string)
-	if !ok {
-		return nil, fmt.Errorf("could not convert to string")
+	if lastErr != nil {
+		return nil, lastErr
 	}
-
-	const prefix = `)]}'`
-
-	raw = strings.TrimSpace(strings.TrimPrefix(raw, prefix))
-
-	return []byte(raw), nil
+	return nil, fmt.Errorf("empty app state after extraction")
 }
 
 func (j *PlaceJob) getReviewCount(data []byte) int {
@@ -400,19 +428,67 @@ func ctxWait(ctx context.Context, dur time.Duration) {
 }
 
 const js = `
-function parse() {
-	const appState = window.APP_INITIALIZATION_STATE[3];
-	if (!appState) {
-		return null;
-	}
+(() => {
+  try {
+    const state = window.APP_INITIALIZATION_STATE;
+    if (!state) return null;
 
-	for (let i = 65; i <= 90; i++) {
-		const key = String.fromCharCode(i) + "f";
-		if (appState[key] && appState[key][6]) {
-		return appState[key][6];
-		}
-	}
+    const toOut = (val) => {
+      if (val == null) return null;
+      try {
+        if (typeof val === 'string') return val;
+        return JSON.stringify(val);
+      } catch (_) {
+        return null;
+      }
+    };
 
-	return null;
-}
-`
+    // If it's an array, iterate all entries
+    if (Array.isArray(state)) {
+      for (let i = 0; i < state.length; i++) {
+        const s = state[i];
+        if (!s) continue;
+
+        // Case: object with keys like 'af', 'bf', etc.
+        if (typeof s === 'object' && !Array.isArray(s)) {
+          for (const k in s) {
+            const node = s[k];
+            if (!node) continue;
+            // Direct [6] index if present
+            if (Array.isArray(node) && node.length > 6 && node[6] != null) {
+              const v = node[6];
+              const out = toOut(v);
+              if (out) return out;
+            }
+            // Nested object with [6]
+            if (typeof node === 'object' && node[6] != null) {
+              const out = toOut(node[6]);
+              if (out) return out;
+            }
+          }
+        }
+
+        // Case: array with index 6
+        if (Array.isArray(s) && s.length > 6 && s[6] != null) {
+          const out = toOut(s[6]);
+          if (out) return out;
+        }
+      }
+    }
+
+    // Also check direct object form
+    if (typeof state === 'object' && !Array.isArray(state)) {
+      for (const k in state) {
+        const node = state[k];
+        if (node && node[6] != null) {
+          const out = toOut(node[6]);
+          if (out) return out;
+        }
+      }
+    }
+
+    return null;
+  } catch (e) {
+    return null;
+  }
+})()`
