@@ -10,6 +10,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/web/auth"
+	webservices "github.com/gosom/google-maps-scraper/web/services"
 	webutils "github.com/gosom/google-maps-scraper/web/utils"
 )
 
@@ -217,6 +218,53 @@ func (h *APIHandlers) GetJobResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := models.PaginatedResultsResponse{Results: results, TotalCount: total, Page: page, Limit: limit, Offset: offset, TotalPages: (total + limit - 1) / limit, HasNext: offset+limit < total, HasPrev: page > 1}
+	renderJSON(w, http.StatusOK, resp)
+}
+
+// GetJobCosts returns the cost breakdown and totals for a job
+func (h *APIHandlers) GetJobCosts(w http.ResponseWriter, r *http.Request) {
+	if h.Deps.Logger != nil {
+		h.Deps.Logger.Printf("GET %s", r.URL.Path)
+	}
+	// Require auth
+	if h.Deps.Auth == nil {
+		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "Authentication not configured"})
+		return
+	}
+	userID, err := auth.GetUserID(r.Context())
+	if err != nil || userID == "" {
+		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
+		return
+	}
+
+	jobID := mux.Vars(r)["id"]
+	if jobID == "" {
+		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Missing job ID"})
+		return
+	}
+
+	// Ensure the job belongs to the user
+	job, err := h.Deps.App.Get(r.Context(), jobID)
+	if err != nil {
+		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: "Job not found"})
+		return
+	}
+	if job.UserID != userID {
+		renderJSON(w, http.StatusForbidden, models.APIError{Code: http.StatusForbidden, Message: "Access denied"})
+		return
+	}
+
+	if h.Deps.DB == nil {
+		renderJSON(w, http.StatusServiceUnavailable, models.APIError{Code: http.StatusServiceUnavailable, Message: "database not available"})
+		return
+	}
+
+	cs := webservices.NewCostsService(h.Deps.DB)
+	resp, err := cs.GetJobCosts(r.Context(), jobID)
+	if err != nil {
+		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: err.Error()})
+		return
+	}
 	renderJSON(w, http.StatusOK, resp)
 }
 

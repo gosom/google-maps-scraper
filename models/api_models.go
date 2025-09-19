@@ -112,3 +112,18 @@ type PaginatedResultsResponse struct {
 	HasNext    bool             `json:"has_next"`
 	HasPrev    bool             `json:"has_prev"`
 }
+
+// JobCostBreakdownItem represents per-event cost aggregation for a job.
+type JobCostBreakdownItem struct {
+	EventType   string `json:"event_type"`
+	Quantity    int64  `json:"quantity"`
+	CostCredits string `json:"cost_credits"`
+}
+
+// JobCostResponse is the API payload for job cost details and totals.
+type JobCostResponse struct {
+	JobID        string                 `json:"job_id"`
+	Items        []JobCostBreakdownItem `json:"items"`
+	TotalCredits string                 `json:"total_credits"`
+	TotalRounded int                    `json:"total_rounded"`
+}

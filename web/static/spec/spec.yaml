@@ -36,6 +36,37 @@ components:
         Get a long-lived token from your Clerk dashboard for testing.
 
   schemas:
+    JobCostBreakdownItem:
+      type: object
+      properties:
+        event_type:
+          type: string
+          example: "actor_start"
+        quantity:
+          type: integer
+          example: 1
+        cost_credits:
+          type: string
+          example: "0.007000"
+
+    JobCostResponse:
+      type: object
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobCostBreakdownItem'
+        total_credits:
+          type: string
+          description: Exact credits with 6-decimal precision
+          example: "0.123000"
+        total_rounded:
+          type: integer
+          description: Rounded integer credits (jobs.actual_cost)
+          example: 0
     ApiError:
       type: object
       properties:
@@ -507,6 +538,59 @@ paths:
                 $ref: '#/components/schemas/ApiError'
         '404':
           description: Job or CSV file not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '422':
+          description: Invalid ID format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+  /api/v1/jobs/{id}/costs:
+    get:
+      summary: Get job cost breakdown and totals
+      description: |
+        Returns per-event cost items and total cost for a job. Totals are computed from billing events and updated via triggers.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Job ID
+      responses:
+        '200':
+          description: Cost breakdown retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobCostResponse'
+        '401':
+          description: Unauthorized - invalid token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: Forbidden - job does not belong to user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Job not found
           content:
             application/json:
               schema:

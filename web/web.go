@@ -137,6 +137,7 @@ func New(cfg ServerConfig) (*Server, error) {
 	apiRouter.HandleFunc("/jobs/{id}/cancel", hg.API.CancelJob).Methods(http.MethodPost)
 	apiRouter.HandleFunc("/jobs/{id}/download", hg.Web.Download).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/{id}/results", hg.API.GetJobResults).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/jobs/{id}/costs", hg.API.GetJobCosts).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/results", hg.API.GetUserResults).Methods(http.MethodGet)
 
 	// Credit endpoints (if billing service is available)
