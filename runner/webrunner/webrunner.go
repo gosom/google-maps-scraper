@@ -35,7 +35,7 @@ type webrunner struct {
 	cfg        *runner.Config
 	db         *sql.DB
 	billingSvc *billing.Service
-	proxySrv   *proxy.Server
+	proxyPool  *proxy.Pool
 }
 
 func New(cfg *runner.Config) (runner.Runner, error) {
@@ -129,22 +129,18 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 	cfgSvc := config.New(db)
 	billSvc := billing.New(db, cfgSvc, "", "")
 
-	// Initialize proxy server if proxies are configured
-	var proxySrv *proxy.Server
+	// Initialize proxy pool if proxies are configured
+	var proxyPool *proxy.Pool
 	if len(cfg.Proxies) > 0 {
-		log.Printf("DEBUG: WebRunner - Creating proxy server with %d proxies", len(cfg.Proxies))
+		log.Printf("DEBUG: WebRunner - Creating proxy pool with %d proxies", len(cfg.Proxies))
 		log.Printf("DEBUG: WebRunner - All cfg.Proxies: %v", cfg.Proxies)
 
-		// Use the new fallback proxy server for multiple proxies
-		proxySrv, err = proxy.NewServerWithFallback(cfg.Proxies, 8888)
+		// Create proxy pool with port range 8888-9998 (1000 ports)
+		proxyPool, err = proxy.NewPool(cfg.Proxies, 8888, 9998)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create proxy server: %w", err)
+			return nil, fmt.Errorf("failed to create proxy pool: %w", err)
 		}
-
-		if err := proxySrv.Start(); err != nil {
-			return nil, fmt.Errorf("failed to start proxy server: %w", err)
-		}
-		log.Printf("🔧 Started proxy server with fallback support")
+		log.Printf("🔧 Started proxy pool with %d proxies", len(cfg.Proxies))
 	}
 
 	ans := webrunner{
@@ -153,7 +149,7 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		cfg:        cfg,
 		db:         db,
 		billingSvc: billSvc,
-		proxySrv:   proxySrv,
+		proxyPool:  proxyPool,
 	}
 
 	return &ans, nil
@@ -174,8 +170,9 @@ func (w *webrunner) Run(ctx context.Context) error {
 }
 
 func (w *webrunner) Close(context.Context) error {
-	if w.proxySrv != nil {
-		w.proxySrv.Stop()
+	if w.proxyPool != nil {
+		// Proxy pool cleanup would go here if needed
+		// For now, individual servers are cleaned up when jobs finish
 	}
 	if w.db != nil {
 		w.db.Close()
@@ -651,16 +648,24 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 	}
 
 	// Handle proxy configuration
-	if w.proxySrv != nil {
-		// Use the local proxy server
-		localProxyURL := w.proxySrv.GetLocalURL()
-		log.Printf("DEBUG: Job %s - using local proxy server: %s", job.ID, localProxyURL)
-		opts = append(opts, scrapemateapp.WithProxies([]string{localProxyURL}))
-		log.Printf("DEBUG: Job %s - local proxy server attached to scrapemate config", job.ID)
+	if w.proxyPool != nil {
+		log.Printf("DEBUG: Job %s - requesting proxy from pool", job.ID)
+		// Get a dedicated proxy server for this job
+		proxySrv, err := w.proxyPool.GetServerForJob(job.ID)
+		if err != nil {
+			log.Printf("❌ Job %s - failed to get proxy server: %v", job.ID, err)
+			// Continue without proxy
+		} else {
+			localProxyURL := proxySrv.GetLocalURL()
+			currentProxy := proxySrv.GetCurrentProxy()
+			log.Printf("🎯 Job %s - assigned proxy %s:%s on %s", job.ID, currentProxy.Address, currentProxy.Port, localProxyURL)
+			opts = append(opts, scrapemateapp.WithProxies([]string{localProxyURL}))
+			log.Printf("DEBUG: Job %s - dedicated proxy server attached to scrapemate config", job.ID)
+		}
 	} else if len(job.Data.Proxies) > 0 {
 		// For job-level proxies, we need to start a separate proxy server
 		// This is more complex, so for now we'll log a warning
-		log.Printf("DEBUG: Job %s - job-level proxies detected (%d) but local proxy server not available", job.ID, len(job.Data.Proxies))
+		log.Printf("DEBUG: Job %s - job-level proxies detected (%d) but proxy pool not available", job.ID, len(job.Data.Proxies))
 		log.Printf("WARNING: Job-level proxies are not yet supported with the new proxy system")
 	} else {
 		log.Printf("DEBUG: Job %s - no proxies configured", job.ID)

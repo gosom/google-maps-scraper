@@ -62,6 +62,15 @@ func NewServer(webshareURL string, localPort int) (*Server, error) {
 	}, nil
 }
 
+// NewServerFromProxy creates a new proxy server from a WebshareProxy
+func NewServerFromProxy(proxy *WebshareProxy, localPort int) (*Server, error) {
+	return &Server{
+		proxies:      []*WebshareProxy{proxy},
+		currentProxy: 0,
+		localPort:    localPort,
+	}, nil
+}
+
 // NewServerWithFallback creates a new proxy server with multiple proxies for fallback
 func NewServerWithFallback(proxyURLs []string, localPort int) (*Server, error) {
 	if len(proxyURLs) == 0 {
@@ -339,6 +348,19 @@ func (ps *Server) GetCurrentProxy() *WebshareProxy {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
 	return ps.proxies[ps.currentProxy]
+}
+
+// MarkProxyBlocked marks the current proxy as blocked
+func (ps *Server) MarkProxyBlocked() {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	currentProxy := ps.proxies[ps.currentProxy]
+	proxyKey := fmt.Sprintf("%s:%s", currentProxy.Address, currentProxy.Port)
+	log.Printf("🚫 Marking proxy %s as blocked", proxyKey)
+
+	// This would need to be called from the pool to actually block it
+	// For now, just log it
 }
 
 // GetProxyCount returns the total number of configured proxies
