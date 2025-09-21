@@ -23,6 +23,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/opt/browsers
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    wget \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && apt-get clean \
@@ -47,9 +48,10 @@ ENV GOSUMDB=sum.golang.org
 
 WORKDIR /app
 
-# Install CA certificates for TLS verification
+# Install CA certificates and wget for TLS verification
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy go mod files first for better caching
