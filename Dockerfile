@@ -1,5 +1,18 @@
 # Build stage for Playwright dependencies
-FROM golang:1.25-bullseye AS playwright-deps
+FROM golang:1.24-bullseye AS go-installer
+
+# Install Go 1.25.1
+RUN wget https://go.dev/dl/go1.25.1.linux-amd64.tar.gz \
+    && tar -C /usr/local -xzf go1.25.1.linux-amd64.tar.gz \
+    && rm go1.25.1.linux-amd64.tar.gz
+
+FROM debian:bullseye-slim AS playwright-deps
+
+# Copy Go 1.25.1 from installer stage
+COPY --from=go-installer /usr/local/go /usr/local/go
+
+# Set up Go environment
+ENV PATH="/usr/local/go/bin:${PATH}"
 
 # Use Go proxy for faster downloads
 ARG GOPROXY=https://proxy.golang.org,direct
@@ -19,7 +32,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && playwright install chromium --with-deps
 
 # Build stage
-FROM golang:1.25-bullseye AS builder
+FROM debian:bullseye-slim AS builder
+
+# Copy Go 1.25.1 from installer stage
+COPY --from=go-installer /usr/local/go /usr/local/go
+
+# Set up Go environment
+ENV PATH="/usr/local/go/bin:${PATH}"
 
 # Use Go proxy for faster downloads
 ARG GOPROXY=https://proxy.golang.org,direct
