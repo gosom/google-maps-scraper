@@ -287,8 +287,16 @@ func ParseConfig() *Config {
 		panic("Dsn must be provided when using ProduceOnly")
 	}
 
+	fmt.Printf("DEBUG: PROXIES env var: '%s'\n", os.Getenv("PROXIES"))
+	fmt.Printf("DEBUG: CLI proxies flag: '%s'\n", proxies)
+
 	if proxies != "" {
 		cfg.Proxies = strings.Split(proxies, ",")
+		fmt.Printf("DEBUG: CLI proxies configured: %d entries\n", len(cfg.Proxies))
+		fmt.Printf("DEBUG: CLI proxy values: %v\n", cfg.Proxies)
+	} else if os.Getenv("PROXIES") != "" {
+		// Informative log: PROXIES env is set but ignored unless -proxies flag is provided
+		fmt.Println("DEBUG: PROXIES env detected but not used; pass with -proxies to enable")
 	}
 
 	if cfg.AwsAccessKey != "" && cfg.AwsSecretKey != "" && cfg.AwsRegion != "" {

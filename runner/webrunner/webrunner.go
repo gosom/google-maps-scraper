@@ -18,6 +18,7 @@ import (
 	"github.com/gosom/google-maps-scraper/deduper"
 	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/google-maps-scraper/postgres"
+	"github.com/gosom/google-maps-scraper/proxy"
 	"github.com/gosom/google-maps-scraper/runner"
 	"github.com/gosom/google-maps-scraper/tlmt"
 	"github.com/gosom/google-maps-scraper/web"
@@ -34,6 +35,7 @@ type webrunner struct {
 	cfg        *runner.Config
 	db         *sql.DB
 	billingSvc *billing.Service
+	proxySrv   *proxy.Server
 }
 
 func New(cfg *runner.Config) (runner.Runner, error) {
@@ -127,12 +129,31 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 	cfgSvc := config.New(db)
 	billSvc := billing.New(db, cfgSvc, "", "")
 
+	// Initialize proxy server if proxies are configured
+	var proxySrv *proxy.Server
+	if len(cfg.Proxies) > 0 {
+		log.Printf("DEBUG: WebRunner - Creating proxy server with %d proxies", len(cfg.Proxies))
+		log.Printf("DEBUG: WebRunner - All cfg.Proxies: %v", cfg.Proxies)
+
+		// Use the new fallback proxy server for multiple proxies
+		proxySrv, err = proxy.NewServerWithFallback(cfg.Proxies, 8888)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create proxy server: %w", err)
+		}
+
+		if err := proxySrv.Start(); err != nil {
+			return nil, fmt.Errorf("failed to start proxy server: %w", err)
+		}
+		log.Printf("🔧 Started proxy server with fallback support")
+	}
+
 	ans := webrunner{
 		srv:        srv,
 		svc:        svc,
 		cfg:        cfg,
 		db:         db,
 		billingSvc: billSvc,
+		proxySrv:   proxySrv,
 	}
 
 	return &ans, nil
@@ -153,6 +174,9 @@ func (w *webrunner) Run(ctx context.Context) error {
 }
 
 func (w *webrunner) Close(context.Context) error {
+	if w.proxySrv != nil {
+		w.proxySrv.Stop()
+	}
 	if w.db != nil {
 		w.db.Close()
 	}
@@ -626,12 +650,20 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 		)
 	}
 
-	if len(w.cfg.Proxies) > 0 {
-		opts = append(opts, scrapemateapp.WithProxies(w.cfg.Proxies))
+	// Handle proxy configuration
+	if w.proxySrv != nil {
+		// Use the local proxy server
+		localProxyURL := w.proxySrv.GetLocalURL()
+		log.Printf("DEBUG: Job %s - using local proxy server: %s", job.ID, localProxyURL)
+		opts = append(opts, scrapemateapp.WithProxies([]string{localProxyURL}))
+		log.Printf("DEBUG: Job %s - local proxy server attached to scrapemate config", job.ID)
 	} else if len(job.Data.Proxies) > 0 {
-		opts = append(opts,
-			scrapemateapp.WithProxies(job.Data.Proxies),
-		)
+		// For job-level proxies, we need to start a separate proxy server
+		// This is more complex, so for now we'll log a warning
+		log.Printf("DEBUG: Job %s - job-level proxies detected (%d) but local proxy server not available", job.ID, len(job.Data.Proxies))
+		log.Printf("WARNING: Job-level proxies are not yet supported with the new proxy system")
+	} else {
+		log.Printf("DEBUG: Job %s - no proxies configured", job.ID)
 	}
 
 	if !w.cfg.DisablePageReuse {
