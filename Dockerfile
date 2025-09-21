@@ -47,6 +47,11 @@ ENV GOSUMDB=sum.golang.org
 
 WORKDIR /app
 
+# Install CA certificates for TLS verification
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy go mod files first for better caching
 COPY go.mod go.sum ./
 
