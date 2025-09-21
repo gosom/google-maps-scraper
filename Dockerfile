@@ -1,5 +1,5 @@
 # Build stage for Playwright dependencies
-FROM golang:1.24-bullseye AS playwright-deps
+FROM golang:1.25-bullseye AS playwright-deps
 
 # Use Go proxy for faster downloads
 ARG GOPROXY=https://proxy.golang.org,direct
@@ -19,7 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && playwright install chromium --with-deps
 
 # Build stage
-FROM golang:1.24-bullseye AS builder
+FROM golang:1.25-bullseye AS builder
 
 # Use Go proxy for faster downloads
 ARG GOPROXY=https://proxy.golang.org,direct
