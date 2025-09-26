@@ -25,6 +25,7 @@ type GmapJob struct {
 	LangCode      string
 	ExtractEmail  bool
 	ExtractImages bool
+	Debug         bool
 
 	Deduper             deduper.Deduper
 	ExitMonitor         exiter.Exiter
@@ -100,6 +101,12 @@ func WithExitMonitor(e exiter.Exiter) GmapJobOptions {
 func WithExtraReviews() GmapJobOptions {
 	return func(j *GmapJob) {
 		j.ExtractExtraReviews = true
+	}
+}
+
+func WithDebug() GmapJobOptions {
+	return func(j *GmapJob) {
+		j.Debug = true
 	}
 }
 
@@ -415,10 +422,8 @@ func scroll(ctx context.Context,
 	waitTime := 100.
 	cnt := 0
 
-	const (
-		timeout  = 500
-		maxWait2 = 2000
-	)
+	initialTimeout := 500
+	maxWait2 := 2000.0
 
 	for i := 0; i < maxDepth; i++ {
 		// Check for cancellation before each scroll
@@ -429,10 +434,10 @@ func scroll(ctx context.Context,
 		}
 
 		cnt++
-		waitTime2 := timeout * cnt
+		waitTime2 := initialTimeout * cnt
 
-		if waitTime2 > timeout {
-			waitTime2 = maxWait2
+		if waitTime2 > initialTimeout {
+			waitTime2 = int(maxWait2)
 		}
 
 		// Scroll to the bottom of the page.

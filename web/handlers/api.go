@@ -39,6 +39,31 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
 		return
 	}
+
+	// Log request parameters for job creation (no secrets involved)
+	if h.Deps.Logger != nil {
+		// Note: MaxTime is in seconds for JSON API; multiplied to Duration below
+		h.Deps.Logger.Printf(
+			"CreateJob request: user_id=%s name=%q keywords=%d lang=%s depth=%d email=%t images=%t reviews_max=%d max_results=%d lat=%s lon=%s zoom=%d radius=%d max_time=%d fast_mode=%t proxies=%d",
+			userID,
+			req.Name,
+			len(req.JobData.Keywords),
+			req.JobData.Lang,
+			req.JobData.Depth,
+			req.JobData.Email,
+			req.JobData.Images,
+			req.JobData.ReviewsMax,
+			req.JobData.MaxResults,
+			req.JobData.Lat,
+			req.JobData.Lon,
+			req.JobData.Zoom,
+			req.JobData.Radius,
+			int64(req.JobData.MaxTime),
+			req.JobData.FastMode,
+			len(req.JobData.Proxies),
+		)
+	}
+
 	newJob := models.Job{ID: uuid.New().String(), UserID: userID, Name: req.Name, Date: time.Now().UTC(), Status: models.StatusPending, Data: req.JobData}
 	newJob.Data.MaxTime *= time.Second
 	if err := webutils.ValidateJob(&newJob); err != nil {
@@ -49,6 +74,12 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: "failed to create job: " + err.Error()})
 		return
 	}
+
+	// Log created job id
+	if h.Deps.Logger != nil {
+		h.Deps.Logger.Printf("CreateJob success: user_id=%s job_id=%s", userID, newJob.ID)
+	}
+
 	renderJSON(w, http.StatusCreated, models.ApiScrapeResponse{ID: newJob.ID})
 }
 

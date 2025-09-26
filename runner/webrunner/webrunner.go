@@ -38,6 +38,39 @@ type webrunner struct {
 	proxyPool  *proxy.Pool
 }
 
+// buildServerConfig loads integration settings from environment, enforces required
+// dependencies (Clerk), and constructs the web.ServerConfig in a single place.
+// Stripe settings are optional; if present, they are applied.
+func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.ServerConfig, error) {
+	clerkAPIKey := os.Getenv("CLERK_API_KEY")
+	stripeAPIKey := os.Getenv("STRIPE_SECRET_KEY")
+	stripeWebhookSecret := os.Getenv("STRIPE_WEBHOOK_SECRET")
+
+	if clerkAPIKey == "" {
+		log.Println("[WebRunner] FATAL: CLERK_API_KEY is required but missing. Set the CLERK_API_KEY environment variable.")
+		return web.ServerConfig{}, fmt.Errorf("CLERK_API_KEY environment variable is required")
+	}
+
+	userRepo := postgres.NewUserRepository(db)
+
+	serverCfg := web.ServerConfig{
+		Service:             svc,
+		Addr:                cfg.Addr,
+		PgDB:                db,
+		UserRepo:            userRepo,
+		ClerkAPIKey:         clerkAPIKey,
+		StripeAPIKey:        stripeAPIKey,
+		StripeWebhookSecret: stripeWebhookSecret,
+	}
+
+	log.Println("[WebRunner] Authentication enabled with Clerk")
+	if stripeAPIKey != "" {
+		log.Println("[WebRunner] Payment enabled with Stripe")
+	}
+
+	return serverCfg, nil
+}
+
 func New(cfg *runner.Config) (runner.Runner, error) {
 	if cfg.DataFolder == "" {
 		return nil, fmt.Errorf("data folder is required")
@@ -79,46 +112,15 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 
 	svc := web.NewService(repo, cfg.DataFolder)
 
-	// Initialize server configuration
-	serverCfg := web.ServerConfig{
-		Service: svc,
-		Addr:    cfg.Addr,
+	// Initialize server configuration (built below by buildServerConfig)
+
+	// Build server config (enforces Clerk, applies Stripe if present)
+
+	serverCfg, err := buildServerConfig(cfg, db, svc)
+	if err != nil {
+		return nil, err
 	}
-	// Load application config - handle if LoadConfig doesn't exist
-	var clerkAPIKey string
-	// Try to load config, but don't fail if it doesn't exist
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("Warning: LoadConfig not available, continuing without Clerk: %v", r)
-		}
-	}()
 
-	// Check environment for optional integrations
-	clerkAPIKey = os.Getenv("CLERK_API_KEY")
-	stripeAPIKey := os.Getenv("STRIPE_SECRET_KEY")
-	stripeWebhookSecret := os.Getenv("STRIPE_WEBHOOK_SECRET")
-
-	// Add PostgreSQL and authentication if available
-	if cfg.Dsn != "" {
-		// If we're using PostgreSQL, add user repository
-		userRepo := postgres.NewUserRepository(db)
-
-		serverCfg.PgDB = db
-		serverCfg.UserRepo = userRepo
-
-		// Use Clerk API key from environment
-		if clerkAPIKey != "" {
-			serverCfg.ClerkAPIKey = clerkAPIKey
-			log.Println("[WebRunner] Authentication enabled with Clerk")
-		}
-
-		// Use Stripe API key and webhook secret from environment
-		if stripeAPIKey != "" {
-			serverCfg.StripeAPIKey = stripeAPIKey
-			serverCfg.StripeWebhookSecret = stripeWebhookSecret
-			log.Println("[WebRunner] Payment enabled with Stripe")
-		}
-	}
 	// Create web server
 	srv, err := web.New(serverCfg)
 	if err != nil {
@@ -367,6 +369,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		job.Data.Depth,
 		job.Data.Email,
 		job.Data.Images,
+		w.cfg.Debug,
 		job.Data.ReviewsMax, // Pass the actual review count
 		coords,
 		job.Data.Zoom,
@@ -572,6 +575,18 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			jobSuccess = true
 		}
 
+		// Post-run sanity checks: ensure seeds completed and results were produced
+		seedCompleted, seedTotal := exitMonitor.GetSeedProgress()
+		resultsWritten := exitMonitor.GetResultsWritten()
+		if seedTotal > 0 && seedCompleted < seedTotal {
+			log.Printf("DEBUG: Job %s - Seeds incomplete (%d/%d), treating as failed", job.ID, seedCompleted, seedTotal)
+			jobSuccess = false
+		}
+		if resultsWritten == 0 {
+			log.Printf("DEBUG: Job %s - 0 results written, treating as failed", job.ID)
+			jobSuccess = false
+		}
+
 		cancel()
 	}
 
@@ -637,14 +652,31 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 
 	// Always use stealth mode for Google Maps to avoid detection
 	if !job.Data.FastMode {
-		opts = append(opts,
-			scrapemateapp.WithStealth("firefox"), // Enable stealth for better compatibility
-			scrapemateapp.WithJS(scrapemateapp.DisableImages()),
-		)
+		if w.cfg.Debug {
+			opts = append(opts,
+				scrapemateapp.WithStealth("firefox"),
+				scrapemateapp.WithJS(
+					scrapemateapp.Headfull(), // Headful browser for visual debugging
+					scrapemateapp.DisableImages(),
+				),
+			)
+		} else {
+			opts = append(opts,
+				scrapemateapp.WithStealth("firefox"), // Enable stealth for better compatibility
+				scrapemateapp.WithJS(scrapemateapp.DisableImages()),
+			)
+		}
 	} else {
-		opts = append(opts,
-			scrapemateapp.WithStealth("firefox"),
-		)
+		if w.cfg.Debug {
+			opts = append(opts,
+				scrapemateapp.WithStealth("firefox"),
+				scrapemateapp.WithJS(scrapemateapp.Headfull()),
+			)
+		} else {
+			opts = append(opts,
+				scrapemateapp.WithStealth("firefox"),
+			)
+		}
 	}
 
 	// Handle proxy configuration

@@ -22,7 +22,9 @@ func main() {
 	_ = godotenv.Load() // Load .env file if present
 	ctx, cancel := context.WithCancel(context.Background())
 
-	runner.Banner()
+	// Parse config first so banner can reflect debug mode
+	cfg := runner.ParseConfig()
+	runner.BannerWithDebug(cfg.Debug)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
@@ -34,8 +36,6 @@ func main() {
 
 		cancel()
 	}()
-
-	cfg := runner.ParseConfig()
 
 	runnerInstance, err := runnerFactory(cfg)
 	if err != nil {

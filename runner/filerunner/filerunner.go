@@ -82,6 +82,7 @@ func (r *fileRunner) Run(ctx context.Context) (err error) {
 		r.cfg.MaxDepth,
 		r.cfg.Email,
 		r.cfg.Images,
+		r.cfg.Debug,
 		func() int {
 			if r.cfg.ExtraReviews {
 				return 1 // Default to 1 review if extra reviews enabled

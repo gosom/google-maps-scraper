@@ -193,6 +193,7 @@ func (d *dbrunner) produceSeedJobs(ctx context.Context) error {
 		d.cfg.MaxDepth,
 		d.cfg.Email,
 		d.cfg.Images,
+		d.cfg.Debug,
 		func() int {
 			if d.cfg.ExtraReviews {
 				return 1 // Default to 1 review if extra reviews enabled

@@ -85,6 +85,7 @@ func (l *lambdaAwsRunner) handler(ctx context.Context, input lInput) error {
 		input.Depth,
 		false, // email
 		false, // images
+		false, // debug
 		func() int {
 			if input.ExtraReviews {
 				return 1 // Default to 1 review if enabled

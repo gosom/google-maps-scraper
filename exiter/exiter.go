@@ -20,6 +20,8 @@ type Exiter interface {
 	SetSeedCount(int)
 	SetMaxResults(int)
 	GetMaxResults() int
+	GetSeedProgress() (completed int, total int)
+	GetResultsWritten() int
 	SetCancelFunc(context.CancelFunc)
 	IncrSeedCompleted(int)
 	IncrPlacesFound(int)
@@ -69,6 +71,22 @@ func (e *exiter) GetMaxResults() int {
 	defer e.mu.Unlock()
 
 	return e.maxResults
+}
+
+// GetSeedProgress returns the number of completed seeds and the total seeds
+func (e *exiter) GetSeedProgress() (int, int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	return e.seedCompleted, e.seedCount
+}
+
+// GetResultsWritten returns the number of results written
+func (e *exiter) GetResultsWritten() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	return e.resultsWritten
 }
 
 func (e *exiter) SetCancelFunc(fn context.CancelFunc) {

@@ -259,6 +259,8 @@ func ParseConfig() *Config {
 		fmt.Printf("DEBUG: Using default concurrency: %d (no CONCURRENCY env var set, system has %d cores)\n", cfg.Concurrency, cpuCores)
 	}
 
+	// Do not force concurrency in debug mode; keep user/provider choice intact
+
 	if cfg.AwsLambdaInvoker && cfg.FunctionName == "" {
 		panic("FunctionName must be provided when using AwsLambdaInvoker")
 	}
@@ -378,7 +380,9 @@ func wrapText(text string, width int) []string {
 	return lines
 }
 
-func banner(messages []string, width int) string {
+// bannerRender renders a framed banner. If color is non-empty (ANSI code),
+// it applies the color to both frame and content lines and resets at EOL.
+func bannerRender(messages []string, width int, color string) string {
 	if width <= 0 {
 		var err error
 
@@ -401,7 +405,11 @@ func banner(messages []string, width int) string {
 
 	var builder strings.Builder
 
-	builder.WriteString("╔" + strings.Repeat("═", width-2) + "╗\n")
+	if color != "" {
+		builder.WriteString(color + "╔" + strings.Repeat("═", width-2) + "╗\x1b[0m\n")
+	} else {
+		builder.WriteString("╔" + strings.Repeat("═", width-2) + "╗\n")
+	}
 
 	for _, line := range wrappedLines {
 		lineWidth := runewidth.StringWidth(line)
@@ -411,17 +419,47 @@ func banner(messages []string, width int) string {
 			paddingRight = 0
 		}
 
-		builder.WriteString(fmt.Sprintf("║ %s%s ║\n", line, strings.Repeat(" ", paddingRight)))
+		if color != "" {
+			builder.WriteString(fmt.Sprintf("%s║ %s%s ║\x1b[0m\n", color, line, strings.Repeat(" ", paddingRight)))
+		} else {
+			builder.WriteString(fmt.Sprintf("║ %s%s ║\n", line, strings.Repeat(" ", paddingRight)))
+		}
 	}
 
-	builder.WriteString("╚" + strings.Repeat("═", width-2) + "╝\n")
+	if color != "" {
+		builder.WriteString(color + "╚" + strings.Repeat("═", width-2) + "╝\x1b[0m\n")
+	} else {
+		builder.WriteString("╚" + strings.Repeat("═", width-2) + "╝\n")
+	}
 
 	return builder.String()
 }
 
-func Banner() {
+func banner(messages []string, width int) string {
+	return bannerRender(messages, width, "")
+}
+
+func bannerColored(messages []string, width int, color string) string {
+	return bannerRender(messages, width, color)
+}
+
+func BannerWithDebug(debug bool) {
 	message1 := "Google Maps Scraper"
 	message2 := "Forked from GitHub: https://github.com/gosom/google-maps-scraper"
 
 	fmt.Fprintln(os.Stderr, banner([]string{message1, message2}, 0))
+
+	if debug {
+		art := []string{
+			" ______   _______  _______  __   __  _______    __   __  _______  ______   _______ ",
+			"|      | |       ||  _    ||  | |  ||       |  |  |_|  ||       ||      | |       |",
+			"|  _    ||    ___|| |_|   ||  | |  ||    ___|  |       ||   _   ||  _    ||    ___|",
+			"| | |   ||   |___ |       ||  |_|  ||   | __   |       ||  | |  || | |   ||   |___ ",
+			"| |_|   ||    ___||  _   | |       ||   ||  |  |       ||  |_|  || |_|   ||    ___|",
+			"|       ||   |___ | |_|   ||       ||   |_| |  | ||_|| ||       ||       ||   |___ ",
+			"|______| |_______||_______||_______||_______|  |_|   |_||_______||______| |_______|",
+		}
+		lines := append([]string{}, art...)
+		fmt.Fprintln(os.Stderr, bannerColored(lines, 0, "\x1b[31m"))
+	}
 }
