@@ -60,15 +60,6 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 		}
 		token := parts[1]
 
-		// DEBUG: Log token verification attempt
-		log.Printf("DEBUG: Attempting to verify token for request %s %s (first 20 chars: %s...)", r.Method, r.URL.Path,
-			func() string {
-				if len(token) > 20 {
-					return token[:20]
-				}
-				return token
-			}())
-
 		// Verify token with Clerk - retry once if clock skew error
 		claims, err := m.client.VerifyToken(token)
 		if err != nil {
