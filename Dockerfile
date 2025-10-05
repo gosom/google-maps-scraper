@@ -1,10 +1,15 @@
 # Build stage for Playwright dependencies
-FROM golang:1.24.6-bullseye AS playwright-deps
+FROM ubuntu:20.04 AS playwright-deps
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/browsers
 #ENV PLAYWRIGHT_DRIVER_PATH=/opt/
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    wget \
+    && wget -q https://go.dev/dl/go1.25.1.linux-amd64.tar.gz \
+    && tar -C /usr/local -xzf go1.25.1.linux-amd64.tar.gz \
+    && rm go1.25.1.linux-amd64.tar.gz \
+    && export PATH=$PATH:/usr/local/go/bin \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && apt-get clean \
@@ -14,7 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && playwright install chromium --with-deps
 
 # Build stage
-FROM golang:1.24.6-bullseye AS builder
+FROM golang:1.25.1-trixie AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
@@ -22,7 +27,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -ldflags="-w -s" -o /usr/bin/google-maps-scraper
 
 # Final stage
-FROM debian:bullseye-slim
+FROM debian:trixie-slim
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/browsers
 ENV PLAYWRIGHT_DRIVER_PATH=/opt
 

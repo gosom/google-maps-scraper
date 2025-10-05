@@ -354,7 +354,7 @@ output instead of CSV.
 
 (tested only on Ubuntu 22.04)
 
-**make sure you use go version 1.24.3**
+**make sure you use go version 1.25.1**
 
 
 ```
