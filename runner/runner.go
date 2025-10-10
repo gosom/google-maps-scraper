@@ -20,6 +20,7 @@ import (
 	"github.com/gosom/google-maps-scraper/tlmt"
 	"github.com/gosom/google-maps-scraper/tlmt/gonoop"
 	"github.com/gosom/google-maps-scraper/tlmt/goposthog"
+	"github.com/gosom/google-maps-scraper/webshare"
 )
 
 // parseConcurrency parses dynamic concurrency values including percentages, fractions, and keywords
@@ -176,6 +177,7 @@ type Config struct {
 	DisablePageReuse         bool
 	ExtraReviews             bool
 	MaxResults               int
+	WebshareAPIKey           string
 }
 
 func ParseConfig() *Config {
@@ -292,6 +294,7 @@ func ParseConfig() *Config {
 	fmt.Printf("DEBUG: PROXIES env var: '%s'\n", os.Getenv("PROXIES"))
 	fmt.Printf("DEBUG: CLI proxies flag: '%s'\n", proxies)
 
+	// Priority: CLI proxies > Webshare API > No proxies
 	if proxies != "" {
 		cfg.Proxies = strings.Split(proxies, ",")
 		fmt.Printf("DEBUG: CLI proxies configured: %d entries\n", len(cfg.Proxies))
@@ -299,6 +302,33 @@ func ParseConfig() *Config {
 	} else if os.Getenv("PROXIES") != "" {
 		// Informative log: PROXIES env is set but ignored unless -proxies flag is provided
 		fmt.Println("DEBUG: PROXIES env detected but not used; pass with -proxies to enable")
+	}
+
+	// Check for Webshare API key
+	if cfg.WebshareAPIKey == "" {
+		cfg.WebshareAPIKey = os.Getenv("WEBSHARE_API_KEY")
+	}
+
+	// Fetch proxies from Webshare API if no manual proxies provided and API key exists
+	if len(cfg.Proxies) == 0 && cfg.WebshareAPIKey != "" {
+		fmt.Println("🔧 Webshare API key detected, fetching proxies dynamically...")
+		webshareClient := webshare.NewClient(cfg.WebshareAPIKey)
+
+		// Ensure IP is authorized
+		if err := webshareClient.EnsureIPAuthorized(); err != nil {
+			fmt.Printf("⚠️ Warning: Failed to authorize IP with Webshare: %v\n", err)
+			fmt.Println("⚠️ Continuing without proxies. You may need to manually authorize your IP.")
+		} else {
+			// Fetch proxy list
+			proxyList, err := webshareClient.GetProxiesForScraper("direct")
+			if err != nil {
+				fmt.Printf("⚠️ Warning: Failed to fetch proxies from Webshare: %v\n", err)
+				fmt.Println("⚠️ Continuing without proxies.")
+			} else {
+				cfg.Proxies = proxyList
+				fmt.Printf("✅ Successfully loaded %d proxies from Webshare API\n", len(cfg.Proxies))
+			}
+		}
 	}
 
 	if cfg.AwsAccessKey != "" && cfg.AwsSecretKey != "" && cfg.AwsRegion != "" {
