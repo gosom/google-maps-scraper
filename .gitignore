@@ -25,3 +25,4 @@ google-maps-scraper
 .vscode/
 *.swp
 *.swo
+go.work.sum
