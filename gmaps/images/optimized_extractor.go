@@ -30,9 +30,9 @@ type ExtractionMethod interface {
 func NewOptimizedImageExtractor(page playwright.Page) *OptimizedImageExtractor {
 	return &OptimizedImageExtractor{
 		page:                   page,
-		maxTimeout:             45 * time.Second,
-		maxImagesPerTab:        50,    // Reasonable limit per tab
-		useAggressiveScrolling: false, // Start conservative
+		maxTimeout:             90 * time.Second, // Increased from 45s to 90s for complex places
+		maxImagesPerTab:        50,               // Reasonable limit per tab
+		useAggressiveScrolling: false,            // Start conservative
 		fallbackMethods: []ExtractionMethod{
 			&DirectGalleryMethod{},
 			&TabBasedMethod{},
