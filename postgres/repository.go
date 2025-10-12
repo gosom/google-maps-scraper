@@ -28,7 +28,7 @@ func NewRepository(db *sql.DB) (models.JobRepository, error) {
 
 // Get retrieves a job by ID (only non-deleted jobs)
 func (repo *repository) Get(ctx context.Context, id string) (models.Job, error) {
-	const q = `SELECT id, name, status, data, extract(epoch from created_at), extract(epoch from updated_at), user_id 
+	const q = `SELECT id, name, status, data, extract(epoch from created_at), extract(epoch from updated_at), user_id, COALESCE(failure_reason, '') 
                FROM jobs WHERE id = $1 AND deleted_at IS NULL`
 
 	row := repo.db.QueryRowContext(ctx, q, id)
@@ -43,10 +43,10 @@ func (repo *repository) Create(ctx context.Context, job *models.Job) error {
 		return err
 	}
 
-	const q = `INSERT INTO jobs (id, name, status, data, created_at, updated_at, user_id) 
-               VALUES ($1, $2, $3, $4, to_timestamp($5), to_timestamp($6), $7)`
+	const q = `INSERT INTO jobs (id, name, status, data, created_at, updated_at, user_id, failure_reason) 
+               VALUES ($1, $2, $3, $4, to_timestamp($5), to_timestamp($6), $7, $8)`
 
-	_, err = repo.db.ExecContext(ctx, q, item.ID, item.Name, item.Status, item.Data, item.CreatedAt, item.UpdatedAt, item.UserID)
+	_, err = repo.db.ExecContext(ctx, q, item.ID, item.Name, item.Status, item.Data, item.CreatedAt, item.UpdatedAt, item.UserID, item.FailureReason)
 	if err != nil {
 		return fmt.Errorf("failed to create job: %w", err)
 	}
@@ -75,7 +75,7 @@ func (repo *repository) Delete(ctx context.Context, id string) error {
 
 // Select finds jobs based on the provided parameters (only non-deleted jobs)
 func (repo *repository) Select(ctx context.Context, params models.SelectParams) ([]models.Job, error) {
-	q := `SELECT id, name, status, data, extract(epoch from created_at), extract(epoch from updated_at), user_id FROM jobs`
+	q := `SELECT id, name, status, data, extract(epoch from created_at), extract(epoch from updated_at), user_id, COALESCE(failure_reason, '') FROM jobs`
 
 	var args []interface{}
 	var conditions []string
@@ -142,9 +142,9 @@ func (repo *repository) Update(ctx context.Context, job *models.Job) error {
 		return err
 	}
 
-	const q = `UPDATE jobs SET name = $1, status = $2, data = $3, updated_at = to_timestamp($4), user_id = $5 WHERE id = $6`
+	const q = `UPDATE jobs SET name = $1, status = $2, data = $3, updated_at = to_timestamp($4), user_id = $5, failure_reason = $6 WHERE id = $7`
 
-	_, err = repo.db.ExecContext(ctx, q, item.Name, item.Status, item.Data, item.UpdatedAt, item.UserID, item.ID)
+	_, err = repo.db.ExecContext(ctx, q, item.Name, item.Status, item.Data, item.UpdatedAt, item.UserID, item.FailureReason, item.ID)
 	if err != nil {
 		return fmt.Errorf("failed to update job: %w", err)
 	}
@@ -199,7 +199,7 @@ type scannable interface {
 func rowToJob(row scannable) (models.Job, error) {
 	var j job
 
-	err := row.Scan(&j.ID, &j.Name, &j.Status, &j.Data, &j.CreatedAt, &j.UpdatedAt, &j.UserID)
+	err := row.Scan(&j.ID, &j.Name, &j.Status, &j.Data, &j.CreatedAt, &j.UpdatedAt, &j.UserID, &j.FailureReason)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return models.Job{}, errors.New("job not found")
@@ -211,13 +211,14 @@ func rowToJob(row scannable) (models.Job, error) {
 	updatedAt := time.Unix(int64(j.UpdatedAt), 0).UTC()
 
 	ans := models.Job{
-		ID:        j.ID,
-		UserID:    j.UserID,
-		Name:      j.Name,
-		Status:    j.Status,
-		Date:      createdAt,
-		CreatedAt: &createdAt,
-		UpdatedAt: &updatedAt,
+		ID:            j.ID,
+		UserID:        j.UserID,
+		Name:          j.Name,
+		Status:        j.Status,
+		Date:          createdAt,
+		CreatedAt:     &createdAt,
+		UpdatedAt:     &updatedAt,
+		FailureReason: j.FailureReason,
 	}
 
 	err = json.Unmarshal([]byte(j.Data), &ans.Data)
@@ -235,24 +236,26 @@ func jobToRow(item *models.Job) (job, error) {
 	}
 
 	return job{
-		ID:        item.ID,
-		UserID:    item.UserID,
-		Name:      item.Name,
-		Status:    item.Status,
-		Data:      string(data),
-		CreatedAt: float64(item.Date.Unix()),
-		UpdatedAt: float64(time.Now().UTC().Unix()),
+		ID:            item.ID,
+		UserID:        item.UserID,
+		Name:          item.Name,
+		Status:        item.Status,
+		Data:          string(data),
+		CreatedAt:     float64(item.Date.Unix()),
+		UpdatedAt:     float64(time.Now().UTC().Unix()),
+		FailureReason: item.FailureReason,
 	}, nil
 }
 
 type job struct {
-	ID        string
-	UserID    string
-	Name      string
-	Status    string
-	Data      string
-	CreatedAt float64
-	UpdatedAt float64
+	ID            string
+	UserID        string
+	Name          string
+	Status        string
+	Data          string
+	CreatedAt     float64
+	UpdatedAt     float64
+	FailureReason string
 }
 
 // Additional methods for soft delete management
@@ -315,7 +318,7 @@ func (repo *repository) RestoreJob(ctx context.Context, id string) error {
 
 // GetDeletedJobs retrieves all soft-deleted jobs (for admin purposes)
 func (repo *repository) GetDeletedJobs(ctx context.Context, params models.SelectParams) ([]models.Job, error) {
-	q := `SELECT id, name, status, data, extract(epoch from created_at), extract(epoch from updated_at), user_id FROM jobs`
+	q := `SELECT id, name, status, data, extract(epoch from created_at), extract(epoch from updated_at), user_id, COALESCE(failure_reason, '') FROM jobs`
 
 	var args []interface{}
 	var conditions []string

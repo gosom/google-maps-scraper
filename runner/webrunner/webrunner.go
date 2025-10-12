@@ -130,6 +130,11 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 	// Initialize billing service for event charging (no Stripe required here)
 	cfgSvc := config.New(db)
 	billSvc := billing.New(db, cfgSvc, "", "")
+	if billSvc != nil {
+		log.Println("[WebRunner] Billing service initialized successfully for event charging")
+	} else {
+		log.Println("[WebRunner] WARNING: Billing service is nil - charges will not be applied!")
+	}
 
 	// Initialize proxy pool if proxies are configured
 	var proxyPool *proxy.Pool
@@ -266,11 +271,16 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 
 	// Charge actor_start at job start (requires sufficient balance)
 	if w.billingSvc != nil {
+		log.Printf("INFO: Job %s - Attempting actor_start charge for user %s", job.ID, job.UserID)
 		if err := w.billingSvc.ChargeActorStart(context.Background(), job.UserID, job.ID); err != nil {
-			log.Printf("billing: actor_start charge failed for job %s: %v", job.ID, err)
+			log.Printf("ERROR: billing: actor_start charge failed for job %s: %v", job.ID, err)
 			job.Status = web.StatusFailed
+			job.FailureReason = "insufficient credit balance to start job"
 			return err
 		}
+		log.Printf("SUCCESS: billing: actor_start charged successfully for job %s (user: %s)", job.ID, job.UserID)
+	} else {
+		log.Printf("WARNING: Job %s - Billing service is nil, skipping actor_start charge", job.ID)
 	}
 
 	// Check if job has been cancelled before starting
@@ -331,6 +341,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 
 	if len(job.Data.Keywords) == 0 {
 		job.Status = web.StatusFailed
+		job.FailureReason = "no keywords provided"
 		return err
 	}
 
@@ -352,6 +363,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	mate, err := w.setupMate(jobCtx, outfile, job, exitMonitor)
 	if err != nil {
 		job.Status = web.StatusFailed
+		job.FailureReason = fmt.Sprintf("setupMate failed: %v", err)
 		return err
 	}
 
@@ -387,6 +399,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	)
 	if err != nil {
 		job.Status = web.StatusFailed
+		job.FailureReason = fmt.Sprintf("CreateSeedJobs failed: %v", err)
 		return err
 	}
 
@@ -540,6 +553,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 							jobSuccess = true
 						} else {
 							log.Printf("DEBUG: Job %s - Context cancelled with 0 results, treating as failed completion", job.ID)
+							job.FailureReason = "scrapemate inactivity timeout / context canceled with 0 results"
 							jobSuccess = false
 						}
 					}
@@ -559,6 +573,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 					jobSuccess = true
 				} else {
 					log.Printf("DEBUG: Job %s - Context deadline exceeded with 0 results, treating as failed", job.ID)
+					job.FailureReason = "job timed out with 0 results"
 					jobSuccess = false
 				}
 			} else {
@@ -567,6 +582,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 				cancel()
 
 				job.Status = web.StatusFailed
+				job.FailureReason = fmt.Sprintf("runtime error: %v", err)
 
 				return err
 			}
@@ -580,11 +596,58 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		resultsWritten := exitMonitor.GetResultsWritten()
 		if seedTotal > 0 && seedCompleted < seedTotal {
 			log.Printf("DEBUG: Job %s - Seeds incomplete (%d/%d), treating as failed", job.ID, seedCompleted, seedTotal)
+			if job.FailureReason == "" {
+				job.FailureReason = fmt.Sprintf("seeds incomplete %d/%d", seedCompleted, seedTotal)
+			}
 			jobSuccess = false
 		}
 		if resultsWritten == 0 {
 			log.Printf("DEBUG: Job %s - 0 results written, treating as failed", job.ID)
+			if job.FailureReason == "" {
+				job.FailureReason = "0 results written"
+			}
 			jobSuccess = false
+		}
+
+		log.Printf("DEBUG: Job %s - BILLING SECTION: jobSuccess=%v, status=%s, cancelled=%v", job.ID, jobSuccess, job.Status, job.Status == web.StatusCancelled)
+
+		if jobSuccess && job.Status != web.StatusCancelled {
+			log.Printf("DEBUG: Job %s - Billing condition passed, checking result count", job.ID)
+			var resultCount int
+			if w.db != nil {
+				if err := w.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM results WHERE job_id=$1`, job.ID).Scan(&resultCount); err != nil {
+					log.Printf("ERROR: Job %s - Failed to count results before charging places: %v", job.ID, err)
+					resultCount = 0
+				} else {
+					log.Printf("DEBUG: Job %s - Database query successful, resultCount=%d", job.ID, resultCount)
+				}
+			} else {
+				log.Printf("ERROR: Job %s - Database connection is nil, cannot count results", job.ID)
+			}
+
+			log.Printf("DEBUG: Job %s - billingSvc nil? %v, resultCount=%d", job.ID, w.billingSvc == nil, resultCount)
+
+			if w.billingSvc != nil && resultCount > 0 {
+				log.Printf("INFO: Job %s - Attempting to charge %d places for user %s", job.ID, resultCount, job.UserID)
+				if err := w.billingSvc.ChargePlaces(context.Background(), job.UserID, job.ID, resultCount); err != nil {
+					// Billing failure should fail the job with clear reason
+					log.Printf("ERROR: billing: place_scraped charge failed for job %s (%d places): %v", job.ID, resultCount, err)
+					jobSuccess = false
+					job.Status = web.StatusFailed
+					job.FailureReason = "insufficient credits to charge places"
+				} else {
+					log.Printf("SUCCESS: billing: successfully charged %d places for job %s (user: %s)", resultCount, job.ID, job.UserID)
+				}
+			} else {
+				if w.billingSvc == nil {
+					log.Printf("WARNING: Job %s - Billing service is nil, skipping place charges", job.ID)
+				}
+				if resultCount == 0 {
+					log.Printf("WARNING: Job %s - Result count is 0, skipping place charges", job.ID)
+				}
+			}
+		} else {
+			log.Printf("DEBUG: Job %s - Skipping billing: jobSuccess=%v, status=%s", job.ID, jobSuccess, job.Status)
 		}
 
 		cancel()
@@ -606,17 +669,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		log.Printf("DEBUG: Job %s - Setting status to FAILED", job.ID)
 	}
 
-	// Only charge places if job succeeded
-	if w.db != nil && w.billingSvc != nil && job.Status == web.StatusOK {
-		var count int
-		if err := w.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM results WHERE job_id=$1`, job.ID).Scan(&count); err != nil {
-			log.Printf("billing: failed to count results for job %s: %v", job.ID, err)
-		} else if count > 0 {
-			if err := w.billingSvc.ChargePlaces(context.Background(), job.UserID, job.ID, count); err != nil {
-				log.Printf("billing: place_scraped charge failed for job %s: %v", job.ID, err)
-			}
-		}
-	}
+	// Charging of places is attempted before marking success above; no charge here
 
 	return nil
 }
@@ -646,8 +699,8 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 		job.ID, perJobConcurrency, w.cfg.Concurrency, maxConcurrentJobs)
 
 	opts := []func(*scrapemateapp.Config) error{
-		scrapemateapp.WithConcurrency(perJobConcurrency),     // Use calculated per-job concurrency
-		scrapemateapp.WithExitOnInactivity(time.Minute * 10), // Increased timeout for Google Maps
+		scrapemateapp.WithConcurrency(perJobConcurrency), // Use calculated per-job concurrency
+		scrapemateapp.WithExitOnInactivity(0),            // Disable inactivity timeout to allow deep scrolling
 	}
 
 	// Always use stealth mode for Google Maps to avoid detection
