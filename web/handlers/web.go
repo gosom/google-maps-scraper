@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -253,16 +254,21 @@ func (h *WebHandlers) Download(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid ID format", http.StatusUnprocessableEntity)
 		return
 	}
-	fileRC, fileNameRel, err := h.Deps.App.GetCSVReader(r.Context(), id)
+	filePath, err := h.Deps.App.GetCSV(r.Context(), id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	defer fileRC.Close()
-	fileName := filepath.Base(fileNameRel)
+	file, err := os.Open(filePath)
+	if err != nil {
+		http.Error(w, "Failed to open file", http.StatusInternalServerError)
+		return
+	}
+	defer file.Close()
+	fileName := filepath.Base(filePath)
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", fileName))
 	w.Header().Set("Content-Type", "text/csv")
-	_, _ = io.Copy(w, fileRC)
+	_, _ = io.Copy(w, file)
 }
 
 // Delete mirrors Server.delete

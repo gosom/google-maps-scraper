@@ -3,8 +3,6 @@ package web
 import (
 	"context"
 	"fmt"
-	"io"
-	iofs "io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -93,39 +91,6 @@ func (s *Service) GetCSV(_ context.Context, id string) (string, error) {
 	}
 
 	return datapath, nil
-}
-
-// GetCSVReader returns a Reader scoped under the service's data folder using a fixed root.
-// This prevents directory traversal by ensuring all file operations are under dataFolder.
-func (s *Service) GetCSVReader(_ context.Context, id string) (io.ReadCloser, string, error) {
-	if strings.Contains(id, "/") || strings.Contains(id, "\\") || strings.Contains(id, "..") {
-		return nil, "", fmt.Errorf("invalid file name")
-	}
-
-	base := filepath.Clean(s.dataFolder)
-	rel := id + ".csv"
-
-	// Resolve and verify path stays under base
-	abs := filepath.Join(base, rel)
-	abs = filepath.Clean(abs)
-	if relCheck, err := filepath.Rel(base, abs); err != nil || strings.HasPrefix(relCheck, "..") || filepath.IsAbs(relCheck) {
-		return nil, "", fmt.Errorf("resolved path escapes data folder")
-	}
-
-	// Scope access under base using an FS rooted at base
-	root := os.DirFS(base)
-
-	// Ensure file exists (scoped stat)
-	if _, err := iofs.Stat(root, rel); err != nil {
-		return nil, "", fmt.Errorf("csv file not found for job %s", id)
-	}
-
-	f, err := root.Open(rel)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to open csv for job %s", id)
-	}
-
-	return f, rel, nil
 }
 
 func (s *Service) Cancel(ctx context.Context, id string) error {

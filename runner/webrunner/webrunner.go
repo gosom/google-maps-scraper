@@ -79,8 +79,7 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		return nil, fmt.Errorf("PostgreSQL DSN is required")
 	}
 
-	// Use restrictive permissions for the data folder (G301)
-	if err := os.MkdirAll(cfg.DataFolder, 0o750); err != nil {
+	if err := os.MkdirAll(cfg.DataFolder, os.ModePerm); err != nil {
 		return nil, err
 	}
 
@@ -346,18 +345,9 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		return err
 	}
 
-	base := filepath.Clean(w.cfg.DataFolder)
-	rel := job.ID + ".csv"
-	outpath := filepath.Join(base, rel)
-	outpath = filepath.Clean(outpath)
-	if relCheck, err := filepath.Rel(base, outpath); err != nil || strings.HasPrefix(relCheck, "..") || filepath.IsAbs(relCheck) {
-		job.Status = web.StatusFailed
-		job.FailureReason = "invalid output path"
-		return fmt.Errorf("resolved path escapes data folder")
-	}
+	outpath := filepath.Join(w.cfg.DataFolder, job.ID+".csv")
 
-	// #nosec G304 - Path validated above; job.ID is system-generated (UUID); base is config
-	outfile, err := os.OpenFile(outpath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o640)
+	outfile, err := os.Create(outpath)
 	if err != nil {
 		return err
 	}
