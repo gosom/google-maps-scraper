@@ -20,6 +20,11 @@ google-maps-scraper
 # Output of the go coverage tool
 *.out
 
+# Security reports
+gosec-report.json
+gosec-report.html
+gosec-report.sarif
+
 # IDE specific files
 .idea/
 .vscode/

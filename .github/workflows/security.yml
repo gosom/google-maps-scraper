@@ -1,0 +1,125 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [ main, master, develop, staging ]
+  pull_request:
+    branches: [ main, master, develop, staging ]
+  schedule:
+    # Run every Sunday at midnight UTC
+    - cron: '0 0 * * 0'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  gosec:
+    name: Gosec Security Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write  # Required for SARIF upload
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: 'go.mod'
+        cache: true
+    
+    - name: Install gosec
+      run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+    
+    - name: Run gosec - Critical Issues Only
+      id: gosec-critical
+      continue-on-error: true
+      run: |
+        gosec -conf .gosec.json -include=G101,G201,G202,G203,G304,G401,G402 ./... || echo "CRITICAL_ISSUES=true" >> $GITHUB_ENV
+    
+    - name: Run gosec - Full Scan with SARIF
+      id: gosec-full
+      continue-on-error: true
+      run: |
+        gosec -conf .gosec.json -fmt sarif -out gosec-report.sarif ./...
+        gosec -conf .gosec.json -fmt json -out gosec-report.json ./...
+    
+    - name: Upload SARIF report to GitHub Security
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: gosec-report.sarif
+        category: gosec
+    
+    - name: Upload gosec reports as artifacts
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: gosec-reports
+        path: |
+          gosec-report.sarif
+          gosec-report.json
+        retention-days: 30
+    
+    - name: Fail if critical issues found
+      if: env.CRITICAL_ISSUES == 'true'
+      run: |
+        echo "::error::Critical security issues found! Check the Security tab for details."
+        exit 1
+    
+    - name: Comment PR with results
+      if: github.event_name == 'pull_request' && always()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          let report = '';
+          
+          try {
+            const jsonReport = JSON.parse(fs.readFileSync('gosec-report.json', 'utf8'));
+            const issues = jsonReport.Issues || [];
+            const critical = issues.filter(i => i.severity === 'CRITICAL' || i.severity === 'HIGH');
+            
+            if (critical.length === 0) {
+              report = '✅ **Gosec Security Scan**: No critical security issues found!';
+            } else {
+              report = `⚠️ **Gosec Security Scan**: Found ${critical.length} critical/high severity issue(s)\n\n`;
+              report += '### Critical Issues\n';
+              critical.slice(0, 5).forEach(issue => {
+                report += `- **${issue.rule_id}**: ${issue.details} (${issue.file}:${issue.line})\n`;
+              });
+              if (critical.length > 5) {
+                report += `\n... and ${critical.length - 5} more. Check the Security tab for full details.`;
+              }
+            }
+          } catch (e) {
+            report = '⚠️ Could not parse gosec report';
+          }
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: report
+          });
+
+  govulncheck:
+    name: Go Vulnerability Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: 'go.mod'
+        cache: true
+    
+    - name: Install govulncheck
+      run: go install golang.org/x/vuln/cmd/govulncheck@latest
+    
+    - name: Run govulncheck
+      run: govulncheck -show verbose ./...
+

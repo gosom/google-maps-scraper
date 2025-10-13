@@ -641,26 +641,19 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filePath, err := s.svc.GetCSV(r.Context(), id.String())
+	fileRC, relName, err := s.svc.GetCSVReader(r.Context(), id.String())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		s.logger.Printf("Failed to get CSV for job %s: %v", id, err)
 		return
 	}
+	defer fileRC.Close()
 
-	file, err := os.Open(filePath)
-	if err != nil {
-		http.Error(w, "Failed to open file", http.StatusInternalServerError)
-		s.logger.Printf("Failed to open file %s: %v", filePath, err)
-		return
-	}
-	defer file.Close()
-
-	fileName := filepath.Base(filePath)
+	fileName := filepath.Base(relName)
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", fileName))
 	w.Header().Set("Content-Type", "text/csv")
 
-	_, err = io.Copy(w, file)
+	_, err = io.Copy(w, fileRC)
 	if err != nil {
 		http.Error(w, "Failed to send file", http.StatusInternalServerError)
 		s.logger.Printf("Failed to send file %s: %v", fileName, err)

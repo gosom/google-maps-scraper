@@ -657,6 +657,24 @@ We expect this to take about 16000/120 ~ 133 minutes ~ 2.5 hours
 If you want to scrape many keywords then it's better to use the Database Provider in
 combination with Kubernetes for convenience and start multiple scrapers in more than 1 machines.
 
+## Security
+
+### Automated Security Scanning
+
+This project includes automated security scanning with [gosec](https://github.com/securego/gosec). 
+
+**Quick security check:**
+```bash
+# Check for critical issues (SQL injection, XSS, hardcoded secrets)
+make sec-critical
+
+# Full security scan
+make sec
+
+# Generate HTML report
+make sec-html
+```
+
 ## References
 
 For more instruction you may also read the following links

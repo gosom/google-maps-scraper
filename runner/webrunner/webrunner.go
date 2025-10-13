@@ -79,7 +79,8 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		return nil, fmt.Errorf("PostgreSQL DSN is required")
 	}
 
-	if err := os.MkdirAll(cfg.DataFolder, os.ModePerm); err != nil {
+	// Use restrictive permissions for the data folder (G301)
+	if err := os.MkdirAll(cfg.DataFolder, 0o750); err != nil {
 		return nil, err
 	}
 
@@ -345,9 +346,18 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		return err
 	}
 
-	outpath := filepath.Join(w.cfg.DataFolder, job.ID+".csv")
+	base := filepath.Clean(w.cfg.DataFolder)
+	rel := job.ID + ".csv"
+	outpath := filepath.Join(base, rel)
+	outpath = filepath.Clean(outpath)
+	if relCheck, err := filepath.Rel(base, outpath); err != nil || strings.HasPrefix(relCheck, "..") || filepath.IsAbs(relCheck) {
+		job.Status = web.StatusFailed
+		job.FailureReason = "invalid output path"
+		return fmt.Errorf("resolved path escapes data folder")
+	}
 
-	outfile, err := os.Create(outpath)
+	// #nosec G304 - Path validated above; job.ID is system-generated (UUID); base is config
+	outfile, err := os.OpenFile(outpath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o640)
 	if err != nil {
 		return err
 	}
@@ -630,7 +640,6 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			if w.billingSvc != nil && resultCount > 0 {
 				log.Printf("INFO: Job %s - Attempting to charge %d places for user %s", job.ID, resultCount, job.UserID)
 				if err := w.billingSvc.ChargePlaces(context.Background(), job.UserID, job.ID, resultCount); err != nil {
-					// Billing failure should fail the job with clear reason
 					log.Printf("ERROR: billing: place_scraped charge failed for job %s (%d places): %v", job.ID, resultCount, err)
 					jobSuccess = false
 					job.Status = web.StatusFailed
@@ -738,12 +747,12 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 		// Get a dedicated proxy server for this job
 		proxySrv, err := w.proxyPool.GetServerForJob(job.ID)
 		if err != nil {
-			log.Printf("❌ Job %s - failed to get proxy server: %v", job.ID, err)
+			log.Printf("Job %s - failed to get proxy server: %v", job.ID, err)
 			// Continue without proxy
 		} else {
 			localProxyURL := proxySrv.GetLocalURL()
 			currentProxy := proxySrv.GetCurrentProxy()
-			log.Printf("🎯 Job %s - assigned proxy %s:%s on %s", job.ID, currentProxy.Address, currentProxy.Port, localProxyURL)
+			log.Printf("Job %s - assigned proxy %s:%s on %s", job.ID, currentProxy.Address, currentProxy.Port, localProxyURL)
 			opts = append(opts, scrapemateapp.WithProxies([]string{localProxyURL}))
 			log.Printf("DEBUG: Job %s - dedicated proxy server attached to scrapemate config", job.ID)
 		}
