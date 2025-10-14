@@ -76,7 +76,15 @@ func LoadConfig() Config {
 func (c *Config) GetDBConnectionString() string {
 	// If a full DSN is provided, use it
 	if c.DatabaseURL != "" {
-		return c.DatabaseURL
+		// Ensure timezone=UTC is present to avoid session timezone drift
+		if strings.Contains(c.DatabaseURL, "timezone=") || strings.Contains(c.DatabaseURL, "TimeZone=") {
+			return c.DatabaseURL
+		}
+		sep := "?"
+		if strings.Contains(c.DatabaseURL, "?") {
+			sep = "&"
+		}
+		return c.DatabaseURL + sep + "timezone=UTC"
 	}
 
 	// Otherwise build from individual components
@@ -85,7 +93,8 @@ func (c *Config) GetDBConnectionString() string {
 		" user=" + c.DBUser +
 		" password=" + c.DBPassword +
 		" dbname=" + c.DBName +
-		" sslmode=" + c.DBSSLMode
+		" sslmode=" + c.DBSSLMode +
+		" timezone=UTC"
 }
 
 // getEnv reads an environment variable or returns a default value
