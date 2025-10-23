@@ -14,7 +14,7 @@ Join our Discord server to get help, share ideas, and connect with other users o
 ## 🎯 What Problem Are You Solving?
 
 I'd love to understand how you're using this tool! 
-Please comment on [this discussion](link) with your use case:
+Please comment on [this discussion](https://github.com/gosom/google-maps-scraper/discussions/184) with your use case:
 
 - 🎯 **Lead Generation** - Finding potential customers
 - 📊 **Market Research** - Understanding competitors/markets
