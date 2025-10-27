@@ -1,20 +1,31 @@
-{{range .}}
+{{$lang := .Lang}}
+{{range .Jobs}}
 <tr>
     <td>{{.ID}}</td>
     <td>{{.Name}}</td>
     <td>{{.Date}}</td>
     <td>
-        <span class="status-indicator status-{{.Status}}">{{.Status}}</span>
+        <span class="status-indicator status-{{.Status}}">
+            {{if eq $lang "zh"}}
+                {{if eq .Status "ok"}}完成{{else if eq .Status "running"}}运行中{{else if eq .Status "error"}}错误{{else if eq .Status "canceled"}}已取消{{else}}{{.Status}}{{end}}
+            {{else}}
+                {{.Status}}
+            {{end}}
+        </span>
     </td>
     <td>
         {{ if eq .Status "ok" }}
-            <a href="/download?id={{.ID}}" download class="button download-button">Download</a>
+            <a href="/download?id={{.ID}}" download class="button download-button">
+                {{if eq $lang "zh"}}下载{{else}}Download{{end}}
+            </a>
         {{ end }}
         <button hx-delete="/delete?id={{.ID}}" 
                 hx-target="closest tr"
                 hx-swap="outerHTML"
-                hx-confirm="Are you sure you want to delete this job?"
-                class="delete-button">Delete</button>
+                hx-confirm="{{if eq $lang "zh"}}您确定要删除此任务吗？{{else}}Are you sure you want to delete this job?{{end}}"
+                class="delete-button">
+                {{if eq $lang "zh"}}删除{{else}}Delete{{end}}
+        </button>
     </td>
 </tr>
 {{end}}

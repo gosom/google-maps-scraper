@@ -3,6 +3,7 @@ package gmaps
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -23,9 +24,10 @@ type PlaceJob struct {
 	ExtractEmail        bool
 	ExitMonitor         exiter.Exiter
 	ExtractExtraReviews bool
+	ReviewsLimit        int
 }
 
-func NewPlaceJob(parentID, langCode, u string, extractEmail, extraExtraReviews bool, opts ...PlaceJobOptions) *PlaceJob {
+func NewPlaceJob(parentID, langCode, u string, extractEmail, extraExtraReviews bool, reviewsLimit int, opts ...PlaceJobOptions) *PlaceJob {
 	const (
 		defaultPrio       = scrapemate.PriorityMedium
 		defaultMaxRetries = 3
@@ -41,6 +43,7 @@ func NewPlaceJob(parentID, langCode, u string, extractEmail, extraExtraReviews b
 			MaxRetries: defaultMaxRetries,
 			Priority:   defaultPrio,
 		},
+		ReviewsLimit: reviewsLimit,
 	}
 
 	job.UsageInResultststs = true
@@ -80,30 +83,80 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 	entry.ID = j.ParentID
 
 	if entry.Link == "" {
-		entry.Link = j.GetURL()
+		entry.Link = j.GetFullURL()
 	}
 
-	allReviewsRaw, ok := resp.Meta["reviews_raw"].(fetchReviewsResponse)
-	if ok && len(allReviewsRaw.pages) > 0 {
-		entry.AddExtraReviews(allReviewsRaw.pages)
+	if j.ExtractExtraReviews {
+		reviewCount := j.getReviewCount(raw)
+		if reviewCount > 8 { // we have more reviews
+			if j.ReviewsLimit != 0 {
+				// Safely attempt to convert the document to a Playwright page
+				page, ok := resp.Document.(playwright.Page)
+				if !ok {
+					log.Printf("Warning: Document is not a playwright.Page, skipping review extraction")
+					return entry, nil, nil
+				}
+				
+				// Introduce a delay to ensure page is fully loaded
+				time.Sleep(3 * time.Second)
+				
+				// Create a context with reasonable timeout
+				reviewsCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				defer cancel()
+				
+				// Try to get reviews with error recovery
+				fetchedCount, reviews, err := scrollReviews(reviewsCtx, page, j.ReviewsLimit)
+				if err != nil {
+					log.Printf("Warning: error scrolling reviews: %v", err)
+				} else {
+					log.Printf("Successfully fetched %d reviews", fetchedCount)
+					
+					if len(reviews) > 0 {
+						for _, review := range reviews {
+							entry.AddReview(review.AuthorName, review.AuthorURL, review.Rating, review.RelativeTimeDescription, review.Text)
+						}
+						log.Printf("Added %d reviews to entry", len(reviews))
+					}
+				}
+			} else {
+				// For this path, also safely handle the page conversion
+				page, ok := resp.Document.(playwright.Page)
+				if !ok {
+					log.Printf("Warning: Document is not a playwright.Page, skipping review extraction")
+					return entry, nil, nil
+				}
+				
+				params := fetchReviewsParams{
+					page:        page,
+					mapURL:      j.GetFullURL(),
+					reviewCount: reviewCount,
+				}
+				
+				reviewFetcher := newReviewFetcher(params)
+				
+				reviewData, err := reviewFetcher.fetch(context.Background())
+				if err != nil {
+					log.Printf("Warning: failed to fetch reviews: %s", err)
+				} else {
+					resp.Meta["reviews_raw"] = reviewData
+				}
+			}
+		}
 	}
 
-	if j.ExtractEmail && entry.IsWebsiteValidForEmail() {
-		opts := []EmailExtractJobOptions{}
-		if j.ExitMonitor != nil {
-			opts = append(opts, WithEmailJobExitMonitor(j.ExitMonitor))
+	if j.ExtractEmail {
+		info := extractBusinessInfo(raw)
+		if info.Website != "" {
+			entry.WebSite = info.Website
 		}
 
-		emailJob := NewEmailJob(j.ID, &entry, opts...)
-
-		j.UsageInResultststs = false
-
-		return nil, []scrapemate.IJob{emailJob}, nil
-	} else if j.ExitMonitor != nil {
-		j.ExitMonitor.IncrPlacesCompleted(1)
+		if entry.IsWebsiteValidForEmail() {
+			j := NewEmailJob(j.ParentID, entry)
+			return entry, []scrapemate.IJob{j}, nil
+		}
 	}
 
-	return &entry, nil, err
+	return entry, nil, nil
 }
 
 func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scrapemate.Response {
@@ -156,26 +209,6 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 	}
 
 	resp.Meta["json"] = raw
-
-	if j.ExtractExtraReviews {
-		reviewCount := j.getReviewCount(raw)
-		if reviewCount > 8 { // we have more reviews
-			params := fetchReviewsParams{
-				page:        page,
-				mapURL:      page.URL(),
-				reviewCount: reviewCount,
-			}
-
-			reviewFetcher := newReviewFetcher(params)
-
-			reviewData, err := reviewFetcher.fetch(ctx)
-			if err != nil {
-				return resp
-			}
-
-			resp.Meta["reviews_raw"] = reviewData
-		}
-	}
 
 	return resp
 }

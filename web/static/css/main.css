@@ -269,7 +269,17 @@ th {
     }
 
     .content {
-        padding: 20px;
+        padding: 16px;
+    }
+    
+    nav {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .language-selector {
+        margin-left: 0;
+        margin-top: 10px;
     }
 }
 
@@ -333,8 +343,40 @@ th {
 }
 
 nav {
-    margin-bottom: 16px;
-    padding: 8px 0;
+    display: flex;
+    align-items: center;
+    margin-top: 16px;
+    justify-content: space-between;
+}
+
+.nav-links {
+    display: flex;
+    gap: 20px;
+}
+
+.language-selector {
+    margin-left: 15px;
+}
+
+.language-selector select {
+    padding: 8px 12px;
+    border-radius: 4px;
+    border: 1px solid var(--color-border);
+    background-color: var(--color-surface);
+    font-size: 14px;
+    color: var(--color-text);
+    cursor: pointer;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.language-selector select:hover {
+    border-color: var(--color-primary-light);
+}
+
+.language-selector select:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(74, 74, 74, 0.2);
 }
 
 nav a {
