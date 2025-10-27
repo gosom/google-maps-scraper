@@ -111,6 +111,7 @@ Collect data without facing CAPTCHAs, IP bans, or geo-restrictions
 [Thordata proxies](https://www.thordata.com/?ls=github&lk=google-maps)
 
 - Precision Targeting, Global Coverage. Starting at $1.80 - Reliable Data Collection, Every Time.
+- Contact Thordata to start your 3-day free trial starting at 100MB
 
 [![Thordata Banner](./img/thordata-banner.png)](https://www.thordata.com/?ls=github&lk=google-maps)
 
@@ -641,6 +642,7 @@ Thank you for considering support for the project. Every bit of assistance helps
 [Thordata proxies](https://www.thordata.com/?ls=github&lk=google-maps)
 
 - Precision Targeting, Global Coverage. Starting at $1.80 - Reliable Data Collection, Every Time.
+- Contact Thordata to start your 3-day free trial starting at 100MB
 
 [![Thordata Banner](./img/thordata-banner.png)](https://www.thordata.com/?ls=github&lk=google-maps)
 
