@@ -11,22 +11,15 @@
 
 Join our Discord server to get help, share ideas, and connect with other users of the Google Maps Scraper!
 
-## 🚀 Take Your Lead Generation to the Next Level
+## 🎯 What Problem Are You Solving?
 
-**Tired of manual data collection? Meet LeadsDB - an API service that integrates with this scraper.**
+I'd love to understand how you're using this tool! 
+Please comment on [this discussion](https://github.com/gosom/google-maps-scraper/discussions/184) with your use case:
 
-[LeadsDB](https://gm.thexos.dev/) enhances your lead generation with:
-- ✅ Cloud storage for all your search results
-- ✅ Visualization dashboard
-- ✅ Advanced filtering & export options
-- ✅ Simple API integration with this scraper
-- ✅ Expose your data to other services via a REST API
-
-Plans start at just €4.99/month
-
-**[Join the waitlist →](https://gm.thexos.dev/)**
-
-_Continue using this free scraper and supercharge your workflow with LeadsDB._
+- 🎯 **Lead Generation** - Finding potential customers
+- 📊 **Market Research** - Understanding competitors/markets
+- 📁 **Database Building** - Creating/maintaining business lists
+- 💡 **Other** - Tell me more!
 
 ## Sponsors
 
