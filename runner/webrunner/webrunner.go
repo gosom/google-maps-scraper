@@ -843,6 +843,7 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 }
 
 // uploadToS3AndSaveMetadata uploads a CSV file to S3 and saves metadata to the database
+// Database record is only created AFTER successful S3 upload to avoid orphaned "uploading" records
 func (w *webrunner) uploadToS3AndSaveMetadata(ctx context.Context, job *web.Job, csvFilePath string) error {
 	// Skip if S3 is not configured
 	if w.s3Uploader == nil || w.s3Bucket == "" {
@@ -866,10 +867,24 @@ func (w *webrunner) uploadToS3AndSaveMetadata(ctx context.Context, job *web.Job,
 	}
 	fileSize := fileInfo.Size()
 
-	// Construct S3 object key: users/{user_id}/jobs/{job_id}/csv.csv
-	objectKey := fmt.Sprintf("users/%s/jobs/%s/csv.csv", job.UserID, job.ID)
+	// Construct S3 object key: users/{user_id}/jobs/{job_id}.csv (not csv.csv - redundant!)
+	objectKey := fmt.Sprintf("users/%s/jobs/%s.csv", job.UserID, job.ID)
 
-	// Create initial job file record with "uploading" status
+	// Upload to S3 with proper Content-Type (including charset) and capture response
+	// CRITICAL: Upload FIRST, then create database record only if upload succeeds
+	result, err := w.s3Uploader.Upload(ctx, w.s3Bucket, objectKey, file, "text/csv; charset=utf-8")
+	if err != nil {
+		log.Printf("[WebRunner] Job %s: S3 upload failed: %v", job.ID, err)
+		return fmt.Errorf("S3 upload failed: %w", err)
+	}
+
+	// CRITICAL: Capture actual ETag from S3 response, not placeholder
+	log.Printf("[WebRunner] Job %s: S3 upload successful (bucket: %s, key: %s, size: %d bytes, ETag: %s)",
+		job.ID, w.s3Bucket, objectKey, fileSize, result.ETag)
+
+	// Only NOW create database record after confirmed S3 upload success
+	// This prevents orphaned "uploading" records if upload fails
+	now := time.Now().UTC()
 	jobFile := &models.JobFile{
 		JobID:      job.ID,
 		UserID:     job.UserID,
@@ -878,66 +893,26 @@ func (w *webrunner) uploadToS3AndSaveMetadata(ctx context.Context, job *web.Job,
 		ObjectKey:  objectKey,
 		SizeBytes:  fileSize,
 		MimeType:   "text/csv",
-		Status:     models.JobFileStatusUploading,
-		CreatedAt:  time.Now().UTC(),
+		Status:     models.JobFileStatusAvailable, // Directly available since upload succeeded
+		ETag:       result.ETag,                   // Actual S3 ETag for integrity
+		VersionID:  result.VersionID,              // S3 version if bucket versioning enabled
+		CreatedAt:  now,
+		UploadedAt: &now, // Upload just completed
 	}
 
-	// Save initial record to database
+	// Save record to database with "available" status
 	if err := w.jobFileRepo.Create(ctx, jobFile); err != nil {
-		log.Printf("[WebRunner] Job %s: Failed to create job file record: %v", job.ID, err)
-		return fmt.Errorf("failed to create job file record: %w", err)
+		log.Printf("[WebRunner] Job %s: CRITICAL - S3 upload succeeded but database record creation failed: %v", job.ID, err)
+		log.Printf("[WebRunner] Job %s: File exists in S3 at: s3://%s/%s (ETag: %s)", job.ID, w.s3Bucket, objectKey, result.ETag)
+		return fmt.Errorf("failed to create job file record after successful S3 upload: %w", err)
 	}
 
-	log.Printf("[WebRunner] Job %s: Created job file record (ID: %s), uploading to S3...", job.ID, jobFile.ID)
+	log.Printf("[WebRunner] Job %s: Job file record created with available status (ETag: %s)", job.ID, result.ETag)
 
-	// Reset file pointer to beginning before upload
-	if _, err := file.Seek(0, 0); err != nil {
-		// Update record with failed status - CRITICAL: Don't silently discard error
-		errMsg := fmt.Sprintf("failed to reset file pointer: %v", err)
-		jobFile.Status = models.JobFileStatusFailed
-		jobFile.ErrorMessage = &errMsg
-		if updateErr := w.jobFileRepo.Update(ctx, jobFile); updateErr != nil {
-			log.Printf("[WebRunner] Job %s: CRITICAL - Failed to update job file status after seek error: %v", job.ID, updateErr)
-		}
-		return fmt.Errorf("failed to reset file pointer: %w", err)
-	}
-
-	// Upload to S3 with proper Content-Type and capture response
-	result, err := w.s3Uploader.Upload(ctx, w.s3Bucket, objectKey, file, "text/csv")
-	if err != nil {
-		log.Printf("[WebRunner] Job %s: S3 upload failed: %v", job.ID, err)
-		// Update record with failed status - CRITICAL: Don't silently discard error
-		errMsg := fmt.Sprintf("S3 upload failed: %v", err)
-		jobFile.Status = models.JobFileStatusFailed
-		jobFile.ErrorMessage = &errMsg
-		if updateErr := w.jobFileRepo.Update(ctx, jobFile); updateErr != nil {
-			log.Printf("[WebRunner] Job %s: CRITICAL - Failed to update job file status after upload error: %v", job.ID, updateErr)
-		}
-		return fmt.Errorf("S3 upload failed: %w", err)
-	}
-
-	// CRITICAL: Capture actual ETag from S3 response, not placeholder
-	log.Printf("[WebRunner] Job %s: S3 upload successful (bucket: %s, key: %s, size: %d bytes, ETag: %s)",
-		job.ID, w.s3Bucket, objectKey, fileSize, result.ETag)
-
-	// Update record with success status and actual S3 metadata
-	now := time.Now().UTC()
-	jobFile.Status = models.JobFileStatusAvailable
-	jobFile.UploadedAt = &now
-	jobFile.ETag = result.ETag          // CRITICAL: Use actual ETag from S3
-	jobFile.VersionID = result.VersionID // Capture version ID if bucket versioning is enabled
-
-	if err := w.jobFileRepo.Update(ctx, jobFile); err != nil {
-		log.Printf("[WebRunner] Job %s: Failed to update job file record to available: %v", job.ID, err)
-		return fmt.Errorf("failed to update job file record: %w", err)
-	}
-
-	log.Printf("[WebRunner] Job %s: Job file record updated to available status (ETag: %s)", job.ID, result.ETag)
-
-	// Delete local CSV file after successful upload
+	// Delete local CSV file after successful upload and database save
 	if err := os.Remove(csvFilePath); err != nil {
 		log.Printf("[WebRunner] Job %s: WARNING - Failed to delete local CSV file after S3 upload: %v", job.ID, err)
-		// Don't return error - upload was successful, cleanup is not critical
+		// Don't return error - upload and database save were successful, cleanup is not critical
 	} else {
 		log.Printf("[WebRunner] Job %s: Local CSV file deleted successfully after S3 upload", job.ID)
 	}

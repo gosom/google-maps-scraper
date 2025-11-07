@@ -129,7 +129,7 @@ func (l *lambdaAwsRunner) handler(ctx context.Context, input lInput) error {
 		}
 		defer fd.Close()
 
-		result, err := l.uploader.Upload(ctx, input.BucketName, key, fd, "text/csv")
+		result, err := l.uploader.Upload(ctx, input.BucketName, key, fd, "text/csv; charset=utf-8")
 		if err != nil {
 			return err
 		}
