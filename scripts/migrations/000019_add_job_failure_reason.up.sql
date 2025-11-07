@@ -5,3 +5,6 @@ ALTER TABLE jobs ADD COLUMN IF NOT EXISTS failure_reason TEXT;
 CREATE INDEX IF NOT EXISTS idx_jobs_failure_reason ON jobs(failure_reason) WHERE failure_reason IS NOT NULL;
 
 
+
+
+
