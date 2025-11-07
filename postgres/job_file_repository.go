@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/gosom/google-maps-scraper/models"
 )
@@ -262,7 +261,7 @@ func (r *jobFileRepository) ListByUserID(ctx context.Context, userID string) ([]
 	}
 	defer rows.Close()
 
-	var files []*models.JobFile{}
+	var files []*models.JobFile
 	for rows.Next() {
 		jobFile := &models.JobFile{}
 		err := rows.Scan(

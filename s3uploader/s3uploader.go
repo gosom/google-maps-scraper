@@ -73,3 +73,19 @@ func (u *Uploader) Upload(ctx context.Context, bucketName, key string, body io.R
 		VersionID: output.VersionId, // May be nil if versioning not enabled
 	}, nil
 }
+
+// Download retrieves a file from S3 and returns an io.ReadCloser
+// The caller is responsible for closing the returned ReadCloser
+func (u *Uploader) Download(ctx context.Context, bucketName, key string) (io.ReadCloser, error) {
+	input := &s3.GetObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(key),
+	}
+
+	output, err := u.client.GetObject(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+
+	return output.Body, nil
+}

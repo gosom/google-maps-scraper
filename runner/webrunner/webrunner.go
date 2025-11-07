@@ -193,6 +193,12 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		return nil, fmt.Errorf("failed to create job file repository: %w", err)
 	}
 
+	// Configure S3 on the service if S3 is available
+	if s3Upload != nil && s3BucketName != "" && jobFileRepo != nil {
+		svc.SetS3Config(jobFileRepo, s3Upload, s3BucketName)
+		log.Printf("[WebRunner] S3 download configured for web service (bucket: %s)", s3BucketName)
+	}
+
 	ans := webrunner{
 		srv:         srv,
 		svc:         svc,

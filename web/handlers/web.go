@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -231,7 +229,7 @@ func (h *WebHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 	_ = tmpl.Execute(w, newJob)
 }
 
-// Download mirrors Server.download
+// Download mirrors Server.download with S3 support
 func (h *WebHandlers) Download(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
 		h.Deps.Logger.Printf("GET %s", r.URL.Path)
@@ -248,27 +246,44 @@ func (h *WebHandlers) Download(w http.ResponseWriter, r *http.Request) {
 	}
 	if id == "" {
 		http.Error(w, "Missing ID", http.StatusUnprocessableEntity)
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Printf("Missing ID for download")
+		}
 		return
 	}
 	if _, err := uuid.Parse(id); err != nil {
 		http.Error(w, "Invalid ID format", http.StatusUnprocessableEntity)
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Printf("Invalid ID format for download: %v", err)
+		}
 		return
 	}
-	filePath, err := h.Deps.App.GetCSV(r.Context(), id)
+
+	// Use new GetCSVReader method which supports both S3 and local filesystem
+	reader, fileName, err := h.Deps.App.GetCSVReader(r.Context(), id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Printf("Failed to get CSV for job %s: %v", id, err)
+		}
 		return
 	}
-	file, err := os.Open(filePath)
-	if err != nil {
-		http.Error(w, "Failed to open file", http.StatusInternalServerError)
-		return
-	}
-	defer file.Close()
-	fileName := filepath.Base(filePath)
+	defer reader.Close()
+
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", fileName))
 	w.Header().Set("Content-Type", "text/csv")
-	_, _ = io.Copy(w, file)
+
+	_, err = io.Copy(w, reader)
+	if err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Printf("Failed to send file %s: %v", fileName, err)
+		}
+		return
+	}
+
+	if h.Deps.Logger != nil {
+		h.Deps.Logger.Printf("Successfully served CSV file %s for job %s", fileName, id)
+	}
 }
 
 // Delete mirrors Server.delete

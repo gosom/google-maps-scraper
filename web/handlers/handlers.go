@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"html/template"
+	"io"
 	"log"
 
 	"github.com/gosom/google-maps-scraper/billing"
@@ -57,6 +58,7 @@ type JobService interface {
 	Delete(ctx context.Context, id string) error
 	Cancel(ctx context.Context, id string) error
 	GetCSV(ctx context.Context, id string) (string, error)
+	GetCSVReader(ctx context.Context, id string) (io.ReadCloser, string, error)
 }
 
 // ResultsService exposes read operations for results data.

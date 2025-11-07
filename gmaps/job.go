@@ -379,26 +379,63 @@ func waitUntilURLContains(ctx context.Context, page playwright.Page, s string) b
 }
 
 func clickRejectCookiesIfRequired(page playwright.Page) error {
-	// click the cookie reject button if exists
-	sel := `form[action="https://consent.google.com/save"]:first-of-type button:first-of-type`
+	// Check if we're on the new Google consent page (consent.google.com/ml)
+	currentURL := page.URL()
+	if strings.Contains(currentURL, "consent.google.com") {
+		// Try to find and click "Reject all" button on new consent page
+		// Google's new consent page uses different selectors
+		selectors := []string{
+			// New consent page selectors
+			`button:has-text("Reject all")`,
+			`button:has-text("reject all")`,
+			`button[aria-label*="Reject"]`,
+			`form button:first-of-type`, // Reject is usually the first button
+			// Old consent page selector (backward compatibility)
+			`form[action="https://consent.google.com/save"]:first-of-type button:first-of-type`,
+		}
 
-	const timeout = 500
+		const timeout = 2000 // Increased timeout for consent page
 
-	//nolint:staticcheck // TODO replace with the new playwright API
-	el, err := page.WaitForSelector(sel, playwright.PageWaitForSelectorOptions{
-		Timeout: playwright.Float(timeout),
-	})
+		for _, sel := range selectors {
+			//nolint:staticcheck // TODO replace with the new playwright API
+			el, err := page.WaitForSelector(sel, playwright.PageWaitForSelectorOptions{
+				Timeout: playwright.Float(timeout),
+			})
 
-	if err != nil {
-		return nil
+			if err == nil && el != nil {
+				// Click the button
+				//nolint:staticcheck // TODO replace with the new playwright API
+				if err := el.Click(); err == nil {
+					// Wait for navigation away from consent page
+					page.WaitForTimeout(2000)
+					return nil
+				}
+			}
+		}
+	} else {
+		// Not on consent page, try old cookie rejection logic
+		sel := `form[action="https://consent.google.com/save"]:first-of-type button:first-of-type`
+
+		const timeout = 500
+
+		//nolint:staticcheck // TODO replace with the new playwright API
+		el, err := page.WaitForSelector(sel, playwright.PageWaitForSelectorOptions{
+			Timeout: playwright.Float(timeout),
+		})
+
+		if err != nil {
+			return nil
+		}
+
+		if el == nil {
+			return nil
+		}
+
+		//nolint:staticcheck // TODO replace with the new playwright API
+		return el.Click()
 	}
 
-	if el == nil {
-		return nil
-	}
-
-	//nolint:staticcheck // TODO replace with the new playwright API
-	return el.Click()
+	return nil
 }
 
 func scroll(ctx context.Context,

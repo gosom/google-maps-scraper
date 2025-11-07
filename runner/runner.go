@@ -137,7 +137,7 @@ type Runner interface {
 }
 
 type S3Uploader interface {
-	Upload(ctx context.Context, bucketName, key string, body io.Reader) error
+	Upload(ctx context.Context, bucketName, key string, body io.Reader, contentType string) (*s3uploader.UploadResult, error)
 }
 
 type Config struct {
