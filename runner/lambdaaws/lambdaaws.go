@@ -127,11 +127,14 @@ func (l *lambdaAwsRunner) handler(ctx context.Context, input lInput) error {
 		if err != nil {
 			return err
 		}
+		defer fd.Close()
 
-		err = l.uploader.Upload(ctx, input.BucketName, key, fd)
+		result, err := l.uploader.Upload(ctx, input.BucketName, key, fd, "text/csv")
 		if err != nil {
 			return err
 		}
+
+		log.Printf("Lambda job %s part %d: S3 upload successful (ETag: %s)", input.JobID, input.Part, result.ETag)
 	} else {
 		log.Println("no uploader set results are at ", out.Name())
 	}
