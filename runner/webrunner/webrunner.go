@@ -711,7 +711,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		log.Printf("DEBUG: Job %s - Setting status to OK (successful completion)", job.ID)
 
 		// Upload CSV to S3 and save metadata if S3 is configured
-		if err := w.uploadToS3AndSaveMetadata(context.Background(), job, outpath); err != nil {
+		if err := w.uploadToS3AndSaveMetadata(ctx, job, outpath); err != nil {
 			log.Printf("ERROR: Job %s - S3 upload failed: %v (job still marked as successful)", job.ID, err)
 			// Don't fail the job due to S3 upload failure - the scraping was successful
 			// The CSV file will remain on local storage
