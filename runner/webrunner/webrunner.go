@@ -17,9 +17,11 @@ import (
 	"github.com/gosom/google-maps-scraper/config"
 	"github.com/gosom/google-maps-scraper/deduper"
 	"github.com/gosom/google-maps-scraper/exiter"
+	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/proxy"
 	"github.com/gosom/google-maps-scraper/runner"
+	"github.com/gosom/google-maps-scraper/s3uploader"
 	"github.com/gosom/google-maps-scraper/tlmt"
 	"github.com/gosom/google-maps-scraper/web"
 	"github.com/gosom/scrapemate"
@@ -30,12 +32,15 @@ import (
 )
 
 type webrunner struct {
-	srv        *web.Server
-	svc        *web.Service
-	cfg        *runner.Config
-	db         *sql.DB
-	billingSvc *billing.Service
-	proxyPool  *proxy.Pool
+	srv         *web.Server
+	svc         *web.Service
+	cfg         *runner.Config
+	db          *sql.DB
+	billingSvc  *billing.Service
+	proxyPool   *proxy.Pool
+	s3Uploader  *s3uploader.Uploader
+	s3Bucket    string
+	jobFileRepo models.JobFileRepository
 }
 
 // buildServerConfig loads integration settings from environment, enforces required
@@ -150,13 +155,54 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		log.Printf("🔧 Started proxy pool with %d proxies", len(cfg.Proxies))
 	}
 
+	// Initialize S3 uploader if AWS credentials are configured
+	var s3Upload *s3uploader.Uploader
+	var s3BucketName string
+
+	awsAccessKey := os.Getenv("AWS_ACCESS_KEY_ID")
+	awsSecretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
+	awsRegion := os.Getenv("AWS_REGION")
+	s3BucketName = os.Getenv("S3_BUCKET_NAME")
+
+	if awsAccessKey != "" && awsSecretKey != "" && awsRegion != "" && s3BucketName != "" {
+		s3Upload = s3uploader.New(awsAccessKey, awsSecretKey, awsRegion)
+		if s3Upload != nil {
+			log.Printf("[WebRunner] S3 uploader initialized successfully (bucket: %s, region: %s)", s3BucketName, awsRegion)
+		} else {
+			log.Println("[WebRunner] WARNING: Failed to initialize S3 uploader - files will only be stored locally")
+		}
+	} else {
+		log.Println("[WebRunner] INFO: S3 not configured - files will only be stored locally")
+		if awsAccessKey == "" {
+			log.Println("[WebRunner] Missing: AWS_ACCESS_KEY_ID")
+		}
+		if awsSecretKey == "" {
+			log.Println("[WebRunner] Missing: AWS_SECRET_ACCESS_KEY")
+		}
+		if awsRegion == "" {
+			log.Println("[WebRunner] Missing: AWS_REGION")
+		}
+		if s3BucketName == "" {
+			log.Println("[WebRunner] Missing: S3_BUCKET_NAME")
+		}
+	}
+
+	// Initialize job file repository
+	jobFileRepo, err := postgres.NewJobFileRepository(db)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create job file repository: %w", err)
+	}
+
 	ans := webrunner{
-		srv:        srv,
-		svc:        svc,
-		cfg:        cfg,
-		db:         db,
-		billingSvc: billSvc,
-		proxyPool:  proxyPool,
+		srv:         srv,
+		svc:         svc,
+		cfg:         cfg,
+		db:          db,
+		billingSvc:  billSvc,
+		proxyPool:   proxyPool,
+		s3Uploader:  s3Upload,
+		s3Bucket:    s3BucketName,
+		jobFileRepo: jobFileRepo,
 	}
 
 	return &ans, nil
@@ -663,6 +709,13 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	} else if jobSuccess {
 		job.Status = web.StatusOK
 		log.Printf("DEBUG: Job %s - Setting status to OK (successful completion)", job.ID)
+
+		// Upload CSV to S3 and save metadata if S3 is configured
+		if err := w.uploadToS3AndSaveMetadata(context.Background(), job, outpath); err != nil {
+			log.Printf("ERROR: Job %s - S3 upload failed: %v (job still marked as successful)", job.ID, err)
+			// Don't fail the job due to S3 upload failure - the scraping was successful
+			// The CSV file will remain on local storage
+		}
 	} else {
 		job.Status = web.StatusFailed
 		log.Printf("DEBUG: Job %s - Setting status to FAILED", job.ID)
@@ -787,4 +840,102 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 	}
 
 	return scrapemateapp.NewScrapeMateApp(matecfg)
+}
+
+// uploadToS3AndSaveMetadata uploads a CSV file to S3 and saves metadata to the database
+func (w *webrunner) uploadToS3AndSaveMetadata(ctx context.Context, job *web.Job, csvFilePath string) error {
+	// Skip if S3 is not configured
+	if w.s3Uploader == nil || w.s3Bucket == "" {
+		log.Printf("[WebRunner] Job %s: S3 not configured, skipping upload (file remains at: %s)", job.ID, csvFilePath)
+		return nil
+	}
+
+	log.Printf("[WebRunner] Job %s: Starting S3 upload for user %s", job.ID, job.UserID)
+
+	// Open the CSV file
+	file, err := os.Open(csvFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to open CSV file for upload: %w", err)
+	}
+	defer file.Close()
+
+	// Get file size
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to get file info: %w", err)
+	}
+	fileSize := fileInfo.Size()
+
+	// Construct S3 object key: users/{user_id}/jobs/{job_id}/csv.csv
+	objectKey := fmt.Sprintf("users/%s/jobs/%s/csv.csv", job.UserID, job.ID)
+
+	// Create initial job file record with "uploading" status
+	jobFile := &models.JobFile{
+		JobID:      job.ID,
+		UserID:     job.UserID,
+		FileType:   models.JobFileTypeCSV,
+		BucketName: w.s3Bucket,
+		ObjectKey:  objectKey,
+		SizeBytes:  fileSize,
+		MimeType:   "text/csv",
+		Status:     models.JobFileStatusUploading,
+		CreatedAt:  time.Now().UTC(),
+	}
+
+	// Save initial record to database
+	if err := w.jobFileRepo.Create(ctx, jobFile); err != nil {
+		log.Printf("[WebRunner] Job %s: Failed to create job file record: %v", job.ID, err)
+		return fmt.Errorf("failed to create job file record: %w", err)
+	}
+
+	log.Printf("[WebRunner] Job %s: Created job file record (ID: %s), uploading to S3...", job.ID, jobFile.ID)
+
+	// Reset file pointer to beginning before upload
+	if _, err := file.Seek(0, 0); err != nil {
+		// Update record with failed status
+		errMsg := fmt.Sprintf("failed to reset file pointer: %v", err)
+		jobFile.Status = models.JobFileStatusFailed
+		jobFile.ErrorMessage = &errMsg
+		_ = w.jobFileRepo.Update(ctx, jobFile)
+		return fmt.Errorf("failed to reset file pointer: %w", err)
+	}
+
+	// Upload to S3
+	if err := w.s3Uploader.Upload(ctx, w.s3Bucket, objectKey, file); err != nil {
+		log.Printf("[WebRunner] Job %s: S3 upload failed: %v", job.ID, err)
+		// Update record with failed status
+		errMsg := fmt.Sprintf("S3 upload failed: %v", err)
+		jobFile.Status = models.JobFileStatusFailed
+		jobFile.ErrorMessage = &errMsg
+		_ = w.jobFileRepo.Update(ctx, jobFile)
+		return fmt.Errorf("S3 upload failed: %w", err)
+	}
+
+	log.Printf("[WebRunner] Job %s: S3 upload successful (bucket: %s, key: %s, size: %d bytes)",
+		job.ID, w.s3Bucket, objectKey, fileSize)
+
+	// Update record with success status
+	// Note: We don't have ETag from the current s3uploader.Upload implementation
+	// but we still mark as available
+	now := time.Now().UTC()
+	jobFile.Status = models.JobFileStatusAvailable
+	jobFile.UploadedAt = &now
+	jobFile.ETag = "completed" // Placeholder since current Upload() doesn't return ETag
+
+	if err := w.jobFileRepo.Update(ctx, jobFile); err != nil {
+		log.Printf("[WebRunner] Job %s: Failed to update job file record to available: %v", job.ID, err)
+		return fmt.Errorf("failed to update job file record: %w", err)
+	}
+
+	log.Printf("[WebRunner] Job %s: Job file record updated to available status", job.ID)
+
+	// Delete local CSV file after successful upload
+	if err := os.Remove(csvFilePath); err != nil {
+		log.Printf("[WebRunner] Job %s: WARNING - Failed to delete local CSV file after S3 upload: %v", job.ID, err)
+		// Don't return error - upload was successful, cleanup is not critical
+	} else {
+		log.Printf("[WebRunner] Job %s: Local CSV file deleted successfully after S3 upload", job.ID)
+	}
+
+	return nil
 }
