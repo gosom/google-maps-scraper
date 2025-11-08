@@ -70,6 +70,52 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: err.Error()})
 		return
 	}
+
+	// Pre-flight cost estimation and balance check
+	if h.Deps.DB != nil {
+		estimationSvc := webservices.NewEstimationService(h.Deps.DB)
+
+		// Estimate job cost
+		estimate, err := estimationSvc.EstimateJobCost(r.Context(), &newJob.Data)
+		if err != nil {
+			if h.Deps.Logger != nil {
+				h.Deps.Logger.Printf("ERROR: Failed to estimate job cost for user %s: %v", userID, err)
+			}
+			renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: "failed to estimate job cost"})
+			return
+		}
+
+		// Log the estimate for debugging
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Printf(
+				"Job cost estimate for user %s: total=%.4f credits (places=%d, reviews=%d, images=%d)",
+				userID,
+				estimate.TotalEstimatedCost,
+				estimate.EstimatedPlaces,
+				estimate.EstimatedReviews,
+				estimate.EstimatedImages,
+			)
+		}
+
+		// Check if user has sufficient balance
+		if err := estimationSvc.CheckSufficientBalance(r.Context(), userID, estimate); err != nil {
+			if h.Deps.Logger != nil {
+				h.Deps.Logger.Printf("INFO: Job creation blocked for user %s: %v", userID, err)
+			}
+			renderJSON(w, http.StatusPaymentRequired, models.APIError{
+				Code:    http.StatusPaymentRequired,
+				Message: err.Error(),
+			})
+			return
+		}
+	} else {
+		// If database is not available, log warning but allow job creation
+		// This maintains backward compatibility for non-billing deployments
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Printf("WARNING: Database not available, skipping cost estimation for user %s", userID)
+		}
+	}
+
 	if err := h.Deps.App.Create(r.Context(), &newJob); err != nil {
 		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: "failed to create job: " + err.Error()})
 		return
@@ -326,6 +372,68 @@ func (h *APIHandlers) GetUserResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	renderJSON(w, http.StatusOK, results)
+}
+
+// EstimateJobCost returns the estimated cost for a job without creating it
+func (h *APIHandlers) EstimateJobCost(w http.ResponseWriter, r *http.Request) {
+	if h.Deps.Logger != nil {
+		h.Deps.Logger.Printf("POST %s", r.URL.Path)
+	}
+
+	var req apiScrapeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: err.Error()})
+		return
+	}
+
+	if h.Deps.Auth == nil {
+		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "Authentication not configured"})
+		return
+	}
+
+	userID, err := auth.GetUserID(r.Context())
+	if err != nil || userID == "" {
+		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
+		return
+	}
+
+	if h.Deps.DB == nil {
+		renderJSON(w, http.StatusServiceUnavailable, models.APIError{Code: http.StatusServiceUnavailable, Message: "database not available"})
+		return
+	}
+
+	// Create estimation service
+	estimationSvc := webservices.NewEstimationService(h.Deps.DB)
+
+	// Estimate job cost
+	estimate, err := estimationSvc.EstimateJobCost(r.Context(), &req.JobData)
+	if err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Printf("ERROR: Failed to estimate job cost for user %s: %v", userID, err)
+		}
+		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: "failed to estimate job cost"})
+		return
+	}
+
+	// Get user's current balance
+	var creditBalance float64
+	const query = `SELECT COALESCE(credit_balance, 0) FROM users WHERE id = $1`
+	if err := h.Deps.DB.QueryRowContext(r.Context(), query, userID).Scan(&creditBalance); err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Printf("ERROR: Failed to get credit balance for user %s: %v", userID, err)
+		}
+		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: "failed to retrieve credit balance"})
+		return
+	}
+
+	// Build response with estimate and balance info
+	response := map[string]interface{}{
+		"estimate":               estimate,
+		"current_credit_balance": creditBalance,
+		"sufficient_balance":     creditBalance >= estimate.TotalEstimatedCost,
+	}
+
+	renderJSON(w, http.StatusOK, response)
 }
 
 // use renderJSON from handlers package (defined in web.go)

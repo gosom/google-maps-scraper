@@ -1,0 +1,204 @@
+package services
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+
+	"github.com/gosom/google-maps-scraper/models"
+)
+
+// EstimationService provides job cost estimation functionality
+type EstimationService struct {
+	db *sql.DB
+}
+
+// Cost estimation constants - average values based on typical Google Maps data
+const (
+	// Average number of reviews per place (Google Maps businesses typically have 10-50 reviews)
+	AvgReviewsPerPlace = 25
+
+	// Average number of images per place (typical business has 5-15 images)
+	AvgImagesPerPlace = 8
+
+	// Default max results if not specified by user (conservative estimate)
+	DefaultMaxResults = 100
+
+	// Default reviews per place if user enables reviews but doesn't specify max
+	DefaultMaxReviewsPerPlace = 50
+
+	// Pricing from billing_event_types and pricing_rules (migration 000017)
+	PriceActorStart        = 0.007  // Flat fee per job
+	PricePlaceScraped      = 0.004  // Per place
+	PriceFiltersApplied    = 0.001  // Per filter per place (not yet implemented)
+	PriceAdditionalDetails = 0.002  // Per place with extra details (not yet implemented)
+	PriceContactDetails    = 0.002  // Per place when email scraping enabled
+	PriceReview            = 0.0005 // Per review
+	PriceImage             = 0.0005 // Per image
+)
+
+// CostEstimate represents the estimated cost breakdown for a job
+type CostEstimate struct {
+	ActorStartCost      float64 `json:"actor_start_cost"`
+	PlacesCost          float64 `json:"places_cost"`
+	ContactDetailsCost  float64 `json:"contact_details_cost"`
+	ReviewsCost         float64 `json:"reviews_cost"`
+	ImagesCost          float64 `json:"images_cost"`
+	TotalEstimatedCost  float64 `json:"total_estimated_cost"`
+	EstimatedPlaces     int     `json:"estimated_places"`
+	EstimatedReviews    int     `json:"estimated_reviews"`
+	EstimatedImages     int     `json:"estimated_images"`
+	IncludesEmailScrape bool    `json:"includes_email_scrape"`
+	Note                string  `json:"note"`
+}
+
+func NewEstimationService(db *sql.DB) *EstimationService {
+	return &EstimationService{db: db}
+}
+
+// EstimateJobCost calculates the estimated cost for a job based on its parameters
+// Uses conservative estimates when user doesn't specify limits
+func (s *EstimationService) EstimateJobCost(ctx context.Context, jobData *models.JobData) (*CostEstimate, error) {
+	estimate := &CostEstimate{}
+
+	// 1. Actor start cost (flat fee per job)
+	estimate.ActorStartCost = PriceActorStart
+
+	// 2. Determine estimated number of places
+	estimatedPlaces := s.estimatePlaceCount(jobData)
+	estimate.EstimatedPlaces = estimatedPlaces
+
+	// 3. Calculate places cost
+	estimate.PlacesCost = float64(estimatedPlaces) * PricePlaceScraped
+
+	// 4. Calculate contact details cost (if email scraping is enabled)
+	if jobData.Email {
+		estimate.IncludesEmailScrape = true
+		estimate.ContactDetailsCost = float64(estimatedPlaces) * PriceContactDetails
+	}
+
+	// 5. Calculate reviews cost (if reviews are requested)
+	if jobData.ReviewsMax > 0 || jobData.Images { // Images often come with reviews
+		estimatedReviews := s.estimateReviewCount(jobData, estimatedPlaces)
+		estimate.EstimatedReviews = estimatedReviews
+		estimate.ReviewsCost = float64(estimatedReviews) * PriceReview
+	}
+
+	// 6. Calculate images cost (if images are requested)
+	if jobData.Images {
+		estimatedImages := s.estimateImageCount(jobData, estimatedPlaces)
+		estimate.EstimatedImages = estimatedImages
+		estimate.ImagesCost = float64(estimatedImages) * PriceImage
+	}
+
+	// 7. Calculate total
+	estimate.TotalEstimatedCost = estimate.ActorStartCost +
+		estimate.PlacesCost +
+		estimate.ContactDetailsCost +
+		estimate.ReviewsCost +
+		estimate.ImagesCost
+
+	// 8. Add note about estimation
+	estimate.Note = s.generateEstimationNote(jobData)
+
+	return estimate, nil
+}
+
+// estimatePlaceCount determines how many places will likely be scraped
+func (s *EstimationService) estimatePlaceCount(jobData *models.JobData) int {
+	// If user specified max_results, use that
+	if jobData.MaxResults > 0 {
+		return jobData.MaxResults
+	}
+
+	// Otherwise, estimate based on keywords and depth
+	// Each keyword at depth 1 typically returns 20-100 results
+	// Depth increases exponentially but with diminishing returns
+	keywordCount := len(jobData.Keywords)
+	if keywordCount == 0 {
+		keywordCount = 1 // At least one keyword
+	}
+
+	baseResultsPerKeyword := 50 // Conservative average
+	depthMultiplier := float64(jobData.Depth)
+	if depthMultiplier < 1 {
+		depthMultiplier = 1
+	}
+
+	// Apply depth multiplier with diminishing returns
+	// Depth 1: 1x, Depth 2: 1.5x, Depth 3: 1.8x, etc.
+	adjustedMultiplier := 1.0 + (depthMultiplier-1)*0.3
+
+	estimated := int(float64(keywordCount*baseResultsPerKeyword) * adjustedMultiplier)
+
+	// Cap at default max to avoid unrealistic estimates
+	if estimated > DefaultMaxResults*keywordCount {
+		estimated = DefaultMaxResults * keywordCount
+	}
+
+	return estimated
+}
+
+// estimateReviewCount determines how many reviews will likely be scraped
+func (s *EstimationService) estimateReviewCount(jobData *models.JobData, estimatedPlaces int) int {
+	// If user specified reviews_max, use that per place
+	reviewsPerPlace := jobData.ReviewsMax
+	if reviewsPerPlace <= 0 {
+		// Use average if not specified
+		reviewsPerPlace = AvgReviewsPerPlace
+	}
+
+	return estimatedPlaces * reviewsPerPlace
+}
+
+// estimateImageCount determines how many images will likely be scraped
+func (s *EstimationService) estimateImageCount(jobData *models.JobData, estimatedPlaces int) int {
+	// Google Maps typically returns 5-15 images per place
+	// Use conservative average
+	return estimatedPlaces * AvgImagesPerPlace
+}
+
+// generateEstimationNote creates a helpful note explaining the estimate
+func (s *EstimationService) generateEstimationNote(jobData *models.JobData) string {
+	if jobData.MaxResults > 0 {
+		return "Estimate based on your specified max_results limit"
+	}
+
+	return fmt.Sprintf(
+		"Estimate based on %d keyword(s) with depth %d. Actual cost may vary. "+
+			"Set max_results to control costs precisely.",
+		len(jobData.Keywords),
+		jobData.Depth,
+	)
+}
+
+// CheckSufficientBalance verifies if a user has enough credits for a job
+// Returns an error if balance is insufficient
+func (s *EstimationService) CheckSufficientBalance(ctx context.Context, userID string, estimate *CostEstimate) error {
+	if s.db == nil {
+		return fmt.Errorf("database not available")
+	}
+
+	// Get user's current credit balance
+	var creditBalance float64
+	const query = `SELECT COALESCE(credit_balance, 0) FROM users WHERE id = $1`
+	err := s.db.QueryRowContext(ctx, query, userID).Scan(&creditBalance)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("user not found")
+		}
+		return fmt.Errorf("failed to retrieve credit balance: %w", err)
+	}
+
+	// Check if balance is sufficient
+	if creditBalance < estimate.TotalEstimatedCost {
+		return fmt.Errorf(
+			"insufficient credits: you have %.4f credits but this job requires approximately %.4f credits (estimated for %d places). Please purchase more credits to continue",
+			creditBalance,
+			estimate.TotalEstimatedCost,
+			estimate.EstimatedPlaces,
+		)
+	}
+
+	return nil
+}
