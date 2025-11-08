@@ -111,23 +111,9 @@ func (s *EstimationService) estimatePlaceCount(jobData *models.JobData) int {
 		return jobData.MaxResults
 	}
 
-	// Otherwise, estimate based on keywords only (ignore depth)
-	// Each keyword typically returns 20-100 results
-	keywordCount := len(jobData.Keywords)
-	if keywordCount == 0 {
-		keywordCount = 1 // At least one keyword
-	}
-
-	baseResultsPerKeyword := 50 // Conservative average per keyword
-
-	estimated := keywordCount * baseResultsPerKeyword
-
-	// Cap at default max to avoid unrealistic estimates
-	if estimated > DefaultMaxResults*keywordCount {
-		estimated = DefaultMaxResults * keywordCount
-	}
-
-	return estimated
+	// Otherwise, use a conservative flat estimate of 50 places
+	// This provides a baseline estimate regardless of keywords
+	return 50
 }
 
 // estimateReviewCount determines how many reviews will likely be scraped
