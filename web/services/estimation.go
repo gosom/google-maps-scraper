@@ -19,7 +19,7 @@ const (
 	AvgReviewsPerPlace = 25
 
 	// Average number of images per place (typical business has 5-15 images)
-	AvgImagesPerPlace = 8
+	AvgImagesPerPlace = 30
 
 	// Default max results if not specified by user (conservative estimate)
 	DefaultMaxResults = 100
