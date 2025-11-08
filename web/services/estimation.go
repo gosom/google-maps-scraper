@@ -111,25 +111,16 @@ func (s *EstimationService) estimatePlaceCount(jobData *models.JobData) int {
 		return jobData.MaxResults
 	}
 
-	// Otherwise, estimate based on keywords and depth
-	// Each keyword at depth 1 typically returns 20-100 results
-	// Depth increases exponentially but with diminishing returns
+	// Otherwise, estimate based on keywords only (ignore depth)
+	// Each keyword typically returns 20-100 results
 	keywordCount := len(jobData.Keywords)
 	if keywordCount == 0 {
 		keywordCount = 1 // At least one keyword
 	}
 
-	baseResultsPerKeyword := 50 // Conservative average
-	depthMultiplier := float64(jobData.Depth)
-	if depthMultiplier < 1 {
-		depthMultiplier = 1
-	}
+	baseResultsPerKeyword := 50 // Conservative average per keyword
 
-	// Apply depth multiplier with diminishing returns
-	// Depth 1: 1x, Depth 2: 1.5x, Depth 3: 1.8x, etc.
-	adjustedMultiplier := 1.0 + (depthMultiplier-1)*0.3
-
-	estimated := int(float64(keywordCount*baseResultsPerKeyword) * adjustedMultiplier)
+	estimated := keywordCount * baseResultsPerKeyword
 
 	// Cap at default max to avoid unrealistic estimates
 	if estimated > DefaultMaxResults*keywordCount {
@@ -165,10 +156,9 @@ func (s *EstimationService) generateEstimationNote(jobData *models.JobData) stri
 	}
 
 	return fmt.Sprintf(
-		"Estimate based on %d keyword(s) with depth %d. Actual cost may vary. "+
+		"Estimate based on %d keyword(s). Actual cost may vary. "+
 			"Set max_results to control costs precisely.",
 		len(jobData.Keywords),
-		jobData.Depth,
 	)
 }
 
