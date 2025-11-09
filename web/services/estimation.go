@@ -196,7 +196,7 @@ func (s *EstimationService) CheckSufficientBalance(ctx context.Context, userID s
 	// Check if balance is sufficient
 	if creditBalance < estimate.TotalEstimatedCost {
 		return fmt.Errorf(
-			"insufficient credits: you have %.4f credits but this job requires approximately %.4f credits (estimated for %d places). Please purchase more credits to continue",
+			"insufficient credits: you have %.4f credits but this job requires a minimum of %.4f credits to start (estimated cost for %d places). Please purchase more credits to continue",
 			creditBalance,
 			estimate.TotalEstimatedCost,
 			estimate.EstimatedPlaces,
