@@ -127,6 +127,11 @@ func New(cfg ServerConfig) (*Server, error) {
 		apiRouter.Use(ans.authMiddleware.Authenticate)
 	}
 
+	// Apply request logger after authentication so user_id is available in context
+	apiRouter.Use(func(next http.Handler) http.Handler {
+		return webmiddleware.RequestLogger(next)
+	})
+
 	// API endpoints (these are protected by middleware if enabled)
 	apiRouter.HandleFunc("/jobs", hg.API.GetJobs).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/user", hg.API.GetUserJobs).Methods(http.MethodGet)
@@ -156,7 +161,8 @@ func New(cfg ServerConfig) (*Server, error) {
 	}
 
 	// Apply security headers and CORS to all routes via middleware chain
-	handler := webmiddleware.Chain(router, webmiddleware.RequestLogger, webmiddleware.SecurityHeaders, webmiddleware.CORS)
+	// Note: RequestLogger is applied separately to API routes after authentication
+	handler := webmiddleware.Chain(router, webmiddleware.SecurityHeaders, webmiddleware.CORS)
 	ans.srv.Handler = handler
 
 	tmplsKeys := []string{

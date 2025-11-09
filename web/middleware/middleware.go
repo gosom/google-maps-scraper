@@ -49,7 +49,7 @@ func SecurityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// RequestLogger logs method, path, status, duration, userID (if any) and UA.
+// RequestLogger logs method, path, status, duration, and userID (if any).
 type loggingResponseWriter struct {
 	http.ResponseWriter
 	status int
@@ -68,7 +68,6 @@ func RequestLogger(next http.Handler) http.Handler {
 		dur := time.Since(start)
 
 		userID, _ := auth.GetUserID(r.Context())
-		ua := r.UserAgent()
-		log.Printf("%s %s %d %s user_id=%s ua=\"%s\"", r.Method, r.URL.Path, lrw.status, dur.String(), userID, ua)
+		log.Printf("%s %s %d %s user_id=%s", r.Method, r.URL.Path, lrw.status, dur.String(), userID)
 	})
 }
