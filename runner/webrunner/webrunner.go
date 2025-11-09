@@ -680,6 +680,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			log.Printf("DEBUG: Job %s - billingSvc nil? %v, resultCount=%d", job.ID, w.billingSvc == nil, resultCount)
 
 			if w.billingSvc != nil && resultCount > 0 {
+				// Charge for places scraped
 				log.Printf("INFO: Job %s - Attempting to charge %d places for user %s", job.ID, resultCount, job.UserID)
 				if err := w.billingSvc.ChargePlaces(context.Background(), job.UserID, job.ID, resultCount); err != nil {
 					log.Printf("ERROR: billing: place_scraped charge failed for job %s (%d places): %v", job.ID, resultCount, err)
@@ -688,6 +689,53 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 					job.FailureReason = "insufficient credits to charge places"
 				} else {
 					log.Printf("SUCCESS: billing: successfully charged %d places for job %s (user: %s)", resultCount, job.ID, job.UserID)
+				}
+
+				// Count and charge for reviews, images, and contact details
+				if jobSuccess {
+					counts, err := w.billingSvc.CountBillableItems(context.Background(), job.ID)
+					if err != nil {
+						log.Printf("ERROR: Job %s - Failed to count billable items: %v", job.ID, err)
+					} else {
+						log.Printf("INFO: Job %s - Billable items: reviews=%d, images=%d, contacts=%d",
+							job.ID, counts.TotalReviews, counts.TotalImages, counts.PlacesWithContacts)
+
+						// Charge for reviews
+						if counts.TotalReviews > 0 {
+							if err := w.billingSvc.ChargeReviews(context.Background(), job.UserID, job.ID, counts.TotalReviews); err != nil {
+								log.Printf("ERROR: billing: review charge failed for job %s (%d reviews): %v", job.ID, counts.TotalReviews, err)
+								jobSuccess = false
+								job.Status = web.StatusFailed
+								job.FailureReason = "insufficient credits to charge reviews"
+							} else {
+								log.Printf("SUCCESS: billing: successfully charged %d reviews for job %s", counts.TotalReviews, job.ID)
+							}
+						}
+
+						// Charge for images (only if reviews charging succeeded)
+						if jobSuccess && counts.TotalImages > 0 {
+							if err := w.billingSvc.ChargeImages(context.Background(), job.UserID, job.ID, counts.TotalImages); err != nil {
+								log.Printf("ERROR: billing: image charge failed for job %s (%d images): %v", job.ID, counts.TotalImages, err)
+								jobSuccess = false
+								job.Status = web.StatusFailed
+								job.FailureReason = "insufficient credits to charge images"
+							} else {
+								log.Printf("SUCCESS: billing: successfully charged %d images for job %s", counts.TotalImages, job.ID)
+							}
+						}
+
+						// Charge for contact details (only if previous charges succeeded)
+						if jobSuccess && counts.PlacesWithContacts > 0 {
+							if err := w.billingSvc.ChargeContactDetails(context.Background(), job.UserID, job.ID, counts.PlacesWithContacts); err != nil {
+								log.Printf("ERROR: billing: contact_details charge failed for job %s (%d places): %v", job.ID, counts.PlacesWithContacts, err)
+								jobSuccess = false
+								job.Status = web.StatusFailed
+								job.FailureReason = "insufficient credits to charge contact details"
+							} else {
+								log.Printf("SUCCESS: billing: successfully charged %d contact details for job %s", counts.PlacesWithContacts, job.ID)
+							}
+						}
+					}
 				}
 			} else {
 				if w.billingSvc == nil {

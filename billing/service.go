@@ -520,3 +520,71 @@ func (s *Service) ChargePlaces(ctx context.Context, userID, jobID string, places
 	}
 	return s.ChargeEvent(ctx, userID, jobID, "place_scraped", places, "job:"+jobID+":place_scraped", map[string]any{})
 }
+
+// ChargeReviews charges review events for N reviews scraped in a job.
+func (s *Service) ChargeReviews(ctx context.Context, userID, jobID string, reviews int) error {
+	if reviews <= 0 {
+		return nil
+	}
+	return s.ChargeEvent(ctx, userID, jobID, "review", reviews, "job:"+jobID+":review", map[string]any{})
+}
+
+// ChargeImages charges image events for N images scraped in a job.
+func (s *Service) ChargeImages(ctx context.Context, userID, jobID string, images int) error {
+	if images <= 0 {
+		return nil
+	}
+	return s.ChargeEvent(ctx, userID, jobID, "image", images, "job:"+jobID+":image", map[string]any{})
+}
+
+// ChargeContactDetails charges contact_details events for N places where contact details were extracted.
+func (s *Service) ChargeContactDetails(ctx context.Context, userID, jobID string, placesWithContacts int) error {
+	if placesWithContacts <= 0 {
+		return nil
+	}
+	return s.ChargeEvent(ctx, userID, jobID, "contact_details", placesWithContacts, "job:"+jobID+":contact_details", map[string]any{})
+}
+
+// BillingCounts represents the counts of billable items in a job's results.
+type BillingCounts struct {
+	TotalReviews        int
+	TotalImages         int
+	PlacesWithContacts  int
+}
+
+// CountBillableItems counts reviews, images, and contact details from job results.
+// This scans the results table and aggregates counts from JSONB fields.
+func (s *Service) CountBillableItems(ctx context.Context, jobID string) (*BillingCounts, error) {
+	if s.db == nil {
+		return nil, fmt.Errorf("db not configured")
+	}
+
+	counts := &BillingCounts{}
+
+	// Query to count billable items from results
+	// - user_reviews/user_reviews_extended: JSONB arrays of review objects
+	// - images: JSONB array of image objects
+	// - emails: TEXT field (non-empty means contact details extracted)
+	const query = `
+		SELECT
+			COALESCE(SUM(
+				COALESCE(jsonb_array_length(user_reviews), 0) +
+				COALESCE(jsonb_array_length(user_reviews_extended), 0)
+			), 0) AS total_reviews,
+			COALESCE(SUM(jsonb_array_length(images)), 0) AS total_images,
+			COUNT(CASE WHEN emails IS NOT NULL AND emails != '' THEN 1 END) AS places_with_contacts
+		FROM results
+		WHERE job_id = $1
+	`
+
+	err := s.db.QueryRowContext(ctx, query, jobID).Scan(
+		&counts.TotalReviews,
+		&counts.TotalImages,
+		&counts.PlacesWithContacts,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count billable items: %w", err)
+	}
+
+	return counts, nil
+}
