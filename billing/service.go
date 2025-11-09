@@ -588,3 +588,108 @@ func (s *Service) CountBillableItems(ctx context.Context, jobID string) (*Billin
 
 	return counts, nil
 }
+
+// ChargeAllJobEvents charges all billing events for a completed job in a single transaction.
+// This ensures atomicity - either all charges succeed or all are rolled back.
+// If any charge fails due to insufficient balance, the entire transaction is rolled back.
+func (s *Service) ChargeAllJobEvents(ctx context.Context, userID, jobID string, placesCount int) error {
+	if s.db == nil {
+		return fmt.Errorf("db not configured")
+	}
+
+	// Start a single transaction for all charges
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
+		Isolation: sql.LevelSerializable,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback() // Rollback if we don't commit
+
+	// Helper function to charge an event within this transaction
+	chargeEventInTx := func(eventType string, quantity int, idempotencyKey string) error {
+		if quantity <= 0 {
+			return nil // Skip if nothing to charge
+		}
+
+		metadata := map[string]any{"idempotency_key": idempotencyKey}
+		metaJSON, _ := json.Marshal(metadata)
+
+		// Insert billing event
+		var eventID, unitPrice, totalPrice string
+		const insEvent = `INSERT INTO billing_events (user_id, job_id, event_type_code, quantity, metadata)
+			VALUES ($1,$2,$3,$4,$5::jsonb)
+			ON CONFLICT (job_id, event_type_code, (metadata->>'idempotency_key'))
+			WHERE (metadata ? 'idempotency_key')
+			DO UPDATE SET quantity = billing_events.quantity
+			RETURNING id, unit_price_credits::text, total_price_credits::text`
+
+		if err := tx.QueryRowContext(ctx, insEvent, userID, jobID, eventType, quantity, string(metaJSON)).Scan(&eventID, &unitPrice, &totalPrice); err != nil {
+			return fmt.Errorf("insert %s event: %w", eventType, err)
+		}
+
+		// Decrement user balance atomically
+		const decBal = `UPDATE users
+			SET credit_balance = credit_balance - $1::numeric,
+			    total_credits_consumed = COALESCE(total_credits_consumed, 0) + $1::numeric,
+			    updated_at = NOW()
+			WHERE id = $2 AND credit_balance >= $1::numeric
+			RETURNING credit_balance::text`
+
+		var newBalance string
+		if err := tx.QueryRowContext(ctx, decBal, totalPrice, userID).Scan(&newBalance); err != nil {
+			if err == sql.ErrNoRows {
+				return fmt.Errorf("insufficient credits to charge %s (%d items)", eventType, quantity)
+			}
+			return fmt.Errorf("failed to update balance for %s: %w", eventType, err)
+		}
+
+		// Insert credit transaction
+		const insTxn = `INSERT INTO credit_transactions (
+			user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type, metadata
+		) VALUES (
+			$1, 'consumption', -$2::numeric,
+			($3::numeric + $2::numeric),
+			$3::numeric,
+			$4, $5, 'job', jsonb_build_object('billing_event_id', $6::text)
+		)`
+		if _, err := tx.ExecContext(ctx, insTxn, userID, totalPrice, newBalance, fmt.Sprintf("Billing charge: %s", eventType), jobID, eventID); err != nil {
+			return fmt.Errorf("insert credit transaction for %s: %w", eventType, err)
+		}
+
+		return nil
+	}
+
+	// 1. Charge for places
+	if err := chargeEventInTx("place_scraped", placesCount, "job:"+jobID+":place_scraped"); err != nil {
+		return err // Transaction will be rolled back
+	}
+
+	// 2. Count and charge for reviews, images, and contacts
+	counts, err := s.CountBillableItems(ctx, jobID)
+	if err != nil {
+		return fmt.Errorf("failed to count billable items: %w", err)
+	}
+
+	// 3. Charge for reviews
+	if err := chargeEventInTx("review", counts.TotalReviews, "job:"+jobID+":review"); err != nil {
+		return err // Transaction will be rolled back
+	}
+
+	// 4. Charge for images
+	if err := chargeEventInTx("image", counts.TotalImages, "job:"+jobID+":image"); err != nil {
+		return err // Transaction will be rolled back
+	}
+
+	// 5. Charge for contact details
+	if err := chargeEventInTx("contact_details", counts.PlacesWithContacts, "job:"+jobID+":contact_details"); err != nil {
+		return err // Transaction will be rolled back
+	}
+
+	// All charges succeeded - commit the transaction
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit billing transaction: %w", err)
+	}
+
+	return nil
+}
