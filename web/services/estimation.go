@@ -24,6 +24,10 @@ const (
 	// Default max results when user specifies 0 (unlimited) - use conservative estimate
 	DefaultEstimateForUnlimited = 50
 
+	// Threshold for detecting "unlimited" reviews_max (treat values >= this as unlimited)
+	// Frontend may send 9999 or 10000 to simulate unlimited
+	UnlimitedReviewsThreshold = 1000
+
 	// Pricing from billing_event_types and pricing_rules (migration 000017)
 	PriceActorStart        = 0.007  // Flat fee per job
 	PricePlaceScraped      = 0.004  // Per place
@@ -120,10 +124,11 @@ func (s *EstimationService) estimatePlaceCount(jobData *models.JobData) int {
 
 // estimateReviewCount determines how many reviews will likely be scraped
 func (s *EstimationService) estimateReviewCount(jobData *models.JobData, estimatedPlaces int) int {
-	// If user specified reviews_max, use that per place
 	reviewsPerPlace := jobData.ReviewsMax
-	if reviewsPerPlace <= 0 {
-		// Use average if not specified
+
+	// Treat unrealistically high values (>=1000) as "unlimited" and use average
+	// Frontend may send 9999 or 10000 to simulate unlimited reviews
+	if reviewsPerPlace <= 0 || reviewsPerPlace >= UnlimitedReviewsThreshold {
 		reviewsPerPlace = AvgReviewsPerPlace
 	}
 
@@ -139,16 +144,35 @@ func (s *EstimationService) estimateImageCount(jobData *models.JobData, estimate
 
 // generateEstimationNote creates a helpful note explaining the estimate
 func (s *EstimationService) generateEstimationNote(jobData *models.JobData) string {
-	if jobData.MaxResults > 0 {
-		return "Estimate based on your specified max_results limit"
+	var notes []string
+
+	// Check if max_results is unlimited
+	if jobData.MaxResults == 0 {
+		notes = append(notes, fmt.Sprintf(
+			"WARNING: max_results is set to unlimited (0). This estimate is for a MINIMUM of %d places. "+
+				"Actual cost could be significantly higher.",
+			DefaultEstimateForUnlimited,
+		))
+	} else {
+		notes = append(notes, "Estimate based on your specified max_results limit")
 	}
 
-	// max_results = 0 means unlimited scraping - warn user!
-	return fmt.Sprintf(
-		"WARNING: max_results is set to unlimited (0). This estimate is for a MINIMUM of %d places. "+
-			"Actual cost could be significantly higher. Set max_results to control costs precisely.",
-		DefaultEstimateForUnlimited,
-	)
+	// Check if reviews_max is treated as unlimited
+	if jobData.ReviewsMax >= UnlimitedReviewsThreshold {
+		notes = append(notes, fmt.Sprintf(
+			"Note: reviews_max (%d) treated as unlimited - using average of %d reviews per place for estimation.",
+			jobData.ReviewsMax, AvgReviewsPerPlace,
+		))
+	}
+
+	// Combine notes
+	note := notes[0]
+	if len(notes) > 1 {
+		note = note + " " + notes[1]
+	}
+
+	note = note + " Set max_results and reviews_max to control costs precisely."
+	return note
 }
 
 // CheckSufficientBalance verifies if a user has enough credits for a job
