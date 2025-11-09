@@ -21,11 +21,8 @@ const (
 	// Average number of images per place (typical business has 5-15 images)
 	AvgImagesPerPlace = 30
 
-	// Default max results if not specified by user (conservative estimate)
-	DefaultMaxResults = 100
-
-	// Default reviews per place if user enables reviews but doesn't specify max
-	DefaultMaxReviewsPerPlace = 50
+	// Default max results when user specifies 0 (unlimited) - use conservative estimate
+	DefaultEstimateForUnlimited = 50
 
 	// Pricing from billing_event_types and pricing_rules (migration 000017)
 	PriceActorStart        = 0.007  // Flat fee per job
@@ -77,8 +74,9 @@ func (s *EstimationService) EstimateJobCost(ctx context.Context, jobData *models
 		estimate.ContactDetailsCost = float64(estimatedPlaces) * PriceContactDetails
 	}
 
-	// 5. Calculate reviews cost (if reviews are requested)
-	if jobData.ReviewsMax > 0 || jobData.Images { // Images often come with reviews
+	// 5. Calculate reviews cost (ONLY if reviews are explicitly requested)
+	// Note: ReviewsMax = 0 means no reviews, NOT unlimited
+	if jobData.ReviewsMax > 0 {
 		estimatedReviews := s.estimateReviewCount(jobData, estimatedPlaces)
 		estimate.EstimatedReviews = estimatedReviews
 		estimate.ReviewsCost = float64(estimatedReviews) * PriceReview
@@ -106,14 +104,18 @@ func (s *EstimationService) EstimateJobCost(ctx context.Context, jobData *models
 
 // estimatePlaceCount determines how many places will likely be scraped
 func (s *EstimationService) estimatePlaceCount(jobData *models.JobData) int {
-	// If user specified max_results, use that
+	// IMPORTANT: max_results = 0 means UNLIMITED scraping, not zero results!
+	// We must handle this specially to avoid underestimating costs
+
 	if jobData.MaxResults > 0 {
+		// User specified a limit, use that exact value
 		return jobData.MaxResults
 	}
 
-	// Otherwise, use a conservative flat estimate of 50 places
-	// This provides a baseline estimate regardless of keywords
-	return 50
+	// max_results = 0 or not specified means UNLIMITED scraping
+	// Use a conservative estimate to warn user about minimum expected cost
+	// This is a MINIMUM - actual cost could be much higher!
+	return DefaultEstimateForUnlimited
 }
 
 // estimateReviewCount determines how many reviews will likely be scraped
@@ -141,10 +143,11 @@ func (s *EstimationService) generateEstimationNote(jobData *models.JobData) stri
 		return "Estimate based on your specified max_results limit"
 	}
 
+	// max_results = 0 means unlimited scraping - warn user!
 	return fmt.Sprintf(
-		"Estimate based on %d keyword(s). Actual cost may vary. "+
-			"Set max_results to control costs precisely.",
-		len(jobData.Keywords),
+		"WARNING: max_results is set to unlimited (0). This estimate is for a MINIMUM of %d places. "+
+			"Actual cost could be significantly higher. Set max_results to control costs precisely.",
+		DefaultEstimateForUnlimited,
 	)
 }
 
