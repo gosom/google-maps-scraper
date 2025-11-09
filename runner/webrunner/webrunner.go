@@ -668,7 +668,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			var resultCount int
 			if w.db != nil {
 				if err := w.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM results WHERE job_id=$1`, job.ID).Scan(&resultCount); err != nil {
-					log.Printf("ERROR: Job %s - Failed to count results before charging places: %v", job.ID, err)
+					log.Printf("ERROR: Job %s - Failed to count results before charging: %v", job.ID, err)
 					resultCount = 0
 				} else {
 					log.Printf("DEBUG: Job %s - Database query successful, resultCount=%d", job.ID, resultCount)
@@ -680,21 +680,25 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			log.Printf("DEBUG: Job %s - billingSvc nil? %v, resultCount=%d", job.ID, w.billingSvc == nil, resultCount)
 
 			if w.billingSvc != nil && resultCount > 0 {
-				log.Printf("INFO: Job %s - Attempting to charge %d places for user %s", job.ID, resultCount, job.UserID)
-				if err := w.billingSvc.ChargePlaces(context.Background(), job.UserID, job.ID, resultCount); err != nil {
-					log.Printf("ERROR: billing: place_scraped charge failed for job %s (%d places): %v", job.ID, resultCount, err)
+				// Charge ALL events in a single atomic transaction
+				// This includes: places, reviews, images, and contact details
+				// If any charge fails, ALL charges are rolled back (all-or-nothing)
+				log.Printf("INFO: Job %s - Attempting to charge all billing events atomically for %d places (user: %s)", job.ID, resultCount, job.UserID)
+
+				if err := w.billingSvc.ChargeAllJobEvents(context.Background(), job.UserID, job.ID, resultCount); err != nil {
+					log.Printf("ERROR: billing: atomic charge failed for job %s: %v", job.ID, err)
 					jobSuccess = false
 					job.Status = web.StatusFailed
-					job.FailureReason = "insufficient credits to charge places"
+					job.FailureReason = fmt.Sprintf("billing failed: %v", err)
 				} else {
-					log.Printf("SUCCESS: billing: successfully charged %d places for job %s (user: %s)", resultCount, job.ID, job.UserID)
+					log.Printf("SUCCESS: billing: successfully charged all events for job %s (user: %s)", job.ID, job.UserID)
 				}
 			} else {
 				if w.billingSvc == nil {
-					log.Printf("WARNING: Job %s - Billing service is nil, skipping place charges", job.ID)
+					log.Printf("WARNING: Job %s - Billing service is nil, skipping all charges", job.ID)
 				}
 				if resultCount == 0 {
-					log.Printf("WARNING: Job %s - Result count is 0, skipping place charges", job.ID)
+					log.Printf("WARNING: Job %s - Result count is 0, skipping all charges", job.ID)
 				}
 			}
 		} else {

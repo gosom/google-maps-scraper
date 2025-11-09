@@ -520,3 +520,176 @@ func (s *Service) ChargePlaces(ctx context.Context, userID, jobID string, places
 	}
 	return s.ChargeEvent(ctx, userID, jobID, "place_scraped", places, "job:"+jobID+":place_scraped", map[string]any{})
 }
+
+// ChargeReviews charges review events for N reviews scraped in a job.
+func (s *Service) ChargeReviews(ctx context.Context, userID, jobID string, reviews int) error {
+	if reviews <= 0 {
+		return nil
+	}
+	return s.ChargeEvent(ctx, userID, jobID, "review", reviews, "job:"+jobID+":review", map[string]any{})
+}
+
+// ChargeImages charges image events for N images scraped in a job.
+func (s *Service) ChargeImages(ctx context.Context, userID, jobID string, images int) error {
+	if images <= 0 {
+		return nil
+	}
+	return s.ChargeEvent(ctx, userID, jobID, "image", images, "job:"+jobID+":image", map[string]any{})
+}
+
+// ChargeContactDetails charges contact_details events for N places where contact details were extracted.
+func (s *Service) ChargeContactDetails(ctx context.Context, userID, jobID string, placesWithContacts int) error {
+	if placesWithContacts <= 0 {
+		return nil
+	}
+	return s.ChargeEvent(ctx, userID, jobID, "contact_details", placesWithContacts, "job:"+jobID+":contact_details", map[string]any{})
+}
+
+// BillingCounts represents the counts of billable items in a job's results.
+type BillingCounts struct {
+	TotalReviews        int
+	TotalImages         int
+	PlacesWithContacts  int
+}
+
+// CountBillableItems counts reviews, images, and contact details from job results.
+// This scans the results table and aggregates counts from JSONB fields.
+func (s *Service) CountBillableItems(ctx context.Context, jobID string) (*BillingCounts, error) {
+	if s.db == nil {
+		return nil, fmt.Errorf("db not configured")
+	}
+
+	counts := &BillingCounts{}
+
+	// Query to count billable items from results
+	// - user_reviews/user_reviews_extended: JSONB arrays of review objects
+	// - images: JSONB array of image objects
+	// - emails: TEXT field (non-empty means contact details extracted)
+	const query = `
+		SELECT
+			COALESCE(SUM(
+				COALESCE(jsonb_array_length(user_reviews), 0) +
+				COALESCE(jsonb_array_length(user_reviews_extended), 0)
+			), 0) AS total_reviews,
+			COALESCE(SUM(jsonb_array_length(images)), 0) AS total_images,
+			COUNT(CASE WHEN emails IS NOT NULL AND emails != '' THEN 1 END) AS places_with_contacts
+		FROM results
+		WHERE job_id = $1
+	`
+
+	err := s.db.QueryRowContext(ctx, query, jobID).Scan(
+		&counts.TotalReviews,
+		&counts.TotalImages,
+		&counts.PlacesWithContacts,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count billable items: %w", err)
+	}
+
+	return counts, nil
+}
+
+// ChargeAllJobEvents charges all billing events for a completed job in a single transaction.
+// This ensures atomicity - either all charges succeed or all are rolled back.
+// If any charge fails due to insufficient balance, the entire transaction is rolled back.
+func (s *Service) ChargeAllJobEvents(ctx context.Context, userID, jobID string, placesCount int) error {
+	if s.db == nil {
+		return fmt.Errorf("db not configured")
+	}
+
+	// Start a single transaction for all charges
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
+		Isolation: sql.LevelSerializable,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback() // Rollback if we don't commit
+
+	// Helper function to charge an event within this transaction
+	chargeEventInTx := func(eventType string, quantity int, idempotencyKey string) error {
+		if quantity <= 0 {
+			return nil // Skip if nothing to charge
+		}
+
+		metadata := map[string]any{"idempotency_key": idempotencyKey}
+		metaJSON, _ := json.Marshal(metadata)
+
+		// Insert billing event
+		var eventID, unitPrice, totalPrice string
+		const insEvent = `INSERT INTO billing_events (user_id, job_id, event_type_code, quantity, metadata)
+			VALUES ($1,$2,$3,$4,$5::jsonb)
+			ON CONFLICT (job_id, event_type_code, (metadata->>'idempotency_key'))
+			WHERE (metadata ? 'idempotency_key')
+			DO UPDATE SET quantity = billing_events.quantity
+			RETURNING id, unit_price_credits::text, total_price_credits::text`
+
+		if err := tx.QueryRowContext(ctx, insEvent, userID, jobID, eventType, quantity, string(metaJSON)).Scan(&eventID, &unitPrice, &totalPrice); err != nil {
+			return fmt.Errorf("insert %s event: %w", eventType, err)
+		}
+
+		// Decrement user balance atomically
+		const decBal = `UPDATE users
+			SET credit_balance = credit_balance - $1::numeric,
+			    total_credits_consumed = COALESCE(total_credits_consumed, 0) + $1::numeric,
+			    updated_at = NOW()
+			WHERE id = $2 AND credit_balance >= $1::numeric
+			RETURNING credit_balance::text`
+
+		var newBalance string
+		if err := tx.QueryRowContext(ctx, decBal, totalPrice, userID).Scan(&newBalance); err != nil {
+			if err == sql.ErrNoRows {
+				return fmt.Errorf("insufficient credits to charge %s (%d items)", eventType, quantity)
+			}
+			return fmt.Errorf("failed to update balance for %s: %w", eventType, err)
+		}
+
+		// Insert credit transaction
+		const insTxn = `INSERT INTO credit_transactions (
+			user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type, metadata
+		) VALUES (
+			$1, 'consumption', -$2::numeric,
+			($3::numeric + $2::numeric),
+			$3::numeric,
+			$4, $5, 'job', jsonb_build_object('billing_event_id', $6::text)
+		)`
+		if _, err := tx.ExecContext(ctx, insTxn, userID, totalPrice, newBalance, fmt.Sprintf("Billing charge: %s", eventType), jobID, eventID); err != nil {
+			return fmt.Errorf("insert credit transaction for %s: %w", eventType, err)
+		}
+
+		return nil
+	}
+
+	// 1. Charge for places
+	if err := chargeEventInTx("place_scraped", placesCount, "job:"+jobID+":place_scraped"); err != nil {
+		return err // Transaction will be rolled back
+	}
+
+	// 2. Count and charge for reviews, images, and contacts
+	counts, err := s.CountBillableItems(ctx, jobID)
+	if err != nil {
+		return fmt.Errorf("failed to count billable items: %w", err)
+	}
+
+	// 3. Charge for reviews
+	if err := chargeEventInTx("review", counts.TotalReviews, "job:"+jobID+":review"); err != nil {
+		return err // Transaction will be rolled back
+	}
+
+	// 4. Charge for images
+	if err := chargeEventInTx("image", counts.TotalImages, "job:"+jobID+":image"); err != nil {
+		return err // Transaction will be rolled back
+	}
+
+	// 5. Charge for contact details
+	if err := chargeEventInTx("contact_details", counts.PlacesWithContacts, "job:"+jobID+":contact_details"); err != nil {
+		return err // Transaction will be rolled back
+	}
+
+	// All charges succeeded - commit the transaction
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit billing transaction: %w", err)
+	}
+
+	return nil
+}

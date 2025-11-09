@@ -259,6 +259,25 @@ func (h *WebHandlers) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check job status - block downloads for failed jobs
+	job, err := h.Deps.App.Get(r.Context(), id)
+	if err != nil {
+		http.Error(w, "Job not found", http.StatusNotFound)
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Printf("Job %s not found for download: %v", id, err)
+		}
+		return
+	}
+
+	// Block access to failed jobs - billing failed
+	if job.Status == "failed" {
+		http.Error(w, "Cannot download results: billing failed for this job. Please ensure you have sufficient credits.", http.StatusPaymentRequired)
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Printf("Download blocked for failed job %s (user: %s)", id, job.UserID)
+		}
+		return
+	}
+
 	// Use new GetCSVReader method which supports both S3 and local filesystem
 	reader, fileName, err := h.Deps.App.GetCSVReader(r.Context(), id)
 	if err != nil {
