@@ -289,6 +289,16 @@ func (h *APIHandlers) GetJobResults(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusForbidden, models.APIError{Code: http.StatusForbidden, Message: "Access denied"})
 		return
 	}
+
+	// Block access to failed jobs - billing failed
+	if job.Status == models.StatusFailed {
+		renderJSON(w, http.StatusPaymentRequired, models.APIError{
+			Code:    http.StatusPaymentRequired,
+			Message: "Cannot access results: billing failed for this job. Please ensure you have sufficient credits.",
+		})
+		return
+	}
+
 	results, total, err := h.Deps.ResultsSvc.GetEnhancedJobResultsPaginated(r.Context(), jobID, limit, offset)
 	if err != nil {
 		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: "Failed to get results: " + err.Error()})
