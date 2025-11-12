@@ -382,26 +382,30 @@ func clickRejectCookiesIfRequired(page playwright.Page) error {
 	// Check if we're on the new Google consent page (consent.google.com/ml)
 	currentURL := page.URL()
 	if strings.Contains(currentURL, "consent.google.com") {
-		// Try to find and click "Reject all" button on new consent page
-		// Google's new consent page uses different selectors
+		// Google's consent page now uses input elements instead of buttons
+		// Try multiple selectors in order until one works
 		selectors := []string{
-			// New consent page selectors - English
+			// New input-based selectors (Google's latest design)
+			`input.baseButtonGm3.filledButton`,
+			`input[value*="Reject"]`,
+			`input[value*="reject"]`,
+			`input[value*="Ablehnen"]`,
+			`input[value*="ablehnen"]`,
+			`form input[type="button"]:first-of-type`,
+			`form input:first-of-type`,
+			// Legacy button selectors (backward compatibility)
 			`button:has-text("Reject all")`,
 			`button:has-text("reject all")`,
 			`button[aria-label*="Reject"]`,
-			// German language support - button text
 			`button:has-text("Alle ablehnen")`,
 			`button:has-text("alle ablehnen")`,
-			// German - button containing specific span elements
 			`button:has(span[jsname="V67aGc"])`,
 			`button:has(span.UywwFc-vQzf8d)`,
-			// Generic fallback - first button in form (Reject is usually first)
 			`form button:first-of-type`,
-			// Old consent page selector (backward compatibility)
 			`form[action="https://consent.google.com/save"]:first-of-type button:first-of-type`,
 		}
 
-		const timeout = 3000 // Increased timeout for consent page
+		const timeout = 500 // Short timeout per selector since we try many
 
 		for _, sel := range selectors {
 			//nolint:staticcheck // TODO replace with the new playwright API
@@ -410,14 +414,14 @@ func clickRejectCookiesIfRequired(page playwright.Page) error {
 			})
 
 			if err == nil && el != nil {
-				// Wait a bit before clicking to ensure button is interactive
-				page.WaitForTimeout(500)
+				// Wait a bit before clicking to ensure element is interactive
+				page.WaitForTimeout(300)
 
-				// Click the button
+				// Click the element (input or button)
 				//nolint:staticcheck // TODO replace with the new playwright API
 				if err := el.Click(); err == nil {
 					// Wait for navigation away from consent page
-					page.WaitForTimeout(3000)
+					page.WaitForTimeout(2000)
 					return nil
 				}
 			}
