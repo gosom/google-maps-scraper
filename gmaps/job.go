@@ -389,18 +389,19 @@ func clickRejectCookiesIfRequired(page playwright.Page) error {
 			`button:has-text("Reject all")`,
 			`button:has-text("reject all")`,
 			`button[aria-label*="Reject"]`,
-			// German language support
+			// German language support - button text
 			`button:has-text("Alle ablehnen")`,
 			`button:has-text("alle ablehnen")`,
-			// Specific element check for German consent page
-			`span[jsname="V67aGc"]:has-text("Alle ablehnen")`,
-			`span.UywwFc-vQzf8d:has-text("Alle ablehnen")`,
-			`form button:first-of-type`, // Reject is usually the first button
+			// German - button containing specific span elements
+			`button:has(span[jsname="V67aGc"])`,
+			`button:has(span.UywwFc-vQzf8d)`,
+			// Generic fallback - first button in form (Reject is usually first)
+			`form button:first-of-type`,
 			// Old consent page selector (backward compatibility)
 			`form[action="https://consent.google.com/save"]:first-of-type button:first-of-type`,
 		}
 
-		const timeout = 2000 // Increased timeout for consent page
+		const timeout = 3000 // Increased timeout for consent page
 
 		for _, sel := range selectors {
 			//nolint:staticcheck // TODO replace with the new playwright API
@@ -409,11 +410,14 @@ func clickRejectCookiesIfRequired(page playwright.Page) error {
 			})
 
 			if err == nil && el != nil {
+				// Wait a bit before clicking to ensure button is interactive
+				page.WaitForTimeout(500)
+
 				// Click the button
 				//nolint:staticcheck // TODO replace with the new playwright API
 				if err := el.Click(); err == nil {
 					// Wait for navigation away from consent page
-					page.WaitForTimeout(2000)
+					page.WaitForTimeout(3000)
 					return nil
 				}
 			}
