@@ -60,6 +60,7 @@ func (j *EmailExtractJob) Process(ctx context.Context, resp *scrapemate.Response
 
 	defer func() {
 		if j.ExitMonitor != nil {
+			// Note: Count completed jobs for exit detection, but results are counted separately
 			j.ExitMonitor.IncrPlacesCompleted(1)
 		}
 	}()

@@ -1,0 +1,204 @@
+{
+    "global": {
+      "nosec": false,
+      "show-ignored": false,
+      "confidence": "low",
+      "severity": "low",
+      "exclude-generated": true
+    },
+    "severity": {
+      "default": "low",
+      "rules": {
+        "G101": "high",
+        "G102": "high",
+        "G103": "high",
+        "G104": "medium",
+        "G201": "critical",
+        "G202": "critical",
+        "G203": "critical",
+        "G204": "high",
+        "G301": "high",
+        "G302": "medium",
+        "G303": "medium",
+        "G304": "high",
+        "G305": "high",
+        "G306": "medium",
+        "G307": "medium",
+        "G401": "high",
+        "G402": "high",
+        "G403": "medium",
+        "G404": "medium",
+        "G501": "medium",
+        "G502": "medium",
+        "G503": "medium",
+        "G504": "medium",
+        "G505": "medium",
+        "G601": "medium"
+      }
+    },
+    "rules": {
+      "G101": {
+        "description": "Look for hardcoded credentials (API keys, passwords, tokens)",
+        "severity": "HIGH",
+        "confidence": "LOW"
+      },
+      "G102": {
+        "description": "Bind to all interfaces (potential security issue)",
+        "severity": "HIGH",
+        "confidence": "MEDIUM"
+      },
+      "G103": {
+        "description": "Audit the use of unsafe block",
+        "severity": "HIGH",
+        "confidence": "LOW"
+      },
+      "G104": {
+        "description": "Audit errors not checked",
+        "severity": "MEDIUM",
+        "confidence": "HIGH"
+      },
+      "G201": {
+        "description": "SQL query construction using format string (SQL INJECTION)",
+        "severity": "CRITICAL",
+        "confidence": "MEDIUM"
+      },
+      "G202": {
+        "description": "SQL query construction using string concatenation (SQL INJECTION)",
+        "severity": "CRITICAL",
+        "confidence": "MEDIUM"
+      },
+      "G203": {
+        "description": "Use of unescaped data in HTML templates (XSS)",
+        "severity": "CRITICAL",
+        "confidence": "MEDIUM"
+      },
+      "G204": {
+        "description": "Audit use of command execution",
+        "severity": "HIGH",
+        "confidence": "MEDIUM"
+      },
+      "G301": {
+        "description": "Poor file permissions used when creating directory",
+        "severity": "HIGH",
+        "confidence": "HIGH"
+      },
+      "G302": {
+        "description": "Poor file permissions used when creation file or using chmod",
+        "severity": "MEDIUM",
+        "confidence": "HIGH"
+      },
+      "G303": {
+        "description": "Creating tempfile using a predictable path",
+        "severity": "MEDIUM",
+        "confidence": "HIGH"
+      },
+      "G304": {
+        "description": "File path provided as taint input (PATH TRAVERSAL)",
+        "severity": "HIGH",
+        "confidence": "MEDIUM"
+      },
+      "G305": {
+        "description": "File traversal when extracting zip/tar archive",
+        "severity": "HIGH",
+        "confidence": "MEDIUM"
+      },
+      "G306": {
+        "description": "Poor file permissions used when writing to new file",
+        "severity": "MEDIUM",
+        "confidence": "HIGH"
+      },
+      "G307": {
+        "description": "Deferring a method which returns an error",
+        "severity": "MEDIUM",
+        "confidence": "LOW"
+      },
+      "G401": {
+        "description": "Detect the usage of DES, RC4, MD4 or MD5",
+        "severity": "HIGH",
+        "confidence": "MEDIUM"
+      },
+      "G402": {
+        "description": "Look for bad TLS connection settings",
+        "severity": "HIGH",
+        "confidence": "MEDIUM"
+      },
+      "G403": {
+        "description": "Ensure minimum RSA key length of 2048 bits",
+        "severity": "MEDIUM",
+        "confidence": "HIGH"
+      },
+      "G404": {
+        "description": "Insecure random number source (rand instead of crypto/rand)",
+        "severity": "MEDIUM",
+        "confidence": "HIGH"
+      },
+      "G501": {
+        "description": "Import blocklist: crypto/md5",
+        "severity": "MEDIUM",
+        "confidence": "HIGH"
+      },
+      "G502": {
+        "description": "Import blocklist: crypto/des",
+        "severity": "MEDIUM",
+        "confidence": "HIGH"
+      },
+      "G503": {
+        "description": "Import blocklist: crypto/rc4",
+        "severity": "MEDIUM",
+        "confidence": "HIGH"
+      },
+      "G504": {
+        "description": "Import blocklist: net/http/cgi",
+        "severity": "MEDIUM",
+        "confidence": "HIGH"
+      },
+      "G505": {
+        "description": "Import blocklist: crypto/sha1",
+        "severity": "MEDIUM",
+        "confidence": "HIGH"
+      },
+      "G601": {
+        "description": "Implicit memory aliasing in for loop",
+        "severity": "MEDIUM",
+        "confidence": "MEDIUM"
+      }
+    },
+    "excludes": [
+      "G104",
+      "G304"
+    ],
+    "tests": true,
+    "exclude-dirs": [
+      "vendor",
+      "node_modules",
+      "scripts/migrations",
+      "webdata",
+      "gmapsdata"
+    ],
+    "include-rules": [
+      "G101",
+      "G102",
+      "G103",
+      "G201",
+      "G202",
+      "G203",
+      "G204",
+      "G301",
+      "G302",
+      "G303",
+      "G305",
+      "G306",
+      "G307",
+      "G401",
+      "G402",
+      "G403",
+      "G404",
+      "G501",
+      "G502",
+      "G503",
+      "G504",
+      "G505",
+      "G601"
+    ]
+  }
+    

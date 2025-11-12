@@ -2,17 +2,254 @@ openapi: 3.0.3
 info:
   title: Google Maps Scraper API
   version: 1.0.0
-  description: API for managing job google maps scraping tasks
+  description: |
+    API for managing Google Maps scraping tasks.
+    
+    ## Authentication
+    This API uses Clerk JWT authentication. Include your JWT token in the Authorization header:
+    ```
+    Authorization: Bearer <your-jwt-token>
+    ```
+    
+    ## Rate Limiting
+    POST requests are rate limited per user. GET requests are not limited.
+    
+    ## Getting Started
+    1. Create a long-lived JWT token in your Clerk dashboard
+    2. Use the token in the Authorization header for all API requests
+    3. Start by creating a scraping job with POST /api/v1/jobs
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+  - url: https://api.brezel.ai
+    description: Production server
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT token from Clerk authentication.
+        Get a long-lived token from your Clerk dashboard for testing.
+
+  schemas:
+    JobCostBreakdownItem:
+      type: object
+      properties:
+        event_type:
+          type: string
+          example: "actor_start"
+        quantity:
+          type: integer
+          example: 1
+        cost_credits:
+          type: string
+          example: "0.007000"
+
+    JobCostResponse:
+      type: object
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobCostBreakdownItem'
+        total_credits:
+          type: string
+          description: Exact credits with 6-decimal precision
+          example: "0.123000"
+        total_rounded:
+          type: integer
+          description: Rounded integer credits (jobs.actual_cost)
+          example: 0
+    ApiError:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 422
+        message:
+          type: string
+          example: "Invalid request parameters"
+
+    ApiScrapeRequest:
+      type: object
+      required:
+        - name
+        - keywords
+        - lang
+        - zoom
+        - depth
+        - max_time
+      properties:
+        name:
+          type: string
+          description: Name of the scraping job
+          example: "Coffee shops in Ilion"
+        keywords:
+          type: array
+          items:
+            type: string
+          description: Search keywords for Google Maps
+          example: ["coffee in ilion", "cafes"]
+        lang:
+          type: string
+          description: Language code (2 characters)
+          example: "el"
+        zoom:
+          type: integer
+          minimum: 1
+          maximum: 20
+          description: Google Maps zoom level
+          example: 15
+        lat:
+          type: string
+          description: Latitude coordinate (required for fast mode)
+          example: "37.9838"
+        lon:
+          type: string
+          description: Longitude coordinate (required for fast mode)
+          example: "23.7275"
+        fast_mode:
+          type: boolean
+          description: Enable fast mode (requires coordinates)
+          example: false
+        radius:
+          type: integer
+          description: Search radius in meters
+          example: 10000
+        depth:
+          type: integer
+          minimum: 1
+          maximum: 10
+          description: Scraping depth level
+          example: 1
+        email:
+          type: boolean
+          description: Send results via email
+          example: false
+        max_time:
+          type: integer
+          description: Maximum scraping time in seconds
+          example: 3600
+        proxies:
+          type: array
+          items:
+            type: string
+          description: List of proxy servers to use
+          example: ["http://proxy1:8080", "http://proxy2:8080"]
+
+    ApiScrapeResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique job identifier
+          example: "6f0c1af8-3c4e-4742-84bb-590938ae8930"
+
+    Job:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique job identifier
+          example: "6f0c1af8-3c4e-4742-84bb-590938ae8930"
+        user_id:
+          type: string
+          description: User ID who created the job
+          example: "user_2abc123def456"
+        name:
+          type: string
+          description: Job name
+          example: "Coffee shops in Ilion"
+        date:
+          type: string
+          format: date-time
+          description: Job creation timestamp
+          example: "2024-01-15T10:30:00Z"
+        status:
+          type: string
+          enum: [pending, working, ok, failed]
+          description: Current job status
+          example: "ok"
+        data:
+          $ref: '#/components/schemas/JobData'
+
+    JobData:
+      type: object
+      properties:
+        keywords:
+          type: array
+          items:
+            type: string
+          description: Search keywords used
+          example: ["coffee in ilion"]
+        lang:
+          type: string
+          description: Language code used
+          example: "el"
+        zoom:
+          type: integer
+          description: Zoom level used
+          example: 15
+        lat:
+          type: string
+          description: Latitude coordinate
+          example: "37.9838"
+        lon:
+          type: string
+          description: Longitude coordinate
+          example: "23.7275"
+        fast_mode:
+          type: boolean
+          description: Whether fast mode was enabled
+          example: false
+        radius:
+          type: integer
+          description: Search radius in meters
+          example: 10000
+        depth:
+          type: integer
+          description: Scraping depth level
+          example: 1
+        email:
+          type: boolean
+          description: Whether email notification was enabled
+          example: false
+        max_time:
+          type: integer
+          description: Maximum scraping time in seconds
+          example: 3600
+        proxies:
+          type: array
+          items:
+            type: string
+          description: Proxy servers used
+          example: ["http://proxy1:8080"]
 
 paths:
   /api/v1/jobs:
     post:
-      summary: Create a new job scraping task
+      summary: Create a new scraping job
+      description: |
+        Create a new Google Maps scraping job. The job will be queued for processing.
+        
+        **Authentication Required**: Include your JWT token in the Authorization header.
+        
+        **Rate Limiting**: This endpoint is rate limited per user.
+      security:
+        - BearerAuth: []
       x-code-samples:
         - lang: curl
           source: |
             curl -X POST "http://localhost:8080/api/v1/jobs" \
               -H "Content-Type: application/json" \
+              -H "Authorization: Bearer YOUR_JWT_TOKEN" \
               -d '{
                 "name": "Coffee shops Ilion",
                 "keywords": ["coffee in ilion"],
@@ -21,6 +258,23 @@ paths:
                 "depth": 1,
                 "max_time": 3600
               }'
+        - lang: JavaScript
+          source: |
+            const response = await fetch('http://localhost:8080/api/v1/jobs', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer YOUR_JWT_TOKEN'
+              },
+              body: JSON.stringify({
+                name: 'Coffee shops Ilion',
+                keywords: ['coffee in ilion'],
+                lang: 'el',
+                zoom: 15,
+                depth: 1,
+                max_time: 3600
+              })
+            });
       requestBody:
         required: true
         content:
@@ -34,8 +288,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiScrapeResponse'
+        '400':
+          description: Bad request - invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: Unauthorized - invalid or missing token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
         '422':
-          description: Unprocessable entity
+          description: Unprocessable entity - validation errors
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '429':
+          description: Too many requests - rate limit exceeded
           content:
             application/json:
               schema:
@@ -48,20 +320,76 @@ paths:
                 $ref: '#/components/schemas/ApiError'
 
     get:
-      summary: Get all jobs
+      summary: List all jobs
+      description: |
+        Get a list of all scraping jobs. When authentication is enabled, only returns jobs for the authenticated user.
+        
+        **Authentication**: Optional but recommended for user-specific results.
+      security:
+        - BearerAuth: []
       x-code-samples:
         - lang: curl
           source: |
-            curl -X GET "http://localhost:8080/api/v1/jobs"
+            curl -X GET "http://localhost:8080/api/v1/jobs" \
+              -H "Authorization: Bearer YOUR_JWT_TOKEN"
+        - lang: JavaScript
+          source: |
+            const response = await fetch('http://localhost:8080/api/v1/jobs', {
+              headers: {
+                'Authorization': 'Bearer YOUR_JWT_TOKEN'
+              }
+            });
       responses:
         '200':
-          description: Successful response
+          description: List of jobs retrieved successfully
           content:
             application/json:
               schema:
                 type: array
                 items:
                   $ref: '#/components/schemas/Job'
+        '401':
+          description: Unauthorized - invalid token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+  /api/v1/jobs/user:
+    get:
+      summary: List user's jobs
+      description: |
+        Get a list of jobs for the authenticated user only.
+        
+        **Authentication Required**: This endpoint always requires authentication.
+      security:
+        - BearerAuth: []
+      x-code-samples:
+        - lang: curl
+          source: |
+            curl -X GET "http://localhost:8080/api/v1/jobs/user" \
+              -H "Authorization: Bearer YOUR_JWT_TOKEN"
+      responses:
+        '200':
+          description: User's jobs retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Job'
+        '401':
+          description: Unauthorized - invalid or missing token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
         '500':
           description: Internal server error
           content:
@@ -72,23 +400,36 @@ paths:
   /api/v1/jobs/{id}:
     get:
       summary: Get a specific job
+      description: Retrieve details of a specific scraping job by ID.
+      security:
+        - BearerAuth: []
       x-code-samples:
         - lang: curl
           source: |
-            curl -X GET "http://localhost:8080/api/v1/jobs/6f0c1af8-3c4e-4742-84bb-590938ae8930"
+            curl -X GET "http://localhost:8080/api/v1/jobs/6f0c1af8-3c4e-4742-84bb-590938ae8930" \
+              -H "Authorization: Bearer YOUR_JWT_TOKEN"
       parameters:
         - name: id
           in: path
           required: true
           schema:
             type: string
+            format: uuid
+          description: Job ID
+          example: "6f0c1af8-3c4e-4742-84bb-590938ae8930"
       responses:
         '200':
-          description: Successful response
+          description: Job details retrieved successfully
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Job'
+        '401':
+          description: Unauthorized - invalid token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
         '404':
           description: Job not found
           content:
@@ -96,7 +437,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ApiError'
         '422':
-          description: Invalid ID
+          description: Invalid ID format
           content:
             application/json:
               schema:
@@ -104,21 +445,34 @@ paths:
 
     delete:
       summary: Delete a specific job
+      description: Delete a scraping job and its associated data.
+      security:
+        - BearerAuth: []
       x-code-samples:
         - lang: curl
           source: |
-            curl -X DELETE "http://localhost:8080/api/v1/jobs/455a6a00-cefb-4a9d-9e7d-791f01873700"
+            curl -X DELETE "http://localhost:8080/api/v1/jobs/6f0c1af8-3c4e-4742-84bb-590938ae8930" \
+              -H "Authorization: Bearer YOUR_JWT_TOKEN"
       parameters:
         - name: id
           in: path
           required: true
           schema:
             type: string
+            format: uuid
+          description: Job ID to delete
+          example: "6f0c1af8-3c4e-4742-84bb-590938ae8930"
       responses:
         '200':
           description: Job deleted successfully
+        '401':
+          description: Unauthorized - invalid token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
         '422':
-          description: Invalid ID
+          description: Invalid ID format
           content:
             application/json:
               schema:
@@ -132,121 +486,125 @@ paths:
 
   /api/v1/jobs/{id}/download:
     get:
-      summary: Download job results as CSV
+      summary: Download job results
+      description: |
+        Download the CSV file containing the scraping results for a completed job.
+        
+        **Note**: Only available for jobs with status "ok".
+      security:
+        - BearerAuth: []
       x-code-samples:
+        - lang: curl
           source: |
-            curl -X GET "http://localhost:8080/api/v1/jobs/18eafda3-53a9-4970-ac96-8f8dfc7011c3/download" --output results.csv
+            curl -X GET "http://localhost:8080/api/v1/jobs/6f0c1af8-3c4e-4742-84bb-590938ae8930/download" \
+              -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+              --output results.csv
+        - lang: JavaScript
+          source: |
+            const response = await fetch('http://localhost:8080/api/v1/jobs/6f0c1af8-3c4e-4742-84bb-590938ae8930/download', {
+              headers: {
+                'Authorization': 'Bearer YOUR_JWT_TOKEN'
+              }
+            });
+            const blob = await response.blob();
+            // Download the file
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'results.csv';
+            a.click();
       parameters:
         - name: id
           in: path
           required: true
           schema:
             type: string
+            format: uuid
+          description: Job ID
+          example: "6f0c1af8-3c4e-4742-84bb-590938ae8930"
       responses:
         '200':
-          description: Successful response
+          description: CSV file downloaded successfully
           content:
             text/csv:
               schema:
                 type: string
                 format: binary
+        '401':
+          description: Unauthorized - invalid token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
         '404':
-          description: File not found
+          description: Job or CSV file not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
         '422':
-          description: Invalid ID
+          description: Invalid ID format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
         '500':
           description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
 
-components:
-  schemas:
-    ApiError:
-      type: object
-      properties:
-        code:
-          type: integer
-        message:
-          type: string
-
-    ApiScrapeRequest:
-      type: object
-      properties:
-        name:
-          type: string
-        keywords:
-          type: array
-          items:
+  /api/v1/jobs/{id}/costs:
+    get:
+      summary: Get job cost breakdown and totals
+      description: |
+        Returns per-event cost items and total cost for a job. Totals are computed from billing events and updated via triggers.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
             type: string
-        lang:
-          type: string
-        zoom:
-          type: integer
-        lat:
-          type: string
-        lon:
-          type: string
-        fast_mode:
-          type: boolean
-        radius:
-          type: integer
-        depth:
-          type: integer
-        email:
-          type: boolean
-        max_time:
-          type: integer
-        proxies:
-          type: array
-          items:
-            type: string
-
-    ApiScrapeResponse:
-      type: object
-      properties:
-        id:
-          type: string
-
-    Job:
-      type: object
-      properties:
-        id:
-          type: string
-        name:
-          type: string
-        date:
-          type: string
-          format: date-time
-        status:
-          type: string
-        data:
-          $ref: '#/components/schemas/JobData'
-
-    JobData:
-      type: object
-      properties:
-        keywords:
-          type: array
-          items:
-            type: string
-        lang:
-          type: string
-        zoom:
-          type: integer
-        lat:
-          type: string
-        lon:
-          type: string
-        fast_mode:
-          type: boolean
-        radius:
-          type: integer
-        depth:
-          type: integer
-        email:
-          type: boolean
-        max_time:
-          type: integer
-        proxies:
-          type: array
-          items:
-            type: string
+            format: uuid
+          description: Job ID
+      responses:
+        '200':
+          description: Cost breakdown retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobCostResponse'
+        '401':
+          description: Unauthorized - invalid token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: Forbidden - job does not belong to user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '422':
+          description: Invalid ID format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
 

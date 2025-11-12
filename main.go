@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -14,12 +15,16 @@ import (
 	"github.com/gosom/google-maps-scraper/runner/installplaywright"
 	"github.com/gosom/google-maps-scraper/runner/lambdaaws"
 	"github.com/gosom/google-maps-scraper/runner/webrunner"
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	_ = godotenv.Load() // Load .env file if present
 	ctx, cancel := context.WithCancel(context.Background())
 
-	runner.Banner()
+	// Parse config first so banner can reflect debug mode
+	cfg := runner.ParseConfig()
+	runner.BannerWithDebug(cfg.Debug)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
@@ -32,8 +37,6 @@ func main() {
 		cancel()
 	}()
 
-	cfg := runner.ParseConfig()
-
 	runnerInstance, err := runnerFactory(cfg)
 	if err != nil {
 		cancel()
@@ -44,7 +47,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := runnerInstance.Run(ctx); err != nil {
+	if err := runnerInstance.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		os.Stderr.WriteString(err.Error() + "\n")
 
 		_ = runnerInstance.Close(ctx)

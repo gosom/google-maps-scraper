@@ -22,11 +22,16 @@ func CreateSeedJobs(
 	r io.Reader,
 	maxDepth int,
 	email bool,
+	images bool,
+	debug bool,
+	reviewsMax int,
 	geoCoordinates string,
 	zoom int,
 	radius float64,
 	dedup deduper.Deduper,
 	exitMonitor exiter.Exiter,
+	extraReviews bool,
+	maxResults int,
 ) (jobs []scrapemate.IJob, err error) {
 	var lat, lon float64
 
@@ -67,6 +72,11 @@ func CreateSeedJobs(
 		}
 	}
 
+	// Set max results limit on the exit monitor if provided
+	if exitMonitor != nil && maxResults > 0 {
+		exitMonitor.SetMaxResults(maxResults)
+	}
+
 	scanner := bufio.NewScanner(r)
 
 	for scanner.Scan() {
@@ -95,7 +105,15 @@ func CreateSeedJobs(
 				opts = append(opts, gmaps.WithExitMonitor(exitMonitor))
 			}
 
-			job = gmaps.NewGmapJob(id, langCode, query, maxDepth, email, geoCoordinates, zoom, opts...)
+			if extraReviews {
+				opts = append(opts, gmaps.WithExtraReviews())
+			}
+
+			if debug {
+				opts = append(opts, gmaps.WithDebug())
+			}
+
+			job = gmaps.NewGmapJob(id, langCode, query, maxDepth, email, images, reviewsMax, geoCoordinates, zoom, opts...)
 		} else {
 			jparams := gmaps.MapSearchParams{
 				Location: gmaps.MapLocation{

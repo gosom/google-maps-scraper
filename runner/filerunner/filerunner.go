@@ -81,11 +81,21 @@ func (r *fileRunner) Run(ctx context.Context) (err error) {
 		r.input,
 		r.cfg.MaxDepth,
 		r.cfg.Email,
+		r.cfg.Images,
+		r.cfg.Debug,
+		func() int {
+			if r.cfg.ExtraReviews {
+				return 1 // Default to 1 review if extra reviews enabled
+			}
+			return 0 // No reviews if not enabled
+		}(),
 		r.cfg.GeoCoordinates,
 		r.cfg.Zoom,
 		r.cfg.Radius,
 		dedup,
 		exitMonitor,
+		r.cfg.ExtraReviews,
+		r.cfg.MaxResults, // Use MaxResults from config instead of hardcoded 0
 	)
 	if err != nil {
 		return err

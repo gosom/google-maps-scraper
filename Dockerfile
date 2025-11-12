@@ -1,10 +1,29 @@
 # Build stage for Playwright dependencies
-FROM golang:1.24.0-bullseye AS playwright-deps
+FROM golang:1.24-bullseye AS go-installer
+
+# Install Go 1.25.1
+RUN wget https://go.dev/dl/go1.25.1.linux-amd64.tar.gz \
+    && tar -C /usr/local -xzf go1.25.1.linux-amd64.tar.gz \
+    && rm go1.25.1.linux-amd64.tar.gz
+
+FROM debian:bullseye-slim AS playwright-deps
+
+# Copy Go 1.25.1 from installer stage
+COPY --from=go-installer /usr/local/go /usr/local/go
+
+# Set up Go environment
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+# Use Go proxy for faster downloads
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=${GOPROXY}
+ENV GOSUMDB=sum.golang.org
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/browsers
-#ENV PLAYWRIGHT_DRIVER_PATH=/opt/
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    wget \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && apt-get clean \
@@ -14,21 +33,50 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && playwright install chromium --with-deps
 
 # Build stage
-FROM golang:1.24.0-bullseye AS builder
-WORKDIR /app
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 go build -ldflags="-w -s" -o /usr/bin/google-maps-scraper
+FROM debian:bullseye-slim AS builder
 
-# Final stage
+# Copy Go 1.25.1 from installer stage
+COPY --from=go-installer /usr/local/go /usr/local/go
+
+# Set up Go environment
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+# Use Go proxy for faster downloads
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=${GOPROXY}
+ENV GOSUMDB=sum.golang.org
+
+WORKDIR /app
+
+# Install CA certificates and wget for TLS verification
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy go mod files first for better caching
+COPY go.mod go.sum ./
+
+# Configure go env and download dependencies
+RUN go env -w GOPROXY=https://proxy.golang.org,direct \
+    && go mod download
+
+# Copy source code
+COPY . .
+
+# Build the binary with proper name for Brezel.ai
+RUN CGO_ENABLED=0 go build -ldflags="-w -s" -o /usr/bin/brezel-api .
+
+# Final stage - optimized for API + scraping
 FROM debian:bullseye-slim
+
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/browsers
 ENV PLAYWRIGHT_DRIVER_PATH=/opt
 
-# Install only the necessary dependencies in a single layer
+# Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    curl \
     libnss3 \
     libnspr4 \
     libatk1.0-0 \
@@ -51,12 +99,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy Playwright browsers and cache
 COPY --from=playwright-deps /opt/browsers /opt/browsers
 COPY --from=playwright-deps /root/.cache/ms-playwright-go /opt/ms-playwright-go
 
+# Set proper permissions
 RUN chmod -R 755 /opt/browsers \
     && chmod -R 755 /opt/ms-playwright-go
 
-COPY --from=builder /usr/bin/google-maps-scraper /usr/bin/
+# Copy the application binary
+COPY --from=builder /usr/bin/brezel-api /usr/bin/
 
-ENTRYPOINT ["google-maps-scraper"]
+# Copy migrations directory
+COPY scripts/migrations /scripts/migrations
+
+# Expose the web server port
+EXPOSE 8080
+
+# Health check for container orchestration
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD curl -f http://localhost:8080/health || exit 1
+
+# Default to web mode for API server (concurrency auto-detected)
+ENTRYPOINT ["brezel-api"]
+CMD ["-web"]

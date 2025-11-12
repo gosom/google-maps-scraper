@@ -65,7 +65,15 @@ func (l *lambdaAwsRunner) handler(ctx context.Context, input lInput) error {
 		return err
 	}
 
-	defer out.Close()
+	// Track whether file was closed to avoid double-close in defer
+	outClosed := false
+	defer func() {
+		if !outClosed {
+			if err := out.Close(); err != nil {
+				log.Printf("ERROR: Lambda runner - Failed to close CSV file in defer: %v", err)
+			}
+		}
+	}()
 
 	app, err := l.getApp(ctx, input, out)
 	if err != nil {
@@ -79,16 +87,26 @@ func (l *lambdaAwsRunner) handler(ctx context.Context, input lInput) error {
 	exitMonitor := exiter.New()
 
 	seedJobs, err = runner.CreateSeedJobs(
-		false, // TODO supoort fast mode
+		false, // TODO support fast mode
 		input.Language,
 		in,
 		input.Depth,
-		false,
-		"",
-		0,
-		10000, // TODO support radius
-		nil,
+		false, // email
+		false, // images
+		false, // debug
+		func() int {
+			if input.ExtraReviews {
+				return 1 // Default to 1 review if enabled
+			}
+			return 0 // No reviews
+		}(), // reviewsMax
+		"",    // geoCoordinates
+		15,    // zoom
+		10000, // radius
+		nil,   // deduper
 		exitMonitor,
+		input.ExtraReviews,
+		0, // No max results limit for lambda runner (unlimited)
 	)
 	if err != nil {
 		return err
@@ -108,7 +126,14 @@ func (l *lambdaAwsRunner) handler(ctx context.Context, input lInput) error {
 		return err
 	}
 
-	out.Close()
+	// CRITICAL: Close the CSV file and check for errors before upload
+	// For writable files, Close() can return I/O errors indicating data loss
+	if err := out.Close(); err != nil {
+		log.Printf("ERROR: Lambda runner - Failed to close CSV file: %v", err)
+		return fmt.Errorf("failed to close CSV file: %w", err)
+	}
+	outClosed = true
+	log.Printf("Lambda runner - CSV file closed successfully")
 
 	if l.uploader != nil {
 		key := fmt.Sprintf("%s-%d.csv", input.JobID, input.Part)
@@ -117,11 +142,14 @@ func (l *lambdaAwsRunner) handler(ctx context.Context, input lInput) error {
 		if err != nil {
 			return err
 		}
+		defer fd.Close()
 
-		err = l.uploader.Upload(ctx, input.BucketName, key, fd)
+		result, err := l.uploader.Upload(ctx, input.BucketName, key, fd, "text/csv; charset=utf-8")
 		if err != nil {
 			return err
 		}
+
+		log.Printf("Lambda job %s part %d: S3 upload successful (ETag: %s)", input.JobID, input.Part, result.ETag)
 	} else {
 		log.Println("no uploader set results are at ", out.Name())
 	}

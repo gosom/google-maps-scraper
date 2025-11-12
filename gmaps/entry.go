@@ -9,11 +9,43 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Image struct {
 	Title string `json:"title"`
 	Image string `json:"image"`
+}
+
+// Enhanced image struct for multiple images per category
+type BusinessImage struct {
+	URL          string          `json:"url"`
+	ThumbnailURL string          `json:"thumbnail_url,omitempty"`
+	AltText      string          `json:"alt_text"`
+	Category     string          `json:"category"` // "business", "menu", "user", "street"
+	Index        int             `json:"index"`
+	Dimensions   ImageDimensions `json:"dimensions,omitempty"`
+	Attribution  string          `json:"attribution,omitempty"`
+}
+
+// ImageDimensions holds width and height information
+type ImageDimensions struct {
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
+// ScrapingMetadata contains metadata about the scraping process
+type ScrapingMetadata struct {
+	ScrapedAt     time.Time `json:"scraped_at"`
+	ImageCount    int       `json:"image_count"`
+	LoadTime      int       `json:"load_time_ms"`
+	ScrollActions int       `json:"scroll_actions"`
+}
+
+// ImageCategory represents a category with multiple images
+type ImageCategory struct {
+	Title  string          `json:"title"`
+	Images []BusinessImage `json:"images"`
 }
 
 type LinkSource struct {
@@ -67,31 +99,35 @@ type Entry struct {
 	OpenHours  map[string][]string `json:"open_hours"`
 	// PopularTImes is a map with keys the days of the week
 	// and value is a map with key the hour and value the traffic in that time
-	PopularTimes     map[string]map[int]int `json:"popular_times"`
-	WebSite          string                 `json:"web_site"`
-	Phone            string                 `json:"phone"`
-	PlusCode         string                 `json:"plus_code"`
-	ReviewCount      int                    `json:"review_count"`
-	ReviewRating     float64                `json:"review_rating"`
-	ReviewsPerRating map[int]int            `json:"reviews_per_rating"`
-	Latitude         float64                `json:"latitude"`
-	Longtitude       float64                `json:"longtitude"`
-	Status           string                 `json:"status"`
-	Description      string                 `json:"description"`
-	ReviewsLink      string                 `json:"reviews_link"`
-	Thumbnail        string                 `json:"thumbnail"`
-	Timezone         string                 `json:"timezone"`
-	PriceRange       string                 `json:"price_range"`
-	DataID           string                 `json:"data_id"`
-	Images           []Image                `json:"images"`
-	Reservations     []LinkSource           `json:"reservations"`
-	OrderOnline      []LinkSource           `json:"order_online"`
-	Menu             LinkSource             `json:"menu"`
-	Owner            Owner                  `json:"owner"`
-	CompleteAddress  Address                `json:"complete_address"`
-	About            []About                `json:"about"`
-	UserReviews      []Review               `json:"user_reviews"`
-	Emails           []string               `json:"emails"`
+	PopularTimes            map[string]map[int]int `json:"popular_times"`
+	WebSite                 string                 `json:"web_site"`
+	Phone                   string                 `json:"phone"`
+	PlusCode                string                 `json:"plus_code"`
+	ReviewCount             int                    `json:"review_count"`
+	ReviewRating            float64                `json:"review_rating"`
+	ReviewsPerRating        map[int]int            `json:"reviews_per_rating"`
+	Latitude                float64                `json:"latitude"`
+	Longtitude              float64                `json:"longtitude"`
+	Status                  string                 `json:"status"`
+	Description             string                 `json:"description"`
+	ReviewsLink             string                 `json:"reviews_link"`
+	Thumbnail               string                 `json:"thumbnail"`
+	Timezone                string                 `json:"timezone"`
+	PriceRange              string                 `json:"price_range"`
+	DataID                  string                 `json:"data_id"`
+	Images                  []Image                `json:"images"`
+	ImageCategories         []ImageCategory        `json:"image_categories,omitempty"` // New: Multiple images per category
+	EnhancedImages          []BusinessImage        `json:"enhanced_images,omitempty"`  // New: Browser-extracted images with metadata
+	ImageExtractionMetadata *ScrapingMetadata      `json:"image_metadata,omitempty"`   // New: Extraction metadata
+	Reservations            []LinkSource           `json:"reservations"`
+	OrderOnline             []LinkSource           `json:"order_online"`
+	Menu                    LinkSource             `json:"menu"`
+	Owner                   Owner                  `json:"owner"`
+	CompleteAddress         Address                `json:"complete_address"`
+	About                   []About                `json:"about"`
+	UserReviews             []Review               `json:"user_reviews"`
+	UserReviewsExtended     []Review               `json:"user_reviews_extended"`
+	Emails                  []string               `json:"emails"`
 }
 
 func (e *Entry) haversineDistance(lat, lon float64) float64 {
@@ -186,11 +222,20 @@ func (e *Entry) CsvHeaders() []string {
 		"complete_address",
 		"about",
 		"user_reviews",
+		"user_reviews_extended",
 		"emails",
 	}
 }
 
 func (e *Entry) CsvRow() []string {
+	// DEBUG: Log final image count being written to CSV
+	if len(e.Images) > 0 {
+		fmt.Printf("DEBUG: Writing %d images to CSV for business: %s\n", len(e.Images), e.Title)
+		if len(e.EnhancedImages) > 0 {
+			fmt.Printf("DEBUG: Enhanced images available: %d, Image extraction metadata available: %v\n", len(e.EnhancedImages), e.ImageExtractionMetadata != nil)
+		}
+	}
+
 	return []string{
 		e.ID,
 		e.Link,
@@ -223,12 +268,158 @@ func (e *Entry) CsvRow() []string {
 		stringify(e.CompleteAddress),
 		stringify(e.About),
 		stringify(e.UserReviews),
+		stringify(e.UserReviewsExtended),
 		stringSliceToString(e.Emails),
 	}
 }
 
+func (e *Entry) AddExtraReviews(pages [][]byte) {
+	if len(pages) == 0 {
+		return
+	}
+
+	for _, page := range pages {
+		reviews := extractReviews(page)
+		if len(reviews) > 0 {
+			e.UserReviewsExtended = append(e.UserReviewsExtended, reviews...)
+		}
+	}
+}
+
+func extractReviews(data []byte) []Review {
+	if len(data) >= 4 && string(data[0:4]) == `)]}'` {
+		data = data[4:] // Skip security prefix
+	}
+
+	var jd []any
+	if err := json.Unmarshal(data, &jd); err != nil {
+		fmt.Printf("Error unmarshalling JSON: %v\n", err)
+		return nil
+	}
+
+	reviewsI := getNthElementAndCast[[]any](jd, 2)
+
+	return parseReviews(reviewsI)
+}
+
+// extractMultipleImages extracts all images per category from the data array
+func extractMultipleImages(darray []any) []ImageCategory {
+	// Try to get all images from various indices where Google Maps might store them
+	var allCategories []ImageCategory
+
+	// Try the standard image location (171)
+	if categories := extractImagesFromIndex(darray, 171); len(categories) > 0 {
+		allCategories = append(allCategories, categories...)
+	}
+
+	// Try alternative indices where images might be stored
+	alternativeIndices := []int{170, 172, 173, 174}
+	for _, idx := range alternativeIndices {
+		if categories := extractImagesFromIndex(darray, idx); len(categories) > 0 {
+			allCategories = append(allCategories, categories...)
+		}
+	}
+
+	return allCategories
+}
+
+// extractImagesFromIndex extracts images from a specific data array index
+func extractImagesFromIndex(darray []any, index int) []ImageCategory {
+	var categories []ImageCategory
+
+	// Get the main image data array
+	imageData := getNthElementAndCast[[]any](darray, index, 0)
+	if len(imageData) == 0 {
+		return categories
+	}
+
+	// Process each category
+	for categoryIndex, categoryData := range imageData {
+		categoryArray, ok := categoryData.([]any)
+		if !ok {
+			continue
+		}
+
+		// Extract category title
+		categoryTitle := ""
+		if len(categoryArray) > 2 {
+			if title, titleOk := categoryArray[2].(string); titleOk {
+				categoryTitle = title
+			}
+		}
+
+		if categoryTitle == "" {
+			categoryTitle = fmt.Sprintf("Category %d", categoryIndex+1)
+		}
+
+		// Extract all images in this category
+		var categoryImages []BusinessImage
+
+		// Try to find image arrays within the category
+		for elementIndex := 0; elementIndex < len(categoryArray); elementIndex++ {
+			if element, elemOk := categoryArray[elementIndex].([]any); elemOk {
+				// Look for nested image data
+				if images := extractImagesFromElement(element); len(images) > 0 {
+					for imgIndex, img := range images {
+						categoryImages = append(categoryImages, BusinessImage{
+							URL:      img,
+							Category: categoryTitle,
+							Index:    imgIndex,
+							AltText:  fmt.Sprintf("%s image %d", categoryTitle, imgIndex+1),
+						})
+					}
+				}
+			}
+		}
+
+		// If we found images, add this category
+		if len(categoryImages) > 0 {
+			categories = append(categories, ImageCategory{
+				Title:  categoryTitle,
+				Images: categoryImages,
+			})
+		}
+	}
+
+	return categories
+}
+
+// extractImagesFromElement extracts image URLs from a data element
+func extractImagesFromElement(element []any) []string {
+	var images []string
+
+	// Try different patterns for image URL extraction
+	for i := 0; i < len(element); i++ {
+		// Pattern 1: Direct URL at various indices
+		if url := getNthElementAndCast[string](element, i); url != "" && isValidImageURL(url) {
+			images = append(images, url)
+		}
+
+		// Pattern 2: Nested array with URLs
+		if nested, ok := element[i].([]any); ok && len(nested) > 0 {
+			for j := 0; j < len(nested); j++ {
+				if nestedUrl := getNthElementAndCast[string](nested, j); nestedUrl != "" && isValidImageURL(nestedUrl) {
+					images = append(images, nestedUrl)
+				}
+
+				// Pattern 3: Deep nested URLs (common pattern: [3][0][6][0])
+				if deepUrl := getNthElementAndCast[string](nested, 3, 0, 6, 0); deepUrl != "" && isValidImageURL(deepUrl) {
+					images = append(images, deepUrl)
+				}
+			}
+		}
+	}
+
+	return images
+}
+
+// isValidImageURL checks if a URL looks like a valid Google image URL
+func isValidImageURL(url string) bool {
+	return strings.Contains(url, "googleusercontent.com") || strings.Contains(url, "gstatic.com")
+}
+
 //nolint:gomnd // it's ok, I need the indexes
-func EntryFromJSON(raw []byte) (entry Entry, err error) {
+func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("recovered from panic: %v stack: %s", r, debug.Stack())
@@ -236,6 +427,12 @@ func EntryFromJSON(raw []byte) (entry Entry, err error) {
 			return
 		}
 	}()
+
+	onlyReviewCount := false
+
+	if len(reviewCountOnly) == 1 && reviewCountOnly[0] {
+		onlyReviewCount = true
+	}
 
 	var jd []any
 	if err := json.Unmarshal(raw, &jd); err != nil {
@@ -249,6 +446,12 @@ func EntryFromJSON(raw []byte) (entry Entry, err error) {
 	darray, ok := jd[6].([]any)
 	if !ok {
 		return entry, fmt.Errorf("invalid json")
+	}
+
+	entry.ReviewCount = int(getNthElementAndCast[float64](darray, 4, 8))
+
+	if onlyReviewCount {
+		return entry, nil
 	}
 
 	entry.Link = getNthElementAndCast[string](darray, 27)
@@ -273,7 +476,6 @@ func EntryFromJSON(raw []byte) (entry Entry, err error) {
 	entry.WebSite = getNthElementAndCast[string](darray, 7, 0)
 	entry.Phone = getNthElementAndCast[string](darray, 178, 0, 0)
 	entry.PlusCode = getNthElementAndCast[string](darray, 183, 2, 2, 0)
-	entry.ReviewCount = int(getNthElementAndCast[float64](darray, 4, 8))
 	entry.ReviewRating = getNthElementAndCast[float64](darray, 4, 7)
 	entry.Latitude = getNthElementAndCast[float64](darray, 9, 2)
 	entry.Longtitude = getNthElementAndCast[float64](darray, 9, 3)
@@ -300,6 +502,9 @@ func EntryFromJSON(raw []byte) (entry Entry, err error) {
 			Image: items[i].Link,
 		}
 	}
+
+	// NEW: Extract multiple images per category
+	entry.ImageCategories = extractMultipleImages(darray)
 
 	entry.Reservations = getLinkSource(getLinkSourceParams{
 		arr:    getNthElementAndCast[[]any](darray, 46),
@@ -376,6 +581,14 @@ func EntryFromJSON(raw []byte) (entry Entry, err error) {
 	}
 
 	reviewsI := getNthElementAndCast[[]any](darray, 175, 9, 0, 0)
+	entry.UserReviews = make([]Review, 0, len(reviewsI))
+
+	return entry, nil
+}
+
+func parseReviews(reviewsI []any) []Review {
+	ans := make([]Review, 0, len(reviewsI))
+
 	for i := range reviewsI {
 		el := getNthElementAndCast[[]any](reviewsI, i, 0)
 
@@ -413,10 +626,10 @@ func EntryFromJSON(raw []byte) (entry Entry, err error) {
 			}
 		}
 
-		entry.UserReviews = append(entry.UserReviews, review)
+		ans = append(ans, review)
 	}
 
-	return entry, nil
+	return ans
 }
 
 type getLinkSourceParams struct {
@@ -449,7 +662,9 @@ func getHours(darray []any) map[string][]string {
 	hours := make(map[string][]string, len(items))
 
 	for _, item := range items {
+		//nolint:errcheck // it's ok, I'm "sure" the indexes are correct
 		day := getNthElementAndCast[string](item.([]any), 0)
+		//nolint:errcheck // it's ok, I'm "sure" the indexes are correct
 		timesI := getNthElementAndCast[[]any](item.([]any), 1)
 		times := make([]string, len(timesI))
 

@@ -16,35 +16,29 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        go: ['1.24.0']
+        go: ['1.24.4']
 
     steps:
       - name: Check out code
         uses: actions/checkout@v4
-
       - name: Install Go
         uses: actions/setup-go@v4
         with:
           go-version: ${{ matrix.go }}
           check-latest: true
-
       - name: Go Format
         run: gofmt -s -w . && git diff --exit-code
-
       - name: Lint
         run: make lint
-
       - name: Go Vet
         run: go vet ./...
-
       - name: Go Tidy
         run: go mod tidy && git diff --exit-code
-
       - name: Go Mod
         run: go mod download
-
       - name: Go Mod Verify
         run: go mod verify
-
+      - name: Go Vulnerability Check
+        run: make vuln
       - name: Go Build
         run: go build -o /dev/null ./...

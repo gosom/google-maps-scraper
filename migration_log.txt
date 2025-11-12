@@ -1,0 +1,9 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 🌍 Google Maps Scraper                                                       ║
+║ ⭐ If you find this project useful, please star it on GitHub: https://github ║
+║ .com/gosom/google-maps-scraper                                               ║
+║ 💖 Consider sponsoring to support development: https://github.com/sponsors/g ║
+║ osom                                                                         ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+visit http://localhost:8080

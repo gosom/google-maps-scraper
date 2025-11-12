@@ -1,0 +1,63 @@
+services:
+  # Production deployment with external PostgreSQL
+  brezel-api:
+    image: brezel-staging-test
+    environment:
+      - DSN=${DSN}
+      - DATA_FOLDER=${DATA_FOLDER:-/gmapsdata}
+      - WEB_ADDR=${WEB_ADDR:-:8080}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - CONCURRENCY=${CONCURRENCY}
+      - CLERK_API_KEY=${CLERK_API_KEY}
+      - DISABLE_TELEMETRY=${DISABLE_TELEMETRY:-0}
+    ports:
+      - "${API_PORT:-8080}:8080"
+    volumes:
+      - gmapsdata:/gmapsdata
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  # Optional: nginx reverse proxy for SSL termination
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "${NGINX_PORT:-80}:80"
+      - "${NGINX_SSL_PORT:-443}:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - brezel-api
+    restart: unless-stopped
+    profiles:
+      - with-proxy
+
+volumes:
+  gmapsdata:
+
+# Environment variables needed:
+# DSN=postgres://username:password@host:5432/database?sslmode=disable
+# LOG_LEVEL=info
+# API_PORT=8080
+# NGINX_PORT=80
+# NGINX_SSL_PORT=443
+# DISABLE_TELEMETRY=0
+# CLERK_API_KEY=your_clerk_api_key_if_needed

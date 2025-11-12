@@ -5,10 +5,12 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 
 	"github.com/google/uuid"
 	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/scrapemate"
+	"github.com/playwright-community/playwright-go"
 )
 
 type SearchJobOptions func(*SearchJob)
@@ -94,10 +96,42 @@ func (j *SearchJob) Process(_ context.Context, resp *scrapemate.Response) (any, 
 	if j.ExitMonitor != nil {
 		j.ExitMonitor.IncrSeedCompleted(1)
 		j.ExitMonitor.IncrPlacesFound(len(entries))
-		j.ExitMonitor.IncrPlacesCompleted(len(entries))
+		// Do not increment placesCompleted here; PlaceJob will account per-place
 	}
 
 	return entries, nil, nil
+}
+
+// BrowserActions performs the navigation for the search job and fills the response body.
+// On early navigation errors, it increments seed completion so the exit monitor can progress.
+func (j *SearchJob) BrowserActions(ctx context.Context, page playwright.Page) scrapemate.Response {
+	var resp scrapemate.Response
+
+	// Build full URL with query params
+	base, _ := url.Parse(j.GetURL())
+	q := url.Values{}
+	for k, v := range j.GetURLParams() {
+		q.Set(k, v)
+	}
+	base.RawQuery = q.Encode()
+
+	pageResp, err := page.Goto(base.String(), playwright.PageGotoOptions{WaitUntil: playwright.WaitUntilStateDomcontentloaded})
+	if err != nil {
+		resp.Error = err
+		if j.ExitMonitor != nil {
+			j.ExitMonitor.IncrSeedCompleted(1)
+		}
+		return resp
+	}
+	resp.StatusCode = pageResp.Status()
+	content, _ := page.Content()
+	resp.Body = []byte(content)
+
+	// Mark seed completion once we have a response
+	if j.ExitMonitor != nil {
+		j.ExitMonitor.IncrSeedCompleted(1)
+	}
+	return resp
 }
 
 func removeFirstLine(data []byte) []byte {

@@ -1,0 +1,413 @@
+name: Deploy Brezel.ai API to Staging
+
+on:
+  push:
+    branches: [main, develop, feature/fix-staging-pipeline]  # Added your feature branch
+  pull_request:
+    branches: [main, develop]
+    types: [closed]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  FRONTEND_IMAGE_NAME: brezel-ai/scraper-webapp
+  DOCKER_COMPOSE_FILE: docker-compose.staging.yaml
+  CONTAINER_NAME: google-maps-scraper-brezel-api-1
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Download dependencies
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Run tests
+        run: |
+          go test -v -race ./...
+
+      - name: Build application
+        run: |
+          go build -o brezel-api .
+
+  build-and-push-backend:
+    name: Build and Push Backend Docker Image
+    needs: [test]
+    runs-on: ubuntu-latest
+    if: |
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/feature/fix-staging-pipeline') && 
+      (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true))
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix=${{ github.ref_name }}-
+            type=raw,value=staging,enable=${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/feature/fix-staging-pipeline' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push Backend Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: |
+            type=gha
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: |
+            type=gha,mode=max
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+          platforms: linux/amd64
+          build-args: |
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            GIT_COMMIT=${{ github.sha }}
+            VERSION=${{ github.ref_name }}
+
+  build-and-push-frontend:
+    name: Build and Push Frontend Docker Image
+    needs: [test]
+    runs-on: ubuntu-latest
+    if: |
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/feature/fix-staging-pipeline') && 
+      (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true))
+    steps:
+      - name: Checkout backend code
+        uses: actions/checkout@v4
+        with:
+          path: backend
+
+      - name: Checkout frontend repository
+        id: check-frontend
+        run: |
+          # Clone the correct frontend repository
+          if git clone https://github.com/brezel-ai/scraper-webapp.git frontend 2>/dev/null; then
+            echo "frontend_exists=true" >> $GITHUB_OUTPUT
+            echo "✅ Frontend repository (brezel-ai/scraper-webapp) found"
+            cd frontend
+            echo "📋 Frontend repository info:"
+            echo "Current branch: $(git branch --show-current)"
+            echo "Latest commit: $(git log --oneline -1)"
+          else
+            echo "frontend_exists=false" >> $GITHUB_OUTPUT
+            echo "⚠️ Frontend repository not found, skipping frontend build"
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.check-frontend.outputs.frontend_exists == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        if: steps.check-frontend.outputs.frontend_exists == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create frontend environment file
+        if: steps.check-frontend.outputs.frontend_exists == 'true'
+        run: |
+          cd frontend
+          
+          # Create staging environment file
+          cat > .env.staging << EOF
+          NEXT_PUBLIC_API_URL=http://64.226.112.104:8080
+          NEXT_PUBLIC_ENVIRONMENT=staging
+          NODE_ENV=production
+          EOF
+          
+          echo "✅ Created frontend environment configuration"
+          echo "Frontend environment variables:"
+          cat .env.staging
+
+      - name: Build and push Frontend Docker image
+        if: steps.check-frontend.outputs.frontend_exists == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE_NAME }}:staging
+            ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE_NAME }}:feature-${{ github.ref_name }}
+          cache-from: |
+            type=gha
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE_NAME }}:buildcache
+          cache-to: |
+            type=gha,mode=max
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE_NAME }}:buildcache,mode=max
+          platforms: linux/amd64
+          build-args: |
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            GIT_COMMIT=${{ github.sha }}
+            VERSION=${{ github.ref_name }}
+
+  deploy-staging:
+    name: Deploy to Staging Environment
+    needs: [build-and-push-backend, build-and-push-frontend]
+    if: |
+      always() && 
+      needs.build-and-push-backend.result == 'success' && 
+      (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/feature/fix-staging-pipeline')
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: http://64.226.112.104:8080
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to staging server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          timeout: 15m
+          command_timeout: 15m
+          script: |
+            set -e
+            
+            echo "🚀 Starting deployment to staging server"
+            echo "Time: $(date)"
+            echo "User: $(whoami)"
+            
+            # Navigate to backend directory
+            cd /home/${{ secrets.STAGING_USER }}/google-maps-scraper || {
+              echo "ERROR: Backend directory not found"
+              exit 1
+            }
+            
+            # Pull latest configuration from feature branch
+            echo "📥 Pulling latest configuration..."
+            git fetch origin
+            git checkout feature/fix-staging-pipeline || git checkout develop
+            git pull origin feature/fix-staging-pipeline || git pull origin develop
+            
+            # Setup environment
+            echo "⚙️ Configuring environment variables..."
+            if [ ! -f ".env" ]; then
+              echo "No .env file found, creating from staging template..."
+              if [ -f ".env.staging" ]; then
+                cp .env.staging .env
+              else
+                cp .env.example .env
+              fi
+            fi
+            
+            # Backup current configuration
+            cp .env .env.backup.$(date +%Y%m%d_%H%M%S)
+            
+            # Fix Docker networking for Linux
+            sed -i 's/host\.docker\.internal/172.17.0.1/g' .env
+            
+            # 🔐 INJECT SECRETS FROM GITHUB ACTIONS
+            echo "🔐 Injecting secrets from GitHub Actions..."
+            
+            # Database password
+            if [ ! -z "${{ secrets.STAGING_POSTGRES_PASSWORD }}" ]; then
+              echo "✅ Updating database password..."
+              sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=${{ secrets.STAGING_POSTGRES_PASSWORD }}/" .env
+              sed -i "s/scraper:strongpassword/scraper:${{ secrets.STAGING_POSTGRES_PASSWORD }}/" .env
+            fi
+            
+            # Clerk API key (for backend)
+            if [ ! -z "${{ secrets.STAGING_CLERK_API_KEY }}" ]; then
+              echo "✅ Updating Clerk API key..."
+              sed -i "s/^CLERK_API_KEY=.*/CLERK_API_KEY=${{ secrets.STAGING_CLERK_API_KEY }}/" .env
+            fi
+            
+            # 🔑 Clerk Secret Key (for frontend middleware)
+            if [ ! -z "${{ secrets.STAGING_CLERK_SECRET_KEY }}" ]; then
+              echo "✅ Updating Clerk secret key..."
+              if grep -q "^CLERK_SECRET_KEY=" .env; then
+                sed -i "s/^CLERK_SECRET_KEY=.*/CLERK_SECRET_KEY=${{ secrets.STAGING_CLERK_SECRET_KEY }}/" .env
+              else
+                echo "CLERK_SECRET_KEY=${{ secrets.STAGING_CLERK_SECRET_KEY }}" >> .env
+              fi
+            fi
+            
+            # 🔑 Clerk Publishable Key (for frontend client)
+            if [ ! -z "${{ secrets.STAGING_CLERK_PUBLISHABLE_KEY }}" ]; then
+              echo "✅ Updating Clerk publishable key..."
+              if grep -q "^NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=" .env; then
+                sed -i "s/^NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=.*/NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ secrets.STAGING_CLERK_PUBLISHABLE_KEY }}/" .env
+              else
+                echo "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ secrets.STAGING_CLERK_PUBLISHABLE_KEY }}" >> .env
+              fi
+            fi
+            
+            # Optimize for single-core server
+            CPU_CORES=$(nproc)
+            echo "Server has $CPU_CORES CPU cores"
+            if [ $CPU_CORES -eq 1 ]; then
+              echo "Configuring for single-core performance..."
+              if grep -q "^CONCURRENCY=" .env; then
+                sed -i "s/^CONCURRENCY=.*/CONCURRENCY=1/" .env
+              else
+                echo "CONCURRENCY=1" >> .env
+              fi
+            fi
+            
+            # Verify critical environment variables are set
+            echo "🔍 Verifying environment variables..."
+            if ! grep -q "^CLERK_SECRET_KEY=sk_" .env; then
+              echo "⚠️ WARNING: CLERK_SECRET_KEY not found or invalid"
+            fi
+            if ! grep -q "^NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_" .env; then
+              echo "⚠️ WARNING: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY not found or invalid"
+            fi
+            
+            # Login to GitHub Container Registry
+            echo "🔐 Logging in to GitHub Container Registry..."
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            
+            # Stop existing containers
+            echo "🛑 Stopping current containers..."
+            docker compose -f docker-compose.staging.yaml down --remove-orphans || true
+            
+            # Clean up to save space
+            echo "🧹 Cleaning up old images..."
+            docker image prune -f || true
+            
+            # Pull pre-built backend image (CRITICAL: No local building)
+            echo "📦 Pulling pre-built backend image..."
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:staging || {
+              echo "❌ ERROR: Failed to pull backend staging image"
+              exit 1
+            }
+            
+            # Pull pre-built frontend image
+            echo "📦 Pulling pre-built frontend image..."
+            FRONTEND_AVAILABLE=false
+            if docker pull ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE_NAME }}:staging 2>/dev/null; then
+              echo "✅ Frontend image (brezel-ai/scraper-webapp) pulled successfully"
+              FRONTEND_AVAILABLE=true
+            else
+              echo "⚠️ Frontend image not available, deploying backend only"
+              # Remove frontend from docker-compose temporarily
+              cp docker-compose.staging.yaml docker-compose.staging.yaml.backup
+              sed -i '/frontend:/,/^$/d' docker-compose.staging.yaml
+            fi
+            
+            # Start containers with pre-built images
+            echo "🚀 Starting services with docker-compose..."
+            docker compose -f docker-compose.staging.yaml --env-file .env up -d
+            
+            # Wait for startup (longer timeout for single-core server)
+            echo "⏳ Waiting for services to initialize..."
+            sleep 30
+            
+            # Health check with more attempts for slower server
+            echo "🏥 Checking backend health status..."
+            HEALTH_CHECK_URL="http://localhost:8080/health"
+            MAX_ATTEMPTS=60
+            
+            for i in $(seq 1 $MAX_ATTEMPTS); do
+              if curl -s -f $HEALTH_CHECK_URL > /dev/null 2>&1; then
+                echo "✅ Backend is running and healthy!"
+                echo ""
+                echo "🎉 Deployment completed successfully"
+                echo "🔗 Backend API: http://64.226.112.104:8080"
+                echo "🔗 Health endpoint: http://64.226.112.104:8080/health"
+                echo "🔗 API documentation: http://64.226.112.104:8080/api/docs"
+                
+                if [ "$FRONTEND_AVAILABLE" = true ]; then
+                  # Check frontend health
+                  if curl -s -I http://localhost:3000 | grep -q "200\|301\|302"; then
+                    echo "🔗 Frontend application: http://64.226.112.104:3000 ✅"
+                  else
+                    echo "🔗 Frontend application: http://64.226.112.104:3000 ⚠️ (may still be starting)"
+                  fi
+                else
+                  echo "⚠️  Frontend: Not deployed (image not available)"
+                fi
+                
+                echo ""
+                echo "📋 Running containers:"
+                docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+                echo ""
+                echo "💾 System resources:"
+                echo "Memory: $(free -h | awk '/^Mem:/ {print $3 "/" $2}')"
+                echo "Disk: $(df -h / | awk 'NR==2 {print $3 "/" $2 " (" $5 " used)"}')"
+                exit 0
+              else
+                echo "Health check attempt $i of $MAX_ATTEMPTS - Backend not ready yet"
+                if [ $i -eq $MAX_ATTEMPTS ]; then
+                  echo "❌ ERROR: Backend failed to start after $MAX_ATTEMPTS attempts"
+                  echo ""
+                  echo "🔍 Container status:"
+                  docker ps -a
+                  echo ""
+                  echo "📋 Container logs:"
+                  docker compose -f docker-compose.staging.yaml logs --tail 50
+                  exit 1
+                fi
+                sleep 5
+              fi
+            done
+
+      - name: Run smoke tests
+        if: success()
+        run: |
+          echo "🧪 Running smoke tests..."
+          
+          # Test health endpoint
+          echo "Testing health endpoint..."
+          curl -f -s http://64.226.112.104:8080/health || {
+            echo "❌ Health check failed"
+            exit 1
+          }
+          
+          echo "✅ All tests passed successfully"
+
+      - name: Notify deployment status
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const status = '${{ job.status }}';
+            const message = status === 'success' 
+              ? '✅ Successfully deployed to staging environment' 
+              : '❌ Deployment to staging failed';
+            
+            github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: status === 'success' ? 'success' : 'failure',
+              description: message,
+              context: 'Staging Deployment'
+            });
