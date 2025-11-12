@@ -565,13 +565,30 @@ func (s *Service) CountBillableItems(ctx context.Context, jobID string) (*Billin
 	// - user_reviews/user_reviews_extended: JSONB arrays of review objects
 	// - images: JSONB array of image objects
 	// - emails: TEXT field (non-empty means contact details extracted)
+	//
+	// IMPORTANT: We must check jsonb_typeof() before calling jsonb_array_length()
+	// because jsonb_array_length() will fail if the value is not an array (scalar, object, null, etc.)
 	const query = `
 		SELECT
 			COALESCE(SUM(
-				COALESCE(jsonb_array_length(user_reviews), 0) +
-				COALESCE(jsonb_array_length(user_reviews_extended), 0)
+				CASE
+					WHEN user_reviews IS NOT NULL AND jsonb_typeof(user_reviews) = 'array'
+					THEN jsonb_array_length(user_reviews)
+					ELSE 0
+				END +
+				CASE
+					WHEN user_reviews_extended IS NOT NULL AND jsonb_typeof(user_reviews_extended) = 'array'
+					THEN jsonb_array_length(user_reviews_extended)
+					ELSE 0
+				END
 			), 0) AS total_reviews,
-			COALESCE(SUM(jsonb_array_length(images)), 0) AS total_images,
+			COALESCE(SUM(
+				CASE
+					WHEN images IS NOT NULL AND jsonb_typeof(images) = 'array'
+					THEN jsonb_array_length(images)
+					ELSE 0
+				END
+			), 0) AS total_images,
 			COUNT(CASE WHEN emails IS NOT NULL AND emails != '' THEN 1 END) AS places_with_contacts
 		FROM results
 		WHERE job_id = $1

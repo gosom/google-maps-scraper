@@ -65,7 +65,15 @@ func (l *lambdaAwsRunner) handler(ctx context.Context, input lInput) error {
 		return err
 	}
 
-	defer out.Close()
+	// Track whether file was closed to avoid double-close in defer
+	outClosed := false
+	defer func() {
+		if !outClosed {
+			if err := out.Close(); err != nil {
+				log.Printf("ERROR: Lambda runner - Failed to close CSV file in defer: %v", err)
+			}
+		}
+	}()
 
 	app, err := l.getApp(ctx, input, out)
 	if err != nil {
@@ -118,7 +126,14 @@ func (l *lambdaAwsRunner) handler(ctx context.Context, input lInput) error {
 		return err
 	}
 
-	out.Close()
+	// CRITICAL: Close the CSV file and check for errors before upload
+	// For writable files, Close() can return I/O errors indicating data loss
+	if err := out.Close(); err != nil {
+		log.Printf("ERROR: Lambda runner - Failed to close CSV file: %v", err)
+		return fmt.Errorf("failed to close CSV file: %w", err)
+	}
+	outClosed = true
+	log.Printf("Lambda runner - CSV file closed successfully")
 
 	if l.uploader != nil {
 		key := fmt.Sprintf("%s-%d.csv", input.JobID, input.Part)

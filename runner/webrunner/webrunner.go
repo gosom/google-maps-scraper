@@ -404,8 +404,14 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		return err
 	}
 
+	// Track whether file was closed to avoid double-close in defer
+	fileClosed := false
 	defer func() {
-		_ = outfile.Close()
+		if !fileClosed {
+			if err := outfile.Close(); err != nil {
+				log.Printf("ERROR: Job %s - Failed to close CSV file in defer: %v", job.ID, err)
+			}
+		}
 	}()
 
 	// Initialize deduper and exitMonitor before use
@@ -690,6 +696,8 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 					jobSuccess = false
 					job.Status = web.StatusFailed
 					job.FailureReason = fmt.Sprintf("billing failed: %v", err)
+					// Return the error so caller knows the job failed
+					return fmt.Errorf("billing failed: %w", err)
 				} else {
 					log.Printf("SUCCESS: billing: successfully charged all events for job %s (user: %s)", job.ID, job.UserID)
 				}
@@ -710,6 +718,21 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 
 	mate.Close()
 
+	// CRITICAL: Close the CSV file handle before S3 upload or any file operations
+	// This ensures all buffered data is flushed to disk and the file is fully written
+	// For writable files, we must explicitly check Close() errors as they can indicate data loss
+	log.Printf("DEBUG: Job %s - Closing CSV file before determining final status", job.ID)
+	if err := outfile.Close(); err != nil {
+		log.Printf("ERROR: Job %s - Failed to close CSV file: %v", job.ID, err)
+		// File close errors can indicate I/O errors (EIO) meaning data was lost
+		// This should fail the job to ensure data integrity
+		job.Status = web.StatusFailed
+		job.FailureReason = fmt.Sprintf("failed to close CSV file: %v", err)
+		return fmt.Errorf("failed to close CSV file: %w", err)
+	}
+	fileClosed = true
+	log.Printf("DEBUG: Job %s - CSV file closed successfully", job.ID)
+
 	// Determine final job status
 	log.Printf("DEBUG: Job %s - Determining final status: jobSuccess=%v, current status=%s", job.ID, jobSuccess, job.Status)
 
@@ -721,6 +744,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		log.Printf("DEBUG: Job %s - Setting status to OK (successful completion)", job.ID)
 
 		// Upload CSV to S3 and save metadata if S3 is configured
+		// File is now fully closed and flushed to disk, safe to upload
 		if err := w.uploadToS3AndSaveMetadata(ctx, job, outpath); err != nil {
 			log.Printf("ERROR: Job %s - S3 upload failed: %v (job still marked as successful)", job.ID, err)
 			// Don't fail the job due to S3 upload failure - the scraping was successful
@@ -877,7 +901,7 @@ func (w *webrunner) uploadToS3AndSaveMetadata(ctx context.Context, job *web.Job,
 	}
 	fileSize := fileInfo.Size()
 
-	// Construct S3 object key: users/{user_id}/jobs/{job_id}.csv (not csv.csv - redundant!)
+	// Construct S3 object key: users/{user_id}/jobs/{job_id}.csv
 	objectKey := fmt.Sprintf("users/%s/jobs/%s.csv", job.UserID, job.ID)
 
 	// Upload to S3 with proper Content-Type (including charset) and capture response
@@ -888,7 +912,7 @@ func (w *webrunner) uploadToS3AndSaveMetadata(ctx context.Context, job *web.Job,
 		return fmt.Errorf("S3 upload failed: %w", err)
 	}
 
-	// CRITICAL: Capture actual ETag from S3 response, not placeholder
+	// Capture  ETag from S3 response
 	log.Printf("[WebRunner] Job %s: S3 upload successful (bucket: %s, key: %s, size: %d bytes, ETag: %s)",
 		job.ID, w.s3Bucket, objectKey, fileSize, result.ETag)
 
