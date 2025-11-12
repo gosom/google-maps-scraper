@@ -184,27 +184,62 @@ func (j *PlaceJob) processExtractedImages(entry *Entry, resp *scrapemate.Respons
 }
 
 func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, []scrapemate.IJob, error) {
+	log := scrapemate.GetLoggerFromContext(context.Background())
+
 	defer func() {
 		resp.Document = nil
 		resp.Body = nil
 		resp.Meta = nil
 	}()
 
+	// CRITICAL FIX: Always create an entry with at least the URL, even if JSON extraction fails
+	// This ensures all visited places are written to PostgreSQL and CSV
+	var entry Entry
+	var entryCreated bool
+
 	raw, ok := resp.Meta["json"].([]byte)
 	if !ok {
+		// JSON extraction failed - create minimal fallback entry
+		log.Warn(fmt.Sprintf("FALLBACK: PlaceJob %s - JSON extraction failed, creating minimal entry with URL only", j.ID))
+		entry = Entry{
+			ID:          j.ParentID,
+			Link:        j.GetURL(),
+			Title:       fmt.Sprintf("EXTRACTION_FAILED_%s", j.ID[:8]), // Unique identifier
+			Status:      "extraction_failed",
+			Description: "JSON extraction failed - partial data only",
+		}
+		entryCreated = true
+
 		if j.ExitMonitor != nil {
 			j.ExitMonitor.IncrPlacesCompleted(1)
 		}
-		return nil, nil, fmt.Errorf("could not convert to []byte")
+		// IMPORTANT: Return the fallback entry instead of nil, so it gets written to database
+		return &entry, nil, fmt.Errorf("JSON extraction failed but fallback entry created")
 	}
 
-	entry, err := EntryFromJSON(raw)
+	parsedEntry, err := EntryFromJSON(raw)
 	if err != nil {
+		// JSON parsing failed - create minimal fallback entry
+		log.Warn(fmt.Sprintf("FALLBACK: PlaceJob %s - JSON parsing failed (%v), creating minimal entry with URL only", j.ID, err))
+		entry = Entry{
+			ID:          j.ParentID,
+			Link:        j.GetURL(),
+			Title:       fmt.Sprintf("PARSING_FAILED_%s", j.ID[:8]), // Unique identifier
+			Status:      "parsing_failed",
+			Description: fmt.Sprintf("JSON parsing error: %v", err),
+		}
+		entryCreated = true
+
 		if j.ExitMonitor != nil {
 			j.ExitMonitor.IncrPlacesCompleted(1)
 		}
-		return nil, nil, err
+		// IMPORTANT: Return the fallback entry instead of nil, so it gets written to database
+		return &entry, nil, fmt.Errorf("JSON parsing failed but fallback entry created: %w", err)
 	}
+
+	// Successful JSON extraction and parsing
+	entry = parsedEntry
+	entryCreated = true
 
 	// Integrate enhanced image data if available
 	j.processExtractedImages(&entry, resp)
@@ -220,23 +255,39 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 		entry.AddExtraReviews(allReviewsRaw.pages)
 	}
 
+	// CRITICAL FIX: Always write the place entry to database FIRST, even if we're going to extract emails
+	// This ensures we don't lose place data if email extraction fails
 	if j.ExtractEmail && entry.IsWebsiteValidForEmail() {
+		log.Info(fmt.Sprintf("PlaceJob %s - Will extract emails from %s but writing place data first", j.ID, entry.WebSite))
+
+		// Count this place as completed since we have the data
+		if j.ExitMonitor != nil {
+			j.ExitMonitor.IncrPlacesCompleted(1)
+		}
+
+		// Create email extraction job for later processing
 		opts := []EmailExtractJobOptions{}
 		if j.ExitMonitor != nil {
 			opts = append(opts, WithEmailJobExitMonitor(j.ExitMonitor))
 		}
-
 		emailJob := NewEmailJob(j.ID, &entry, opts...)
 
-		j.UsageInResultststs = false
+		// IMPORTANT: Return the entry to be written, AND the email job for additional processing
+		// This ensures place data is saved even if email extraction fails
+		return &entry, []scrapemate.IJob{emailJob}, nil
+	}
 
-		return nil, []scrapemate.IJob{emailJob}, nil
-	} else if j.ExitMonitor != nil {
-		// Note: Count completed jobs for exit detection, but results are counted separately
+	// No email extraction needed - just save the place entry
+	if j.ExitMonitor != nil {
 		j.ExitMonitor.IncrPlacesCompleted(1)
 	}
 
-	return &entry, nil, err
+	if !entryCreated {
+		log.Error(fmt.Sprintf("CRITICAL: PlaceJob %s - No entry was created!", j.ID))
+		return nil, nil, fmt.Errorf("no entry created")
+	}
+
+	return &entry, nil, nil
 }
 
 // extractImages performs enhanced image extraction if enabled

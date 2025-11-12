@@ -21,6 +21,7 @@ import (
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/proxy"
 	"github.com/gosom/google-maps-scraper/runner"
+	"github.com/gosom/google-maps-scraper/runner/webrunner/writers"
 	"github.com/gosom/google-maps-scraper/s3uploader"
 	"github.com/gosom/google-maps-scraper/tlmt"
 	"github.com/gosom/google-maps-scraper/web"
@@ -851,22 +852,29 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 
 	// log.Printf("job %s configured with stealth mode and proxy: %v", job.ID, hasProxy)
 
-	// Create list of writers - CSV and PostgreSQL
-	csvWriter := csvwriter.NewCsvWriter(csv.NewWriter(writer))
-	writers := []scrapemate.ResultWriter{csvWriter}
+	// Create list of writers
+	// CRITICAL: Use a SINGLE synchronized writer that writes to both PostgreSQL and CSV atomically
+	// This ensures perfect 1:1 correspondence between the two destinations
+	var writersList []scrapemate.ResultWriter
 
-	// Add PostgreSQL writer if database is available
+	// Add synchronized dual writer if database is available
 	if w.db != nil {
-		// Use enhanced result writer with exiter to count actual results
-		pgWriter := postgres.NewEnhancedResultWriterWithExiter(w.db, job.UserID, job.ID, exitMonitor)
-		writers = append(writers, pgWriter)
-		log.Printf("Added PostgreSQL enhanced result writer with exiter for job %s (user: %s)", job.ID, job.UserID)
+		// Create the CSV writer
+		csvWriterInstance := csv.NewWriter(writer)
+
+		// Create synchronized dual writer that writes to BOTH destinations
+		syncWriter := writers.NewSynchronizedDualWriter(w.db, csvWriterInstance, job.UserID, job.ID, exitMonitor)
+
+		writersList = []scrapemate.ResultWriter{syncWriter}
+		log.Printf("Added synchronized dual writer (PostgreSQL + CSV) for job %s (user: %s)", job.ID, job.UserID)
 	} else {
+		// No database, use plain CSV writer
+		csvWriter := csvwriter.NewCsvWriter(csv.NewWriter(writer))
+		writersList = []scrapemate.ResultWriter{csvWriter}
 		log.Printf("Warning: No database connection available for job %s - results will only be saved to CSV", job.ID)
 	}
-
 	matecfg, err := scrapemateapp.NewConfig(
-		writers,
+		writersList,
 		opts...,
 	)
 	if err != nil {
