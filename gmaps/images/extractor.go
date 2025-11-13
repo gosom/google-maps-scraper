@@ -48,6 +48,62 @@ type ImageExtractor struct {
 	metadata     *ScrapingMetadata
 }
 
+// dismissGoogleDialogs handles the two Google dialogs that appear when accessing photos/reviews
+// Dialog 1: "How your posts appear" - click OK button
+// Dialog 2: "Sign in to your Google Account" - click X button to close
+func dismissGoogleDialogs(page playwright.Page) error {
+	fmt.Printf("DEBUG: Checking for Google dialogs to dismiss...\n")
+
+	// Dialog 1: "How your posts appear" dialog with OK button
+	// Wait up to 3 seconds for this dialog to appear
+	okButtonSelectors := []string{
+		`button:has-text("OK")`,
+		`button:has-text("Ok")`,
+		`button[aria-label="OK"]`,
+		`button[aria-label="Ok"]`,
+	}
+
+	for _, selector := range okButtonSelectors {
+		okButton := page.Locator(selector).First()
+		visible, err := okButton.IsVisible()
+		if err == nil && visible {
+			fmt.Printf("DEBUG: Found 'OK' button dialog, clicking...\n")
+			if err := okButton.Click(); err == nil {
+				fmt.Printf("DEBUG: Successfully clicked OK button\n")
+				time.Sleep(500 * time.Millisecond) // Wait for next dialog
+				break
+			}
+		}
+	}
+
+	// Dialog 2: "Sign in to your Google Account" dialog with X close button
+	// Wait up to 3 seconds for this dialog to appear
+	closeButtonSelectors := []string{
+		`button[aria-label="Close"]`,
+		`button[aria-label="close"]`,
+		`button[aria-label="Schließen"]`, // German
+		`button:has([aria-label="Close"])`,
+		`div[role="dialog"] button:has-text("×")`,
+		`div[role="dialog"] button[class*="close"]`,
+	}
+
+	for _, selector := range closeButtonSelectors {
+		closeButton := page.Locator(selector).First()
+		visible, err := closeButton.IsVisible()
+		if err == nil && visible {
+			fmt.Printf("DEBUG: Found close button for sign-in dialog, clicking...\n")
+			if err := closeButton.Click(); err == nil {
+				fmt.Printf("DEBUG: Successfully dismissed sign-in dialog\n")
+				time.Sleep(300 * time.Millisecond) // Small delay after closing
+				return nil
+			}
+		}
+	}
+
+	fmt.Printf("DEBUG: No dialogs found or already dismissed\n")
+	return nil
+}
+
 // NewImageExtractor creates a new image extractor instance
 func NewImageExtractor(page playwright.Page) *ImageExtractor {
 	return &ImageExtractor{
@@ -392,6 +448,13 @@ func (e *ImageExtractor) clickTab(tab ImageTab) error {
 	}
 
 	fmt.Printf("DEBUG: Successfully clicked tab %s\n", tab.Name)
+
+	// NEW: Dismiss Google dialogs that may appear after clicking tab
+	if err := dismissGoogleDialogs(e.page); err != nil {
+		fmt.Printf("Warning: Failed to dismiss dialogs after clicking tab %s: %v\n", tab.Name, err)
+		// Don't return error - continue anyway
+	}
+
 	return nil
 }
 
@@ -423,6 +486,9 @@ func (e *ImageExtractor) navigateToImagesSection() error {
 
 		// Wait a bit for the images section to load
 		e.page.WaitForTimeout(1000)
+
+		// NEW: Dismiss any dialogs that appeared
+		dismissGoogleDialogs(e.page)
 
 		return nil
 	}
