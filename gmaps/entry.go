@@ -496,21 +496,64 @@ func getLinkSource(params getLinkSourceParams) []LinkSource {
 
 //nolint:gomnd // it's ok, I need the indexes
 func getHours(darray []any) map[string][]string {
-	items := getNthElementAndCast[[]any](darray, 34, 1)
+	// Try new structure first (as of Nov 2025) - darray[203][0]
+	items := getNthElementAndCast[[]any](darray, 203, 0)
+	if len(items) == 0 {
+		// Fall back to old structure - darray[34][1]
+		items = getNthElementAndCast[[]any](darray, 34, 1)
+	}
+
 	hours := make(map[string][]string, len(items))
 
 	for _, item := range items {
-		//nolint:errcheck // it's ok, I'm "sure" the indexes are correct
-		day := getNthElementAndCast[string](item.([]any), 0)
-		//nolint:errcheck // it's ok, I'm "sure" the indexes are correct
-		timesI := getNthElementAndCast[[]any](item.([]any), 1)
-		times := make([]string, len(timesI))
-
-		for i := range timesI {
-			times[i], _ = timesI[i].(string)
+		itemArray, ok := item.([]any)
+		if !ok {
+			continue
 		}
 
-		hours[day] = times
+		// New structure: [0] = day name, [3] = time slots array
+		day := getNthElementAndCast[string](itemArray, 0)
+		if day == "" {
+			continue
+		}
+
+		// Try new structure for times
+		timeSlotsI := getNthElementAndCast[[]any](itemArray, 3)
+		if len(timeSlotsI) > 0 {
+			// New format: each slot is [formatted_string, [[hour, min], [hour, min]]]
+			times := make([]string, 0, len(timeSlotsI))
+
+			for _, slot := range timeSlotsI {
+				slotArray, ok := slot.([]any)
+				if !ok || len(slotArray) == 0 {
+					continue
+				}
+
+				// Get the formatted time string (e.g., "11 am–1:30 pm")
+				timeStr := getNthElementAndCast[string](slotArray, 0)
+				if timeStr != "" {
+					times = append(times, timeStr)
+				}
+			}
+
+			if len(times) > 0 {
+				hours[day] = times
+			}
+		} else {
+			// Fall back to old structure: [1] = times array
+			timesI := getNthElementAndCast[[]any](itemArray, 1)
+			times := make([]string, 0, len(timesI))
+
+			for i := range timesI {
+				if timeStr, ok := timesI[i].(string); ok {
+					times = append(times, timeStr)
+				}
+			}
+
+			if len(times) > 0 {
+				hours[day] = times
+			}
+		}
 	}
 
 	return hours
