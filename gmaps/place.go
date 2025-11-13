@@ -118,11 +118,7 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 		return resp
 	}
 
-	if err = clickRejectCookiesIfRequired(page); err != nil {
-		resp.Error = err
-
-		return resp
-	}
+	clickRejectCookiesIfRequired(page)
 
 	const defaultTimeout = 5000
 
