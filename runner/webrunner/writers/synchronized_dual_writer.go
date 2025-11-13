@@ -18,11 +18,12 @@ import (
 // SynchronizedDualWriter writes to both PostgreSQL and CSV in a synchronized way
 // ensuring both destinations receive exactly the same results
 type SynchronizedDualWriter struct {
-	db          *sql.DB
-	csvWriter   *csv.Writer
-	userID      string
-	jobID       string
-	exitMonitor exiter.Exiter
+	db             *sql.DB
+	csvWriter      *csv.Writer
+	userID         string
+	jobID          string
+	exitMonitor    exiter.Exiter
+	headersWritten bool
 }
 
 // NewSynchronizedDualWriter creates a writer that writes to both PostgreSQL and CSV
@@ -34,11 +35,12 @@ func NewSynchronizedDualWriter(
 	exitMonitor exiter.Exiter,
 ) scrapemate.ResultWriter {
 	return &SynchronizedDualWriter{
-		db:          db,
-		csvWriter:   csvWriter,
-		userID:      userID,
-		jobID:       jobID,
-		exitMonitor: exitMonitor,
+		db:             db,
+		csvWriter:      csvWriter,
+		userID:         userID,
+		jobID:          jobID,
+		exitMonitor:    exitMonitor,
+		headersWritten: false,
 	}
 }
 
@@ -60,6 +62,15 @@ func (w *SynchronizedDualWriter) Run(ctx context.Context, in <-chan scrapemate.R
 		entry, ok := result.Data.(*gmaps.Entry)
 		if !ok {
 			return errors.New("invalid data type")
+		}
+
+		// Write CSV headers on first result
+		if !w.headersWritten {
+			if err := w.csvWriter.Write(entry.CsvHeaders()); err != nil {
+				return fmt.Errorf("failed to write CSV headers: %w", err)
+			}
+			w.headersWritten = true
+			fmt.Println("DEBUG: SynchronizedDualWriter - CSV headers written")
 		}
 
 		// Log what we're processing
@@ -191,31 +202,7 @@ func (w *SynchronizedDualWriter) writeToPostgreSQL(ctx context.Context, entry *g
 }
 
 func (w *SynchronizedDualWriter) writeToCSV(entry *gmaps.Entry) error {
-	// Convert entry to CSV row (matching the standard CSV format)
-	row := []string{
-		entry.ID,
-		entry.Link,
-		entry.Title,
-		strings.Join(entry.Categories, ", "),
-		entry.Category,
-		entry.Address,
-		entry.WebSite,
-		entry.Phone,
-		entry.PlusCode,
-		fmt.Sprintf("%d", entry.ReviewCount),
-		fmt.Sprintf("%.2f", entry.ReviewRating),
-		fmt.Sprintf("%.6f", entry.Latitude),
-		fmt.Sprintf("%.6f", entry.Longtitude),
-		entry.Cid,
-		entry.Status,
-		entry.Description,
-		entry.ReviewsLink,
-		entry.Thumbnail,
-		entry.Timezone,
-		entry.PriceRange,
-		entry.DataID,
-		strings.Join(entry.Emails, ", "),
-	}
-
-	return w.csvWriter.Write(row)
+	// Use the Entry's own CsvRow() method which properly formats ALL fields
+	// including JSON serialization of complex types
+	return w.csvWriter.Write(entry.CsvRow())
 }
