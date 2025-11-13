@@ -405,6 +405,14 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		return err
 	}
 
+	// Write UTF-8 BOM to ensure proper encoding detection in Excel and other programs
+	// BOM = 0xEF, 0xBB, 0xBF
+	if _, err := outfile.Write([]byte{0xEF, 0xBB, 0xBF}); err != nil {
+		outfile.Close()
+		return fmt.Errorf("failed to write UTF-8 BOM: %w", err)
+	}
+	log.Printf("DEBUG: Job %s - UTF-8 BOM written to CSV file", job.ID)
+
 	// Track whether file was closed to avoid double-close in defer
 	fileClosed := false
 	defer func() {
