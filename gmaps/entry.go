@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"iter"
 	"math"
+	"net/url"
 	"runtime/debug"
 	"slices"
 	"strconv"
@@ -473,7 +474,7 @@ func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error)
 	)
 	entry.OpenHours = getHours(darray)
 	entry.PopularTimes = getPopularTimes(darray)
-	entry.WebSite = getNthElementAndCast[string](darray, 7, 0)
+	entry.WebSite = cleanGoogleRedirectURL(getNthElementAndCast[string](darray, 7, 0))
 	entry.Phone = getNthElementAndCast[string](darray, 178, 0, 0)
 	entry.PlusCode = getNthElementAndCast[string](darray, 183, 2, 2, 0)
 	entry.ReviewRating = getNthElementAndCast[float64](darray, 4, 7)
@@ -828,8 +829,8 @@ func stringify(v any) string {
 	}
 }
 
-func decodeURL(url string) (string, error) {
-	quoted := `"` + strings.ReplaceAll(url, `"`, `\"`) + `"`
+func decodeURL(urlStr string) (string, error) {
+	quoted := `"` + strings.ReplaceAll(urlStr, `"`, `\"`) + `"`
 
 	unquoted, err := strconv.Unquote(quoted)
 	if err != nil {
@@ -837,6 +838,45 @@ func decodeURL(url string) (string, error) {
 	}
 
 	return unquoted, nil
+}
+
+// cleanGoogleRedirectURL extracts the actual URL from Google redirect URLs
+// Example: /url?q=http://example.com&opi=123 → http://example.com
+func cleanGoogleRedirectURL(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+
+	// Check if it's a Google redirect URL
+	if !strings.HasPrefix(rawURL, "/url?") && !strings.HasPrefix(rawURL, "https://www.google.com/url?") {
+		// Not a redirect URL, return as-is
+		return rawURL
+	}
+
+	// Extract the 'q=' parameter which contains the actual URL
+	if idx := strings.Index(rawURL, "q="); idx != -1 {
+		// Find the start of the URL after 'q='
+		urlStart := idx + 2
+		urlPart := rawURL[urlStart:]
+
+		// Find the end of the URL (next '&' or end of string)
+		endIdx := strings.Index(urlPart, "&")
+		if endIdx != -1 {
+			urlPart = urlPart[:endIdx]
+		}
+
+		// URL decode the extracted URL
+		decodedURL, err := url.QueryUnescape(urlPart)
+		if err != nil {
+			// If decoding fails, return the URL part as-is
+			return urlPart
+		}
+
+		return decodedURL
+	}
+
+	// Couldn't find 'q=' parameter, return original
+	return rawURL
 }
 
 type EntryWithDistance struct {
