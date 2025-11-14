@@ -30,10 +30,11 @@ type ExtractionMethod interface {
 func NewOptimizedImageExtractor(page playwright.Page) *OptimizedImageExtractor {
 	return &OptimizedImageExtractor{
 		page:                   page,
-		maxTimeout:             90 * time.Second, // Increased from 45s to 90s for complex places
+		maxTimeout:             30 * time.Second, // Optimized for fast extraction
 		maxImagesPerTab:        50,               // Reasonable limit per tab
 		useAggressiveScrolling: false,            // Start conservative
 		fallbackMethods: []ExtractionMethod{
+			&ScrollAllTabMethod{}, // NEW: Highest priority - scroll in All tab (no dialog issues!)
 			&DirectGalleryMethod{},
 			&TabBasedMethod{},
 			&LegacyDOMMethod{},
@@ -81,12 +82,24 @@ func (e *OptimizedImageExtractor) ExtractAllImagesOptimized(ctx context.Context)
 		if err != nil {
 			fmt.Printf("Warning: Method %s failed: %v\n", method.Name(), err)
 			lastError = err
+
+			// CRITICAL: If ScrollAllTab method fails, still stop here - don't try TabBasedMethod
+			if method.Name() == "ScrollAllTab" {
+				fmt.Printf("DEBUG: ScrollAllTab method failed but stopping to avoid tab clicking\n")
+				break
+			}
 			continue
 		}
 
 		if len(images) > 0 {
 			fmt.Printf("DEBUG: Method %s succeeded with %d images\n", method.Name(), len(images))
 			allImages = e.mergeImages(allImages, images)
+
+			// CRITICAL: If ScrollAllTab succeeds with ANY images, stop immediately
+			if method.Name() == "ScrollAllTab" && len(allImages) > 0 {
+				fmt.Printf("DEBUG: ScrollAllTab got %d images, stopping to avoid tab clicking\n", len(allImages))
+				break
+			}
 
 			// If we have enough images, stop trying other methods
 			if len(allImages) >= 20 {
@@ -574,4 +587,337 @@ func (m *AppStateMethod) Extract(ctx context.Context, page playwright.Page) ([]B
 	// This would implement APP_INITIALIZATION_STATE extraction
 	// For now, return empty to maintain interface compatibility
 	return []BusinessImage{}, fmt.Errorf("APP_INITIALIZATION_STATE extraction not implemented yet")
+}
+
+// ScrollAllTabMethod scrolls in "All" tab without clicking other tabs (FAST, no dialogs!)
+type ScrollAllTabMethod struct{}
+
+func (m *ScrollAllTabMethod) Name() string  { return "ScrollAllTab" }
+func (m *ScrollAllTabMethod) Priority() int { return 110 } // Highest priority!
+
+func (m *ScrollAllTabMethod) Extract(ctx context.Context, page playwright.Page) ([]BusinessImage, error) {
+	fmt.Printf("DEBUG: ScrollAllTab method - FAST extraction starting\n")
+
+	// Step 1: Try to navigate to images section (but don't wait long)
+	if err := m.navigateToImages(page); err != nil {
+		fmt.Printf("DEBUG: Could not navigate to photos section: %v - extracting from current page\n", err)
+	} else {
+		// Quick wait for gallery - reduced from 2s to 500ms
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	// Step 2: Fast scroll and collect (optimized for speed)
+	return m.scrollAndCollectImages(ctx, page)
+}
+
+func (m *ScrollAllTabMethod) navigateToImages(page playwright.Page) error {
+	selectors := []string{
+		`button[data-value="images"]`,
+		`[role="tab"][aria-label*="Photo"]`,
+		`button:has-text("Photos")`,
+		`button:has-text("View all")`,
+	}
+
+	for _, selector := range selectors {
+		element := page.Locator(selector).First()
+		if visible, _ := element.IsVisible(); visible {
+			if err := element.Click(); err == nil {
+				fmt.Printf("DEBUG: Clicked photos button\n")
+				time.Sleep(800 * time.Millisecond)
+				return nil
+			}
+		}
+	}
+
+	return fmt.Errorf("could not find photos button")
+}
+
+func (m *ScrollAllTabMethod) scrollAndCollectImages(ctx context.Context, page playwright.Page) ([]BusinessImage, error) {
+	urlSet := make(map[string]bool)
+	var allImages []BusinessImage
+	scrollCount := 0
+	stableCount := 0
+	maxScrolls := 10 // Reduced from 25 to 10 for speed
+	maxStable := 2   // Reduced from 5 to 2 (less patient, faster)
+
+	fmt.Printf("DEBUG: Starting FAST scroll in All tab...\n")
+
+	for scrollCount < maxScrolls {
+		select {
+		case <-ctx.Done():
+			return allImages, nil
+		default:
+		}
+
+		previousCount := len(urlSet)
+
+		// Fast scroll
+		scrolled := m.scrollGallery(page)
+		if !scrolled {
+			fmt.Printf("DEBUG: Can't scroll anymore, stopping\n")
+			break
+		}
+
+		scrollCount++
+
+		// Minimal wait for lazy loading - reduced from 1.5s to 400ms
+		time.Sleep(400 * time.Millisecond)
+
+		// Extract visible images
+		newImages := m.extractVisibleImages(page)
+		for _, img := range newImages {
+			if !urlSet[img.URL] {
+				urlSet[img.URL] = true
+				allImages = append(allImages, img)
+			}
+		}
+
+		newFound := len(urlSet) - previousCount
+		fmt.Printf("DEBUG: Scroll %d: +%d images (total: %d)\n", scrollCount, newFound, len(urlSet))
+
+		if newFound == 0 {
+			stableCount++
+			if stableCount >= maxStable {
+				fmt.Printf("DEBUG: No new images after %d scrolls, done\n", maxStable)
+				break
+			}
+		} else {
+			stableCount = 0
+		}
+	}
+
+	fmt.Printf("DEBUG: ScrollAllTab completed: %d images after %d scrolls\n", len(allImages), scrollCount)
+	return allImages, nil
+}
+
+func (m *ScrollAllTabMethod) scrollGallery(page playwright.Page) bool {
+	scrolled, err := page.Evaluate(`() => {
+		const selectors = [
+			'div[role="main"]',
+			'div.m6QErb.DxyBCb',
+			'div[jslog]',
+			'div[class*="gallery"]',
+		];
+		
+		let scrolledAny = false;
+		
+		for (const sel of selectors) {
+			const containers = document.querySelectorAll(sel);
+			console.log('Trying selector:', sel, 'found:', containers.length);
+			
+			for (const c of containers) {
+				const scrollHeight = c.scrollHeight;
+				const clientHeight = c.clientHeight;
+				const scrollTop = c.scrollTop;
+				
+				console.log('Container:', sel, 'scrollHeight:', scrollHeight, 'clientHeight:', clientHeight, 'scrollTop:', scrollTop);
+				
+					if (scrollHeight > clientHeight) {
+						const before = c.scrollTop;
+						c.scrollBy(0, 1200); // Increased from 800 to 1200 for even faster scrolling
+						const after = c.scrollTop;
+					
+					console.log('Scrolled from', before, 'to', after);
+					
+					if (after > before) {
+						scrolledAny = true;
+						break;
+					}
+				}
+			}
+			if (scrolledAny) break;
+		}
+		
+		if (!scrolledAny) {
+			console.log('Trying window scroll as fallback');
+			const before = window.scrollY;
+			window.scrollBy(0, 1200); // Increased from 800 to 1200 for speed
+			const after = window.scrollY;
+			console.log('Window scrolled from', before, 'to', after);
+			scrolledAny = after > before;
+		}
+		
+		return scrolledAny;
+	}`)
+
+	if err != nil {
+		fmt.Printf("DEBUG: Scroll evaluation error: %v\n", err)
+		return false
+	}
+
+	if b, ok := scrolled.(bool); ok {
+		if b {
+			fmt.Printf("DEBUG: ✅ Scroll successful\n")
+		} else {
+			fmt.Printf("DEBUG: ❌ Scroll failed - no scrollable container found\n")
+		}
+		return b
+	}
+	return false
+}
+
+func (m *ScrollAllTabMethod) extractVisibleImages(page playwright.Page) []BusinessImage {
+	selectors := []string{
+		`img[src*="googleusercontent.com"]`,
+		`img[src*="gstatic.com"]`,
+		`div[style*="googleusercontent.com"]`,    // Background images
+		`img[data-src*="googleusercontent.com"]`, // Lazy loaded
+		`a[data-photo-index] img`,                // Photo gallery links
+		`button[data-photo-index] img`,           // Photo buttons
+	}
+
+	var images []BusinessImage
+	urlsSeen := make(map[string]bool)
+
+	for _, selector := range selectors {
+		elements, err := page.Locator(selector).All()
+		if err != nil {
+			continue
+		}
+
+		fmt.Printf("DEBUG: Selector '%s' found %d elements\n", selector, len(elements))
+
+		for i, element := range elements {
+			// Try multiple ways to get URL
+			var url string
+
+			// Method 1: src attribute
+			if src, err := element.GetAttribute("src"); err == nil && src != "" {
+				url = src
+			}
+
+			// Method 2: data-src attribute
+			if url == "" {
+				if dataSrc, err := element.GetAttribute("data-src"); err == nil && dataSrc != "" {
+					url = dataSrc
+				}
+			}
+
+			// Method 3: background-image from style
+			if url == "" {
+				if style, err := element.GetAttribute("style"); err == nil && style != "" {
+					url = m.extractURLFromStyle(style)
+				}
+			}
+
+			if url == "" || urlsSeen[url] {
+				continue
+			}
+
+			if !m.isValidImageURL(url) {
+				continue
+			}
+
+			urlsSeen[url] = true
+			altText, _ := element.GetAttribute("alt")
+
+			images = append(images, BusinessImage{
+				URL:          m.enhanceImageURL(url),
+				ThumbnailURL: m.createThumbnailURL(url),
+				AltText:      altText,
+				Category:     "all",
+				Index:        i,
+			})
+		}
+	}
+
+	fmt.Printf("DEBUG: Extracted %d unique images from DOM\n", len(images))
+	return images
+}
+
+func (m *ScrollAllTabMethod) extractURLFromStyle(style string) string {
+	if start := strings.Index(style, "url("); start != -1 {
+		start += 4
+		if strings.HasPrefix(style[start:], `"`) || strings.HasPrefix(style[start:], `'`) {
+			start++
+		}
+
+		if end := strings.IndexAny(style[start:], `"')`); end != -1 {
+			url := style[start : start+end]
+			// Clean up HTML entities
+			url = strings.ReplaceAll(url, "&quot;", "")
+			url = strings.ReplaceAll(url, "&amp;", "&")
+			return url
+		}
+	}
+	return ""
+}
+
+func (m *ScrollAllTabMethod) isValidImageURL(url string) bool {
+	// Must contain Google image domains
+	if !strings.Contains(url, "googleusercontent.com") && !strings.Contains(url, "gstatic.com") {
+		return false
+	}
+
+	// Filter out junk images
+	junkPatterns := []string{
+		"loader",           // Loading spinners
+		"spinner",          // Loading animations
+		".gif",             // GIF files (usually UI elements/loaders)
+		"icon",             // UI icons
+		"logo",             // Logos
+		"marker",           // Map markers
+		"pin",              // Map pins
+		"avatar",           // User avatars (too small)
+		"=s32",             // 32px images (too small)
+		"=s40",             // 40px images (too small)
+		"=w35",             // 35px wide (too small)
+		"=w40",             // 40px wide (too small)
+		"=w50",             // 50px wide (too small)
+		"tactile/basepage", // UI elements
+		"basepage",         // Base page elements
+	}
+
+	for _, pattern := range junkPatterns {
+		if strings.Contains(strings.ToLower(url), pattern) {
+			return false
+		}
+	}
+
+	// Must be reasonably sized (at least 100px)
+	if strings.Contains(url, "=w") {
+		// Extract width from URL like =w80-h60
+		if parts := strings.Split(url, "=w"); len(parts) > 1 {
+			widthStr := strings.Split(parts[1], "-")[0]
+			width := 0
+			for _, r := range widthStr {
+				if r >= '0' && r <= '9' {
+					width = width*10 + int(r-'0')
+				} else {
+					break
+				}
+			}
+			if width > 0 && width < 100 {
+				return false // Too small
+			}
+		}
+	}
+
+	return true
+}
+
+func (m *ScrollAllTabMethod) enhanceImageURL(url string) string {
+	if strings.Contains(url, "googleusercontent.com") {
+		if strings.Contains(url, "=w") {
+			parts := strings.Split(url, "=w")
+			if len(parts) > 1 {
+				return parts[0] + "=w1920-h1080-k-no"
+			}
+		}
+		return url + "=w1920-h1080-k-no"
+	}
+	return url
+}
+
+func (m *ScrollAllTabMethod) createThumbnailURL(url string) string {
+	if strings.Contains(url, "googleusercontent.com") {
+		if strings.Contains(url, "=w") {
+			parts := strings.Split(url, "=w")
+			if len(parts) > 1 {
+				return parts[0] + "=w200-h200-c"
+			}
+		}
+		return url + "=w200-h200-c"
+	}
+	return url
 }

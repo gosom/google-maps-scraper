@@ -304,8 +304,8 @@ func (j *PlaceJob) extractImages(ctx context.Context, page playwright.Page, resp
 
 	log.Info(fmt.Sprintf("DEBUG: Multi-image extraction ENABLED for job %s - starting extraction", j.ID))
 
-	// Create a separate context for image extraction with longer timeout
-	imageCtx, imageCancel := context.WithTimeout(ctx, 90*time.Second) // Increased from 30s to 90s
+	// Create a separate context for image extraction with optimized timeout
+	imageCtx, imageCancel := context.WithTimeout(ctx, 30*time.Second) // Fast extraction should complete quickly
 	defer imageCancel()
 
 	imageExtractor := images.NewImageExtractor(page)

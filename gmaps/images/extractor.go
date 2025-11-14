@@ -1306,6 +1306,272 @@ func (e *ImageExtractor) GetMetadata() *ScrapingMetadata {
 	return e.metadata
 }
 
+// extractAllImagesViaScrolling extracts images by scrolling in "All" photos view (FAST, no dialogs)
+func (e *ImageExtractor) extractAllImagesViaScrolling(ctx context.Context) ([]BusinessImage, error) {
+	// Step 1: Try to navigate to photos section (but don't fail if it doesn't work)
+	if err := e.navigateToImagesSection(); err != nil {
+		fmt.Printf("DEBUG: Could not navigate to photos section: %v - will try to extract from current page\n", err)
+		// Don't return error - maybe images are already visible on the page
+	}
+
+	// Wait for initial images to load
+	time.Sleep(1 * time.Second)
+
+	// Step 2: Check if we're in a photo gallery (if not, skip tab selection)
+	if e.isInPhotoGallery() {
+		fmt.Printf("DEBUG: In photo gallery, ensuring 'All' tab selected\n")
+		e.ensureAllTabSelected()
+	} else {
+		fmt.Printf("DEBUG: Not in photo gallery view, extracting images from business page\n")
+	}
+
+	// Step 3: Scroll and collect all images
+	images, scrollActions, err := e.scrollAndCollectImages(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to scroll and collect images: %w", err)
+	}
+
+	e.metadata.ScrollActions = scrollActions
+	fmt.Printf("DEBUG: Collected %d images after %d scroll actions\n", len(images), scrollActions)
+
+	return images, nil
+}
+
+// isInPhotoGallery checks if we're currently in the photo gallery view
+func (e *ImageExtractor) isInPhotoGallery() bool {
+	// Check for tab elements that indicate we're in gallery
+	tabSelectors := []string{
+		`button[role="tab"]`,
+		`.hh2c6`, // Google Maps tab class
+	}
+
+	for _, selector := range tabSelectors {
+		if count, err := e.page.Locator(selector).Count(); err == nil && count > 0 {
+			return true
+		}
+	}
+
+	return false
+}
+
+// ensureAllTabSelected clicks "All" tab if it exists and isn't already selected
+func (e *ImageExtractor) ensureAllTabSelected() {
+	allTabSelectors := []string{
+		`button[role="tab"]:has-text("All")`,
+		`button[role="tab"][aria-label*="All"]`,
+		`button.hh2c6:has-text("All")`,
+	}
+
+	for _, selector := range allTabSelectors {
+		tab := e.page.Locator(selector).First()
+		if visible, _ := tab.IsVisible(); visible {
+			// Check if already selected
+			if selected, _ := tab.GetAttribute("aria-selected"); selected == "true" {
+				fmt.Printf("DEBUG: 'All' tab already selected\n")
+				return
+			}
+
+			// Click it
+			if err := tab.Click(); err == nil {
+				fmt.Printf("DEBUG: Clicked 'All' tab\n")
+				time.Sleep(500 * time.Millisecond)
+				return
+			}
+		}
+	}
+
+	fmt.Printf("DEBUG: No 'All' tab found or already in all photos view\n")
+}
+
+// scrollAndCollectImages scrolls the photo gallery and collects all visible image URLs
+func (e *ImageExtractor) scrollAndCollectImages(ctx context.Context) ([]BusinessImage, int, error) {
+	urlSet := make(map[string]bool) // Track unique URLs
+	var allImages []BusinessImage
+	scrollActions := 0
+	stableCount := 0
+	maxStableChecks := 3 // Stop after 3 scrolls with no new images
+	maxScrolls := 20     // Maximum scroll attempts
+
+	fmt.Printf("DEBUG: Starting to scroll and collect images...\n")
+
+	for scrollActions < maxScrolls {
+		select {
+		case <-ctx.Done():
+			return allImages, scrollActions, ctx.Err()
+		default:
+		}
+
+		// Get current image count before scroll
+		previousCount := len(urlSet)
+
+		// Perform scroll action
+		scrolled, err := e.scrollPhotoGallery()
+		if err != nil {
+			fmt.Printf("Warning: Scroll action failed: %v\n", err)
+		}
+
+		if scrolled {
+			scrollActions++
+
+			// Wait for images to load after scroll
+			time.Sleep(1 * time.Second)
+
+			// Extract newly visible images
+			newImages := e.extractVisibleImages()
+
+			// Add new unique images
+			for _, img := range newImages {
+				if !urlSet[img.URL] {
+					urlSet[img.URL] = true
+					allImages = append(allImages, img)
+				}
+			}
+
+			currentCount := len(urlSet)
+			newFound := currentCount - previousCount
+			fmt.Printf("DEBUG: Scroll %d: Found %d new images (total: %d)\n", scrollActions, newFound, currentCount)
+
+			// Check if we found new images
+			if newFound == 0 {
+				stableCount++
+				if stableCount >= maxStableChecks {
+					fmt.Printf("DEBUG: No new images after %d scrolls, stopping\n", maxStableChecks)
+					break
+				}
+			} else {
+				stableCount = 0 // Reset stable count when we find new images
+			}
+		} else {
+			// Can't scroll anymore (reached bottom)
+			fmt.Printf("DEBUG: Reached end of gallery after %d scrolls\n", scrollActions)
+			break
+		}
+	}
+
+	return allImages, scrollActions, nil
+}
+
+// scrollPhotoGallery scrolls within the photo gallery container
+func (e *ImageExtractor) scrollPhotoGallery() (bool, error) {
+	// Try to scroll the photo gallery container
+	scrolled, err := e.page.Evaluate(`() => {
+		// Find the scrollable photo gallery container
+		const gallerySelectors = [
+			'div[role="main"]',           // Main content area
+			'div.m6QErb.DxyBCb',          // Google Maps gallery class
+			'div[class*="gallery"]',       // Generic gallery
+			'div[jslog]',                  // Elements with jslog (Google uses this)
+		];
+		
+		let scrolled = false;
+		
+		for (const selector of gallerySelectors) {
+			const containers = document.querySelectorAll(selector);
+			for (const container of containers) {
+				// Check if this element is scrollable
+				if (container.scrollHeight > container.clientHeight) {
+					const beforeScroll = container.scrollTop;
+					container.scrollBy(0, 500); // Scroll down 500px
+					
+					// Check if scroll actually happened
+					if (container.scrollTop > beforeScroll) {
+						scrolled = true;
+						console.log('Scrolled container:', selector);
+						break;
+					}
+				}
+			}
+			if (scrolled) break;
+		}
+		
+		// Also try scrolling the window as fallback
+		if (!scrolled) {
+			const beforeScroll = window.scrollY;
+			window.scrollBy(0, 500);
+			scrolled = window.scrollY > beforeScroll;
+			if (scrolled) console.log('Scrolled window');
+		}
+		
+		return scrolled;
+	}`)
+
+	if err != nil {
+		return false, fmt.Errorf("scroll evaluation failed: %w", err)
+	}
+
+	scrolledBool, ok := scrolled.(bool)
+	if !ok {
+		return false, nil
+	}
+
+	return scrolledBool, nil
+}
+
+// extractVisibleImages extracts all currently visible image URLs from the gallery
+func (e *ImageExtractor) extractVisibleImages() []BusinessImage {
+	// Use multiple selectors to find all image elements
+	imageSelectors := []string{
+		`img[src*="googleusercontent.com"]`,
+		`img[src*="gstatic.com"]`,
+		`div[style*="googleusercontent.com"]`, // Background images
+	}
+
+	var images []BusinessImage
+	urlsSeen := make(map[string]bool)
+
+	for _, selector := range imageSelectors {
+		elements, err := e.page.Locator(selector).All()
+		if err != nil {
+			continue
+		}
+
+		for i, element := range elements {
+			// Extract URL from element
+			url := e.extractURLFromElement(element)
+			if url == "" || urlsSeen[url] {
+				continue
+			}
+
+			// Validate it's a valid Google image URL
+			if !isValidGoogleImageURL(url) {
+				continue
+			}
+
+			urlsSeen[url] = true
+
+			// Get additional attributes
+			altText, _ := element.GetAttribute("alt")
+
+			// Create business image
+			images = append(images, BusinessImage{
+				URL:          e.generateFullResolutionURL(url),
+				ThumbnailURL: generateThumbnailURL(url),
+				AltText:      altText,
+				Category:     "all", // All images from "All" tab
+				Index:        i,
+				Dimensions:   parseImageDimensions(url, element),
+			})
+		}
+	}
+
+	return images
+}
+
+// extractURLFromElement extracts image URL from an element (src or background-image)
+func (e *ImageExtractor) extractURLFromElement(element playwright.Locator) string {
+	// Try src attribute first
+	if src, err := element.GetAttribute("src"); err == nil && src != "" {
+		return src
+	}
+
+	// Try background-image from style
+	if style, err := element.GetAttribute("style"); err == nil && style != "" {
+		return e.extractURLFromStyle(style)
+	}
+
+	return ""
+}
+
 // GetLinkSources provides backward compatibility with the original function signature
 func GetLinkSources(page playwright.Page) ([]BusinessImage, error) {
 	extractor := NewImageExtractor(page)
