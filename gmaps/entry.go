@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"iter"
 	"math"
+	"net/url"
 	"runtime/debug"
 	"slices"
 	"strconv"
@@ -315,6 +316,11 @@ func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error)
 	entry.OpenHours = getHours(darray)
 	entry.PopularTimes = getPopularTimes(darray)
 	entry.WebSite = getNthElementAndCast[string](darray, 7, 0)
+	// Clean Google redirect URL
+	if entry.WebSite != "" {
+		cleanURL, _ := extractActualURL(entry.WebSite)
+		entry.WebSite = cleanURL
+	}
 	entry.Phone = getNthElementAndCast[string](darray, 178, 0, 0)
 	entry.PlusCode = getNthElementAndCast[string](darray, 183, 2, 2, 0)
 	entry.ReviewRating = getNthElementAndCast[float64](darray, 4, 7)
@@ -680,6 +686,28 @@ func decodeURL(url string) (string, error) {
 	}
 
 	return unquoted, nil
+}
+
+// extractActualURL cleans URLs that Google redirects using the path /url?q=<real_url>
+func extractActualURL(googleURL string) (string, error) {
+	// If it doesn't start with /url?q=, return as is
+	if !strings.HasPrefix(googleURL, "/url?q=") {
+		return googleURL, nil
+	}
+
+	// Parse the URL
+	parsedURL, err := url.Parse(googleURL)
+	if err != nil {
+		return googleURL, nil // Return original if parsing fails
+	}
+
+	// Extract the 'q' parameter that contains the real URL
+	actualURL := parsedURL.Query().Get("q")
+	if actualURL == "" {
+		return googleURL, nil // Return original if there's no 'q' parameter
+	}
+
+	return actualURL, nil
 }
 
 type EntryWithDistance struct {
