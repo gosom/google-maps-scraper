@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"iter"
 	"math"
+	"net/url"
 	"runtime/debug"
 	"slices"
 	"strconv"
@@ -314,7 +315,7 @@ func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error)
 	)
 	entry.OpenHours = getHours(darray)
 	entry.PopularTimes = getPopularTimes(darray)
-	entry.WebSite = getNthElementAndCast[string](darray, 7, 0)
+	entry.WebSite = extractWebsite(darray)
 	entry.Phone = getNthElementAndCast[string](darray, 178, 0, 0)
 	entry.PlusCode = getNthElementAndCast[string](darray, 183, 2, 2, 0)
 	entry.ReviewRating = getNthElementAndCast[float64](darray, 4, 7)
@@ -422,6 +423,26 @@ func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error)
 	entry.UserReviews = make([]Review, 0, len(reviewsI))
 
 	return entry, nil
+}
+
+func extractWebsite(darray []any) string {
+	raw := getNthElementAndCast[string](darray, 7, 0)
+
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+
+	q := u.Query().Get("q")
+
+	if q != "" {
+		decoded, err := url.QueryUnescape(q)
+		if err == nil {
+			return decoded
+		}
+	}
+
+	return raw
 }
 
 func parseReviews(reviewsI []any) []Review {
