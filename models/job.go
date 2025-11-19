@@ -7,17 +7,17 @@ import (
 
 // JobData contains the configurable options for a job
 type JobData struct {
-	Keywords   []string      `json:"keywords"`
-	Lang       string        `json:"lang"`
-	Depth      int           `json:"depth"`
+	Keywords   []string      `json:"keywords" validate:"required,min=1,max=5"`
+	Lang       string        `json:"lang" validate:"required,len=2"`
+	Depth      int           `json:"depth" validate:"min=1,max=20"`
 	Email      bool          `json:"email"`
 	Images     bool          `json:"images"`
-	ReviewsMax int           `json:"reviews_max"` // Maximum number of reviews to scrape per location
-	MaxResults int           `json:"max_results"` // Maximum number of locations to scrape (0 = unlimited)
-	Lat        string        `json:"lat"`
-	Lon        string        `json:"lon"`
-	Zoom       int           `json:"zoom"`
-	Radius     int           `json:"radius"`
+	ReviewsMax int           `json:"reviews_max" validate:"min=0,max=9999"` // Max Reviews: 0-9999 (0 = don't scrape reviews)
+	MaxResults int           `json:"max_results" validate:"min=0,max=1000"` // Max results: 0-1000 (0 = unlimited)
+	Lat        string        `json:"lat" validate:"omitempty,latitude"`
+	Lon        string        `json:"lon" validate:"omitempty,longitude"`
+	Zoom       int           `json:"zoom" validate:"omitempty,min=0,max=21"`
+	Radius     int           `json:"radius" validate:"omitempty,min=0"`
 	MaxTime    time.Duration `json:"max_time"`
 	FastMode   bool          `json:"fast_mode"`
 	Proxies    []string      `json:"proxies"`

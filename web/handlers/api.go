@@ -12,10 +12,14 @@ import (
 	"github.com/gosom/google-maps-scraper/web/auth"
 	webservices "github.com/gosom/google-maps-scraper/web/services"
 	webutils "github.com/gosom/google-maps-scraper/web/utils"
+
+	"github.com/go-playground/validator/v10"
 )
 
+var validate = validator.New()
+
 type apiScrapeRequest struct {
-	Name string
+	Name string `validate:"required"`
 	models.JobData
 }
 
@@ -28,6 +32,11 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 	var req apiScrapeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: err.Error()})
+		return
+	}
+
+	if err := validate.Struct(req); err != nil {
+		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: err.Error()})
 		return
 	}
 	if h.Deps.Auth == nil {
@@ -393,6 +402,11 @@ func (h *APIHandlers) EstimateJobCost(w http.ResponseWriter, r *http.Request) {
 	var req apiScrapeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: err.Error()})
+		return
+	}
+
+	if err := validate.Struct(req); err != nil {
+		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: err.Error()})
 		return
 	}
 
