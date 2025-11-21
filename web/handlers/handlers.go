@@ -9,35 +9,40 @@ import (
 
 	"github.com/gosom/google-maps-scraper/billing"
 	"github.com/gosom/google-maps-scraper/models"
+	"github.com/gosom/google-maps-scraper/pkg/googlesheets"
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/web/auth"
 )
 
 // Dependencies aggregates shared services used by handlers.
 type Dependencies struct {
-	Logger     *log.Logger
-	DB         *sql.DB
-	BillingSvc *billing.Service
-	Templates  map[string]*template.Template
-	Auth       *auth.AuthMiddleware
-	App        JobService
-	UserRepo   postgres.UserRepository
-	ResultsSvc ResultsService
+	Logger          *log.Logger
+	DB              *sql.DB
+	BillingSvc      *billing.Service
+	Templates       map[string]*template.Template
+	Auth            *auth.AuthMiddleware
+	App             JobService
+	UserRepo        postgres.UserRepository
+	ResultsSvc      ResultsService
+	IntegrationRepo models.IntegrationRepository
+	GoogleSheetsSvc *googlesheets.Service
 }
 
 // HandlerGroup groups all handler categories for routing setup.
 type HandlerGroup struct {
-	Web     *WebHandlers
-	API     *APIHandlers
-	Billing *BillingHandlers
+	Web         *WebHandlers
+	API         *APIHandlers
+	Billing     *BillingHandlers
+	Integration *IntegrationHandler
 }
 
 // NewHandlerGroup constructs a HandlerGroup with initialized handlers.
 func NewHandlerGroup(deps Dependencies) *HandlerGroup {
 	return &HandlerGroup{
-		Web:     &WebHandlers{Deps: deps},
-		API:     &APIHandlers{Deps: deps},
-		Billing: &BillingHandlers{Deps: deps},
+		Web:         &WebHandlers{Deps: deps},
+		API:         &APIHandlers{Deps: deps},
+		Billing:     &BillingHandlers{Deps: deps},
+		Integration: NewIntegrationHandler(deps.IntegrationRepo, deps.App, deps.GoogleSheetsSvc),
 	}
 }
 

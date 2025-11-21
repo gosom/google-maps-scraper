@@ -45,20 +45,27 @@ func NewAuthMiddleware(clerkAPIKey string, userRepo postgres.UserRepository) (*A
 // Authenticate is the middleware function for authentication
 func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Get token from Authorization header
-		authHeader := r.Header.Get(AuthHeaderName)
-		if authHeader == "" {
-			http.Error(w, "Unauthorized: missing authorization header", http.StatusUnauthorized)
-			return
-		}
+		var token string
 
-		// Extract token from Bearer format
-		parts := strings.Split(authHeader, " ")
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			http.Error(w, "Unauthorized: invalid authorization format", http.StatusUnauthorized)
-			return
+		// Try to get token from Authorization header first
+		authHeader := r.Header.Get(AuthHeaderName)
+		if authHeader != "" {
+			// Extract token from Bearer format
+			parts := strings.Split(authHeader, " ")
+			if len(parts) != 2 || parts[0] != "Bearer" {
+				http.Error(w, "Unauthorized: invalid authorization format", http.StatusUnauthorized)
+				return
+			}
+			token = parts[1]
+		} else {
+			// Fallback to __session cookie (for OAuth callbacks and same-origin requests)
+			sessionCookie, err := r.Cookie("__session")
+			if err != nil || sessionCookie.Value == "" {
+				http.Error(w, "Unauthorized: missing authorization header", http.StatusUnauthorized)
+				return
+			}
+			token = sessionCookie.Value
 		}
-		token := parts[1]
 
 		// Verify token with Clerk - retry once if clock skew error
 		claims, err := m.client.VerifyToken(token)

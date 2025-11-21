@@ -8,3 +8,5 @@ CREATE INDEX IF NOT EXISTS idx_jobs_failure_reason ON jobs(failure_reason) WHERE
 
 
 
+
+

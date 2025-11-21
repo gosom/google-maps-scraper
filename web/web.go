@@ -20,6 +20,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/gosom/google-maps-scraper/billing"
 	"github.com/gosom/google-maps-scraper/config"
+	"github.com/gosom/google-maps-scraper/pkg/googlesheets"
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/web/auth"
 	webhandlers "github.com/gosom/google-maps-scraper/web/handlers"
@@ -93,13 +94,15 @@ func New(cfg ServerConfig) (*Server, error) {
 
 	// Initialize modular handler group (incremental migration)
 	deps := webhandlers.Dependencies{
-		Logger:     ans.logger,
-		DB:         ans.db,
-		BillingSvc: ans.billingSvc,
-		Templates:  ans.tmpl,
-		Auth:       ans.authMiddleware,
-		App:        ans.svc,
-		ResultsSvc: webservices.NewResultsService(ans.db),
+		Logger:          ans.logger,
+		DB:              ans.db,
+		BillingSvc:      ans.billingSvc,
+		Templates:       ans.tmpl,
+		Auth:            ans.authMiddleware,
+		App:             ans.svc,
+		ResultsSvc:      webservices.NewResultsService(ans.db),
+		IntegrationRepo: postgres.NewIntegrationRepository(ans.db),
+		GoogleSheetsSvc: googlesheets.NewService(),
 	}
 	hg := webhandlers.NewHandlerGroup(deps)
 
@@ -118,6 +121,16 @@ func New(cfg ServerConfig) (*Server, error) {
 
 	// API documentation (public access)
 	router.HandleFunc("/api/docs", hg.Web.Redoc).Methods(http.MethodGet)
+
+	// Public API routes (no authentication required)
+	publicAPIRouter := router.PathPrefix("/api/v1").Subrouter()
+	publicAPIRouter.Use(func(next http.Handler) http.Handler {
+		return webmiddleware.RequestLogger(next)
+	})
+
+	// OAuth auth endpoint (public - initiates OAuth flow)
+	// User clicks "Connect" in the webapp and is redirected here
+	publicAPIRouter.HandleFunc("/integrations/google/auth", hg.Integration.HandleGoogleAuth).Methods(http.MethodGet)
 
 	// API routes with authentication if available
 	apiRouter := router.PathPrefix("/api/v1").Subrouter()
@@ -144,6 +157,17 @@ func New(cfg ServerConfig) (*Server, error) {
 	apiRouter.HandleFunc("/jobs/{id}/costs", hg.API.GetJobCosts).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/estimate", hg.API.EstimateJobCost).Methods(http.MethodPost)
 	apiRouter.HandleFunc("/results", hg.API.GetUserResults).Methods(http.MethodGet)
+
+	// Protected integration endpoints (require authentication)
+	// Callback is protected because:
+	// 1. User must be logged in to initiate OAuth
+	// 2. Browser automatically sends __session cookie with the redirect (SameSite=Lax)
+	// 3. Auth middleware verifies the session cookie
+	// 4. User ID is available in context via auth.GetUserID()
+	apiRouter.HandleFunc("/integrations/google/callback", hg.Integration.HandleGoogleCallback).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/integrations/google/status", hg.Integration.HandleGetStatus).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/integrations/config", hg.Integration.HandleGetConfig).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/jobs/{id}/export/google-sheets", hg.Integration.HandleExportJob).Methods(http.MethodPost)
 
 	// Credit endpoints (if billing service is available)
 	if ans.billingSvc != nil {
@@ -285,18 +309,22 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) {
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Set CORS headers
-		w.Header().Set("Access-Control-Allow-Origin", "*") // Or specific origin like "http://localhost:3000"
+		origin := r.Header.Get("Origin")
+		// Allow localhost origins for development
+		if origin == "http://localhost:3000" || origin == "http://localhost:3001" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		} else {
+			// For production, you should set specific allowed origins
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 
-		// Handle preflight requests
-		if r.Method == "OPTIONS" {
+		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-
 		next.ServeHTTP(w, r)
 	})
 }

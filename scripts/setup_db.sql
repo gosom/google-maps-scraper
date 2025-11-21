@@ -1,5 +1,5 @@
 -- Run this script as a database superuser to set up the database and permissions correctly
--- Example: psql -h localhost -p 5432 -U postgres -f setup_db.sql
+-- command: psql -h localhost -p 5432 -U postgres -f setup_db.sql
 
 -- Create database if it doesn't exist
 SELECT 'CREATE DATABASE google_maps_scraper' 

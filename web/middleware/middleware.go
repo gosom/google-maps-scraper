@@ -19,7 +19,14 @@ func Chain(h http.Handler, mws ...func(http.Handler) http.Handler) http.Handler 
 // CORS replicates the existing CORS behavior.
 func CORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+		// Allow localhost origins for development
+		if origin == "http://localhost:3000" || origin == "http://localhost:3001" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		} else {
+			// For production, you should set specific allowed origins
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")

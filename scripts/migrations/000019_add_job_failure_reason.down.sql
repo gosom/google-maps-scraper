@@ -6,3 +6,5 @@ ALTER TABLE jobs DROP COLUMN IF EXISTS failure_reason;
 
 
 
+
+
