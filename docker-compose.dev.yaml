@@ -1,31 +1,44 @@
 services:
-  db:
-    image: postgres:15.2-alpine
+  brezel-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    platform: linux/arm64
+    container_name: brezelscraper-go-api-dev
     environment:
-      - POSTGRES_USER=${POSTGRES_USER:-postgres}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - DSN=${DSN}
+      - DATA_FOLDER=${DATA_FOLDER:-/gmapsdata}
+      - WEB_ADDR=${WEB_ADDR:-:8080}
+      - LOG_LEVEL=${LOG_LEVEL:-debug}
+      - CONCURRENCY=${CONCURRENCY:-1}
+      - CLERK_API_KEY=${CLERK_API_KEY}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+      - DISABLE_TELEMETRY=1
+    command: [ "-web" ]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
-      - '127.0.0.1:5432:5432'
-    expose:
-      - 5432
-    volumes: 
-      - gmapsdev:/var/lib/postgresql/data
-    restart: "unless-stopped"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 2s
-      timeout: 30s
-      retries: 5
-  migrate:
-    image: migrate/migrate
+      - "8080:8080"
     volumes:
-      - ./scripts/migrations:/migrations
-    command: ["-path", "/migrations", "-database",  "postgres://postgres:postgres@db:5432/postgres?sslmode=disable", "up"]
-    healthcheck:
-      test: "exit 0"
-    depends_on:
-      db:
-        condition: service_healthy
+      - ./gmapsdata:/gmapsdata
+    restart: unless-stopped
 
-volumes:
-  gmapsdev:
+  frontend:
+    build:
+      context: ../google-maps-scraper-webapp
+      dockerfile: Dockerfile
+    platform: linux/arm64
+    container_name: brezelscraper-webapp-dev
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8080
+      - NEXT_PUBLIC_ENVIRONMENT=development
+      - NODE_ENV=development
+      - CLERK_SECRET_KEY=${CLERK_SECRET_KEY}
+      - NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+    restart: unless-stopped
+    depends_on:
+      brezel-api:
+        condition: service_started

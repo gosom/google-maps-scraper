@@ -149,8 +149,12 @@ jobs:
           EOF
           
           echo "✅ Created frontend environment configuration"
+          
+          # Copy to .env for Docker build
+          cp .env.staging .env
+          
           echo "Frontend environment variables:"
-          cat .env.staging
+          cat .env
 
       - name: Build and push Frontend Docker image
         if: steps.check-frontend.outputs.frontend_exists == 'true'

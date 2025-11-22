@@ -1,0 +1,29 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+brezel-api
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Data and logs
+gmapsdata/
+webdata/
+logs/
+*.log
+migration_log.txt
+
+# IDE
+.vscode
+.idea
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
