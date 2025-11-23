@@ -44,6 +44,8 @@ jobs:
       run: |
         gosec -conf .gosec.json -fmt sarif -out gosec-report.sarif ./...
         gosec -conf .gosec.json -fmt json -out gosec-report.json ./...
+        # Workaround for invalid SARIF output from gosec (artifactChanges not an array)
+        jq 'del(.runs[].results[].fixes)' gosec-report.sarif > gosec-report-clean.sarif && mv gosec-report-clean.sarif gosec-report.sarif
     
     - name: Upload SARIF report to GitHub Security
       uses: github/codeql-action/upload-sarif@v4
