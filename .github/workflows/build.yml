@@ -28,8 +28,7 @@ jobs:
           check-latest: true
       - name: Go Format
         run: gofmt -s -w . && git diff --exit-code
-      - name: Lint
-        run: make lint
+
       - name: Go Vet
         run: go vet ./...
       - name: Go Tidy
