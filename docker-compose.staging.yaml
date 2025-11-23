@@ -13,10 +13,11 @@ services:
       - CLERK_API_KEY=${CLERK_API_KEY}
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       - STRIPE_SUCCESS_URL=${STRIPE_SUCCESS_URL:-https://staging.brezel.ai/dashboard/credits?session_id={CHECKOUT_SESSION_ID}}
       - STRIPE_CANCEL_URL=${STRIPE_CANCEL_URL:-https://staging.brezel.ai/dashboard/credits}
       - DISABLE_TELEMETRY=${DISABLE_TELEMETRY:-0}
-    command: ["-web"]
+    command: [ "-web" ]
     ports:
       - "8080:8080"
     volumes:
@@ -25,15 +26,15 @@ services:
     networks:
       - gmaps
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
       interval: 30s
       timeout: 10s
-      start_period: 60s  # Increased for single-core server
+      start_period: 60s # Increased for single-core server
       retries: 5
     deploy:
       resources:
         limits:
-          memory: 512M  # Limit memory usage on single-core server
+          memory: 512M # Limit memory usage on single-core server
         reservations:
           memory: 256M
 
@@ -59,7 +60,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M  # Limit memory usage for frontend
+          memory: 256M # Limit memory usage for frontend
         reservations:
           memory: 128M
 

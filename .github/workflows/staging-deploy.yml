@@ -240,17 +240,45 @@ jobs:
             # 🔐 INJECT SECRETS FROM GITHUB ACTIONS
             echo "🔐 Injecting secrets from GitHub Actions..."
             
-            # Database password
-            if [ ! -z "${{ secrets.STAGING_POSTGRES_PASSWORD }}" ]; then
-              echo "✅ Updating database password..."
-              sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=${{ secrets.STAGING_POSTGRES_PASSWORD }}/" .env
-              sed -i "s/scraper:strongpassword/scraper:${{ secrets.STAGING_POSTGRES_PASSWORD }}/" .env
+            # Database DSN
+            if [ ! -z "${{ secrets.DSN }}" ]; then
+              echo "✅ Updating DSN..."
+              sed -i "s|^DSN=.*|DSN=${{ secrets.DSN }}|" .env
             fi
             
             # Clerk API key (for backend)
-            if [ ! -z "${{ secrets.STAGING_CLERK_API_KEY }}" ]; then
+            if [ ! -z "${{ secrets.CLERK_API_KEY }}" ]; then
               echo "✅ Updating Clerk API key..."
-              sed -i "s/^CLERK_API_KEY=.*/CLERK_API_KEY=${{ secrets.STAGING_CLERK_API_KEY }}/" .env
+              sed -i "s/^CLERK_API_KEY=.*/CLERK_API_KEY=${{ secrets.CLERK_API_KEY }}/" .env
+            fi
+            
+            # Stripe Secrets
+            if [ ! -z "${{ secrets.STRIPE_SECRET_KEY }}" ]; then
+              echo "✅ Updating Stripe Secret Key..."
+              if grep -q "^STRIPE_SECRET_KEY=" .env; then
+                sed -i "s/^STRIPE_SECRET_KEY=.*/STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}/" .env
+              else
+                echo "STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}" >> .env
+              fi
+            fi
+            
+            if [ ! -z "${{ secrets.STRIPE_WEBHOOK_SECRET }}" ]; then
+              echo "✅ Updating Stripe Webhook Secret..."
+              if grep -q "^STRIPE_WEBHOOK_SECRET=" .env; then
+                sed -i "s/^STRIPE_WEBHOOK_SECRET=.*/STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}/" .env
+              else
+                echo "STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}" >> .env
+              fi
+            fi
+
+            # Google Client Secret
+            if [ ! -z "${{ secrets.GOOGLE_CLIENT_SECRET }}" ]; then
+              echo "✅ Updating Google Client Secret..."
+              if grep -q "^GOOGLE_CLIENT_SECRET=" .env; then
+                sed -i "s/^GOOGLE_CLIENT_SECRET=.*/GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}/" .env
+              else
+                echo "GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}" >> .env
+              fi
             fi
             
             # 🔑 Clerk Secret Key (for frontend middleware)
@@ -272,7 +300,36 @@ jobs:
                 echo "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ secrets.STAGING_CLERK_PUBLISHABLE_KEY }}" >> .env
               fi
             fi
-            
+
+            # 💳 Stripe Secret Key
+            if [ ! -z "${{ secrets.STAGING_STRIPE_SECRET_KEY }}" ]; then
+              echo "✅ Updating Stripe secret key..."
+              if grep -q "^STRIPE_SECRET_KEY=" .env; then
+                sed -i "s/^STRIPE_SECRET_KEY=.*/STRIPE_SECRET_KEY=${{ secrets.STAGING_STRIPE_SECRET_KEY }}/" .env
+              else
+                echo "STRIPE_SECRET_KEY=${{ secrets.STAGING_STRIPE_SECRET_KEY }}" >> .env
+              fi
+            fi
+
+            # ☁️ AWS Access Keys
+            if [ ! -z "${{ secrets.STAGING_AWS_ACCESS_KEY_ID }}" ]; then
+              echo "✅ Updating AWS access key ID..."
+              if grep -q "^AWS_ACCESS_KEY_ID=" .env; then
+                sed -i "s/^AWS_ACCESS_KEY_ID=.*/AWS_ACCESS_KEY_ID=${{ secrets.STAGING_AWS_ACCESS_KEY_ID }}/" .env
+              else
+                echo "AWS_ACCESS_KEY_ID=${{ secrets.STAGING_AWS_ACCESS_KEY_ID }}" >> .env
+              fi
+            fi
+
+            if [ ! -z "${{ secrets.STAGING_AWS_SECRET_ACCESS_KEY }}" ]; then
+              echo "✅ Updating AWS secret access key..."
+              if grep -q "^AWS_SECRET_ACCESS_KEY=" .env; then
+                sed -i "s/^AWS_SECRET_ACCESS_KEY=.*/AWS_SECRET_ACCESS_KEY=${{ secrets.STAGING_AWS_SECRET_ACCESS_KEY }}/" .env
+              else
+                echo "AWS_SECRET_ACCESS_KEY=${{ secrets.STAGING_AWS_SECRET_ACCESS_KEY }}" >> .env
+              fi
+            fi
+
             # Optimize for single-core server
             CPU_CORES=$(nproc)
             echo "Server has $CPU_CORES CPU cores"
