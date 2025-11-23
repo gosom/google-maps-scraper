@@ -208,7 +208,7 @@ func (ps *Server) handleHTTPS(clientConn net.Conn, target string) {
 		proxyConn, err = ps.tryFallbackProxies(target)
 		if err != nil {
 			log.Printf("❌ All proxies failed for HTTPS %s: %v", target, err)
-			clientConn.Write([]byte("HTTP/1.1 500 All proxies failed\r\n\r\n"))
+			_, _ = clientConn.Write([]byte("HTTP/1.1 500 All proxies failed\r\n\r\n"))
 			return
 		}
 	}
@@ -284,7 +284,7 @@ func (ps *Server) handleHTTP(clientConn net.Conn, reader *bufio.Reader, firstLin
 	}
 
 	// Forward response back to client
-	io.Copy(clientConn, proxyConn)
+	_, _ = io.Copy(clientConn, proxyConn)
 }
 
 func (ps *Server) tunnelData(clientConn, proxyConn net.Conn) {
@@ -294,14 +294,14 @@ func (ps *Server) tunnelData(clientConn, proxyConn net.Conn) {
 	// Client to proxy
 	go func() {
 		defer wg.Done()
-		io.Copy(proxyConn, clientConn)
+		_, _ = io.Copy(proxyConn, clientConn)
 		proxyConn.Close()
 	}()
 
 	// Proxy to client
 	go func() {
 		defer wg.Done()
-		io.Copy(clientConn, proxyConn)
+		_, _ = io.Copy(clientConn, proxyConn)
 		clientConn.Close()
 	}()
 

@@ -233,7 +233,7 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 		log.Printf("ERROR: Failed to begin transaction: %v", err)
 		return 500, fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Get current balance before update for accurate transaction records
 	// IMPROVED: Handle potential NULL values with COALESCE
@@ -321,7 +321,7 @@ func (s *Service) handleCheckoutSessionExpired(ctx context.Context, event stripe
 		log.Printf("ERROR: Failed to begin transaction for expired session: %v", err)
 		return 500, fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Update payment status to canceled
 	const upd = `UPDATE stripe_payments SET status='canceled', updated_at=NOW() WHERE stripe_checkout_session_id=$1`
@@ -401,7 +401,7 @@ func (s *Service) ReconcileSession(ctx context.Context, sessionID string) error 
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Get current balance with row lock
 	var currentBalance float64
@@ -460,7 +460,7 @@ func (s *Service) ChargeEvent(ctx context.Context, userID, jobID, eventType stri
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Insert billing event; trigger resolves pricing and totals
 	var (
@@ -621,7 +621,7 @@ func (s *Service) ChargeAllJobEvents(ctx context.Context, userID, jobID string, 
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback() // Rollback if we don't commit
+	defer func() { _ = tx.Rollback() }() // Rollback if we don't commit
 
 	// Helper function to charge an event within this transaction
 	chargeEventInTx := func(eventType string, quantity int, idempotencyKey string) error {

@@ -164,7 +164,7 @@ func (h *IntegrationHandler) HandleGetStatus(w http.ResponseWriter, r *http.Requ
 			// For now, if error, we assume not connected or error.
 			// But getHTTPClient returns error if not found.
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"connected": false}`))
+			_, _ = w.Write([]byte(`{"connected": false}`))
 			return
 		}
 		http.Error(w, "Failed to get integration client: "+err.Error(), http.StatusInternalServerError)
@@ -177,7 +177,7 @@ func (h *IntegrationHandler) HandleGetStatus(w http.ResponseWriter, r *http.Requ
 		// If we can't get info, maybe token is revoked or expired and refresh failed.
 		// We return connected: true but unknown email to indicate the link exists in DB.
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"connected": true, "email": "Unknown"}`))
+		_, _ = w.Write([]byte(`{"connected": true, "email": "Unknown"}`))
 		return
 	}
 
@@ -305,5 +305,5 @@ func (h *IntegrationHandler) HandleGetConfig(w http.ResponseWriter, r *http.Requ
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(config)
+	_ = json.NewEncoder(w).Encode(config)
 }

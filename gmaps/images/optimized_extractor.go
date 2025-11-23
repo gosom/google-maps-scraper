@@ -520,7 +520,7 @@ func (m *TabBasedMethod) extractImagesFromCurrentTab(ctx context.Context, page p
 func (m *TabBasedMethod) performMinimalScroll(page playwright.Page) {
 	// Perform just a few scroll actions
 	for i := 0; i < 2; i++ {
-		page.Evaluate(`() => {
+		_, _ = page.Evaluate(`() => {
 			window.scrollBy(0, 300);
 			const containers = document.querySelectorAll('[role="main"], .gallery-container');
 			containers.forEach(c => c.scrollTop += 300);
