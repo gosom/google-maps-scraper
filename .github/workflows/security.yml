@@ -46,7 +46,7 @@ jobs:
         gosec -conf .gosec.json -fmt json -out gosec-report.json ./...
     
     - name: Upload SARIF report to GitHub Security
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@v4
       if: always()
       with:
         sarif_file: gosec-report.sarif
