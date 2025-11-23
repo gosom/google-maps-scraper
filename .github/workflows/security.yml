@@ -17,6 +17,7 @@ jobs:
     permissions:
       contents: read
       security-events: write  # Required for SARIF upload
+      pull-requests: write    # Required for commenting on PRs
       
     steps:
     - name: Checkout code
@@ -122,4 +123,5 @@ jobs:
     
     - name: Run govulncheck
       run: govulncheck -show verbose ./...
+
 
