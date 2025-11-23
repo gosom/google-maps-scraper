@@ -547,9 +547,9 @@ func (s *Service) ChargeContactDetails(ctx context.Context, userID, jobID string
 
 // BillingCounts represents the counts of billable items in a job's results.
 type BillingCounts struct {
-	TotalReviews        int
-	TotalImages         int
-	PlacesWithContacts  int
+	TotalReviews       int
+	TotalImages        int
+	PlacesWithContacts int
 }
 
 // CountBillableItems counts reviews, images, and contact details from job results.

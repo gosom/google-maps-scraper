@@ -7,20 +7,20 @@ import (
 
 // JobFile represents a file (CSV, JSON, etc.) stored in S3 for a job
 type JobFile struct {
-	ID            string
-	JobID         string
-	UserID        string
-	FileType      string // csv, json, xlsx, log, archive
-	BucketName    string
-	ObjectKey     string
-	VersionID     *string // S3 version ID if bucket versioning is enabled
-	ETag          string  // S3 ETag for integrity verification
-	SizeBytes     int64
-	MimeType      string
-	Status        string // uploading, available, failed, archived, deleted
-	ErrorMessage  *string
-	CreatedAt     time.Time
-	UploadedAt    *time.Time
+	ID             string
+	JobID          string
+	UserID         string
+	FileType       string // csv, json, xlsx, log, archive
+	BucketName     string
+	ObjectKey      string
+	VersionID      *string // S3 version ID if bucket versioning is enabled
+	ETag           string  // S3 ETag for integrity verification
+	SizeBytes      int64
+	MimeType       string
+	Status         string // uploading, available, failed, archived, deleted
+	ErrorMessage   *string
+	CreatedAt      time.Time
+	UploadedAt     *time.Time
 	LastAccessedAt *time.Time
 }
 

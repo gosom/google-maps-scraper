@@ -27,7 +27,7 @@ func New(accessKey, secretKey, region string) *Uploader {
 	cfg, err := config.LoadDefaultConfig(context.Background(),
 		config.WithCredentialsProvider(creds),
 		config.WithRegion(region),
-		config.WithRetryMaxAttempts(3), // Retry up to 3 times for transient failures
+		config.WithRetryMaxAttempts(3),              // Retry up to 3 times for transient failures
 		config.WithRetryMode(aws.RetryModeAdaptive), // Use adaptive retry mode
 	)
 	if err != nil {
