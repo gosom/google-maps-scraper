@@ -2,3 +2,21 @@ cache/
 vendor
 bin
 webdata/
+# File di output scraping (CSV)
+output/*.csv
+
+# File di input personalizzati (opzionale - rimuovi se vuoi versionarli)
+# input/*.txt
+
+# File temporanei
+*.tmp
+*.bak
+
+# Log
+*.log
+
+# Binary compilato
+google-maps-scraper
+
+# Cache
+cache/
