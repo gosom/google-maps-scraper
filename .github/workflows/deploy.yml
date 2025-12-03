@@ -160,6 +160,34 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set API URL for build
+        id: api-config
+        run: |
+          # Set the API URL as a step output (more reliable than env vars)
+          echo "api_url=https://staging.brezel.ai" >> $GITHUB_OUTPUT
+          echo "API URL set to: https://staging.brezel.ai"
+
+      - name: Clean environment files
+        if: env.FRONTEND_EXISTS == 'true'
+        run: |
+          echo "Removing any .env files that could conflict with build-args..."
+          rm -f frontend/.env frontend/.env.* 2>/dev/null || true
+          
+          echo "Creating .dockerignore to prevent any remaining env files..."
+          cat > frontend/.dockerignore << 'EOF'
+          .env
+          .env.*
+          .env.local
+          .env.staging
+          .env.production
+          node_modules
+          .next
+          .git
+          EOF
+          
+          echo "Contents of frontend directory:"
+          ls -la frontend/
+
       - name: Build and push Frontend
         if: env.FRONTEND_EXISTS == 'true'
         uses: docker/build-push-action@v6
@@ -175,11 +203,12 @@ jobs:
           build-args: |
             CLERK_SECRET_KEY=${{ secrets.CLERK_SECRET_KEY }}
             NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
-            NEXT_PUBLIC_API_URL=NEXT_PUBLIC_API_URL=https://staging.brezel.ai
+            NEXT_PUBLIC_API_URL=${{ steps.api-config.outputs.api_url }}
             NEXT_PUBLIC_ENVIRONMENT=staging
             NODE_ENV=production
             BUILD_DATE=${{ needs.setup.outputs.build_timestamp }}
             VERSION=${{ steps.frontend-prep.outputs.frontend_version }}
+            SKIP_ENV_VALIDATION=1
 
   deploy-staging:
     name: Deploy to Staging
@@ -376,7 +405,7 @@ jobs:
             exit 1
           }
           
-          echo "Smoke tests passed!"
+          echo "Smoke tests passed"
 
       - name: Notify on failure
         if: failure()
