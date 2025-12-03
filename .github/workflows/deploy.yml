@@ -175,7 +175,7 @@ jobs:
           build-args: |
             CLERK_SECRET_KEY=${{ secrets.CLERK_SECRET_KEY }}
             NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
-            NEXT_PUBLIC_API_URL=http://brezelscraper-backend:8080
+            NEXT_PUBLIC_API_URL=NEXT_PUBLIC_API_URL=https://staging.brezel.ai
             NEXT_PUBLIC_ENVIRONMENT=staging
             NODE_ENV=production
             BUILD_DATE=${{ needs.setup.outputs.build_timestamp }}
@@ -366,7 +366,7 @@ jobs:
       - name: Smoke tests
         if: success()
         run: |
-          echo "🧪 Running smoke tests..."
+          echo "Running smoke tests..."
           
           STAGING_URL="${{ secrets.STAGING_URL || 'https://staging.brezel.ai' }}"
           
@@ -376,7 +376,7 @@ jobs:
             exit 1
           }
           
-          echo "✅ Smoke tests passed"
+          echo "Smoke tests passed!"
 
       - name: Notify on failure
         if: failure()
