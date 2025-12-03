@@ -208,7 +208,6 @@ jobs:
             NODE_ENV=production
             BUILD_DATE=${{ needs.setup.outputs.build_timestamp }}
             VERSION=${{ steps.frontend-prep.outputs.frontend_version }}
-            SKIP_ENV_VALIDATION=1
 
   deploy-staging:
     name: Deploy to Staging
