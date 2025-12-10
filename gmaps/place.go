@@ -140,18 +140,6 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 		resp.Headers.Add(k, v)
 	}
 
-	// Wait for the page to be fully loaded and interactive
-	time.Sleep(2 * time.Second)
-	
-	// Wait for a key element that indicates the place data is loaded
-	_, _ = page.WaitForSelector("h1", playwright.PageWaitForSelectorOptions{
-		Timeout: playwright.Float(10000),
-		State:   playwright.WaitForSelectorStateVisible,
-	})
-	
-	// Additional wait for JavaScript state to stabilize
-	time.Sleep(1 * time.Second)
-
 	raw, err := j.extractJSON(page)
 	if err != nil {
 		resp.Error = err
