@@ -207,15 +207,7 @@ func (j *PlaceJob) extractJSON(page playwright.Page) ([]byte, error) {
 	}
 	
 	if rawI == nil {
-		// Get debug info to understand what's in the page
-		debugI, _ := page.Evaluate(jsDebug)
-		debugInfo := "unknown"
-		if debugI != nil {
-			if debugStr, ok := debugI.(string); ok {
-				debugInfo = debugStr
-			}
-		}
-		return nil, fmt.Errorf("APP_INITIALIZATION_STATE data not found - %s", debugInfo)
+		return nil, fmt.Errorf("APP_INITIALIZATION_STATE data not found")
 	}
 
 	raw, ok := rawI.(string)
@@ -249,38 +241,6 @@ func ctxWait(ctx context.Context, dur time.Duration) {
 	case <-time.After(dur):
 	}
 }
-
-const jsDebug = `
-(function() {
-	const debug = {
-		hasWindow: typeof window !== 'undefined',
-		hasAppState: typeof window.APP_INITIALIZATION_STATE !== 'undefined',
-		appStateLength: window.APP_INITIALIZATION_STATE ? window.APP_INITIALIZATION_STATE.length : 0,
-		appStateType: typeof window.APP_INITIALIZATION_STATE,
-		hasIndex3: window.APP_INITIALIZATION_STATE && window.APP_INITIALIZATION_STATE[3] ? true : false
-	};
-	
-	if (window.APP_INITIALIZATION_STATE && window.APP_INITIALIZATION_STATE[3]) {
-		const appState = window.APP_INITIALIZATION_STATE[3];
-		debug.appState3Type = typeof appState;
-		debug.keys = Object.keys(appState);
-		debug.keysLength = debug.keys.length;
-		
-		if (debug.keys.length > 0) {
-			const key = debug.keys[0];
-			debug.firstKey = key;
-			debug.hasData = appState[key] && appState[key][6] ? true : false;
-			if (appState[key]) {
-				debug.keyType = typeof appState[key];
-				debug.keyIsArray = Array.isArray(appState[key]);
-				debug.keyLength = appState[key].length || 0;
-			}
-		}
-	}
-	
-	return 'DEBUG:' + JSON.stringify(debug);
-})()
-`
 
 const js = `
 (function() {
