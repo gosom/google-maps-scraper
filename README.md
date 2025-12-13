@@ -83,16 +83,6 @@ A no-code Google Maps scraper that pulls business leads from Google Maps in one 
 
 <hr>
 
-[Scrapeless](https://www.scrapeless.com/): One-click to scrape Google search results, supporting 15+ SERP scenarios such as Google Maps/Scholars/Jobs, $0.1/thousand queries, 0.2s response.
-
-**[👉 Free Trial](https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps)**
-
-![Scrapeless](./img/scrapeless_dark.png#gh-dark-mode-only)
-
-![Scrapeless](./img/scrapeless_light.png#gh-light-mode-only)
-
-<hr>
-
 [Decodo's proxies](https://visit.decodo.com/APVbbx) with #1 response time in the market
 
 Collect data without facing CAPTCHAs, IP bans, or geo-restrictions
@@ -642,17 +632,6 @@ Collect data without facing CAPTCHAs, IP bans, or geo-restrictions
 **[Start your 3-day free trial with 100MB →](https://visit.decodo.com/APVbbx)**
 
 ![Decodo](./img/decodo.png)
-
-<br>
-
-[Scrapeless](https://www.scrapeless.com/): One-click to scrape Google search results, supporting 15+ SERP scenarios such as Google Maps/Scholars/Jobs, $0.1/thousand queries, 0.2s response.
-
-**[👉 Free Trial](https://app.scrapeless.com/passport/login?utm_source=gosom&utm_campaign=google-maps)**
-
-![Scrapeless](./img/scrapeless_dark.png#gh-dark-mode-only)
-
-![Scrapeless](./img/scrapeless_light.png#gh-light-mode-only)
-
 
 <br>
 
