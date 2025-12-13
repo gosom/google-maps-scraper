@@ -2,3 +2,11 @@ cache/
 vendor
 bin
 webdata/
+output/*.csv
+input/*.txt
+.cursor/
+*.tmp
+*.bak
+*.log
+google-maps-scraper
+.DS_Store
