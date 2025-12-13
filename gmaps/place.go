@@ -177,23 +177,26 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 }
 
 func (j *PlaceJob) extractJSON(page playwright.Page) ([]byte, error) {
-	var rawI interface{}
-	var err error
-	
+	var (
+		rawI any
+		err  error
+	)
+
 	// Retry logic: sometimes the data takes time to load
 	// Try up to 20 times with 1 second delay = 20 seconds total
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		rawI, err = page.Evaluate(js)
 		if err == nil && rawI != nil {
 			break
 		}
+
 		time.Sleep(1 * time.Second)
 	}
-	
+
 	if err != nil {
 		return nil, err
 	}
-	
+
 	if rawI == nil {
 		return nil, fmt.Errorf("APP_INITIALIZATION_STATE data not found")
 	}
@@ -221,13 +224,6 @@ func (j *PlaceJob) getReviewCount(data []byte) int {
 
 func (j *PlaceJob) UseInResults() bool {
 	return j.UsageInResultststs
-}
-
-func ctxWait(ctx context.Context, dur time.Duration) {
-	select {
-	case <-ctx.Done():
-	case <-time.After(dur):
-	}
 }
 
 const js = `
