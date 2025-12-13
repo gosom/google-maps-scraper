@@ -108,15 +108,6 @@ Collect data without facing CAPTCHAs, IP bans, or geo-restrictions
 <hr>
 
 
-[Thordata proxies](https://www.thordata.com/?ls=github&lk=google-maps)
-
-- Precision Targeting, Global Coverage. Starting at $1.80 - Reliable Data Collection, Every Time.
-- Contact Thordata to start your 3-day free trial starting at 100MB
-
-[![Thordata Banner](./img/thordata-banner.png)](https://www.thordata.com/?ls=github&lk=google-maps)
-
-<hr>
-
 
 ## What Google maps scraper does
 
@@ -639,14 +630,6 @@ Thank you for considering support for the project. Every bit of assistance helps
 
 ### Special Thanks to:
 
-[Thordata proxies](https://www.thordata.com/?ls=github&lk=google-maps)
-
-- Precision Targeting, Global Coverage. Starting at $1.80 - Reliable Data Collection, Every Time.
-- Contact Thordata to start your 3-day free trial starting at 100MB
-
-[![Thordata Banner](./img/thordata-banner.png)](https://www.thordata.com/?ls=github&lk=google-maps)
-
-<br>
 
 [Decodo's proxies](https://visit.decodo.com/APVbbx) with #1 response time in the market
 
