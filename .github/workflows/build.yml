@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        go: ['1.25.3']
+        go: ['1.25.5']
 
     steps:
       - name: Check out code
