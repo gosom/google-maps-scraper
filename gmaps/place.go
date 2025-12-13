@@ -177,14 +177,33 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 }
 
 func (j *PlaceJob) extractJSON(page playwright.Page) ([]byte, error) {
-	rawI, err := page.Evaluate(js)
+	var (
+		rawI any
+		err  error
+	)
+
+	// Retry logic: sometimes the data takes time to load
+	// Try up to 20 times with 1 second delay = 20 seconds total
+	for range 20 {
+		rawI, err = page.Evaluate(js)
+		if err == nil && rawI != nil {
+			break
+		}
+
+		time.Sleep(1 * time.Second)
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
+	if rawI == nil {
+		return nil, fmt.Errorf("APP_INITIALIZATION_STATE data not found")
+	}
+
 	raw, ok := rawI.(string)
 	if !ok {
-		return nil, fmt.Errorf("could not convert to string")
+		return nil, fmt.Errorf("could not convert to string, got type %T", rawI)
 	}
 
 	const prefix = `)]}'`
@@ -207,24 +226,20 @@ func (j *PlaceJob) UseInResults() bool {
 	return j.UsageInResultststs
 }
 
-func ctxWait(ctx context.Context, dur time.Duration) {
-	select {
-	case <-ctx.Done():
-	case <-time.After(dur):
-	}
-}
-
 const js = `
-function parse() {
-	const appState = window.APP_INITIALIZATION_STATE[3];
-	if (!appState) {
+(function() {
+	if (!window.APP_INITIALIZATION_STATE || !window.APP_INITIALIZATION_STATE[3]) {
 		return null;
 	}
+	const appState = window.APP_INITIALIZATION_STATE[3];
 	const keys = Object.keys(appState);
+	if (keys.length === 0) {
+		return null;
+	}
 	const key = keys[0];
 	if (appState[key] && appState[key][6]) {
 		return appState[key][6];
 	}
 	return null;
-}
+})()
 `
