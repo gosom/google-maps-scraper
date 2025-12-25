@@ -83,9 +83,17 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 		entry.Link = j.GetURL()
 	}
 
+	// Handle RPC-based reviews
 	allReviewsRaw, ok := resp.Meta["reviews_raw"].(fetchReviewsResponse)
 	if ok && len(allReviewsRaw.pages) > 0 {
 		entry.AddExtraReviews(allReviewsRaw.pages)
+	}
+
+	// Handle DOM-based reviews (fallback)
+	domReviews, ok := resp.Meta["dom_reviews"].([]DOMReview)
+	if ok && len(domReviews) > 0 {
+		convertedReviews := ConvertDOMReviewsToReviews(domReviews)
+		entry.UserReviewsExtended = append(entry.UserReviewsExtended, convertedReviews...)
 	}
 
 	if j.ExtractEmail && entry.IsWebsiteValidForEmail() {
@@ -162,14 +170,16 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 				reviewCount: reviewCount,
 			}
 
-			reviewFetcher := newReviewFetcher(params)
-
-			reviewData, err := reviewFetcher.fetch(ctx)
+			// Use the new fallback mechanism that tries RPC first, then DOM
+			rpcData, domReviews, err := FetchReviewsWithFallback(ctx, params)
 			if err != nil {
-				return resp
+				// Log but don't fail the entire job
+				fmt.Printf("Warning: review extraction failed: %v\n", err)
+			} else if len(rpcData.pages) > 0 {
+				resp.Meta["reviews_raw"] = rpcData
+			} else if len(domReviews) > 0 {
+				resp.Meta["dom_reviews"] = domReviews
 			}
-
-			resp.Meta["reviews_raw"] = reviewData
 		}
 	}
 
