@@ -1,4 +1,48 @@
-# Google maps scraper
+# Google maps scraper (Fork with Review Extraction Fixes)
+
+> **This is a fork of [gosom/google-maps-scraper](https://github.com/gosom/google-maps-scraper) with fixes for review extraction.**
+
+## Why This Fork Exists
+
+The upstream scraper has issues with extracting reviews (see issues [#205](https://github.com/gosom/google-maps-scraper/issues/205), [#195](https://github.com/gosom/google-maps-scraper/issues/195), [#185](https://github.com/gosom/google-maps-scraper/issues/185), [#156](https://github.com/gosom/google-maps-scraper/issues/156)). This fork includes fixes that have been submitted as PRs:
+
+- **[PR #207](https://github.com/gosom/google-maps-scraper/pull/207)**: Fix `-extra-reviews` by using browser-based RPC requests (extracts up to 1000 reviews per place)
+- **[PR #208](https://github.com/gosom/google-maps-scraper/pull/208)**: Fix inline review parsing (captures reviews visible on the place page)
+
+### Using This Fork
+
+#### Option 1: Docker (Recommended)
+
+The easiest way to use this fork is via the pre-built Docker image:
+
+```bash
+# Pull the image
+docker pull ghcr.io/dredozubov/google-maps-scraper:latest
+
+# Run with a query file
+echo "pizza manhattan" > queries.txt
+docker run -v $(pwd):/data ghcr.io/dredozubov/google-maps-scraper:latest \
+  -input /data/queries.txt \
+  -results /data/results.json \
+  -json \
+  -extra-reviews
+
+# Results will be saved to results.json in your current directory
+```
+
+#### Option 2: Build from Source
+
+```bash
+git clone https://github.com/dredozubov/google-maps-scraper.git
+cd google-maps-scraper
+go build
+./google-maps-scraper -input queries.txt -json -extra-reviews
+```
+
+Once the PRs are merged upstream, this fork will no longer be necessary.
+
+---
+
 ![build](https://github.com/gosom/google-maps-scraper/actions/workflows/build.yml/badge.svg)
 [![Go Report Card](https://goreportcard.com/badge/github.com/gosom/google-maps-scraper)](https://goreportcard.com/report/github.com/gosom/google-maps-scraper)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Chat-7289DA?logo=discord&logoColor=white)](https://discord.gg/fpaAVhNCCu)
