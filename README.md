@@ -11,15 +11,17 @@
 
 Join our Discord server to get help, share ideas, and connect with other users of the Google Maps Scraper!
 
-## 🎯 What Problem Are You Solving?
+## 🎯 Need a Central Database for Your Leads?
 
-I'd love to understand how you're using this tool! 
-Please comment on [this discussion](https://github.com/gosom/google-maps-scraper/discussions/184) with your use case:
+Scraped data is just the beginning. **[LeadsDB](https://getleadsdb.com/)** is your central database for business leads:
 
-- 🎯 **Lead Generation** - Finding potential customers
-- 📊 **Market Research** - Understanding competitors/markets
-- 📁 **Database Building** - Creating/maintaining business lists
-- 💡 **Other** - Tell me more!
+- **AI Agent Integration** - Connect any MCP-compatible AI to manage leads with natural language
+- **Automatic Deduplication** - Duplicates are detected and merged automatically
+- **Advanced Filters** - Combine multiple filters with AND/OR logic on any field
+- **Flexible Export** - Export filtered results to CSV or JSON anytime
+- **REST API** - Full CRUD API to use LeadsDB as a backend for your apps
+
+**Start free with 500 leads** 👉 [Join the Waitlist](https://getleadsdb.com/)
 
 ## Sponsors
 
