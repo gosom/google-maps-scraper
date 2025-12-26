@@ -84,7 +84,7 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 	}
 
 	// Handle RPC-based reviews
-	allReviewsRaw, ok := resp.Meta["reviews_raw"].(fetchReviewsResponse)
+	allReviewsRaw, ok := resp.Meta["reviews_raw"].(FetchReviewsResponse)
 	if ok && len(allReviewsRaw.pages) > 0 {
 		entry.AddExtraReviews(allReviewsRaw.pages)
 	}
@@ -172,12 +172,13 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 
 			// Use the new fallback mechanism that tries RPC first, then DOM
 			rpcData, domReviews, err := FetchReviewsWithFallback(ctx, params)
-			if err != nil {
-				// Log but don't fail the entire job
+
+			switch {
+			case err != nil:
 				fmt.Printf("Warning: review extraction failed: %v\n", err)
-			} else if len(rpcData.pages) > 0 {
+			case len(rpcData.pages) > 0:
 				resp.Meta["reviews_raw"] = rpcData
-			} else if len(domReviews) > 0 {
+			case len(domReviews) > 0:
 				resp.Meta["dom_reviews"] = domReviews
 			}
 		}
