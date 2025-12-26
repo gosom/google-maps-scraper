@@ -245,17 +245,29 @@ func (e *Entry) AddExtraReviews(pages [][]byte) {
 }
 
 func extractReviews(data []byte) []Review {
-	if len(data) >= 4 && string(data[0:4]) == `)]}'` {
-		data = data[4:] // Skip security prefix
+	// Skip the security prefix
+	prefix := ")]}'\n"
+	if len(data) >= len(prefix) && string(data[:len(prefix)]) == prefix {
+		data = data[len(prefix):]
+	} else if len(data) >= 4 && string(data[0:4]) == `)]}'` {
+		data = data[4:]
 	}
 
 	var jd []any
 	if err := json.Unmarshal(data, &jd); err != nil {
-		fmt.Printf("Error unmarshalling JSON: %v\n", err)
+		fmt.Printf("Error unmarshalling RPC JSON: %v (data len: %d)\n", err, len(data))
+		return nil
+	}
+
+	if len(jd) < 3 {
 		return nil
 	}
 
 	reviewsI := getNthElementAndCast[[]any](jd, 2)
+	if len(reviewsI) == 0 {
+		// Try alternative indices - Google may have changed the structure
+		reviewsI = getNthElementAndCast[[]any](jd, 0)
+	}
 
 	return parseReviews(reviewsI)
 }
@@ -419,8 +431,19 @@ func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error)
 		5: int(getNthElementAndCast[float64](darray, 175, 3, 4)),
 	}
 
+	// Parse inline reviews from the page data
 	reviewsI := getNthElementAndCast[[]any](darray, 175, 9, 0, 0)
-	entry.UserReviews = make([]Review, 0, len(reviewsI))
+	if len(reviewsI) > 0 {
+		entry.UserReviews = parseReviews(reviewsI)
+	} else {
+		// Try alternative location for reviews
+		reviewsI = getNthElementAndCast[[]any](darray, 175, 9, 0)
+		if len(reviewsI) > 0 {
+			entry.UserReviews = parseReviews(reviewsI)
+		} else {
+			entry.UserReviews = make([]Review, 0)
+		}
+	}
 
 	return entry, nil
 }
@@ -430,16 +453,58 @@ func parseReviews(reviewsI []any) []Review {
 
 	for i := range reviewsI {
 		el := getNthElementAndCast[[]any](reviewsI, i, 0)
+		if len(el) == 0 {
+			// Try alternative structure
+			el = getNthElementAndCast[[]any](reviewsI, i)
+			if len(el) == 0 {
+				continue
+			}
+		}
 
+		// Try multiple paths for the timestamp
 		time := getNthElementAndCast[[]any](el, 2, 2, 0, 1, 21, 6, 8)
+		if len(time) == 0 {
+			time = getNthElementAndCast[[]any](el, 2, 2, 0, 1, 6, 8)
+		}
 
+		// Try multiple paths for profile picture
 		profilePic, err := decodeURL(getNthElementAndCast[string](el, 1, 4, 5, 1))
-		if err != nil {
-			profilePic = ""
+		if err != nil || profilePic == "" {
+			profilePic = getNthElementAndCast[string](el, 1, 2, 0)
+			if profilePic == "" {
+				profilePic = getNthElementAndCast[string](el, 0, 2, 0)
+			}
+		}
+
+		// Try multiple paths for author name
+		authorName := getNthElementAndCast[string](el, 1, 4, 5, 0)
+		if authorName == "" {
+			authorName = getNthElementAndCast[string](el, 1, 4, 4)
+			if authorName == "" {
+				authorName = getNthElementAndCast[string](el, 0, 1)
+			}
+		}
+
+		// Try multiple paths for rating
+		rating := int(getNthElementAndCast[float64](el, 2, 0, 0))
+		if rating == 0 {
+			rating = int(getNthElementAndCast[float64](el, 2, 0))
+			if rating == 0 {
+				rating = int(getNthElementAndCast[float64](el, 1, 0, 0))
+			}
+		}
+
+		// Try multiple paths for description
+		description := getNthElementAndCast[string](el, 2, 15, 0, 0)
+		if description == "" {
+			description = getNthElementAndCast[string](el, 2, 15, 0)
+			if description == "" {
+				description = getNthElementAndCast[string](el, 3, 0)
+			}
 		}
 
 		review := Review{
-			Name:           getNthElementAndCast[string](el, 1, 4, 5, 0),
+			Name:           authorName,
 			ProfilePicture: profilePic,
 			When: func() string {
 				if len(time) < 3 {
@@ -448,19 +513,23 @@ func parseReviews(reviewsI []any) []Review {
 
 				return fmt.Sprintf("%v-%v-%v", time[0], time[1], time[2])
 			}(),
-			Rating:      int(getNthElementAndCast[float64](el, 2, 0, 0)),
-			Description: getNthElementAndCast[string](el, 2, 15, 0, 0),
+			Rating:      rating,
+			Description: description,
 		}
 
 		if review.Name == "" {
 			continue
 		}
 
+		// Try multiple paths for images
 		optsI := getNthElementAndCast[[]any](el, 2, 2, 0, 1, 21, 7)
+		if len(optsI) == 0 {
+			optsI = getNthElementAndCast[[]any](el, 2, 2, 0, 1, 7)
+		}
 
 		for j := range optsI {
 			val := getNthElementAndCast[string](optsI, j)
-			if val != "" {
+			if val != "" && len(val) > 2 {
 				review.Images = append(review.Images, val[2:])
 			}
 		}
