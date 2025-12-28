@@ -19,6 +19,62 @@
 
 ---
 
+## Sponsored By
+
+<p align="center">
+  <i>This project is made possible by our amazing sponsors</i>
+</p>
+
+<p align="center">
+  <a href="https://scrap.io?utm_medium=ads&utm_source=github_gosom_gmap_scraper">
+    <img src="./img/premium_scrap_io.png" alt="Scrap.io - Extract ALL Google Maps Listings" width="400">
+  </a>
+</p>
+
+<p align="center">
+  <b><a href="https://scrap.io?utm_medium=ads&utm_source=github_gosom_gmap_scraper">Scrap.io</a></b> - Extract ALL Google Maps listings at country-scale. No keywords, no limits.<br>
+  <a href="https://scrap.io?utm_medium=ads&utm_source=github_gosom_gmap_scraper">Try it free</a>
+</p>
+
+<p align="center">
+  <a href="https://gmapsextractor.com?utm_source=github&utm_medium=banner&utm_campaign=gosom">
+    <img src="./img/gmaps-extractor-banner.png" alt="G Maps Extractor" width="400">
+  </a>
+</p>
+
+<p align="center">
+  <b><a href="https://gmapsextractor.com?utm_source=github&utm_medium=banner&utm_campaign=gosom">G Maps Extractor</a></b> - No-code Chrome extension for Google Maps. Get emails, social profiles, reviews & more.<br>
+  <a href="https://gmapsextractor.com?utm_source=github&utm_medium=banner&utm_campaign=gosom">Get 1,000 free leads</a>
+</p>
+
+<p align="center">
+  <a href="https://serpapi.com/?utm_source=google-maps-scraper">
+    <img src="./img/SerpApi-banner.png" alt="SerpApi" width="400">
+  </a>
+</p>
+
+<p align="center">
+  <b><a href="https://serpapi.com/?utm_source=google-maps-scraper">SerpApi</a></b> - Google Maps API and 30+ search engine APIs. Fast, reliable, scalable.<br>
+  <a href="https://serpapi.com/search-api">View all APIs</a>
+</p>
+
+<p align="center">
+  <a href="https://visit.decodo.com/APVbbx">
+    <img src="./img/decodo.png" alt="Decodo Proxies" width="400">
+  </a>
+</p>
+
+<p align="center">
+  <b><a href="https://visit.decodo.com/APVbbx">Decodo</a></b> - 125M+ residential IPs with #1 response time. 195+ locations worldwide.<br>
+  <a href="https://visit.decodo.com/APVbbx">Start 3-day free trial</a> | <a href="decodo.md">Integration guide</a>
+</p>
+
+<p align="center">
+  <a href="#sponsors">View all sponsors</a> | <a href="https://github.com/sponsors/gosom">Become a sponsor</a>
+</p>
+
+---
+
 ## Why Use This Scraper?
 
 | | |
@@ -484,87 +540,140 @@ When you need proxies, APIs, or cloud services, consider using our sponsors. You
 
 A huge thank you to the sponsors who make this project possible!
 
+---
+
 ### Premium Sponsors
 
+<!-- Scrap.io -->
+<p align="center">
+  <a href="https://scrap.io?utm_medium=ads&utm_source=github_gosom_gmap_scraper">
+    <img src="./img/premium_scrap_io.png" alt="Scrap.io - Extract ALL Google Maps Listings" width="600">
+  </a>
+</p>
+
+<h3 align="center">
+  <a href="https://scrap.io?utm_medium=ads&utm_source=github_gosom_gmap_scraper">Scrap.io</a>
+</h3>
+
+<p align="center">
+  <strong>Extract ALL Google Maps listings at country-scale in 2 clicks.</strong><br>
+  No keywords needed. No limits. Export millions of businesses instantly.
+</p>
+
+<p align="center">
+  <a href="https://scrap.io?utm_medium=ads&utm_source=github_gosom_gmap_scraper"><strong>Try it free</strong></a> ·
+  <a href="scrap_io.md">See demo</a>
+</p>
+
+<br>
+
+---
+
+<!-- G Maps Extractor -->
+<p align="center">
+  <a href="https://gmapsextractor.com?utm_source=github&utm_medium=banner&utm_campaign=gosom">
+    <img src="./img/gmaps-extractor-banner.png" alt="G Maps Extractor" width="600">
+  </a>
+</p>
+
+<h3 align="center">
+  <a href="https://gmapsextractor.com?utm_source=github&utm_medium=banner&utm_campaign=gosom">G Maps Extractor</a>
+</h3>
+
+<p align="center">
+  <strong>No-code Google Maps scraper Chrome extension.</strong><br>
+  Extract emails, social profiles, phone numbers, reviews, images & more with one click.
+</p>
+
+<p align="center">
+  <a href="https://gmapsextractor.com?utm_source=github&utm_medium=banner&utm_campaign=gosom"><strong>Get 1,000 free leads</strong></a> ·
+  <a href="https://gmapsextractor.com/google-maps-api?utm_source=github&utm_medium=banner&utm_campaign=gosom">API docs</a>
+</p>
+
+<br>
+
+---
+
+<!-- SerpApi -->
+<p align="center">
+  <a href="https://serpapi.com/?utm_source=google-maps-scraper">
+    <img src="./img/SerpApi-banner.png" alt="SerpApi" width="600">
+  </a>
+</p>
+
+<h3 align="center">
+  <a href="https://serpapi.com/?utm_source=google-maps-scraper">SerpApi</a>
+</h3>
+
+<p align="center">
+  <strong>Google Maps API and 30+ search engine APIs.</strong><br>
+  Fast, reliable, and scalable. Used by Fortune 500 companies.
+</p>
+
+<p align="center">
+  <a href="https://serpapi.com/search-api"><strong>View all APIs</strong></a> ·
+  <a href="serpapi.md">Learn more</a>
+</p>
+
+<br>
+
+---
+
+<!-- Decodo -->
+<p align="center">
+  <a href="https://visit.decodo.com/APVbbx">
+    <img src="./img/decodo.png" alt="Decodo Proxies" width="600">
+  </a>
+</p>
+
+<h3 align="center">
+  <a href="https://visit.decodo.com/APVbbx">Decodo</a>
+</h3>
+
+<p align="center">
+  <strong>Premium residential proxies with #1 response time.</strong><br>
+  125M+ IPs · 195+ locations · No CAPTCHAs · No IP bans
+</p>
+
+<p align="center">
+  <a href="https://visit.decodo.com/APVbbx"><strong>Start 3-day free trial</strong></a> ·
+  <a href="decodo.md">Integration guide</a>
+</p>
+
+<br>
+
+---
+
+### Sponsors
+
 <table>
 <tr>
 <td align="center" width="50%">
-
-[![Scrap.io](./img/premium_scrap_io.png)](https://scrap.io?utm_medium=ads&utm_source=github_gosom_gmap_scraper)
-
-**[Scrap.io](https://scrap.io?utm_medium=ads&utm_source=github_gosom_gmap_scraper)**
-
-Extract ALL Google Maps listings at country-scale in 2 clicks. No keywords, no limits.
-
-[Try it free](https://scrap.io?utm_medium=ads&utm_source=github_gosom_gmap_scraper) | [See demo](scrap_io.md)
-
-</td>
-<td align="center" width="50%">
-
-[![G Maps Extractor](./img/gmaps-extractor-banner.png)](https://gmapsextractor.com?utm_source=github&utm_medium=banner&utm_campaign=gosom)
-
-**[G Maps Extractor](https://gmapsextractor.com?utm_source=github&utm_medium=banner&utm_campaign=gosom)**
-
-No-code Chrome extension. Emails, social profiles, reviews, and more.
-
-[Get 1,000 free leads](https://gmapsextractor.com?utm_source=github&utm_medium=banner&utm_campaign=gosom) | [API docs](https://gmapsextractor.com/google-maps-api?utm_source=github&utm_medium=banner&utm_campaign=gosom)
-
-</td>
-</tr>
-<tr>
-<td align="center">
-
-<a href="https://serpapi.com/?utm_source=google-maps-scraper">
-<img src="./img/SerpApi-banner.png" alt="SerpApi" width="300">
-</a>
-
-**[SerpApi](https://serpapi.com/?utm_source=google-maps-scraper)**
-
-Google Maps API and 30+ other search engine APIs.
-
-[View all APIs](https://serpapi.com/search-api) | [Learn more](serpapi.md)
-
-</td>
-<td align="center">
-
-[![Decodo](./img/decodo.png)](https://visit.decodo.com/APVbbx)
-
-**[Decodo](https://visit.decodo.com/APVbbx)**
-
-125M+ residential IPs. #1 response time. 195+ locations.
-
-[Start 3-day free trial](https://visit.decodo.com/APVbbx) | [Integration guide](decodo.md)
-
-</td>
-</tr>
-</table>
-
-### More Sponsors
-
-<table>
-<tr>
-<td align="center">
 
 [![Evomi](https://my.evomi.com/images/brand/cta.png)](https://evomi.com?utm_source=github&utm_medium=banner&utm_campaign=gosom-maps)
 
 **[Evomi](https://evomi.com?utm_source=github&utm_medium=banner&utm_campaign=gosom-maps)**
 
-Swiss quality proxies from $0.49/GB. 150+ countries, 24/7 support.
+Swiss quality proxies from $0.49/GB<br>150+ countries · 24/7 support · 99.9% uptime
 
 </td>
-<td align="center">
+<td align="center" width="50%">
 
 [![SearchAPI](https://www.searchapi.io/press/v1/svg/searchapi_logo_black_h.svg)](https://www.searchapi.io/google-maps?via=gosom)
 
 **[SearchAPI](https://www.searchapi.io/google-maps?via=gosom)**
 
-Google Maps API for easy SERP scraping.
+Google Maps API for easy SERP scraping<br>Real-time data · Simple integration
 
 </td>
 </tr>
 </table>
 
-**[Become a sponsor](https://github.com/sponsors/gosom)** to get your logo here and support open source development.
+---
+
+<p align="center">
+  <a href="https://github.com/sponsors/gosom"><strong>Become a sponsor</strong></a> to get your logo here and support open source development.
+</p>
 
 ---
 
