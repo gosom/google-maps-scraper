@@ -756,6 +756,10 @@ For more information, see [scrap.io demo](scrap_io.md).
 
 [Supported by the community](https://github.com/sponsors/gosom)
 
+If you're planning to use DigitalOcean, signing up through this link helps support the project. You get $200 in credit over 60 days, and I receive $25 once you've spent $25:
+
+<a href="https://www.digitalocean.com/?refcode=c11136c4693c&utm_campaign=Referral_Invite&utm_medium=Referral_Program&utm_source=badge"><img src="https://web-platforms.sfo2.cdn.digitaloceanspaces.com/WWW/Badge%201.svg" alt="DigitalOcean Referral Badge" /></a>
+
 
 ## Notes
 
