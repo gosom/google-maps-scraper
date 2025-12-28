@@ -55,6 +55,7 @@ func Test_EntryFromJSON(t *testing.T) {
 		Timezone:     "Asia/Nicosia",
 		PriceRange:   "€€",
 		DataID:       "0x14e732fd76f0d90d:0xe5415928d6702b47",
+		PlaceID:      "ChIJDdnwdv0y5xQRRytw1ihZQeU",
 		Images: []gmaps.Image{
 			{
 				Title: "All",
