@@ -760,6 +760,10 @@ If you're planning to use DigitalOcean, signing up through this link helps suppo
 
 <a href="https://www.digitalocean.com/?refcode=c11136c4693c&utm_campaign=Referral_Invite&utm_medium=Referral_Program&utm_source=badge"><img src="https://web-platforms.sfo2.cdn.digitaloceanspaces.com/WWW/Badge%201.svg" alt="DigitalOcean Referral Badge" /></a>
 
+If you're planning to use Hetzner Cloud, signing up through this link helps support the project. You get €20 in credit, and I receive €10 once you've spent €10:
+
+[Sign up for Hetzner Cloud](https://hetzner.cloud/?ref=ihtQPa0cT18n)
+
 
 ## Notes
 
