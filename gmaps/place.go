@@ -187,41 +187,69 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 	return resp
 }
 
-func (j *PlaceJob) extractJSON(page playwright.Page) ([]byte, error) {
-	var (
-		rawI any
-		err  error
-	)
+func (j *PlaceJob) getRaw(ctx context.Context, page playwright.Page) (any, error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("timeout while getting raw data: %w", ctx.Err())
+		default:
+			raw, err := page.Evaluate(js)
+			if err == nil && raw != nil {
+				return raw, nil
+			}
 
-	// Retry logic: sometimes the data takes time to load
-	// Try up to 20 times with 1 second delay = 20 seconds total
-	for range 20 {
-		rawI, err = page.Evaluate(js)
-		if err == nil && rawI != nil {
-			break
+			<-time.After(time.Millisecond * 200)
+		}
+	}
+}
+
+func (j *PlaceJob) extractJSON(page playwright.Page) ([]byte, error) {
+	const maxRetries = 2
+
+	for attempt := range maxRetries {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		rawI, err := j.getRaw(ctx, page)
+
+		cancel()
+
+		if err != nil {
+			// On timeout, try reloading the page
+			if attempt < maxRetries-1 {
+				if _, reloadErr := page.Reload(playwright.PageReloadOptions{
+					WaitUntil: playwright.WaitUntilStateDomcontentloaded,
+				}); reloadErr == nil {
+					continue
+				}
+			}
+
+			return nil, err
 		}
 
-		time.Sleep(1 * time.Second)
+		if rawI == nil {
+			if attempt < maxRetries-1 {
+				if _, reloadErr := page.Reload(playwright.PageReloadOptions{
+					WaitUntil: playwright.WaitUntilStateDomcontentloaded,
+				}); reloadErr == nil {
+					continue
+				}
+			}
+
+			return nil, fmt.Errorf("APP_INITIALIZATION_STATE data not found")
+		}
+
+		raw, ok := rawI.(string)
+		if !ok {
+			return nil, fmt.Errorf("could not convert to string, got type %T", rawI)
+		}
+
+		const prefix = `)]}'`
+
+		raw = strings.TrimSpace(strings.TrimPrefix(raw, prefix))
+
+		return []byte(raw), nil
 	}
 
-	if err != nil {
-		return nil, err
-	}
-
-	if rawI == nil {
-		return nil, fmt.Errorf("APP_INITIALIZATION_STATE data not found")
-	}
-
-	raw, ok := rawI.(string)
-	if !ok {
-		return nil, fmt.Errorf("could not convert to string, got type %T", rawI)
-	}
-
-	const prefix = `)]}'`
-
-	raw = strings.TrimSpace(strings.TrimPrefix(raw, prefix))
-
-	return []byte(raw), nil
+	return nil, fmt.Errorf("APP_INITIALIZATION_STATE data not found after retries")
 }
 
 func (j *PlaceJob) getReviewCount(data []byte) int {
@@ -243,13 +271,19 @@ const js = `
 		return null;
 	}
 	const appState = window.APP_INITIALIZATION_STATE[3];
-	const keys = Object.keys(appState);
-	if (keys.length === 0) {
-		return null;
-	}
-	const key = keys[0];
-	if (appState[key] && appState[key][6]) {
-		return appState[key][6];
+	
+	// Search all properties of appState for arrays containing JSON strings
+	for (const key of Object.keys(appState)) {
+		const arr = appState[key];
+		if (Array.isArray(arr)) {
+			// Check indices 6 and 5 (where place data typically is)
+			for (const idx of [6, 5]) {
+				const item = arr[idx];
+				if (typeof item === 'string' && item.startsWith(")]}'")) {
+					return item;
+				}
+			}
+		}
 	}
 	return null;
 })()

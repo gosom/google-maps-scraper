@@ -11,6 +11,7 @@ import (
 
 	"github.com/gosom/google-maps-scraper/deduper"
 	"github.com/gosom/google-maps-scraper/exiter"
+	"github.com/gosom/google-maps-scraper/leadsdb"
 	"github.com/gosom/google-maps-scraper/runner"
 	"github.com/gosom/google-maps-scraper/tlmt"
 	"github.com/gosom/scrapemate"
@@ -141,7 +142,8 @@ func (r *fileRunner) setInput() error {
 }
 
 func (r *fileRunner) setWriters() error {
-	if r.cfg.CustomWriter != "" {
+	switch {
+	case r.cfg.CustomWriter != "":
 		parts := strings.Split(r.cfg.CustomWriter, ":")
 		if len(parts) != 2 {
 			return fmt.Errorf("invalid custom writer format: %s", r.cfg.CustomWriter)
@@ -155,7 +157,9 @@ func (r *fileRunner) setWriters() error {
 		}
 
 		r.writers = append(r.writers, customWriter)
-	} else {
+	case r.cfg.LeadsDBAPIKey != "":
+		r.writers = append(r.writers, leadsdb.New(r.cfg.LeadsDBAPIKey))
+	default:
 		var resultsWriter io.Writer
 
 		switch r.cfg.ResultsFile {

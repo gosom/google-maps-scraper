@@ -453,6 +453,8 @@ try `./google-maps-scraper -h` to see the command line options available:
         produce JSON output instead of CSV
   -lang string
         language code for Google (e.g., 'de' for German) [default: en] (default "en")
+  -leadsdb-api-key string
+        LeadsDB API key for exporting results to LeadsDB
   -produce
         produce seed jobs only (requires dsn)
   -proxies string
@@ -503,6 +505,52 @@ otherwise you will encounter an error like:
 /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.32' not found (required by /plugins/example_writer.so)
 ```
 
+## Exporting to LeadsDB
+
+You can export your scraped results directly to [LeadsDB](https://getleadsdb.com/), a central database for managing business leads.
+
+Using LeadsDB allows you to:
+- **Filter leads** with advanced AND/OR logic on any field
+- **Export custom fields** - select exactly which fields you need in CSV or JSON
+- **Access via API** - integrate with your own apps or AI agents
+
+### Usage
+
+```bash
+./google-maps-scraper -input example-queries.txt -leadsdb-api-key "your-api-key" -exit-on-inactivity 3m
+```
+
+Or using an environment variable:
+
+```bash
+export LEADSDB_API_KEY="your-api-key"
+./google-maps-scraper -input example-queries.txt -exit-on-inactivity 3m
+```
+
+### What gets exported
+
+The scraper maps Google Maps data to LeadsDB leads:
+
+| Google Maps Field | LeadsDB Field |
+|-------------------|---------------|
+| Title | Name |
+| Category | Category |
+| Categories | Tags |
+| Phone | Phone |
+| Website | Website |
+| Address | Address, City, State, Country, PostalCode |
+| Latitude/Longitude | Coordinates |
+| Review Rating | Rating |
+| Review Count | ReviewCount |
+| Emails | Email |
+| Thumbnail | LogoURL |
+| CID | SourceID |
+
+Additional fields like Google Maps link, plus code, price range, owner info, and more are stored as custom attributes.
+
+### Getting an API Key
+
+Sign up at [LeadsDB](https://getleadsdb.com/) and get your API key from the [settings page](https://getleadsdb.com/settings).
 
 ## Using Database Provider (postgreSQL)
 

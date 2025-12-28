@@ -715,6 +715,10 @@ func getNthElementAndCast[T any](arr []any, indexes ...int) T {
 		return defaultVal
 	}
 
+	if indexes[0] >= len(arr) {
+		return defaultVal
+	}
+
 	ans, ok := arr[indexes[0]].(T)
 	if !ok {
 		return defaultVal
