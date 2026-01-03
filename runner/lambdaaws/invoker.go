@@ -129,6 +129,7 @@ func (i *invoker) setPayloads(cfg *runner.Config) error {
 				Language:     cfg.LangCode,
 				FunctionName: cfg.FunctionName,
 				ExtraReviews: cfg.ExtraReviews,
+				ExtraPhotos:  cfg.ExtraPhotos,
 			}
 			i.payloads = append(i.payloads, payload)
 
@@ -148,6 +149,7 @@ func (i *invoker) setPayloads(cfg *runner.Config) error {
 			Language:     cfg.LangCode,
 			FunctionName: cfg.FunctionName,
 			ExtraReviews: cfg.ExtraReviews,
+			ExtraPhotos:  cfg.ExtraPhotos,
 		}
 		i.payloads = append(i.payloads, payload)
 	}
