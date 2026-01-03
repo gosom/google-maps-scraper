@@ -80,6 +80,7 @@ type Config struct {
 	DisablePageReuse         bool
 	ExtraReviews             bool
 	LeadsDBAPIKey            string
+	ExtraPhotos              bool
 }
 
 func ParseConfig() *Config {
@@ -127,6 +128,7 @@ func ParseConfig() *Config {
 	flag.BoolVar(&cfg.DisablePageReuse, "disable-page-reuse", false, "disable page reuse in playwright")
 	flag.BoolVar(&cfg.ExtraReviews, "extra-reviews", false, "enable extra reviews collection")
 	flag.StringVar(&cfg.LeadsDBAPIKey, "leadsdb-api-key", "", "LeadsDB API key for exporting results to LeadsDB")
+	flag.BoolVar(&cfg.ExtraPhotos, "extra-photos", false, "enable extra photos collection (includes dates and individual photos)")
 
 	flag.Parse()
 

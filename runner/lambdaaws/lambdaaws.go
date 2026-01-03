@@ -90,6 +90,7 @@ func (l *lambdaAwsRunner) handler(ctx context.Context, input lInput) error {
 		nil,
 		exitMonitor,
 		input.ExtraReviews,
+		input.ExtraPhotos,
 	)
 	if err != nil {
 		return err
