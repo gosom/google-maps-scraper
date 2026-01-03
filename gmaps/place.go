@@ -23,9 +23,10 @@ type PlaceJob struct {
 	ExtractEmail        bool
 	ExitMonitor         exiter.Exiter
 	ExtractExtraReviews bool
+	ExtractExtraPhotos  bool
 }
 
-func NewPlaceJob(parentID, langCode, u string, extractEmail, extraExtraReviews bool, opts ...PlaceJobOptions) *PlaceJob {
+func NewPlaceJob(parentID, langCode, u string, extractEmail, extraExtraReviews, extraPhotos bool, opts ...PlaceJobOptions) *PlaceJob {
 	const (
 		defaultPrio       = scrapemate.PriorityMedium
 		defaultMaxRetries = 3
@@ -46,6 +47,7 @@ func NewPlaceJob(parentID, langCode, u string, extractEmail, extraExtraReviews b
 	job.UsageInResultststs = true
 	job.ExtractEmail = extractEmail
 	job.ExtractExtraReviews = extraExtraReviews
+	job.ExtractExtraPhotos = extraPhotos
 
 	for _, opt := range opts {
 		opt(&job)
@@ -75,6 +77,10 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 	entry, err := EntryFromJSON(raw)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	if j.ExtractExtraPhotos {
+		entry.AddExtraPhotos(raw)
 	}
 
 	entry.ID = j.ParentID

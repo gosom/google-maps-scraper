@@ -79,6 +79,7 @@ type Config struct {
 	Addr                     string
 	DisablePageReuse         bool
 	ExtraReviews             bool
+	ExtraPhotos              bool
 }
 
 func ParseConfig() *Config {
@@ -125,6 +126,7 @@ func ParseConfig() *Config {
 	flag.StringVar(&cfg.Addr, "addr", ":8080", "address to listen on for web server")
 	flag.BoolVar(&cfg.DisablePageReuse, "disable-page-reuse", false, "disable page reuse in playwright")
 	flag.BoolVar(&cfg.ExtraReviews, "extra-reviews", false, "enable extra reviews collection")
+	flag.BoolVar(&cfg.ExtraPhotos, "extra-photos", false, "enable extra photos collection (includes dates and individual photos)")
 
 	flag.Parse()
 

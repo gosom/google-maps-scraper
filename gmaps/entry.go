@@ -15,6 +15,7 @@ import (
 type Image struct {
 	Title string `json:"title"`
 	Image string `json:"image"`
+	Date  string `json:"date,omitempty"`
 }
 
 type LinkSource struct {
@@ -84,6 +85,7 @@ type Entry struct {
 	Timezone            string                 `json:"timezone"`
 	PriceRange          string                 `json:"price_range"`
 	DataID              string                 `json:"data_id"`
+	PhotosCount         int                    `json:"photos_count"`
 	Images              []Image                `json:"images"`
 	Reservations        []LinkSource           `json:"reservations"`
 	OrderOnline         []LinkSource           `json:"order_online"`
@@ -180,6 +182,7 @@ func (e *Entry) CsvHeaders() []string {
 		"timezone",
 		"price_range",
 		"data_id",
+		"photos_count",
 		"images",
 		"reservations",
 		"order_online",
@@ -218,6 +221,7 @@ func (e *Entry) CsvRow() []string {
 		e.Timezone,
 		e.PriceRange,
 		e.DataID,
+		stringify(e.PhotosCount),
 		stringify(e.Images),
 		stringify(e.Reservations),
 		stringify(e.OrderOnline),
@@ -242,6 +246,93 @@ func (e *Entry) AddExtraReviews(pages [][]byte) {
 			e.UserReviewsExtended = append(e.UserReviewsExtended, reviews...)
 		}
 	}
+}
+
+// AddExtraPhotos extracts additional photo data including dates for existing images
+// and individual photos from the raw JSON data.
+func (e *Entry) AddExtraPhotos(raw []byte) {
+	var jd []any
+	if err := json.Unmarshal(raw, &jd); err != nil {
+		return
+	}
+
+	if len(jd) < 7 {
+		return
+	}
+
+	darray, ok := jd[6].([]any)
+	if !ok {
+		return
+	}
+
+	// Extract dates for existing category images from darray[171][0]
+	catImages := getNthElementAndCast[[]any](darray, 171, 0)
+	for i := range e.Images {
+		if i < len(catImages) {
+			cat := getNthElementAndCast[[]any](catImages, i)
+			// Date is at cat[3][0][21][6][8]
+			dateArr := getNthElementAndCast[[]any](cat, 3, 0, 21, 6, 8)
+			e.Images[i].Date = formatPhotoDate(dateArr)
+		}
+	}
+
+	// Extract individual photos from darray[37][0]
+	photoObjects := getNthElementAndCast[[]any](darray, 37, 0)
+	for i := range photoObjects {
+		photo := getNthElementAndCast[[]any](photoObjects, i)
+		if len(photo) == 0 {
+			continue
+		}
+
+		photoID := getNthElementAndCast[string](photo, 0)
+		photoURL := getNthElementAndCast[string](photo, 6, 0)
+		photoLabel := getNthElementAndCast[string](photo, 20)
+		dateArr := getNthElementAndCast[[]any](photo, 21, 6, 8)
+
+		if photoURL == "" {
+			continue
+		}
+
+		// Use label as title, fallback to "Photo"
+		title := photoLabel
+		if title == "" {
+			title = fmt.Sprintf("Photo %d", i+1)
+		}
+
+		// Check if this photo is already in Images (by URL or ID)
+		alreadyExists := false
+		for _, img := range e.Images {
+			if strings.Contains(img.Image, photoID) {
+				alreadyExists = true
+				break
+			}
+		}
+
+		if !alreadyExists {
+			e.Images = append(e.Images, Image{
+				Title: title,
+				Image: photoURL,
+				Date:  formatPhotoDate(dateArr),
+			})
+		}
+	}
+}
+
+// formatPhotoDate converts a date array [year, month, day, hour] to "YYYY-MM-DD" format.
+func formatPhotoDate(dateArr []any) string {
+	if len(dateArr) < 3 {
+		return ""
+	}
+
+	year := int(getNthElementAndCast[float64](dateArr, 0))
+	month := int(getNthElementAndCast[float64](dateArr, 1))
+	day := int(getNthElementAndCast[float64](dateArr, 2))
+
+	if year == 0 || month == 0 || day == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf("%04d-%02d-%02d", year, month, day)
 }
 
 func extractReviews(data []byte) []Review {
@@ -329,6 +420,7 @@ func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error)
 	entry.Timezone = getNthElementAndCast[string](darray, 30)
 	entry.PriceRange = getNthElementAndCast[string](darray, 4, 2)
 	entry.DataID = getNthElementAndCast[string](darray, 10)
+	entry.PhotosCount = int(getNthElementAndCast[float64](darray, 37, 1))
 
 	items := getLinkSource(getLinkSourceParams{
 		arr:    getNthElementAndCast[[]any](darray, 171, 0),
