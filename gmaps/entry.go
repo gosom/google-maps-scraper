@@ -6,11 +6,14 @@ import (
 	"iter"
 	"math"
 	"net/url"
+	"regexp"
 	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
 )
+
+var panoidRegex = regexp.MustCompile(`panoid=([^&]+)`)
 
 type Image struct {
 	Title string `json:"title"`
@@ -86,6 +89,7 @@ type Entry struct {
 	PriceRange          string                 `json:"price_range"`
 	DataID              string                 `json:"data_id"`
 	PhotosCount         int                    `json:"photos_count"`
+	StreetViewURL       string                 `json:"street_view_url"`
 	Images              []Image                `json:"images"`
 	Reservations        []LinkSource           `json:"reservations"`
 	OrderOnline         []LinkSource           `json:"order_online"`
@@ -183,6 +187,7 @@ func (e *Entry) CsvHeaders() []string {
 		"price_range",
 		"data_id",
 		"photos_count",
+		"street_view_url",
 		"images",
 		"reservations",
 		"order_online",
@@ -222,6 +227,7 @@ func (e *Entry) CsvRow() []string {
 		e.PriceRange,
 		e.DataID,
 		stringify(e.PhotosCount),
+		e.StreetViewURL,
 		stringify(e.Images),
 		stringify(e.Reservations),
 		stringify(e.OrderOnline),
@@ -436,6 +442,9 @@ func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error)
 			Image: items[i].Link,
 		}
 	}
+
+	// Extract Street View URL from images
+	entry.StreetViewURL = extractStreetViewURL(entry.Images)
 
 	entry.Reservations = getLinkSource(getLinkSourceParams{
 		arr:    getNthElementAndCast[[]any](darray, 46),
@@ -762,6 +771,20 @@ func stringify(v any) string {
 		d, _ := json.Marshal(v)
 		return string(d)
 	}
+}
+
+// extractStreetViewURL finds the Street View image and extracts the panoid to create a proper URL
+func extractStreetViewURL(images []Image) string {
+	for _, img := range images {
+		if strings.Contains(img.Title, "Street View") {
+			matches := panoidRegex.FindStringSubmatch(img.Image)
+			if len(matches) > 1 {
+				return fmt.Sprintf("https://www.google.com/maps/@?api=1&map_action=pano&pano=%s", matches[1])
+			}
+		}
+	}
+
+	return ""
 }
 
 func decodeURL(url string) (string, error) {
