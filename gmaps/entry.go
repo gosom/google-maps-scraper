@@ -84,6 +84,7 @@ type Entry struct {
 	Timezone            string                 `json:"timezone"`
 	PriceRange          string                 `json:"price_range"`
 	DataID              string                 `json:"data_id"`
+	PhotosCount         int                    `json:"photos_count"`
 	Images              []Image                `json:"images"`
 	Reservations        []LinkSource           `json:"reservations"`
 	OrderOnline         []LinkSource           `json:"order_online"`
@@ -180,6 +181,7 @@ func (e *Entry) CsvHeaders() []string {
 		"timezone",
 		"price_range",
 		"data_id",
+		"photos_count",
 		"images",
 		"reservations",
 		"order_online",
@@ -218,6 +220,7 @@ func (e *Entry) CsvRow() []string {
 		e.Timezone,
 		e.PriceRange,
 		e.DataID,
+		stringify(e.PhotosCount),
 		stringify(e.Images),
 		stringify(e.Reservations),
 		stringify(e.OrderOnline),
@@ -341,6 +344,7 @@ func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error)
 	entry.Timezone = getNthElementAndCast[string](darray, 30)
 	entry.PriceRange = getNthElementAndCast[string](darray, 4, 2)
 	entry.DataID = getNthElementAndCast[string](darray, 10)
+	entry.PhotosCount = int(getNthElementAndCast[float64](darray, 37, 1))
 
 	items := getLinkSource(getLinkSourceParams{
 		arr:    getNthElementAndCast[[]any](darray, 171, 0),
