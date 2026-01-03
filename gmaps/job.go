@@ -29,6 +29,7 @@ type GmapJob struct {
 	Deduper             deduper.Deduper
 	ExitMonitor         exiter.Exiter
 	ExtractExtraReviews bool
+	ExtractExtraPhotos  bool
 }
 
 func NewGmapJob(
@@ -97,6 +98,12 @@ func WithExtraReviews() GmapJobOptions {
 	}
 }
 
+func WithExtraPhotos() GmapJobOptions {
+	return func(j *GmapJob) {
+		j.ExtractExtraPhotos = true
+	}
+}
+
 func (j *GmapJob) UseInResults() bool {
 	return false
 }
@@ -122,7 +129,7 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 			jopts = append(jopts, WithPlaceJobExitMonitor(j.ExitMonitor))
 		}
 
-		placeJob := NewPlaceJob(j.ID, j.LangCode, resp.URL, j.ExtractEmail, j.ExtractExtraReviews, jopts...)
+		placeJob := NewPlaceJob(j.ID, j.LangCode, resp.URL, j.ExtractEmail, j.ExtractExtraReviews, j.ExtractExtraPhotos, jopts...)
 
 		next = append(next, placeJob)
 	} else {
@@ -133,7 +140,7 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 					jopts = append(jopts, WithPlaceJobExitMonitor(j.ExitMonitor))
 				}
 
-				nextJob := NewPlaceJob(j.ID, j.LangCode, href, j.ExtractEmail, j.ExtractExtraReviews, jopts...)
+				nextJob := NewPlaceJob(j.ID, j.LangCode, href, j.ExtractEmail, j.ExtractExtraReviews, j.ExtractExtraPhotos, jopts...)
 
 				if j.Deduper == nil || j.Deduper.AddIfNotExists(ctx, href) {
 					next = append(next, nextJob)
