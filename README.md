@@ -250,6 +250,7 @@ go build
 | 31 | `user_reviews` | Customer reviews (text, rating, timestamp) |
 | 32 | `emails` | Extracted email addresses (requires `-email` flag) |
 | 33 | `user_reviews_extended` | Extended reviews up to ~300 (requires `-extra-reviews`) |
+| 34 | `place_id` | Google's unique place id |
 
 </details>
 
