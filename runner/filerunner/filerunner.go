@@ -206,8 +206,7 @@ func (r *fileRunner) setApp() error {
 			opts = append(opts, scrapemateapp.WithJS(
 				scrapemateapp.Headfull(),
 				scrapemateapp.DisableImages(),
-			),
-			)
+			))
 		} else {
 			opts = append(opts, scrapemateapp.WithJS(scrapemateapp.DisableImages()))
 		}
