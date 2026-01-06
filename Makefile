@@ -1,5 +1,5 @@
 APP_NAME := google_maps_scraper
-VERSION := 1.9.2
+VERSION := 1.10.0
 
 default: help
 
@@ -36,3 +36,20 @@ cross-compile: ## cross compiles the application
 	GOOS=linux GOARCH=amd64 go build -o bin/$(APP_NAME)-${VERSION}-linux-amd64
 	GOOS=darwin GOARCH=amd64 go build -o bin/$(APP_NAME)-${VERSION}-darwin-amd64
 	GOOS=windows GOARCH=amd64 go build -o bin/$(APP_NAME)-${VERSION}-windows-amd64.exe
+
+build: ## builds the application (default: playwright)
+	go build -o bin/$(APP_NAME) .
+
+build-rod: ## builds the application with go-rod browser engine
+	go build -tags rod -o bin/$(APP_NAME)-rod .
+
+cross-compile-rod: ## cross compiles the application with go-rod
+	GOOS=linux GOARCH=amd64 go build -tags rod -o bin/$(APP_NAME)-${VERSION}-rod-linux-amd64
+	GOOS=darwin GOARCH=amd64 go build -tags rod -o bin/$(APP_NAME)-${VERSION}-rod-darwin-amd64
+	GOOS=windows GOARCH=amd64 go build -tags rod -o bin/$(APP_NAME)-${VERSION}-rod-windows-amd64.exe
+
+docker: ## builds docker image with playwright (default)
+	docker build -t $(APP_NAME):$(VERSION) .
+
+docker-rod: ## builds docker image with go-rod
+	docker build -f Dockerfile.rod -t $(APP_NAME):$(VERSION)-rod .

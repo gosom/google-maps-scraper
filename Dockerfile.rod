@@ -1,0 +1,47 @@
+# Build stage
+FROM golang:1.25.5-trixie AS builder
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -tags rod -ldflags="-w -s" -o /usr/bin/google-maps-scraper
+
+# Download Chromium for rod during build using the browser download tool
+RUN go run github.com/go-rod/rod/lib/utils/get-browser@latest
+
+# Final stage - using Debian base with minimal Chromium dependencies
+FROM debian:trixie-slim
+
+# Install only essential Chromium dependencies (combined in single layer, aggressive cleanup)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libasound2t64 \
+    libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libcairo2 \
+    libcups2 \
+    libdbus-1-3 \
+    libdrm2 \
+    libexpat1 \
+    libgbm1 \
+    libglib2.0-0 \
+    libnspr4 \
+    libnss3 \
+    libpango-1.0-0 \
+    libx11-6 \
+    libxcb1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxkbcommon0 \
+    libxrandr2 \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /var/tmp/* \
+    && find /usr/share/doc -type f -delete \
+    && find /usr/share/man -type f -delete \
+    && find /usr/share/locale -type f -delete
+
+COPY --from=builder /usr/bin/google-maps-scraper /usr/bin/
+COPY --from=builder /root/.cache/rod /root/.cache/rod
+
+ENTRYPOINT ["google-maps-scraper"]
