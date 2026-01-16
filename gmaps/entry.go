@@ -308,13 +308,11 @@ func (e *Entry) AddExtraPhotos(raw []byte) {
 			title = fmt.Sprintf("Photo %d", i+1)
 		}
 
-				// Check if this photo is already in Images (by URL or ID)
+		// Check if this photo is already in Images (by URL or ID)
 
-				alreadyExists := false
+		alreadyExists := false
 
-		
-
-				for _, img := range e.Images {
+		for _, img := range e.Images {
 			if strings.Contains(img.Image, photoID) {
 				alreadyExists = true
 				break
