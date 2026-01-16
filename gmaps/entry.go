@@ -310,6 +310,7 @@ func (e *Entry) AddExtraPhotos(raw []byte) {
 
 		// Check if this photo is already in Images (by URL or ID)
 		alreadyExists := false
+
 		for _, img := range e.Images {
 			if strings.Contains(img.Image, photoID) {
 				alreadyExists = true
