@@ -201,6 +201,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	)
 	if err != nil {
 		job.Status = web.StatusFailed
+
 		err2 := w.svc.Update(ctx, job)
 		if err2 != nil {
 			log.Printf("failed to update job status: %v", err2)
@@ -236,6 +237,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			cancel()
 
 			job.Status = web.StatusFailed
+
 			err2 := w.svc.Update(ctx, job)
 			if err2 != nil {
 				log.Printf("failed to update job status: %v", err2)
@@ -271,6 +273,7 @@ func (w *webrunner) setupMate(ctx context.Context, writer io.Writer, job *web.Jo
 	}
 
 	var proxies []string
+
 	if len(w.cfg.Proxies) > 0 {
 		proxies = w.cfg.Proxies
 	} else if len(job.Data.Proxies) > 0 {
@@ -278,6 +281,7 @@ func (w *webrunner) setupMate(ctx context.Context, writer io.Writer, job *web.Jo
 	}
 
 	hasProxy := false
+
 	if len(proxies) > 0 {
 		if err := validateProxy(ctx, proxies[0]); err != nil {
 			return nil, fmt.Errorf("proxy validation failed: %w", err)
@@ -331,7 +335,7 @@ func validateProxy(ctx context.Context, proxyURL string) error {
 		Timeout:   20 * time.Second,
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", "http://clients3.google.com/generate_204", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", "http://clients3.google.com/generate_204", http.NoBody)
 	if err != nil {
 		return err
 	}
