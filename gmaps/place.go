@@ -3,13 +3,11 @@ package gmaps
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/gosom/scrapemate"
-	"github.com/playwright-community/playwright-go"
 
 	"github.com/gosom/google-maps-scraper/exiter"
 )
@@ -120,12 +118,10 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 	return &entry, nil, err
 }
 
-func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scrapemate.Response {
+func (j *PlaceJob) BrowserActions(ctx context.Context, page scrapemate.BrowserPage) scrapemate.Response {
 	var resp scrapemate.Response
 
-	pageResponse, err := page.Goto(j.GetURL(), playwright.PageGotoOptions{
-		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
-	})
+	pageResponse, err := page.Goto(j.GetURL(), scrapemate.WaitUntilDOMContentLoaded)
 	if err != nil {
 		resp.Error = err
 
@@ -134,25 +130,18 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 
 	clickRejectCookiesIfRequired(page)
 
-	const defaultTimeout = 5000
+	const defaultTimeout = 5 * time.Second
 
-	err = page.WaitForURL(page.URL(), playwright.PageWaitForURLOptions{
-		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
-		Timeout:   playwright.Float(defaultTimeout),
-	})
+	err = page.WaitForURL(page.URL(), defaultTimeout)
 	if err != nil {
 		resp.Error = err
 
 		return resp
 	}
 
-	resp.URL = pageResponse.URL()
-	resp.StatusCode = pageResponse.Status()
-	resp.Headers = make(http.Header, len(pageResponse.Headers()))
-
-	for k, v := range pageResponse.Headers() {
-		resp.Headers.Add(k, v)
-	}
+	resp.URL = pageResponse.URL
+	resp.StatusCode = pageResponse.StatusCode
+	resp.Headers = pageResponse.Headers
 
 	raw, err := j.extractJSON(page)
 	if err != nil {
@@ -193,23 +182,40 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 	return resp
 }
 
-func (j *PlaceJob) getRaw(ctx context.Context, page playwright.Page) (any, error) {
+func (j *PlaceJob) getRaw(ctx context.Context, page scrapemate.BrowserPage) (any, error) {
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, fmt.Errorf("timeout while getting raw data: %w", ctx.Err())
 		default:
-			raw, err := page.Evaluate(js)
-			if err == nil && raw != nil {
-				return raw, nil
+			raw, err := page.Eval(js)
+			if err != nil {
+				// Continue retrying on error
+				<-time.After(time.Millisecond * 200)
+				continue
 			}
 
-			<-time.After(time.Millisecond * 200)
+			// Check for valid non-null result
+			// go-rod may return nil for JS null, or empty string
+			if raw == nil {
+				<-time.After(time.Millisecond * 200)
+				continue
+			}
+
+			// If it's a string, make sure it's not empty
+			if str, ok := raw.(string); ok {
+				if str == "" {
+					<-time.After(time.Millisecond * 200)
+					continue
+				}
+			}
+
+			return raw, nil
 		}
 	}
 }
 
-func (j *PlaceJob) extractJSON(page playwright.Page) ([]byte, error) {
+func (j *PlaceJob) extractJSON(page scrapemate.BrowserPage) ([]byte, error) {
 	const maxRetries = 2
 
 	for attempt := range maxRetries {
@@ -221,9 +227,7 @@ func (j *PlaceJob) extractJSON(page playwright.Page) ([]byte, error) {
 		if err != nil {
 			// On timeout, try reloading the page
 			if attempt < maxRetries-1 {
-				if _, reloadErr := page.Reload(playwright.PageReloadOptions{
-					WaitUntil: playwright.WaitUntilStateDomcontentloaded,
-				}); reloadErr == nil {
+				if reloadErr := page.Reload(scrapemate.WaitUntilDOMContentLoaded); reloadErr == nil {
 					continue
 				}
 			}
@@ -233,9 +237,7 @@ func (j *PlaceJob) extractJSON(page playwright.Page) ([]byte, error) {
 
 		if rawI == nil {
 			if attempt < maxRetries-1 {
-				if _, reloadErr := page.Reload(playwright.PageReloadOptions{
-					WaitUntil: playwright.WaitUntilStateDomcontentloaded,
-				}); reloadErr == nil {
+				if reloadErr := page.Reload(scrapemate.WaitUntilDOMContentLoaded); reloadErr == nil {
 					continue
 				}
 			}
