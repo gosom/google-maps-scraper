@@ -341,6 +341,15 @@ For larger scraping jobs, proxies help avoid rate limiting. Here's how to config
   -depth 1 -c 2
 ```
 
+**Scrapoxy**
+
+To use a Scrapoxy rotating proxy endpoint, set `SCRAPOXY_PROXY_URL` and omit `-proxies`:
+
+```bash
+export SCRAPOXY_PROXY_URL="http://project-user:project-pass@scrapoxy-host:8888"
+./google-maps-scraper -input queries.txt -results results.csv -depth 1 -c 2
+```
+
 **Supported protocols:** `socks5`, `socks5h`, `http`, `https`
 
 #### Proxy Providers
