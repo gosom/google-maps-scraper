@@ -172,6 +172,8 @@ func ParseConfig() *Config {
 
 	if proxies != "" {
 		cfg.Proxies = strings.Split(proxies, ",")
+	} else if scrapoxyProxy := os.Getenv("SCRAPOXY_PROXY_URL"); scrapoxyProxy != "" {
+		cfg.Proxies = strings.Split(scrapoxyProxy, ",")
 	}
 
 	if cfg.AwsAccessKey != "" && cfg.AwsSecretKey != "" && cfg.AwsRegion != "" {
