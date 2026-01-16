@@ -2,7 +2,7 @@ name: Publish to GitHub Container Registry
 
 on:
   push:
-    branches: [unified-review-fixes]
+    branches: [fork-main]
   workflow_dispatch:
 
 env:
@@ -37,7 +37,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest
-            type=raw,value=unified-review-fixes
+            type=raw,value=fork-main
             type=sha,prefix=
 
       - name: Build and push Docker image
