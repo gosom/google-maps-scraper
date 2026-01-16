@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -198,6 +201,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		w.cfg.ExtraPhotos,
 	)
 	if err != nil {
+		job.Status = web.StatusFailed
 		err2 := w.svc.Update(ctx, job)
 		if err2 != nil {
 			log.Printf("failed to update job status: %v", err2)
@@ -232,6 +236,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
 			cancel()
 
+			job.Status = web.StatusFailed
 			err2 := w.svc.Update(ctx, job)
 			if err2 != nil {
 				log.Printf("failed to update job status: %v", err2)
@@ -250,7 +255,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	return w.svc.Update(ctx, job)
 }
 
-func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job) (*scrapemateapp.ScrapemateApp, error) {
+func (w *webrunner) setupMate(ctx context.Context, writer io.Writer, job *web.Job) (*scrapemateapp.ScrapemateApp, error) {
 	opts := []func(*scrapemateapp.Config) error{
 		scrapemateapp.WithConcurrency(w.cfg.Concurrency),
 		scrapemateapp.WithExitOnInactivity(time.Minute * 3),
@@ -266,15 +271,20 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job)
 		)
 	}
 
-	hasProxy := false
-
+	var proxies []string
 	if len(w.cfg.Proxies) > 0 {
-		opts = append(opts, scrapemateapp.WithProxies(w.cfg.Proxies))
-		hasProxy = true
+		proxies = w.cfg.Proxies
 	} else if len(job.Data.Proxies) > 0 {
-		opts = append(opts,
-			scrapemateapp.WithProxies(job.Data.Proxies),
-		)
+		proxies = job.Data.Proxies
+	}
+
+	hasProxy := false
+	if len(proxies) > 0 {
+		if err := validateProxy(ctx, proxies[0]); err != nil {
+			return nil, fmt.Errorf("proxy validation failed: %w", err)
+		}
+
+		opts = append(opts, scrapemateapp.WithProxies(proxies))
 		hasProxy = true
 	}
 
@@ -300,4 +310,42 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job)
 	}
 
 	return scrapemateapp.NewScrapeMateApp(matecfg)
+}
+
+func validateProxy(ctx context.Context, proxyURL string) error {
+	u, err := url.Parse(proxyURL)
+	if err != nil {
+		return err
+	}
+
+	transport := &http.Transport{
+		Proxy: http.ProxyURL(u),
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout: 10 * time.Second,
+	}
+
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   20 * time.Second,
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", "http://clients3.google.com/generate_204", nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 500 {
+		return fmt.Errorf("proxy returned status %d", resp.StatusCode)
+	}
+
+	return nil
 }

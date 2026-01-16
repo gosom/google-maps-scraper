@@ -29,11 +29,11 @@ type JobRepository interface {
 }
 
 type Job struct {
-	ID     string
-	Name   string
-	Date   time.Time
-	Status string
-	Data   JobData
+	ID     string    `json:"id"`
+	Name   string    `json:"name"`
+	Date   time.Time `json:"date"`
+	Status string    `json:"status"`
+	Data   JobData   `json:"data"`
 }
 
 func (j *Job) Validate() error {
