@@ -79,6 +79,7 @@ type Config struct {
 	Addr                     string
 	DisablePageReuse         bool
 	ExtraReviews             bool
+	LeadsDBAPIKey            string
 	ExtraPhotos              bool
 }
 
@@ -126,6 +127,7 @@ func ParseConfig() *Config {
 	flag.StringVar(&cfg.Addr, "addr", ":8080", "address to listen on for web server")
 	flag.BoolVar(&cfg.DisablePageReuse, "disable-page-reuse", false, "disable page reuse in playwright")
 	flag.BoolVar(&cfg.ExtraReviews, "extra-reviews", false, "enable extra reviews collection")
+	flag.StringVar(&cfg.LeadsDBAPIKey, "leadsdb-api-key", "", "LeadsDB API key for exporting results to LeadsDB")
 	flag.BoolVar(&cfg.ExtraPhotos, "extra-photos", false, "enable extra photos collection (includes dates and individual photos)")
 
 	flag.Parse()
@@ -172,6 +174,8 @@ func ParseConfig() *Config {
 
 	if proxies != "" {
 		cfg.Proxies = strings.Split(proxies, ",")
+	} else if scrapoxyProxy := os.Getenv("SCRAPOXY_PROXY_URL"); scrapoxyProxy != "" {
+		cfg.Proxies = strings.Split(scrapoxyProxy, ",")
 	}
 
 	if cfg.AwsAccessKey != "" && cfg.AwsSecretKey != "" && cfg.AwsRegion != "" {
