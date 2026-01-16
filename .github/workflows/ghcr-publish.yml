@@ -1,5 +1,4 @@
 name: Publish to GitHub Container Registry
-name: ghcr-publish
 
 on:
   push:
