@@ -1,17 +1,3 @@
-For README.md
-
-### [HasData](https://hasdata.com/scrapers/google-maps?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom) - No-code Google Maps Scraper & Email Extraction
-
-[![HasData Google Maps Scraper](./img/hd-gm-banner.png)](https://hasdata.com/scrapers/google-maps?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom)
-
-Extract business leads, emails, addresses, phones, reviews and more. [**Get 1,000 free credits →**](https://hasdata.com/scrapers/google-maps?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom)
-
----
-================================================================
-
-For hasdata.md
-
-
 # HasData: Premium Google Maps & SERP API
 
 ![HasData](img/hd-gm-banner.png) 
@@ -105,4 +91,5 @@ curl --request GET \
 
 ### Ready to build?
 Stop worrying about proxies and start scraping in minutes.
+
 **[Get your Free API Key (1,000 Credits) →](https://hasdata.com/?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom)**
