@@ -193,7 +193,7 @@ docker pull gosom/google-maps-scraper:latest-rod
 
 ### Build from Source
 
-Requirements: Go 1.25.5+
+Requirements: Go 1.25.6+
 
 ```bash
 git clone https://github.com/gosom/google-maps-scraper.git
