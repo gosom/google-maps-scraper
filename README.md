@@ -48,11 +48,11 @@ Fast, reliable, and scalable. Used by Fortune 500 companies. [**View all APIs �
 
 ---
 
-### [Decodo](https://visit.decodo.com/APVbbx) - Premium residential proxies with #1 response time
+### [HasData](https://hasdata.com/scrapers/google-maps?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom) - No-code Google Maps Scraper & Email Extraction
 
-[![Decodo Proxies](./img/decodo.png)](https://visit.decodo.com/APVbbx)
+[![HasData Google Maps Scraper](./img/hd-gm-banner.png)](https://hasdata.com/scrapers/google-maps?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom)
 
-125M+ IPs · 195+ locations · No CAPTCHAs · No IP bans. [**Start 3-day free trial →**](https://visit.decodo.com/APVbbx) | [Integration guide](decodo.md)
+Extract business leads, emails, addresses, phones, reviews and more. [**Get 1,000 free credits →**](https://hasdata.com/scrapers/google-maps?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom)
 
 ---
 
@@ -352,7 +352,7 @@ If you need reliable proxies, these providers support this project as sponsors:
 | [Decodo](https://visit.decodo.com/APVbbx) | #1 response time, 125M+ IPs | [3-day free trial](https://visit.decodo.com/APVbbx) |
 | [Evomi](https://evomi.com?utm_source=github&utm_medium=banner&utm_campaign=gosom-maps) | Swiss quality, 150+ countries | From $0.49/GB |
 
-Using their services helps fund continued development of this scraper. See the [Decodo integration guide](decodo.md) for setup instructions.
+Using their services helps fund continued development of this scraper.
 
 ### Email Extraction
 
@@ -583,13 +583,13 @@ A huge thank you to the sponsors who make this project possible!
 
 ---
 
-#### [Decodo](https://visit.decodo.com/APVbbx)
+#### [HasData](https://hasdata.com/scrapers/google-maps?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom)
 
-[![Decodo Proxies](./img/decodo.png)](https://visit.decodo.com/APVbbx)
+[![HasData Google Maps Scraper](./img/hd-gm-banner.png)](https://hasdata.com/scrapers/google-maps?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom)
 
-**Premium residential proxies with #1 response time.** 125M+ IPs · 195+ locations · No CAPTCHAs · No IP bans
+**No-code Google Maps Scraper & Email Extraction.** Extract business leads, emails, addresses, phones, reviews and more.
 
-[**Start 3-day free trial →**](https://visit.decodo.com/APVbbx) · [Integration guide](decodo.md)
+[**Get 1,000 free credits →**](https://hasdata.com/scrapers/google-maps?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom) · [Learn more](sponsors/hasdata.md)
 
 ---
 
