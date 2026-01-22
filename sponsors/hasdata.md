@@ -1,6 +1,6 @@
 # HasData: Premium Google Maps & SERP API
 
-![HasData](img/hd-gm-banner.png) 
+![HasData](../img/hd-gm-banner.png) 
 
 **[HasData](https://hasdata.com/?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom)** is a professional web scraping infrastructure that handles browsers, rotating proxies, and anti-bot systems for you.
 
