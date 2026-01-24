@@ -107,11 +107,11 @@ The scraper has [built-in LeadsDB integration](#export-to-leadsdb) - just add yo
   - [Using Proxies](#using-proxies)
   - [Email Extraction](#email-extraction)
   - [Fast Mode](#fast-mode)
+- [Export to LeadsDB](#export-to-leadsdb)
 - [Advanced Usage](#advanced-usage)
   - [PostgreSQL Database Provider](#postgresql-database-provider)
   - [Kubernetes Deployment](#kubernetes-deployment)
   - [Custom Writer Plugins](#custom-writer-plugins)
-  - [Export to LeadsDB](#export-to-leadsdb)
 - [Performance](#performance)
 - [Support the Project](#support-the-project)
 - [Sponsors](#sponsors)
@@ -396,6 +396,61 @@ Fast mode returns up to 21 results per query, ordered by distance. Useful for qu
 
 ---
 
+## Export to LeadsDB
+
+Skip the CSV files and send leads directly to a managed database. [LeadsDB](https://getleadsdb.com/) handles deduplication, filtering, and provides an API for your applications.
+
+**Using Docker:**
+```bash
+docker run \
+  -v $PWD/example-queries.txt:/example-queries \
+  gosom/google-maps-scraper \
+  -depth 1 \
+  -input /example-queries \
+  -leadsdb-api-key "your-api-key" \
+  -exit-on-inactivity 3m
+```
+
+**Using binary:**
+```bash
+./google-maps-scraper \
+  -input queries.txt \
+  -leadsdb-api-key "your-api-key" \
+  -exit-on-inactivity 3m
+```
+
+Or via environment variable:
+```bash
+export LEADSDB_API_KEY="your-api-key"
+./google-maps-scraper -input queries.txt -exit-on-inactivity 3m
+```
+
+<details>
+<summary><strong>Field Mapping</strong></summary>
+
+| Google Maps | LeadsDB |
+|-------------|---------|
+| Title | Name |
+| Category | Category |
+| Categories | Tags |
+| Phone | Phone |
+| Website | Website |
+| Address | Address, City, State, Country, PostalCode |
+| Latitude/Longitude | Coordinates |
+| Review Rating | Rating |
+| Review Count | ReviewCount |
+| Emails | Email |
+| Thumbnail | LogoURL |
+| CID | SourceID |
+
+Additional fields (Google Maps link, plus code, price range, etc.) are stored as custom attributes.
+
+</details>
+
+Get your API key at [getleadsdb.com/settings](https://getleadsdb.com/settings) after signing up.
+
+---
+
 ## Advanced Usage
 
 ### PostgreSQL Database Provider
@@ -468,47 +523,6 @@ go build -buildmode=plugin -tags=plugin -o myplugin.so myplugin.go
 ```bash
 ./google-maps-scraper -writer ~/plugins:MyWriter -input queries.txt
 ```
-
-### Export to LeadsDB
-
-Skip the CSV files and send leads directly to a managed database. [LeadsDB](https://getleadsdb.com/) handles deduplication, filtering, and provides an API for your applications.
-
-```bash
-./google-maps-scraper \
-  -input queries.txt \
-  -leadsdb-api-key "your-api-key" \
-  -exit-on-inactivity 3m
-```
-
-Or via environment variable:
-```bash
-export LEADSDB_API_KEY="your-api-key"
-./google-maps-scraper -input queries.txt -exit-on-inactivity 3m
-```
-
-<details>
-<summary><strong>Field Mapping</strong></summary>
-
-| Google Maps | LeadsDB |
-|-------------|---------|
-| Title | Name |
-| Category | Category |
-| Categories | Tags |
-| Phone | Phone |
-| Website | Website |
-| Address | Address, City, State, Country, PostalCode |
-| Latitude/Longitude | Coordinates |
-| Review Rating | Rating |
-| Review Count | ReviewCount |
-| Emails | Email |
-| Thumbnail | LogoURL |
-| CID | SourceID |
-
-Additional fields (Google Maps link, plus code, price range, etc.) are stored as custom attributes.
-
-</details>
-
-Get your API key at [getleadsdb.com/settings](https://getleadsdb.com/settings) after signing up.
 
 ---
 
