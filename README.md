@@ -16,6 +16,8 @@
 
 ![Example GIF](img/example.gif)
 
+> 💡 **New:** Export leads directly to [LeadsDB](https://getleadsdb.com/) - manage via API, AI/MCP integration, or UI with custom filtering and exports.
+
 > **Love this project?** A star helps others discover it and motivates continued development. [Become a sponsor](https://github.com/sponsors/gosom) to directly support new features and maintenance.
 
 ---
@@ -155,6 +157,18 @@ touch results.csv && docker run \
 **Want emails?** Add the `-email` flag.
 
 **Want all reviews (up to ~300)?** Add `--extra-reviews` and use `-json` output.
+
+**Want to skip CSV files?** Send leads directly to [LeadsDB](https://getleadsdb.com/):
+
+```bash
+docker run \
+  -v $PWD/example-queries.txt:/example-queries \
+  gosom/google-maps-scraper \
+  -depth 1 \
+  -input /example-queries \
+  -leadsdb-api-key "your-api-key" \
+  -exit-on-inactivity 3m
+```
 
 ### REST API
 
@@ -539,6 +553,7 @@ When you need proxies, APIs, or cloud services, consider using our sponsors. You
 - **Need proxies?** [Decodo](https://visit.decodo.com/APVbbx) or [Evomi](https://evomi.com?utm_source=github&utm_medium=banner&utm_campaign=gosom-maps)
 - **Prefer an API?** [SerpApi](https://serpapi.com/?utm_source=google-maps-scraper) or [SearchAPI](https://www.searchapi.io/google-maps?via=gosom)
 - **No-code solution?** [Scrap.io](https://scrap.io?utm_medium=ads&utm_source=github_gosom_gmap_scraper) or [G Maps Extractor](https://gmapsextractor.com?utm_source=github&utm_medium=banner&utm_campaign=gosom)
+- **Manage your leads?** [LeadsDB](https://getleadsdb.com/) - deduplicate, filter, and export with AI
 - **Cloud hosting?** [DigitalOcean](https://www.digitalocean.com/?refcode=c11136c4693c&utm_campaign=Referral_Invite&utm_medium=Referral_Program&utm_source=badge) ($200 credit) or [Hetzner](https://hetzner.cloud/?ref=ihtQPa0cT18n) (EUR 20 credit)
 
 ---
@@ -614,6 +629,19 @@ Swiss quality proxies from $0.49/GB<br>150+ countries · 24/7 support · 99.9% u
 
 Google Maps API for easy SERP scraping<br>Real-time data · Simple integration
 
+</td>
+</tr>
+<tr>
+<td align="center" width="50%">
+
+[![LeadsDB](https://getleadsdb.com/static/logo/logo-dark.svg)](https://getleadsdb.com/)
+
+**[LeadsDB](https://getleadsdb.com/)**
+
+Manage leads after scraping<br>Deduplication · AI-ready · Advanced filtering
+
+</td>
+<td align="center" width="50%">
 </td>
 </tr>
 </table>
