@@ -58,6 +58,14 @@ Extract business leads, emails, addresses, phones, reviews and more. [**Get 1,00
 
 ---
 
+### [LeadsDB](https://getleadsdb.com/) - Your Central Database for Business Leads
+
+[![LeadsDB](./img/leadsdb-banner.png)](https://getleadsdb.com/)
+
+Push leads via API or AI agent, remove duplicates automatically, and export when ready. [**Start free →**](https://getleadsdb.com/)
+
+---
+
 <p align="center">
   <a href="#sponsors">View all sponsors</a> | <a href="https://github.com/sponsors/gosom">Become a sponsor</a>
 </p>
