@@ -49,12 +49,14 @@ type About struct {
 }
 
 type Review struct {
-	Name           string
-	ProfilePicture string
-	Rating         int
-	Description    string
-	Images         []string
-	When           string
+	Name              string
+	ProfilePicture    string
+	Rating            int
+	Description       string
+	Images            []string
+	When              string
+	OwnerResponse     string
+	OwnerResponseTime string
 }
 
 type Entry struct {
@@ -507,6 +509,11 @@ func parseReviews(reviewsI []any) []Review {
 			}
 		}
 
+		// Extract owner response if present
+		// Owner response text is at [3][14][0][0], time at [3][3]
+		ownerResponse := getNthElementAndCast[string](el, 3, 14, 0, 0)
+		ownerResponseTime := getNthElementAndCast[string](el, 3, 3)
+
 		review := Review{
 			Name:           authorName,
 			ProfilePicture: profilePic,
@@ -517,8 +524,10 @@ func parseReviews(reviewsI []any) []Review {
 
 				return fmt.Sprintf("%v-%v-%v", time[0], time[1], time[2])
 			}(),
-			Rating:      rating,
-			Description: description,
+			Rating:            rating,
+			Description:       description,
+			OwnerResponse:     ownerResponse,
+			OwnerResponseTime: ownerResponseTime,
 		}
 
 		if review.Name == "" {
