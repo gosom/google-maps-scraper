@@ -13,11 +13,49 @@ import (
 
 type EmailExtractJobOptions func(*EmailExtractJob)
 
+type EmailFilter func(string) bool
+
+func DefaultEmailFilter(email string) bool {
+	lower := strings.ToLower(email)
+
+	// Filter images
+	imageExtensions := []string{".png", ".webp", ".jpg", ".jpeg", ".gif"}
+	for _, ext := range imageExtensions {
+		if strings.HasSuffix(lower, ext) {
+			return false
+		}
+	}
+	if strings.Contains(lower, "@2x.webp") || strings.Contains(lower, "@3x.webp") {
+		return false
+	}
+
+	// Filter sandbox/test emails
+	if strings.Contains(lower, "sentry-next.wixpress.com") {
+		return false
+	}
+
+	// Filter local/test domains
+	parts := strings.Split(lower, "@")
+	if len(parts) == 2 {
+		domain := parts[1]
+		invalidSuffixes := []string{".local", ".test", ".example"}
+		for _, suffix := range invalidSuffixes {
+			if strings.HasSuffix(domain, suffix) {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+
 type EmailExtractJob struct {
 	scrapemate.Job
 
 	Entry       *Entry
 	ExitMonitor exiter.Exiter
+	EmailFilter EmailFilter
 }
 
 func NewEmailJob(parentID string, entry *Entry, opts ...EmailExtractJobOptions) *EmailExtractJob {
@@ -44,6 +82,12 @@ func NewEmailJob(parentID string, entry *Entry, opts ...EmailExtractJobOptions) 
 	}
 
 	return &job
+}
+
+func WithEmailFilter(filter EmailFilter) EmailExtractJobOptions {
+	return func(j *EmailExtractJob) {
+		j.EmailFilter = filter
+	}
 }
 
 func WithEmailJobExitMonitor(exitMonitor exiter.Exiter) EmailExtractJobOptions {
@@ -78,9 +122,19 @@ func (j *EmailExtractJob) Process(ctx context.Context, resp *scrapemate.Response
 		return j.Entry, nil, nil
 	}
 
-	emails := docEmailExtractor(doc)
+	emails = docEmailExtractor(doc)
 	if len(emails) == 0 {
 		emails = regexEmailExtractor(resp.Body)
+	}
+
+	if j.EmailFilter != nil {
+		var filtered []string
+		for _, email := range emails {
+			if j.EmailFilter(email) {
+				filtered = append(filtered, email)
+			}
+		}
+		emails = filtered
 	}
 
 	j.Entry.Emails = emails
