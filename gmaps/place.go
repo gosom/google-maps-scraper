@@ -21,6 +21,7 @@ type PlaceJob struct {
 	ExtractEmail        bool
 	ExitMonitor         exiter.Exiter
 	ExtractExtraReviews bool
+	EmailFilter         EmailFilter
 }
 
 func NewPlaceJob(parentID, langCode, u string, extractEmail, extraExtraReviews bool, opts ...PlaceJobOptions) *PlaceJob {
@@ -55,6 +56,12 @@ func NewPlaceJob(parentID, langCode, u string, extractEmail, extraExtraReviews b
 func WithPlaceJobExitMonitor(exitMonitor exiter.Exiter) PlaceJobOptions {
 	return func(j *PlaceJob) {
 		j.ExitMonitor = exitMonitor
+	}
+}
+
+func WithPlaceEmailFilter(filter EmailFilter) PlaceJobOptions {
+	return func(j *PlaceJob) {
+		j.EmailFilter = filter
 	}
 }
 
@@ -98,6 +105,10 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 		opts := []EmailExtractJobOptions{}
 		if j.ExitMonitor != nil {
 			opts = append(opts, WithEmailJobExitMonitor(j.ExitMonitor))
+		}
+
+		if j.EmailFilter != nil {
+			opts = append(opts, WithEmailFilter(j.EmailFilter))
 		}
 
 		emailJob := NewEmailJob(j.ID, &entry, opts...)
