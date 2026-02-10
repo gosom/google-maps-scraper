@@ -1,6 +1,6 @@
 services:
   brezelscraper-backend:
-    image: ghcr.io/yasseen-salama/google-maps-scraper:staging
+    image: ghcr.io/brezel-ai/brezelscraper-backend:staging
     container_name: brezelscraper-backend
     environment:
       - DSN=${DSN}
@@ -39,7 +39,7 @@ services:
         max-file: "3"
 
   brezelscraper-frontend:
-    image: ghcr.io/yasseen-salama/brezelscraper-frontend:staging
+    image: ghcr.io/brezel-ai/brezelscraper-frontend:staging
     container_name: brezelscraper-frontend
     ports:
       - "3000:3000"
