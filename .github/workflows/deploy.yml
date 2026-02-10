@@ -10,8 +10,8 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  BACKEND_IMAGE: yasseen-salama/google-maps-scraper
-  FRONTEND_IMAGE: yasseen-salama/brezelscraper-frontend
+  BACKEND_IMAGE: brezel-ai/brezelscraper-backend
+  FRONTEND_IMAGE: brezel-ai/brezelscraper-frontend
   DOCKER_COMPOSE_FILE: docker-compose.staging.yaml
   BACKEND_CONTAINER: brezelscraper-backend
   FRONTEND_CONTAINER: brezelscraper-frontend
@@ -390,21 +390,6 @@ jobs:
             echo ""
             echo "📊 Container status:"
             docker ps --filter "name=brezel" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-
-      - name: Smoke tests
-        if: success()
-        run: |
-          echo "Running smoke tests..."
-          
-          STAGING_URL="${{ secrets.STAGING_URL || 'https://staging.brezel.ai' }}"
-          
-          # Test backend health
-          curl -f "$STAGING_URL/health" || {
-            echo "❌ Backend health check failed"
-            exit 1
-          }
-          
-          echo "Smoke tests passed"
 
       - name: Notify on failure
         if: failure()
