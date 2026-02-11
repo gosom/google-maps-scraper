@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log"
 	"net/http"
@@ -13,8 +14,12 @@ import (
 	"github.com/gosom/google-maps-scraper/postgres"
 )
 
+// SignupBonusAmount is the credit amount granted to new users on signup ($1.00)
+const SignupBonusAmount = 1.0
+
 // AuthMiddleware handles Clerk authentication and adds user info to the request context
 type AuthMiddleware struct {
+	db       *sql.DB
 	userAPI  *user.Client
 	userRepo postgres.UserRepository
 }
@@ -30,11 +35,12 @@ const (
 )
 
 // NewAuthMiddleware creates a new AuthMiddleware
-func NewAuthMiddleware(clerkAPIKey string, userRepo postgres.UserRepository) (*AuthMiddleware, error) {
+func NewAuthMiddleware(clerkAPIKey string, db *sql.DB, userRepo postgres.UserRepository) (*AuthMiddleware, error) {
 	// Configure Clerk SDK with the provided secret key
 	clerk.SetKey(clerkAPIKey)
 
 	return &AuthMiddleware{
+		db: db,
 		userAPI: user.NewClient(&clerk.ClientConfig{
 			BackendConfig: clerk.BackendConfig{
 				Key: clerk.String(clerkAPIKey),
@@ -114,12 +120,59 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 				http.Error(w, "Failed to create user record: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
+
+			// Grant signup bonus
+			if err := m.grantSignupBonus(r.Context(), userID); err != nil {
+				log.Printf("ERROR: Failed to grant signup bonus to user %s: %v", userID, err)
+				// Don't block signup if bonus fails
+			} else {
+				log.Printf("INFO: Granted $%.2f signup bonus to new user %s", SignupBonusAmount, userID)
+			}
 		}
 
 		// Add user ID to request context
 		ctx := context.WithValue(r.Context(), UserIDKey, userID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	}))
+}
+
+// grantSignupBonus awards the signup bonus credit to a newly created user.
+func (m *AuthMiddleware) grantSignupBonus(ctx context.Context, userID string) error {
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Get current balance (should be 0 for a new user)
+	var currentBalance float64
+	err = tx.QueryRowContext(ctx, "SELECT COALESCE(credit_balance, 0) FROM users WHERE id = $1 FOR UPDATE", userID).Scan(&currentBalance)
+	if err != nil {
+		return err
+	}
+
+	newBalance := currentBalance + SignupBonusAmount
+
+	// Update user credit balance
+	_, err = tx.ExecContext(ctx, `
+		UPDATE users 
+		SET credit_balance = COALESCE(credit_balance, 0) + $1::numeric,
+		    updated_at = NOW()
+		WHERE id = $2`, SignupBonusAmount, userID)
+	if err != nil {
+		return err
+	}
+
+	// Insert credit transaction for audit
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO credit_transactions (user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
+		VALUES ($1, 'bonus', $2, $3, $4, 'Signup bonus', 'signup_bonus', 'system')`,
+		userID, SignupBonusAmount, currentBalance, newBalance)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 // GetUserID extracts the user ID from the request context
