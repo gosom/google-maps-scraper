@@ -176,6 +176,7 @@ func New(cfg ServerConfig) (*Server, error) {
 	// Credit endpoints (if billing service is available)
 	if ans.billingSvc != nil {
 		apiRouter.HandleFunc("/credits/balance", hg.Billing.GetCreditBalance).Methods(http.MethodGet)
+		apiRouter.HandleFunc("/credits/history", hg.Billing.GetBillingHistory).Methods(http.MethodGet)
 		apiRouter.HandleFunc("/credits/checkout-session", hg.Billing.CreateCheckoutSession).Methods(http.MethodPost)
 		apiRouter.HandleFunc("/credits/reconcile", hg.Billing.Reconcile).Methods(http.MethodPost)
 	}

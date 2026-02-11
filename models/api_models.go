@@ -113,6 +113,28 @@ type PaginatedResultsResponse struct {
 	HasPrev    bool             `json:"has_prev"`
 }
 
+// CreditTransaction represents a single credit transaction for billing history.
+type CreditTransaction struct {
+	ID            string    `json:"id"`
+	Type          string    `json:"type"`
+	Amount        string    `json:"amount"`
+	BalanceBefore string    `json:"balance_before"`
+	BalanceAfter  string    `json:"balance_after"`
+	Description   string    `json:"description"`
+	ReferenceID   *string   `json:"reference_id,omitempty"`
+	ReferenceType *string   `json:"reference_type,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// BillingHistoryResponse is the paginated billing history response.
+type BillingHistoryResponse struct {
+	Transactions []CreditTransaction `json:"transactions"`
+	Total        int                 `json:"total"`
+	Limit        int                 `json:"limit"`
+	Offset       int                 `json:"offset"`
+	HasMore      bool                `json:"has_more"`
+}
+
 // JobCostBreakdownItem represents per-event cost aggregation for a job.
 type JobCostBreakdownItem struct {
 	EventType   string `json:"event_type"`

@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 
 	"github.com/gosom/google-maps-scraper/billing"
 	"github.com/gosom/google-maps-scraper/models"
@@ -113,4 +114,38 @@ func (h *BillingHandlers) HandleStripeWebhook(w http.ResponseWriter, r *http.Req
 	}
 	log.Printf("DEBUG: Webhook response code: %d", code)
 	w.WriteHeader(code)
+}
+
+func (h *BillingHandlers) GetBillingHistory(w http.ResponseWriter, r *http.Request) {
+	if h.Deps.DB == nil {
+		renderJSON(w, http.StatusServiceUnavailable, models.APIError{Code: http.StatusServiceUnavailable, Message: "database not available"})
+		return
+	}
+	userID, err := auth.GetUserID(r.Context())
+	if err != nil || userID == "" {
+		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
+		return
+	}
+
+	// Parse pagination params
+	limit := 50
+	offset := 0
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 && parsed <= 100 {
+			limit = parsed
+		}
+	}
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc)
+	resp, err := cs.GetBillingHistory(r.Context(), userID, limit, offset)
+	if err != nil {
+		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: err.Error()})
+		return
+	}
+	renderJSON(w, http.StatusOK, resp)
 }
