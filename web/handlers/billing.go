@@ -121,6 +121,10 @@ func (h *BillingHandlers) GetBillingHistory(w http.ResponseWriter, r *http.Reque
 		renderJSON(w, http.StatusServiceUnavailable, models.APIError{Code: http.StatusServiceUnavailable, Message: "database not available"})
 		return
 	}
+	if h.Deps.Auth == nil {
+		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "Authentication not configured"})
+		return
+	}
 	userID, err := auth.GetUserID(r.Context())
 	if err != nil || userID == "" {
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
