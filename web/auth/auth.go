@@ -137,6 +137,7 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 }
 
 // grantSignupBonus awards the signup bonus credit to a newly created user.
+// It is idempotent: if a bonus transaction already exists for this user, it no-ops.
 func (m *AuthMiddleware) grantSignupBonus(ctx context.Context, userID string) error {
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -144,7 +145,21 @@ func (m *AuthMiddleware) grantSignupBonus(ctx context.Context, userID string) er
 	}
 	defer tx.Rollback()
 
-	// Get current balance (should be 0 for a new user)
+	// Idempotency check: skip if this user already received a signup bonus.
+	// Uses FOR UPDATE to prevent concurrent grants via row-level locking.
+	var alreadyGranted bool
+	err = tx.QueryRowContext(ctx,
+		"SELECT EXISTS(SELECT 1 FROM credit_transactions WHERE user_id = $1 AND reference_id = 'signup_bonus' AND reference_type = 'system' FOR UPDATE)",
+		userID).Scan(&alreadyGranted)
+	if err != nil {
+		return err
+	}
+	if alreadyGranted {
+		log.Printf("INFO: Signup bonus already granted to user %s, skipping", userID)
+		return nil
+	}
+
+	// Lock the user row and get current balance
 	var currentBalance float64
 	err = tx.QueryRowContext(ctx, "SELECT COALESCE(credit_balance, 0) FROM users WHERE id = $1 FOR UPDATE", userID).Scan(&currentBalance)
 	if err != nil {
