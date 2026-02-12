@@ -233,6 +233,7 @@ jobs:
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.STAGING_HOST }}
@@ -241,7 +242,7 @@ jobs:
           port: ${{ secrets.STAGING_SSH_PORT }}
           timeout: 15m
           command_timeout: 15m
-          envs: GITHUB_TOKEN,DSN,CLERK_SECRET_KEY,CLERK_PUBLISHABLE_KEY,STRIPE_SECRET_KEY,STRIPE_WEBHOOK_SECRET,GOOGLE_CLIENT_SECRET
+          envs: GITHUB_TOKEN,DSN,CLERK_SECRET_KEY,CLERK_PUBLISHABLE_KEY,STRIPE_SECRET_KEY,STRIPE_WEBHOOK_SECRET,GOOGLE_CLIENT_SECRET,GRAFANA_ADMIN_PASSWORD
           script: |
             set -e
             
@@ -328,6 +329,11 @@ jobs:
             # Google
             if [ ! -z "$GOOGLE_CLIENT_SECRET" ]; then
               update_env "GOOGLE_CLIENT_SECRET" "$GOOGLE_CLIENT_SECRET"
+            fi
+            
+            # Monitoring
+            if [ ! -z "$GRAFANA_ADMIN_PASSWORD" ]; then
+              update_env "GRAFANA_ADMIN_PASSWORD" "$GRAFANA_ADMIN_PASSWORD"
             fi
             
             # Optimize for CPU (using update_env for consistency)
