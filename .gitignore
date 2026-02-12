@@ -32,3 +32,4 @@ brezel-api
 .gitignore
 *.DS_Store
 .DS_Store
+.claude/
