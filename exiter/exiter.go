@@ -2,8 +2,7 @@ package exiter
 
 import (
 	"context"
-	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -63,7 +62,7 @@ func (e *exiter) SetMaxResults(val int) {
 	defer e.mu.Unlock()
 
 	e.maxResults = val
-	fmt.Printf("DEBUG: SetMaxResults called with value: %d\n", val)
+	slog.Debug("set_max_results", slog.Int("max_results", val))
 }
 
 func (e *exiter) GetMaxResults() int {
@@ -124,9 +123,11 @@ func (e *exiter) IncrPlacesCompleted(val int) {
 	e.placesCompleted += val
 	e.lastProgressTime = time.Now() // Update progress time
 
-	// DEBUG: Log the current state
-	fmt.Printf("DEBUG: IncrPlacesCompleted - placesCompleted: %d, resultsWritten: %d, maxResults: %d\n",
-		e.placesCompleted, e.resultsWritten, e.maxResults)
+	slog.Debug("places_completed_updated",
+		slog.Int("places_completed", e.placesCompleted),
+		slog.Int("results_written", e.resultsWritten),
+		slog.Int("max_results", e.maxResults),
+	)
 }
 
 func (e *exiter) IncrResultsWritten(val int) {
@@ -135,7 +136,11 @@ func (e *exiter) IncrResultsWritten(val int) {
 
 	// Check if we've already triggered cancellation
 	if e.maxResults > 0 && e.resultsWritten >= e.maxResults && e.cancellationTriggered {
-		fmt.Printf("DEBUG: Skipping results increment - already at limit and cancellation triggered (written: %d, limit: %d)\n", e.resultsWritten, e.maxResults)
+		slog.Debug("results_increment_skipped",
+			slog.Int("results_written", e.resultsWritten),
+			slog.Int("max_results", e.maxResults),
+			slog.Bool("cancellation_triggered", e.cancellationTriggered),
+		)
 		return
 	}
 
@@ -143,22 +148,35 @@ func (e *exiter) IncrResultsWritten(val int) {
 	e.resultsWritten += val
 	e.lastProgressTime = time.Now() // Update progress time
 
-	// DEBUG: Log the current state
-	fmt.Printf("DEBUG: IncrResultsWritten - resultsWritten: %d, maxResults: %d, cancellationTriggered: %v\n", e.resultsWritten, e.maxResults, e.cancellationTriggered)
+	slog.Debug("results_written_updated",
+		slog.Int("results_written", e.resultsWritten),
+		slog.Int("max_results", e.maxResults),
+		slog.Bool("cancellation_triggered", e.cancellationTriggered),
+	)
 
 	// Check if we've reached the max results limit and trigger early exit
 	if e.maxResults > 0 && e.resultsWritten >= e.maxResults && !e.cancellationTriggered {
 		e.cancellationTriggered = true
-		fmt.Printf("DEBUG: MAX RESULTS LIMIT REACHED! Triggering cancellation - written: %d, limit: %d\n", e.resultsWritten, e.maxResults)
+		slog.Info("max_results_reached",
+			slog.Int("results_written", e.resultsWritten),
+			slog.Int("max_results", e.maxResults),
+		)
 		if e.cancelFunc != nil {
-			fmt.Printf("DEBUG: Calling cancel function to stop job execution\n")
+			slog.Debug("triggering_cancel_func")
 			// Trigger cancellation - we've written enough results
 			go e.cancelFunc() // Keep it async to avoid potential deadlocks
 		} else {
-			fmt.Printf("DEBUG: WARNING - cancelFunc is nil, cannot trigger cancellation\n")
+			slog.Warn("cancel_func_nil_on_max_results",
+				slog.Int("results_written", e.resultsWritten),
+				slog.Int("max_results", e.maxResults),
+			)
 		}
 	} else {
-		fmt.Printf("DEBUG: Not triggering cancellation - written: %d, limit: %d, triggered: %v\n", e.resultsWritten, e.maxResults, e.cancellationTriggered)
+		slog.Debug("cancellation_not_triggered",
+			slog.Int("results_written", e.resultsWritten),
+			slog.Int("max_results", e.maxResults),
+			slog.Bool("cancellation_triggered", e.cancellationTriggered),
+		)
 	}
 }
 
@@ -166,12 +184,12 @@ func (e *exiter) Run(ctx context.Context) {
 	ticker := time.NewTicker(time.Second * 1) // Check every second instead of 5 seconds
 	defer ticker.Stop()
 
-	log.Printf("DEBUG: Exit monitor started - seedCount: %d, maxResults: %d", e.seedCount, e.maxResults)
+	slog.Debug("exit_monitor_started", slog.Int("seed_count", e.seedCount), slog.Int("max_results", e.maxResults))
 
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Printf("DEBUG: Exit monitor stopped due to context cancellation\n")
+			slog.Debug("exit_monitor_stopped_context_cancelled")
 			return
 		case <-ticker.C:
 			e.mu.Lock()
@@ -179,26 +197,40 @@ func (e *exiter) Run(ctx context.Context) {
 			seedCount := e.seedCount
 			placesFound := e.placesFound
 			placesCompleted := e.placesCompleted
+			resultsWritten := e.resultsWritten
 			maxResults := e.maxResults
 			cancellationTriggered := e.cancellationTriggered
 			e.mu.Unlock()
 
 			// Log current state every 5 seconds
 			if time.Now().Second()%5 == 0 {
-				fmt.Printf("DEBUG: Exit monitor state - seeds: %d/%d, places: %d/%d, resultsWritten: %d, maxResults: %d, cancelled: %v\n",
-					seedCompleted, seedCount, placesCompleted, placesFound, e.resultsWritten, maxResults, cancellationTriggered)
+				slog.Debug("exit_monitor_state",
+					slog.Int("seed_completed", seedCompleted),
+					slog.Int("seed_count", seedCount),
+					slog.Int("places_completed", placesCompleted),
+					slog.Int("places_found", placesFound),
+					slog.Int("results_written", resultsWritten),
+					slog.Int("max_results", maxResults),
+					slog.Bool("cancellation_triggered", cancellationTriggered),
+				)
 			}
 
 			if e.isDone() {
-				fmt.Printf("DEBUG: Exit monitor detected completion, calling cancelFunc\n")
-				fmt.Printf("DEBUG: Final state - seeds: %d/%d, places: %d/%d, results: %d/%d\n",
-					seedCompleted, seedCount, placesCompleted, placesFound, e.resultsWritten, maxResults)
+				slog.Debug("exit_monitor_detected_completion")
+				slog.Info("exit_monitor_final_state",
+					slog.Int("seed_completed", seedCompleted),
+					slog.Int("seed_count", seedCount),
+					slog.Int("places_completed", placesCompleted),
+					slog.Int("places_found", placesFound),
+					slog.Int("results_written", resultsWritten),
+					slog.Int("max_results", maxResults),
+				)
 				if e.cancelFunc != nil {
-					fmt.Printf("DEBUG: Exit monitor calling cancel function to terminate mate.Start()\n")
+					slog.Debug("exit_monitor_calling_cancel_func")
 					e.cancelFunc()
-					fmt.Printf("DEBUG: Exit monitor cancel function called successfully\n")
+					slog.Debug("exit_monitor_cancel_func_called")
 				} else {
-					fmt.Printf("DEBUG: WARNING - cancelFunc is nil in Run()\n")
+					slog.Warn("exit_monitor_cancel_func_nil")
 				}
 				return
 			}
@@ -213,20 +245,29 @@ func (e *exiter) isDone() bool {
 	// Simple and reliable exit logic:
 	// 1. If max results is set and we've written enough results, we're done
 	if e.maxResults > 0 && e.resultsWritten >= e.maxResults {
-		fmt.Printf("DEBUG: isDone() - max results reached (written: %d >= limit: %d)\n", e.resultsWritten, e.maxResults)
+		slog.Debug("exit_done_max_results_reached",
+			slog.Int("results_written", e.resultsWritten),
+			slog.Int("max_results", e.maxResults),
+		)
 		return true
 	}
 
 	// 2. Check if all seeds are complete - if not, keep going
 	if e.seedCompleted < e.seedCount {
-		fmt.Printf("DEBUG: isDone() - seeds not complete (%d/%d)\n", e.seedCompleted, e.seedCount)
+		slog.Debug("exit_not_done_seeds_incomplete",
+			slog.Int("seed_completed", e.seedCompleted),
+			slog.Int("seed_count", e.seedCount),
+		)
 		return false
 	}
 
 	// 3. For unlimited results (maxResults = 0), check if all places are processed
 	if e.maxResults == 0 {
 		if e.placesFound > 0 && e.placesCompleted >= e.placesFound {
-			fmt.Printf("DEBUG: isDone() - unlimited mode, all places complete (%d/%d)\n", e.placesCompleted, e.placesFound)
+			slog.Debug("exit_done_unlimited_all_places_complete",
+				slog.Int("places_completed", e.placesCompleted),
+				slog.Int("places_found", e.placesFound),
+			)
 			return true
 		}
 		// Add timeout protection - if we've been waiting too long for the last place
@@ -239,28 +280,42 @@ func (e *exiter) isDone() bool {
 			// If we're missing only 1-2 places and haven't made progress, exit
 			missingPlaces := e.placesFound - e.placesCompleted
 			if (missingPlaces <= 2 && missingPlaces > 0) && inactivityDuration > maxInactivity {
-				fmt.Printf("DEBUG: isDone() - unlimited mode, inactivity timeout after %v with %d missing places\n", inactivityDuration, missingPlaces)
+				slog.Debug("exit_done_unlimited_inactivity_timeout",
+					slog.Duration("inactivity", inactivityDuration),
+					slog.Int("missing_places", missingPlaces),
+				)
 				return true
 			} else if missingPlaces <= 1 && missingPlaces > 0 {
 				// Only exit for 1 missing place if we have a decent number of results
 				// AND we haven't had recent activity
 				if e.resultsWritten >= 10 && inactivityDuration > (10*time.Second) {
-					fmt.Printf("DEBUG: isDone() - unlimited mode, accepting completion with %d missing place (have %d results)\n", missingPlaces, e.resultsWritten)
+					slog.Debug("exit_done_unlimited_accept_missing_place",
+						slog.Int("missing_places", missingPlaces),
+						slog.Int("results_written", e.resultsWritten),
+						slog.Duration("inactivity", inactivityDuration),
+					)
 					return true
 				}
 			}
 		}
 		inactivityDuration := time.Since(e.lastProgressTime)
-		fmt.Printf("DEBUG: isDone() - unlimited mode, waiting for places (%d/%d), inactive for %v\n", e.placesCompleted, e.placesFound, inactivityDuration)
+		slog.Debug("exit_not_done_unlimited_waiting",
+			slog.Int("places_completed", e.placesCompleted),
+			slog.Int("places_found", e.placesFound),
+			slog.Duration("inactivity", inactivityDuration),
+		)
 		return false
 	}
 
 	// 4. For limited results, we're done if seeds are complete
 	// (results will be capped by IncrResultsWritten)
 	if e.placesFound > 0 && e.placesCompleted >= e.placesFound {
-		fmt.Printf("DEBUG: isDone() - limited mode, all places complete (%d/%d)\n", e.placesCompleted, e.placesFound)
+		slog.Debug("exit_done_limited_all_places_complete",
+			slog.Int("places_completed", e.placesCompleted),
+			slog.Int("places_found", e.placesFound),
+		)
 		return true
 	}
-	fmt.Printf("DEBUG: isDone() - limited mode, seeds complete, continuing to collect results\n")
+	slog.Debug("exit_not_done_limited_collecting_more_results")
 	return false
 }

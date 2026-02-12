@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -18,15 +18,17 @@ const (
 type Client struct {
 	apiKey     string
 	httpClient *http.Client
+	logger     *slog.Logger
 }
 
 // NewClient creates a new Webshare API client
-func NewClient(apiKey string) *Client {
+func NewClient(apiKey string, logger *slog.Logger) *Client {
 	return &Client{
 		apiKey: apiKey,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		logger: logger,
 	}
 }
 
@@ -69,7 +71,7 @@ func (c *Client) doRequest(method, endpoint string, body interface{}) ([]byte, e
 
 // GetMyIP retrieves the current public IP address
 func (c *Client) GetMyIP() (string, error) {
-	log.Println("🔍 Fetching current IP from Webshare API...")
+	c.logger.Info("fetching_current_ip")
 
 	respBody, err := c.doRequest("GET", "/proxy/ipauthorization/whatsmyip/", nil)
 	if err != nil {
@@ -81,13 +83,13 @@ func (c *Client) GetMyIP() (string, error) {
 		return "", fmt.Errorf("failed to parse IP response: %w", err)
 	}
 
-	log.Printf("✅ Current IP detected: %s", response.IPAddress)
+	c.logger.Info("current_ip_detected", slog.String("ip", response.IPAddress))
 	return response.IPAddress, nil
 }
 
 // ListIPAuthorizations lists all authorized IPs
 func (c *Client) ListIPAuthorizations() ([]IPAuthorization, error) {
-	log.Println("📋 Fetching authorized IPs from Webshare...")
+	c.logger.Info("fetching_authorized_ips")
 
 	respBody, err := c.doRequest("GET", "/proxy/ipauthorization/", nil)
 	if err != nil {
@@ -99,7 +101,7 @@ func (c *Client) ListIPAuthorizations() ([]IPAuthorization, error) {
 		return nil, fmt.Errorf("failed to parse IP authorization list: %w", err)
 	}
 
-	log.Printf("✅ Found %d authorized IPs", len(response.Results))
+	c.logger.Info("authorized_ips_found", slog.Int("count", len(response.Results)))
 	return response.Results, nil
 }
 
@@ -112,18 +114,18 @@ func (c *Client) IsIPAuthorized(ipAddress string) (bool, error) {
 
 	for _, auth := range authorizedIPs {
 		if auth.IPAddress == ipAddress {
-			log.Printf("✅ IP %s is already authorized (ID: %d)", ipAddress, auth.ID)
+			c.logger.Info("ip_already_authorized", slog.String("ip", ipAddress), slog.Int("id", auth.ID))
 			return true, nil
 		}
 	}
 
-	log.Printf("⚠️ IP %s is NOT authorized", ipAddress)
+	c.logger.Warn("ip_not_authorized", slog.String("ip", ipAddress))
 	return false, nil
 }
 
 // AddIPAuthorization adds a new IP authorization
 func (c *Client) AddIPAuthorization(ipAddress string) error {
-	log.Printf("➕ Adding IP authorization for %s...", ipAddress)
+	c.logger.Info("adding_ip_authorization", slog.String("ip", ipAddress))
 
 	requestBody := map[string]string{
 		"ip_address": ipAddress,
@@ -139,7 +141,7 @@ func (c *Client) AddIPAuthorization(ipAddress string) error {
 		return fmt.Errorf("failed to parse IP authorization response: %w", err)
 	}
 
-	log.Printf("✅ Successfully authorized IP %s (ID: %d)", response.IPAddress, response.ID)
+	c.logger.Info("ip_authorization_success", slog.String("ip", response.IPAddress), slog.Int("id", response.ID))
 	return nil
 }
 
@@ -175,7 +177,7 @@ func (c *Client) GetProxyList(mode string) ([]Proxy, error) {
 		mode = "direct"
 	}
 
-	log.Printf("🔄 Fetching proxy list from Webshare (mode: %s)...", mode)
+	c.logger.Info("fetching_proxy_list", slog.String("mode", mode))
 
 	allProxies := []Proxy{}
 	page := 1
@@ -194,7 +196,7 @@ func (c *Client) GetProxyList(mode string) ([]Proxy, error) {
 		}
 
 		allProxies = append(allProxies, response.Results...)
-		log.Printf("📦 Fetched page %d: %d proxies (total: %d/%d)", page, len(response.Results), len(allProxies), response.Count)
+		c.logger.Info("proxy_page_fetched", slog.Int("page", page), slog.Int("page_count", len(response.Results)), slog.Int("total", len(allProxies)), slog.Int("expected_total", response.Count))
 
 		// Check if there are more pages
 		if response.Next == nil {
@@ -204,7 +206,7 @@ func (c *Client) GetProxyList(mode string) ([]Proxy, error) {
 		page++
 	}
 
-	log.Printf("✅ Successfully fetched %d proxies from Webshare", len(allProxies))
+	c.logger.Info("proxy_list_fetched", slog.Int("count", len(allProxies)))
 	return allProxies, nil
 }
 
@@ -215,7 +217,7 @@ func FormatProxiesForScraper(proxies []Proxy) []string {
 	for _, proxy := range proxies {
 		// Only include valid proxies
 		if !proxy.Valid {
-			log.Printf("⚠️ Skipping invalid proxy: %s:%d", proxy.ProxyAddress, proxy.Port)
+			slog.Warn("skipping_invalid_proxy", slog.String("address", proxy.ProxyAddress), slog.Int("port", proxy.Port))
 			continue
 		}
 
@@ -229,7 +231,7 @@ func FormatProxiesForScraper(proxies []Proxy) []string {
 		proxyURLs = append(proxyURLs, proxyURL)
 	}
 
-	log.Printf("✅ Formatted %d valid proxies for scraper", len(proxyURLs))
+	slog.Info("proxies_formatted_for_scraper", slog.Int("count", len(proxyURLs)))
 	return proxyURLs
 }
 

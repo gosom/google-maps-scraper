@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -82,8 +82,7 @@ func (i *invoker) invoke(ctx context.Context, input lInput) error {
 		return err
 	}
 
-	log.Printf("Lambda function %s invoked with JobID %s, Part %d, StatusCode %d\n",
-		input.FunctionName, input.JobID, input.Part, result.StatusCode)
+	slog.Info("lambda_function_invoked", slog.String("function_name", input.FunctionName), slog.String("job_id", input.JobID), slog.Int("part", input.Part), slog.Int("status_code", int(result.StatusCode)))
 
 	return nil
 }

@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -22,6 +22,7 @@ type AuthMiddleware struct {
 	db       *sql.DB
 	userAPI  *user.Client
 	userRepo postgres.UserRepository
+	logger   *slog.Logger
 }
 
 // ContextKey is used to store user information in the request context
@@ -35,7 +36,7 @@ const (
 )
 
 // NewAuthMiddleware creates a new AuthMiddleware
-func NewAuthMiddleware(clerkAPIKey string, db *sql.DB, userRepo postgres.UserRepository) (*AuthMiddleware, error) {
+func NewAuthMiddleware(clerkAPIKey string, db *sql.DB, userRepo postgres.UserRepository, logger *slog.Logger) (*AuthMiddleware, error) {
 	// Configure Clerk SDK with the provided secret key
 	clerk.SetKey(clerkAPIKey)
 
@@ -47,6 +48,7 @@ func NewAuthMiddleware(clerkAPIKey string, db *sql.DB, userRepo postgres.UserRep
 			},
 		}),
 		userRepo: userRepo,
+		logger:   logger,
 	}, nil
 }
 
@@ -86,7 +88,7 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 			// If user doesn't exist, fetch from Clerk and create locally
 			clerkUser, err := m.userAPI.Get(r.Context(), userID)
 			if err != nil {
-				log.Printf("ERROR: Failed to retrieve user %s from Clerk: %v", userID, err)
+				m.logger.Error("failed_to_retrieve_user_from_clerk", slog.String("user_id", userID), slog.Any("error", err))
 				http.Error(w, "Failed to retrieve user information", http.StatusInternalServerError)
 				return
 			}
@@ -106,7 +108,7 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 			}
 
 			if email == "" {
-				log.Printf("ERROR: User %s has no email address in Clerk", userID)
+				m.logger.Error("user_has_no_email", slog.String("user_id", userID))
 				http.Error(w, "User has no email address", http.StatusBadRequest)
 				return
 			}
@@ -116,17 +118,17 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 				Email: email,
 			}
 			if err := m.userRepo.Create(r.Context(), &userRecord); err != nil {
-				log.Printf("ERROR: Failed to create user %s in local database: %v", userID, err)
+				m.logger.Error("failed_to_create_user", slog.String("user_id", userID), slog.Any("error", err))
 				http.Error(w, "Failed to create user record: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
 
 			// Grant signup bonus
 			if err := m.grantSignupBonus(r.Context(), userID); err != nil {
-				log.Printf("ERROR: Failed to grant signup bonus to user %s: %v", userID, err)
+				m.logger.Error("failed_to_grant_signup_bonus", slog.String("user_id", userID), slog.Any("error", err))
 				// Don't block signup if bonus fails
 			} else {
-				log.Printf("INFO: Granted $%.2f signup bonus to new user %s", SignupBonusAmount, userID)
+				m.logger.Info("signup_bonus_granted", slog.Float64("amount", SignupBonusAmount), slog.String("user_id", userID))
 			}
 		}
 
@@ -155,7 +157,7 @@ func (m *AuthMiddleware) grantSignupBonus(ctx context.Context, userID string) er
 		return err
 	}
 	if alreadyGranted {
-		log.Printf("INFO: Signup bonus already granted to user %s, skipping", userID)
+		m.logger.Info("signup_bonus_already_granted", slog.String("user_id", userID))
 		return nil
 	}
 

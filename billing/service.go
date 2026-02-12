@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
+	"os"
 	"strconv" // ADDED: Required for strconv.Atoi on line 195
 
 	"github.com/gosom/google-maps-scraper/config"
+	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	"github.com/stripe/stripe-go/v82"
 	checkoutsession "github.com/stripe/stripe-go/v82/checkout/session"
 	"github.com/stripe/stripe-go/v82/webhook"
@@ -20,6 +22,7 @@ type Service struct {
 	cfg               *config.Service
 	stripeSecretKey   string
 	webhookSigningKey string
+	logger            *slog.Logger
 }
 
 type CheckoutRequest struct {
@@ -34,7 +37,13 @@ type CheckoutResponse struct {
 }
 
 func New(db *sql.DB, cfg *config.Service, stripeSecretKey, webhookSigningKey string) *Service {
-	return &Service{db: db, cfg: cfg, stripeSecretKey: stripeSecretKey, webhookSigningKey: webhookSigningKey}
+	return &Service{
+		db:                db,
+		cfg:               cfg,
+		stripeSecretKey:   stripeSecretKey,
+		webhookSigningKey: webhookSigningKey,
+		logger:            pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "billing"),
+	}
 }
 
 // CreateCheckoutSession creates a Stripe Checkout Session for purchasing credits.
@@ -105,21 +114,21 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, req CheckoutRequest
 
 func (s *Service) HandleWebhook(ctx context.Context, payload []byte, signatureHeader string) (int, error) {
 	if s.webhookSigningKey == "" {
-		log.Printf("ERROR: Webhook signing key not configured")
+		s.logger.Error("webhook_signing_key_not_configured")
 		return 400, errors.New("webhook signing key not configured")
 	}
 
 	event, err := webhook.ConstructEvent(payload, signatureHeader, s.webhookSigningKey)
 	if err != nil {
-		log.Printf("ERROR: Invalid webhook signature: %v", err)
+		s.logger.Error("invalid_webhook_signature", slog.Any("error", err))
 		return 400, fmt.Errorf("invalid signature: %w", err)
 	}
 
-	log.Printf("BILLING: Webhook signature verified successfully, event type: %s, event ID: %s", event.Type, event.ID)
+	s.logger.Info("webhook_signature_verified", slog.String("event_type", string(event.Type)), slog.String("event_id", event.ID))
 
 	// Idempotency check - prevent duplicate processing
 	if s.hasProcessedEvent(ctx, event.ID) {
-		log.Printf("BILLING: Event %s already processed, skipping", event.ID)
+		s.logger.Info("event_already_processed", slog.String("event_id", event.ID))
 		return 200, nil
 	}
 
@@ -129,7 +138,7 @@ func (s *Service) HandleWebhook(ctx context.Context, payload []byte, signatureHe
 	case "checkout.session.expired":
 		return s.handleCheckoutSessionExpired(ctx, event)
 	default:
-		log.Printf("BILLING: Unhandled event type: %s", event.Type)
+		s.logger.Info("unhandled_event_type", slog.String("event_type", string(event.Type)))
 		return 200, nil
 	}
 }
@@ -139,7 +148,7 @@ func (s *Service) hasProcessedEvent(ctx context.Context, eventID string) bool {
 	var exists bool
 	err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM processed_webhook_events WHERE event_id = $1)", eventID).Scan(&exists)
 	if err != nil {
-		log.Printf("ERROR: Failed to check event processing status: %v", err)
+		s.logger.Error("failed_to_check_event_processing_status", slog.Any("error", err))
 		return false // Fail open to allow processing
 	}
 	return exists
@@ -156,15 +165,15 @@ func (s *Service) markEventProcessed(ctx context.Context, tx *sql.Tx, eventID st
 func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stripe.Event) (int, error) {
 	var session stripe.CheckoutSession
 	if err := json.Unmarshal(event.Data.Raw, &session); err != nil {
-		log.Printf("ERROR: Failed to parse checkout session: %v", err)
+		s.logger.Error("failed_to_parse_checkout_session", slog.Any("error", err))
 		return 400, fmt.Errorf("failed to parse session: %w", err)
 	}
 
-	log.Printf("BILLING: Processing checkout.session.completed for session: %s", session.ID)
+	s.logger.Info("processing_checkout_session_completed", slog.String("session_id", session.ID))
 
 	// Verify payment status before processing
 	if session.PaymentStatus != "paid" {
-		log.Printf("BILLING: Session %s completed but payment status is %s, skipping credit", session.ID, session.PaymentStatus)
+		s.logger.Info("session_completed_not_paid", slog.String("session_id", session.ID), slog.String("payment_status", string(session.PaymentStatus)))
 		return 200, nil
 	}
 
@@ -174,11 +183,11 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 		"SELECT EXISTS(SELECT 1 FROM credit_transactions WHERE reference_id=$1 AND reference_type='payment')",
 		session.ID).Scan(&exists)
 	if err != nil {
-		log.Printf("ERROR: Failed to check transaction existence: %v", err)
+		s.logger.Error("failed_to_check_transaction_existence", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to check transaction existence: %w", err)
 	}
 	if exists {
-		log.Printf("BILLING: Session %s already processed (found in credit_transactions), skipping", session.ID)
+		s.logger.Info("session_already_processed", slog.String("session_id", session.ID))
 		return 200, nil // Already processed
 	}
 
@@ -191,7 +200,7 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 	err = s.db.QueryRowContext(ctx, sel, session.ID).Scan(&userID, &credits, &currency)
 
 	if err != nil && err != sql.ErrNoRows {
-		log.Printf("ERROR: Database query failed: %v", err)
+		s.logger.Error("database_query_failed", slog.Any("error", err))
 		return 500, fmt.Errorf("database query failed: %w", err)
 	}
 
@@ -204,7 +213,7 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 			if parsedCredits, err := strconv.Atoi(creditsStr); err == nil {
 				credits = parsedCredits
 			} else {
-				log.Printf("WARNING: Invalid credits value in metadata: %s", creditsStr)
+				s.logger.Warn("invalid_credits_in_metadata", slog.String("credits_str", creditsStr))
 			}
 		}
 
@@ -213,15 +222,15 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 
 	// Validate required data
 	if userID == "" {
-		log.Printf("WARNING: No user_id found for session %s", session.ID)
+		s.logger.Warn("no_user_id_for_session", slog.String("session_id", session.ID))
 		return 200, nil
 	}
 	if credits <= 0 {
-		log.Printf("WARNING: Invalid credits amount %d for session %s", credits, session.ID)
+		s.logger.Warn("invalid_credits_amount", slog.Int("credits", credits), slog.String("session_id", session.ID))
 		return 200, nil
 	}
 	if currency != "USD" {
-		log.Printf("WARNING: Unsupported currency %s for session %s", currency, session.ID)
+		s.logger.Warn("unsupported_currency", slog.String("currency", currency), slog.String("session_id", session.ID))
 		return 200, nil
 	}
 
@@ -230,7 +239,7 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 		Isolation: sql.LevelSerializable,
 	})
 	if err != nil {
-		log.Printf("ERROR: Failed to begin transaction: %v", err)
+		s.logger.Error("failed_to_begin_transaction", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
@@ -241,10 +250,10 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 	err = tx.QueryRowContext(ctx, "SELECT COALESCE(credit_balance, 0) FROM users WHERE id = $1 FOR UPDATE", userID).Scan(&currentBalance)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			log.Printf("WARNING: User %s not found", userID)
+			s.logger.Warn("user_not_found", slog.String("user_id", userID))
 			return 400, fmt.Errorf("user not found: %s", userID)
 		}
-		log.Printf("ERROR: Failed to get current user balance: %v", err)
+		s.logger.Error("failed_to_get_user_balance", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to get user balance: %w", err)
 	}
 
@@ -256,18 +265,18 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 		WHERE id=$2`
 	result, err := tx.ExecContext(ctx, updUser, credits, userID)
 	if err != nil {
-		log.Printf("ERROR: Failed to update user credits: %v", err)
+		s.logger.Error("failed_to_update_user_credits", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to update user credits: %w", err)
 	}
 
 	// Check if user exists
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		log.Printf("ERROR: Failed to get rows affected: %v", err)
+		s.logger.Error("failed_to_get_rows_affected", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to get rows affected: %w", err)
 	}
 	if rowsAffected == 0 {
-		log.Printf("WARNING: No user found with ID %s", userID)
+		s.logger.Warn("no_user_found", slog.String("user_id", userID))
 		return 400, fmt.Errorf("user not found: %s", userID)
 	}
 
@@ -276,7 +285,7 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 					VALUES ($1, 'purchase', $2, $3, $4, $5, $6, 'payment')`
 	_, err = tx.ExecContext(ctx, insTxn, userID, credits, currentBalance, currentBalance+float64(credits), "Stripe purchase", session.ID)
 	if err != nil {
-		log.Printf("ERROR: Failed to insert credit transaction: %v", err)
+		s.logger.Error("failed_to_insert_credit_transaction", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to insert credit transaction: %w", err)
 	}
 
@@ -284,41 +293,41 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 	const updPay = `UPDATE stripe_payments SET status='succeeded', completed_at=NOW() WHERE stripe_checkout_session_id=$1`
 	_, err = tx.ExecContext(ctx, updPay, session.ID)
 	if err != nil {
-		log.Printf("ERROR: Failed to update payment status: %v", err)
+		s.logger.Error("failed_to_update_payment_status", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to update payment status: %w", err)
 	}
 
 	// Mark event as processed for idempotency
 	if err := s.markEventProcessed(ctx, tx, event.ID); err != nil {
-		log.Printf("ERROR: Failed to mark event as processed: %v", err)
+		s.logger.Error("failed_to_mark_event_processed", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to mark event as processed: %w", err)
 	}
 
 	// Commit transaction
 	if err := tx.Commit(); err != nil {
-		log.Printf("ERROR: Failed to commit transaction: %v", err)
+		s.logger.Error("failed_to_commit_transaction", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	log.Printf("BILLING: Successfully processed checkout.session.completed for user %s, credits: %d, session: %s", userID, credits, session.ID)
+	s.logger.Info("checkout_session_completed", slog.String("user_id", userID), slog.Int("credits", credits), slog.String("session_id", session.ID))
 	return 200, nil
 }
 
 func (s *Service) handleCheckoutSessionExpired(ctx context.Context, event stripe.Event) (int, error) {
 	var session stripe.CheckoutSession
 	if err := json.Unmarshal(event.Data.Raw, &session); err != nil {
-		log.Printf("ERROR: Failed to parse expired session: %v", err)
+		s.logger.Error("failed_to_parse_expired_session", slog.Any("error", err))
 		return 400, fmt.Errorf("failed to parse session: %w", err)
 	}
 
-	log.Printf("BILLING: Processing checkout.session.expired for session: %s", session.ID)
+	s.logger.Info("processing_checkout_session_expired", slog.String("session_id", session.ID))
 
 	// Begin transaction for consistency and idempotency
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
 		Isolation: sql.LevelReadCommitted, // Less strict isolation for expired sessions
 	})
 	if err != nil {
-		log.Printf("ERROR: Failed to begin transaction for expired session: %v", err)
+		s.logger.Error("failed_to_begin_transaction_expired", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
@@ -327,22 +336,22 @@ func (s *Service) handleCheckoutSessionExpired(ctx context.Context, event stripe
 	const upd = `UPDATE stripe_payments SET status='canceled', updated_at=NOW() WHERE stripe_checkout_session_id=$1`
 	_, err = tx.ExecContext(ctx, upd, session.ID)
 	if err != nil {
-		log.Printf("ERROR: Failed to update expired payment status: %v", err)
+		s.logger.Error("failed_to_update_expired_payment_status", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to update expired payment status: %w", err)
 	}
 
 	// Mark event as processed
 	if err := s.markEventProcessed(ctx, tx, event.ID); err != nil {
-		log.Printf("ERROR: Failed to mark expired event as processed: %v", err)
+		s.logger.Error("failed_to_mark_expired_event_processed", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to mark event as processed: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		log.Printf("ERROR: Failed to commit expired session transaction: %v", err)
+		s.logger.Error("failed_to_commit_expired_session_transaction", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	log.Printf("BILLING: Successfully processed checkout.session.expired for session %s", session.ID)
+	s.logger.Info("checkout_session_expired", slog.String("session_id", session.ID))
 	return 200, nil
 }
 

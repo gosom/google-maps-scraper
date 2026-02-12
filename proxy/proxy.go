@@ -5,7 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/url"
 	"strings"
@@ -21,6 +21,7 @@ type Server struct {
 	running      bool
 	wg           sync.WaitGroup
 	mu           sync.RWMutex
+	logger       *slog.Logger
 }
 
 // WebshareProxy represents the upstream proxy configuration
@@ -32,7 +33,7 @@ type WebshareProxy struct {
 }
 
 // NewServer creates a new proxy server that forwards to the webshare proxy
-func NewServer(webshareURL string, localPort int) (*Server, error) {
+func NewServer(webshareURL string, localPort int, logger *slog.Logger) (*Server, error) {
 	parsed, err := url.Parse(webshareURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid proxy URL: %w", err)
@@ -59,20 +60,22 @@ func NewServer(webshareURL string, localPort int) (*Server, error) {
 		}},
 		currentProxy: 0,
 		localPort:    localPort,
+		logger:       logger,
 	}, nil
 }
 
 // NewServerFromProxy creates a new proxy server from a WebshareProxy
-func NewServerFromProxy(proxy *WebshareProxy, localPort int) (*Server, error) {
+func NewServerFromProxy(proxy *WebshareProxy, localPort int, logger *slog.Logger) (*Server, error) {
 	return &Server{
 		proxies:      []*WebshareProxy{proxy},
 		currentProxy: 0,
 		localPort:    localPort,
+		logger:       logger,
 	}, nil
 }
 
 // NewServerWithFallback creates a new proxy server with multiple proxies for fallback
-func NewServerWithFallback(proxyURLs []string, localPort int) (*Server, error) {
+func NewServerWithFallback(proxyURLs []string, localPort int, logger *slog.Logger) (*Server, error) {
 	if len(proxyURLs) == 0 {
 		return nil, fmt.Errorf("no proxy URLs provided")
 	}
@@ -82,13 +85,13 @@ func NewServerWithFallback(proxyURLs []string, localPort int) (*Server, error) {
 	for i, proxyURL := range proxyURLs {
 		parsed, err := url.Parse(proxyURL)
 		if err != nil {
-			log.Printf("⚠️ Skipping invalid proxy URL %d: %s (%v)", i+1, proxyURL, err)
+			logger.Warn("skipping_invalid_proxy_url", slog.Int("index", i+1), slog.String("url", proxyURL), slog.Any("error", err))
 			continue
 		}
 
 		host, port, err := net.SplitHostPort(parsed.Host)
 		if err != nil {
-			log.Printf("⚠️ Skipping invalid proxy host:port %d: %s (%v)", i+1, proxyURL, err)
+			logger.Warn("skipping_invalid_proxy_host_port", slog.Int("index", i+1), slog.String("url", proxyURL), slog.Any("error", err))
 			continue
 		}
 
@@ -105,18 +108,19 @@ func NewServerWithFallback(proxyURLs []string, localPort int) (*Server, error) {
 			Username: username,
 			Password: password,
 		})
-		log.Printf("✅ Added proxy %d: %s:%s", len(proxies), host, port)
+		logger.Info("proxy_added", slog.Int("index", len(proxies)), slog.String("host", host), slog.String("port", port))
 	}
 
 	if len(proxies) == 0 {
 		return nil, fmt.Errorf("no valid proxy URLs provided")
 	}
 
-	log.Printf("🔧 Configured %d proxies for fallback", len(proxies))
+	logger.Info("proxies_configured_for_fallback", slog.Int("count", len(proxies)))
 	return &Server{
 		proxies:      proxies,
 		currentProxy: 0,
 		localPort:    localPort,
+		logger:       logger,
 	}, nil
 }
 
@@ -133,9 +137,8 @@ func (ps *Server) Start() error {
 	currentProxy := ps.proxies[ps.currentProxy]
 	ps.mu.RUnlock()
 
-	log.Printf("🔧 Proxy server started on 127.0.0.1:%d (forwarding to %s:%s)",
-		ps.localPort, currentProxy.Address, currentProxy.Port)
-	log.Printf("🔄 Fallback enabled with %d proxies", len(ps.proxies))
+	ps.logger.Info("proxy_server_started", slog.Int("local_port", ps.localPort), slog.String("forward_host", currentProxy.Address), slog.String("forward_port", currentProxy.Port))
+	ps.logger.Info("fallback_enabled", slog.Int("proxy_count", len(ps.proxies)))
 
 	ps.wg.Add(1)
 	go ps.run()
@@ -149,7 +152,7 @@ func (ps *Server) Stop() {
 		ps.listener.Close()
 	}
 	ps.wg.Wait()
-	log.Printf("🔧 Proxy server stopped")
+	ps.logger.Info("proxy_server_stopped")
 }
 
 // GetLocalURL returns the local proxy URL
@@ -163,7 +166,7 @@ func (ps *Server) run() {
 		conn, err := ps.listener.Accept()
 		if err != nil {
 			if ps.running {
-				log.Printf("Proxy accept error: %v", err)
+				ps.logger.Error("proxy_accept_error", slog.Any("error", err))
 			}
 			continue
 		}
@@ -207,7 +210,7 @@ func (ps *Server) handleHTTPS(clientConn net.Conn, target string) {
 		// Try fallback proxies
 		proxyConn, err = ps.tryFallbackProxies(target)
 		if err != nil {
-			log.Printf("❌ All proxies failed for HTTPS %s: %v", target, err)
+			ps.logger.Error("all_proxies_failed_https", slog.String("target", target), slog.Any("error", err))
 			_, _ = clientConn.Write([]byte("HTTP/1.1 500 All proxies failed\r\n\r\n"))
 			return
 		}
@@ -267,7 +270,7 @@ func (ps *Server) handleHTTP(clientConn net.Conn, reader *bufio.Reader, firstLin
 		// Try fallback proxies
 		proxyConn, err = ps.tryFallbackProxies("")
 		if err != nil {
-			log.Printf("❌ All proxies failed for HTTP: %v", err)
+			ps.logger.Error("all_proxies_failed_http", slog.Any("error", err))
 			return
 		}
 	}
@@ -313,7 +316,7 @@ func (ps *Server) tryConnectToProxy(proxy *WebshareProxy, target string) (net.Co
 	address := net.JoinHostPort(proxy.Address, proxy.Port)
 	conn, err := net.Dial("tcp", address)
 	if err != nil {
-		log.Printf("⚠️ Failed to connect to proxy %s:%s: %v", proxy.Address, proxy.Port, err)
+		ps.logger.Warn("proxy_connect_failed", slog.String("host", proxy.Address), slog.String("port", proxy.Port), slog.Any("error", err))
 		return nil, err
 	}
 	return conn, nil
@@ -334,8 +337,7 @@ func (ps *Server) tryFallbackProxies(target string) (net.Conn, error) {
 			// Success! Switch to this proxy
 			oldProxy := ps.proxies[ps.currentProxy]
 			ps.currentProxy = nextIndex
-			log.Printf("🔄 Switched to fallback proxy %d: %s:%s (was %s:%s)",
-				nextIndex+1, proxy.Address, proxy.Port, oldProxy.Address, oldProxy.Port)
+			ps.logger.Info("switched_to_fallback_proxy", slog.Int("index", nextIndex+1), slog.String("new_host", proxy.Address), slog.String("new_port", proxy.Port), slog.String("old_host", oldProxy.Address), slog.String("old_port", oldProxy.Port))
 			return conn, nil
 		}
 	}
@@ -357,7 +359,7 @@ func (ps *Server) MarkProxyBlocked() {
 
 	currentProxy := ps.proxies[ps.currentProxy]
 	proxyKey := fmt.Sprintf("%s:%s", currentProxy.Address, currentProxy.Port)
-	log.Printf("🚫 Marking proxy %s as blocked", proxyKey)
+	ps.logger.Warn("marking_proxy_blocked", slog.String("proxy", proxyKey))
 
 	// This would need to be called from the pool to actually block it
 	// For now, just log it

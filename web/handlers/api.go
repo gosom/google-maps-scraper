@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -26,7 +27,7 @@ type apiScrapeRequest struct {
 // apiScrape mirrors Server.apiScrape behavior
 func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
-		h.Deps.Logger.Printf("POST %s", r.URL.Path)
+		h.Deps.Logger.Info("request", slog.String("method", "POST"), slog.String("path", r.URL.Path))
 	}
 
 	var req apiScrapeRequest
@@ -52,24 +53,23 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 	// Log request parameters for job creation (no secrets involved)
 	if h.Deps.Logger != nil {
 		// Note: MaxTime is in seconds for JSON API; multiplied to Duration below
-		h.Deps.Logger.Printf(
-			"CreateJob request: user_id=%s name=%q keywords=%d lang=%s depth=%d email=%t images=%t reviews_max=%d max_results=%d lat=%s lon=%s zoom=%d radius=%d max_time=%d fast_mode=%t proxies=%d",
-			userID,
-			req.Name,
-			len(req.JobData.Keywords),
-			req.JobData.Lang,
-			req.JobData.Depth,
-			req.JobData.Email,
-			req.JobData.Images,
-			req.JobData.ReviewsMax,
-			req.JobData.MaxResults,
-			req.JobData.Lat,
-			req.JobData.Lon,
-			req.JobData.Zoom,
-			req.JobData.Radius,
-			int64(req.JobData.MaxTime),
-			req.JobData.FastMode,
-			len(req.JobData.Proxies),
+		h.Deps.Logger.Info("create_job_request",
+			slog.String("user_id", userID),
+			slog.String("name", req.Name),
+			slog.Int("keywords", len(req.JobData.Keywords)),
+			slog.String("lang", req.JobData.Lang),
+			slog.Int("depth", req.JobData.Depth),
+			slog.Bool("email", req.JobData.Email),
+			slog.Bool("images", req.JobData.Images),
+			slog.Int("reviews_max", req.JobData.ReviewsMax),
+			slog.Int("max_results", req.JobData.MaxResults),
+			slog.String("lat", req.JobData.Lat),
+			slog.String("lon", req.JobData.Lon),
+			slog.Int("zoom", req.JobData.Zoom),
+			slog.Int("radius", req.JobData.Radius),
+			slog.Int64("max_time", int64(req.JobData.MaxTime)),
+			slog.Bool("fast_mode", req.JobData.FastMode),
+			slog.Int("proxies", len(req.JobData.Proxies)),
 		)
 	}
 
@@ -88,7 +88,7 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 		estimate, err := estimationSvc.EstimateJobCost(r.Context(), &newJob.Data)
 		if err != nil {
 			if h.Deps.Logger != nil {
-				h.Deps.Logger.Printf("ERROR: Failed to estimate job cost for user %s: %v", userID, err)
+				h.Deps.Logger.Error("job_cost_estimation_failed", slog.String("user_id", userID), slog.Any("error", err))
 			}
 			renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: "failed to estimate job cost"})
 			return
@@ -96,20 +96,19 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 
 		// Log the estimate for debugging
 		if h.Deps.Logger != nil {
-			h.Deps.Logger.Printf(
-				"Job cost estimate for user %s: total=%.4f credits (places=%d, reviews=%d, images=%d)",
-				userID,
-				estimate.TotalEstimatedCost,
-				estimate.EstimatedPlaces,
-				estimate.EstimatedReviews,
-				estimate.EstimatedImages,
+			h.Deps.Logger.Info("job_cost_estimate",
+				slog.String("user_id", userID),
+				slog.Float64("total_estimated_cost", estimate.TotalEstimatedCost),
+				slog.Int("estimated_places", estimate.EstimatedPlaces),
+				slog.Int("estimated_reviews", estimate.EstimatedReviews),
+				slog.Int("estimated_images", estimate.EstimatedImages),
 			)
 		}
 
 		// Check if user has sufficient balance
 		if err := estimationSvc.CheckSufficientBalance(r.Context(), userID, estimate); err != nil {
 			if h.Deps.Logger != nil {
-				h.Deps.Logger.Printf("INFO: Job creation blocked for user %s: %v", userID, err)
+				h.Deps.Logger.Info("job_creation_blocked", slog.String("user_id", userID), slog.Any("error", err))
 			}
 			renderJSON(w, http.StatusPaymentRequired, models.APIError{
 				Code:    http.StatusPaymentRequired,
@@ -121,7 +120,7 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 		// If database is not available, log warning but allow job creation
 		// This maintains backward compatibility for non-billing deployments
 		if h.Deps.Logger != nil {
-			h.Deps.Logger.Printf("WARNING: Database not available, skipping cost estimation for user %s", userID)
+			h.Deps.Logger.Warn("db_unavailable_skipping_cost_estimation", slog.String("user_id", userID))
 		}
 	}
 
@@ -132,7 +131,7 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 
 	// Log created job id
 	if h.Deps.Logger != nil {
-		h.Deps.Logger.Printf("CreateJob success: user_id=%s job_id=%s", userID, newJob.ID)
+		h.Deps.Logger.Info("job_created", slog.String("user_id", userID), slog.String("job_id", newJob.ID))
 	}
 
 	renderJSON(w, http.StatusCreated, models.ApiScrapeResponse{ID: newJob.ID})
@@ -140,7 +139,7 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 
 func (h *APIHandlers) GetJobs(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
-		h.Deps.Logger.Printf("GET %s", r.URL.Path)
+		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
 	}
 	var jobs []models.Job
 	var err error
@@ -163,7 +162,7 @@ func (h *APIHandlers) GetJobs(w http.ResponseWriter, r *http.Request) {
 
 func (h *APIHandlers) GetUserJobs(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
-		h.Deps.Logger.Printf("GET %s", r.URL.Path)
+		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
 	}
 	if h.Deps.Auth == nil {
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "Authentication not configured"})
@@ -184,7 +183,7 @@ func (h *APIHandlers) GetUserJobs(w http.ResponseWriter, r *http.Request) {
 
 func (h *APIHandlers) GetJob(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
-		h.Deps.Logger.Printf("GET %s", r.URL.Path)
+		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
 	}
 	idStr := mux.Vars(r)["id"]
 	if idStr == "" {
@@ -206,7 +205,7 @@ func (h *APIHandlers) GetJob(w http.ResponseWriter, r *http.Request) {
 
 func (h *APIHandlers) DeleteJob(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
-		h.Deps.Logger.Printf("DELETE %s", r.URL.Path)
+		h.Deps.Logger.Info("request", slog.String("method", "DELETE"), slog.String("path", r.URL.Path))
 	}
 	idStr := mux.Vars(r)["id"]
 	if idStr == "" {
@@ -227,7 +226,7 @@ func (h *APIHandlers) DeleteJob(w http.ResponseWriter, r *http.Request) {
 
 func (h *APIHandlers) CancelJob(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
-		h.Deps.Logger.Printf("POST %s", r.URL.Path)
+		h.Deps.Logger.Info("request", slog.String("method", "POST"), slog.String("path", r.URL.Path))
 	}
 	idStr := mux.Vars(r)["id"]
 	if idStr == "" {
@@ -264,7 +263,7 @@ func (h *APIHandlers) CancelJob(w http.ResponseWriter, r *http.Request) {
 
 func (h *APIHandlers) GetJobResults(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
-		h.Deps.Logger.Printf("GET %s", r.URL.Path)
+		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
 	}
 	jobID := mux.Vars(r)["id"]
 	if jobID == "" {
@@ -320,7 +319,7 @@ func (h *APIHandlers) GetJobResults(w http.ResponseWriter, r *http.Request) {
 // GetJobCosts returns the cost breakdown and totals for a job
 func (h *APIHandlers) GetJobCosts(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
-		h.Deps.Logger.Printf("GET %s", r.URL.Path)
+		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
 	}
 	// Require auth
 	if h.Deps.Auth == nil {
@@ -366,7 +365,7 @@ func (h *APIHandlers) GetJobCosts(w http.ResponseWriter, r *http.Request) {
 
 func (h *APIHandlers) GetUserResults(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
-		h.Deps.Logger.Printf("GET %s", r.URL.Path)
+		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
 	}
 	userID, err := auth.GetUserID(r.Context())
 	if err != nil {
@@ -396,7 +395,7 @@ func (h *APIHandlers) GetUserResults(w http.ResponseWriter, r *http.Request) {
 // EstimateJobCost returns the estimated cost for a job without creating it
 func (h *APIHandlers) EstimateJobCost(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
-		h.Deps.Logger.Printf("POST %s", r.URL.Path)
+		h.Deps.Logger.Info("request", slog.String("method", "POST"), slog.String("path", r.URL.Path))
 	}
 
 	var req apiScrapeRequest
@@ -433,7 +432,7 @@ func (h *APIHandlers) EstimateJobCost(w http.ResponseWriter, r *http.Request) {
 	estimate, err := estimationSvc.EstimateJobCost(r.Context(), &req.JobData)
 	if err != nil {
 		if h.Deps.Logger != nil {
-			h.Deps.Logger.Printf("ERROR: Failed to estimate job cost for user %s: %v", userID, err)
+			h.Deps.Logger.Error("job_cost_estimation_failed", slog.String("user_id", userID), slog.Any("error", err))
 		}
 		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: "failed to estimate job cost"})
 		return
@@ -444,7 +443,7 @@ func (h *APIHandlers) EstimateJobCost(w http.ResponseWriter, r *http.Request) {
 	const query = `SELECT COALESCE(credit_balance, 0) FROM users WHERE id = $1`
 	if err := h.Deps.DB.QueryRowContext(r.Context(), query, userID).Scan(&creditBalance); err != nil {
 		if h.Deps.Logger != nil {
-			h.Deps.Logger.Printf("ERROR: Failed to get credit balance for user %s: %v", userID, err)
+			h.Deps.Logger.Error("credit_balance_fetch_failed", slog.String("user_id", userID), slog.Any("error", err))
 		}
 		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: "failed to retrieve credit balance"})
 		return

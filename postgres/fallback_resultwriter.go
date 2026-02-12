@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/gosom/scrapemate"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -50,7 +50,7 @@ func (r *fallbackResultWriter) Run(ctx context.Context, in <-chan scrapemate.Res
 		if len(buff) >= maxBatchSize || time.Now().UTC().Sub(lastSave) >= time.Minute {
 			err := r.batchSaveFallback(dbCtx, buff)
 			if err != nil {
-				log.Printf("Error saving batch: %v", err)
+				slog.Error("batch_save_error", slog.Any("error", err))
 				// Continue processing instead of failing completely
 			}
 
@@ -62,7 +62,7 @@ func (r *fallbackResultWriter) Run(ctx context.Context, in <-chan scrapemate.Res
 	if len(buff) > 0 {
 		err := r.batchSaveFallback(dbCtx, buff)
 		if err != nil {
-			log.Printf("Error saving final batch: %v", err)
+			slog.Error("final_batch_save_error", slog.Any("error", err))
 		}
 	}
 
@@ -74,21 +74,21 @@ func (r *fallbackResultWriter) batchSaveFallback(ctx context.Context, entries []
 		return nil
 	}
 
-	log.Printf("[Fallback Writer] Attempting to insert %d entries for user %s, job %s", len(entries), r.userID, r.jobID)
+	slog.Info("fallback_writer_inserting", slog.Int("count", len(entries)), slog.String("user_id", r.userID), slog.String("job_id", r.jobID))
 
 	// Insert entries one by one to handle duplicates gracefully
 	successCount := 0
 	for _, entry := range entries {
 		err := r.insertSingleEntry(ctx, entry)
 		if err != nil {
-			log.Printf("[Fallback Writer] Failed to insert entry %s: %v", entry.Title, err)
+			slog.Error("fallback_writer_insert_failed", slog.String("title", entry.Title), slog.Any("error", err))
 			// Continue with next entry
 		} else {
 			successCount++
 		}
 	}
 
-	log.Printf("[Fallback Writer] Successfully inserted %d/%d entries for user %s, job %s", successCount, len(entries), r.userID, r.jobID)
+	slog.Info("fallback_writer_insert_complete", slog.Int("success_count", successCount), slog.Int("total_count", len(entries)), slog.String("user_id", r.userID), slog.String("job_id", r.jobID))
 	return nil
 }
 

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -51,7 +52,9 @@ func (w *SynchronizedDualWriter) Run(ctx context.Context, in <-chan scrapemate.R
 		// Check for cancellation
 		select {
 		case <-ctx.Done():
-			fmt.Printf("DEBUG: SynchronizedDualWriter stopped due to cancellation (wrote %d results)\n", resultCount)
+			slog.Debug("synchronized_dual_writer_stopped_context_cancelled",
+				slog.Int("results_written", resultCount),
+			)
 			// Flush CSV before returning
 			w.csvWriter.Flush()
 			return ctx.Err()
@@ -70,24 +73,35 @@ func (w *SynchronizedDualWriter) Run(ctx context.Context, in <-chan scrapemate.R
 				return fmt.Errorf("failed to write CSV headers: %w", err)
 			}
 			w.headersWritten = true
-			fmt.Println("DEBUG: SynchronizedDualWriter - CSV headers written")
+			slog.Debug("synchronized_dual_writer_csv_headers_written")
 		}
 
 		// Log what we're processing
 		if entry.Title != "" {
-			fmt.Printf("DEBUG: SynchronizedDualWriter - Processing result #%d: %s\n", resultCount+1, entry.Title)
+			slog.Debug("synchronized_dual_writer_processing_result",
+				slog.Int("result_number", resultCount+1),
+				slog.String("title", entry.Title),
+			)
 		} else {
-			fmt.Printf("DEBUG: SynchronizedDualWriter - Processing result #%d: (empty title)\n", resultCount+1)
+			slog.Debug("synchronized_dual_writer_processing_result_empty_title",
+				slog.Int("result_number", resultCount+1),
+			)
 		}
 
 		// Write to BOTH destinations atomically
 		if err := w.writeToPostgreSQL(ctx, entry); err != nil {
-			fmt.Printf("ERROR: SynchronizedDualWriter - PostgreSQL write failed for %s: %v\n", entry.Title, err)
+			slog.Error("synchronized_dual_writer_postgres_write_failed",
+				slog.String("title", entry.Title),
+				slog.Any("error", err),
+			)
 			return fmt.Errorf("PostgreSQL write failed: %w", err)
 		}
 
 		if err := w.writeToCSV(entry); err != nil {
-			fmt.Printf("ERROR: SynchronizedDualWriter - CSV write failed for %s: %v\n", entry.Title, err)
+			slog.Error("synchronized_dual_writer_csv_write_failed",
+				slog.String("title", entry.Title),
+				slog.Any("error", err),
+			)
 			return fmt.Errorf("CSV write failed: %w", err)
 		}
 
@@ -97,7 +111,9 @@ func (w *SynchronizedDualWriter) Run(ctx context.Context, in <-chan scrapemate.R
 		// Notify exit monitor
 		if w.exitMonitor != nil {
 			w.exitMonitor.IncrResultsWritten(1)
-			fmt.Printf("DEBUG: SynchronizedDualWriter - Successfully wrote result #%d to both destinations\n", resultCount)
+			slog.Debug("synchronized_dual_writer_result_written",
+				slog.Int("result_number", resultCount),
+			)
 		}
 
 		// Flush CSV periodically to ensure data is written
@@ -115,7 +131,9 @@ func (w *SynchronizedDualWriter) Run(ctx context.Context, in <-chan scrapemate.R
 		return fmt.Errorf("final CSV flush error: %w", err)
 	}
 
-	fmt.Printf("DEBUG: SynchronizedDualWriter - Completed. Total results written to both destinations: %d\n", resultCount)
+	slog.Info("synchronized_dual_writer_completed",
+		slog.Int("results_written", resultCount),
+	)
 	return nil
 }
 

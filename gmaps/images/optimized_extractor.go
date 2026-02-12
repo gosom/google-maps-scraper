@@ -70,7 +70,7 @@ func (e *OptimizedImageExtractor) ExtractAllImagesOptimized(ctx context.Context)
 		default:
 		}
 
-		fmt.Printf("DEBUG: Trying extraction method %d: %s\n", i+1, method.Name())
+		logf("DEBUG: Trying extraction method %d: %s\n", i+1, method.Name())
 
 		// Create method-specific context with shorter timeout
 		methodTimeout := time.Duration(float64(e.maxTimeout) * 0.4) // 40% of total time per method
@@ -80,30 +80,30 @@ func (e *OptimizedImageExtractor) ExtractAllImagesOptimized(ctx context.Context)
 		methodCancel()
 
 		if err != nil {
-			fmt.Printf("Warning: Method %s failed: %v\n", method.Name(), err)
+			logf("Warning: Method %s failed: %v\n", method.Name(), err)
 			lastError = err
 
 			// CRITICAL: If ScrollAllTab method fails, still stop here - don't try TabBasedMethod
 			if method.Name() == "ScrollAllTab" {
-				fmt.Printf("DEBUG: ScrollAllTab method failed but stopping to avoid tab clicking\n")
+				logf("DEBUG: ScrollAllTab method failed but stopping to avoid tab clicking\n")
 				break
 			}
 			continue
 		}
 
 		if len(images) > 0 {
-			fmt.Printf("DEBUG: Method %s succeeded with %d images\n", method.Name(), len(images))
+			logf("DEBUG: Method %s succeeded with %d images\n", method.Name(), len(images))
 			allImages = e.mergeImages(allImages, images)
 
 			// CRITICAL: If ScrollAllTab succeeds with ANY images, stop immediately
 			if method.Name() == "ScrollAllTab" && len(allImages) > 0 {
-				fmt.Printf("DEBUG: ScrollAllTab got %d images, stopping to avoid tab clicking\n", len(allImages))
+				logf("DEBUG: ScrollAllTab got %d images, stopping to avoid tab clicking\n", len(allImages))
 				break
 			}
 
 			// If we have enough images, stop trying other methods
 			if len(allImages) >= 20 {
-				fmt.Printf("DEBUG: Sufficient images collected (%d), stopping extraction\n", len(allImages))
+				logf("DEBUG: Sufficient images collected (%d), stopping extraction\n", len(allImages))
 				break
 			}
 		}
@@ -117,7 +117,7 @@ func (e *OptimizedImageExtractor) ExtractAllImagesOptimized(ctx context.Context)
 		return nil, metadata, fmt.Errorf("all extraction methods failed, last error: %w", lastError)
 	}
 
-	fmt.Printf("DEBUG: Optimized extraction completed - %d images in %dms\n", len(allImages), metadata.LoadTime)
+	logf("DEBUG: Optimized extraction completed - %d images in %dms\n", len(allImages), metadata.LoadTime)
 	return allImages, metadata, nil
 }
 
@@ -169,7 +169,7 @@ func (m *DirectGalleryMethod) Extract(ctx context.Context, page playwright.Page)
 			continue
 		}
 
-		fmt.Printf("DEBUG: DirectGallery found %d elements with selector: %s\n", len(elements), selector)
+		logf("DEBUG: DirectGallery found %d elements with selector: %s\n", len(elements), selector)
 
 		for i, element := range elements {
 			select {
@@ -364,11 +364,11 @@ func (m *TabBasedMethod) Extract(ctx context.Context, page playwright.Page) ([]B
 		default:
 		}
 
-		fmt.Printf("DEBUG: Processing tab %d: %s\n", i, tab.Name)
+		logf("DEBUG: Processing tab %d: %s\n", i, tab.Name)
 
 		tabImages, err := m.processTab(ctx, page, tab)
 		if err != nil {
-			fmt.Printf("Warning: Failed to process tab %s: %v\n", tab.Name, err)
+			logf("Warning: Failed to process tab %s: %v\n", tab.Name, err)
 			continue
 		}
 
@@ -596,11 +596,11 @@ func (m *ScrollAllTabMethod) Name() string  { return "ScrollAllTab" }
 func (m *ScrollAllTabMethod) Priority() int { return 110 } // Highest priority!
 
 func (m *ScrollAllTabMethod) Extract(ctx context.Context, page playwright.Page) ([]BusinessImage, error) {
-	fmt.Printf("DEBUG: ScrollAllTab method - FAST extraction starting\n")
+	logf("DEBUG: ScrollAllTab method - FAST extraction starting\n")
 
 	// Step 1: Try to navigate to images section (but don't wait long)
 	if err := m.navigateToImages(page); err != nil {
-		fmt.Printf("DEBUG: Could not navigate to photos section: %v - extracting from current page\n", err)
+		logf("DEBUG: Could not navigate to photos section: %v - extracting from current page\n", err)
 	} else {
 		// Quick wait for gallery - reduced from 2s to 500ms
 		time.Sleep(500 * time.Millisecond)
@@ -622,7 +622,7 @@ func (m *ScrollAllTabMethod) navigateToImages(page playwright.Page) error {
 		element := page.Locator(selector).First()
 		if visible, _ := element.IsVisible(); visible {
 			if err := element.Click(); err == nil {
-				fmt.Printf("DEBUG: Clicked photos button\n")
+				logf("DEBUG: Clicked photos button\n")
 				time.Sleep(800 * time.Millisecond)
 				return nil
 			}
@@ -640,7 +640,7 @@ func (m *ScrollAllTabMethod) scrollAndCollectImages(ctx context.Context, page pl
 	maxScrolls := 10 // Reduced from 25 to 10 for speed
 	maxStable := 2   // Reduced from 5 to 2 (less patient, faster)
 
-	fmt.Printf("DEBUG: Starting FAST scroll in All tab...\n")
+	logf("DEBUG: Starting FAST scroll in All tab...\n")
 
 	for scrollCount < maxScrolls {
 		select {
@@ -654,7 +654,7 @@ func (m *ScrollAllTabMethod) scrollAndCollectImages(ctx context.Context, page pl
 		// Fast scroll
 		scrolled := m.scrollGallery(page)
 		if !scrolled {
-			fmt.Printf("DEBUG: Can't scroll anymore, stopping\n")
+			logf("DEBUG: Can't scroll anymore, stopping\n")
 			break
 		}
 
@@ -673,12 +673,12 @@ func (m *ScrollAllTabMethod) scrollAndCollectImages(ctx context.Context, page pl
 		}
 
 		newFound := len(urlSet) - previousCount
-		fmt.Printf("DEBUG: Scroll %d: +%d images (total: %d)\n", scrollCount, newFound, len(urlSet))
+		logf("DEBUG: Scroll %d: +%d images (total: %d)\n", scrollCount, newFound, len(urlSet))
 
 		if newFound == 0 {
 			stableCount++
 			if stableCount >= maxStable {
-				fmt.Printf("DEBUG: No new images after %d scrolls, done\n", maxStable)
+				logf("DEBUG: No new images after %d scrolls, done\n", maxStable)
 				break
 			}
 		} else {
@@ -686,7 +686,7 @@ func (m *ScrollAllTabMethod) scrollAndCollectImages(ctx context.Context, page pl
 		}
 	}
 
-	fmt.Printf("DEBUG: ScrollAllTab completed: %d images after %d scrolls\n", len(allImages), scrollCount)
+	logf("DEBUG: ScrollAllTab completed: %d images after %d scrolls\n", len(allImages), scrollCount)
 	return allImages, nil
 }
 
@@ -741,15 +741,15 @@ func (m *ScrollAllTabMethod) scrollGallery(page playwright.Page) bool {
 	}`)
 
 	if err != nil {
-		fmt.Printf("DEBUG: Scroll evaluation error: %v\n", err)
+		logf("DEBUG: Scroll evaluation error: %v\n", err)
 		return false
 	}
 
 	if b, ok := scrolled.(bool); ok {
 		if b {
-			fmt.Printf("DEBUG: ✅ Scroll successful\n")
+			logf("DEBUG: ✅ Scroll successful\n")
 		} else {
-			fmt.Printf("DEBUG: ❌ Scroll failed - no scrollable container found\n")
+			logf("DEBUG: ❌ Scroll failed - no scrollable container found\n")
 		}
 		return b
 	}
@@ -775,7 +775,7 @@ func (m *ScrollAllTabMethod) extractVisibleImages(page playwright.Page) []Busine
 			continue
 		}
 
-		fmt.Printf("DEBUG: Selector '%s' found %d elements\n", selector, len(elements))
+		logf("DEBUG: Selector '%s' found %d elements\n", selector, len(elements))
 
 		for i, element := range elements {
 			// Try multiple ways to get URL
@@ -821,7 +821,7 @@ func (m *ScrollAllTabMethod) extractVisibleImages(page playwright.Page) []Busine
 		}
 	}
 
-	fmt.Printf("DEBUG: Extracted %d unique images from DOM\n", len(images))
+	logf("DEBUG: Extracted %d unique images from DOM\n", len(images))
 	return images
 }
 

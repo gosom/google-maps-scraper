@@ -3,7 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -94,25 +94,25 @@ func (h *BillingHandlers) Reconcile(w http.ResponseWriter, r *http.Request) {
 
 func (h *BillingHandlers) HandleStripeWebhook(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.BillingSvc == nil {
-		log.Printf("ERROR: BillingSvc is nil in webhook handler")
+		slog.Error("billing_svc_nil_in_webhook_handler")
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 	payload, err := io.ReadAll(r.Body)
 	if err != nil {
-		log.Printf("ERROR: Failed to read webhook payload: %v", err)
+		slog.Error("webhook_payload_read_failed", slog.Any("error", err))
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	sig := r.Header.Get("Stripe-Signature")
-	log.Printf("DEBUG: Webhook received - payload length: %d, signature present: %t", len(payload), sig != "")
+	slog.Debug("webhook_received", slog.Int("payload_length", len(payload)), slog.Bool("signature_present", sig != ""))
 
 	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc)
 	code, err := cs.HandleWebhook(r.Context(), payload, sig)
 	if err != nil {
-		log.Printf("ERROR: Webhook processing failed: %v", err)
+		slog.Error("webhook_processing_failed", slog.Any("error", err))
 	}
-	log.Printf("DEBUG: Webhook response code: %d", code)
+	slog.Debug("webhook_response", slog.Int("code", code))
 	w.WriteHeader(code)
 }
 
