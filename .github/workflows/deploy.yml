@@ -255,6 +255,20 @@ jobs:
               exit 1
             }
             
+            # Pull latest repo changes (compose files, configs, etc.)
+            echo "📥 Pulling latest changes from develop..."
+            git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/brezel-ai/brezelscraper-backend.git"
+            git fetch origin develop || {
+              echo "❌ Failed to fetch from origin"
+              exit 1
+            }
+            git checkout develop 2>/dev/null || true
+            git reset --hard origin/develop || {
+              echo "❌ Failed to sync with origin/develop"
+              exit 1
+            }
+            echo "✅ Repository synced to latest develop"
+            
             # Verify docker-compose file exists
             if [ ! -f "${{ env.DOCKER_COMPOSE_FILE }}" ]; then
               echo "${{ env.DOCKER_COMPOSE_FILE }} not found"
@@ -381,6 +395,10 @@ jobs:
                 echo "⚠️ Frontend not responding yet"
               fi
             fi
+            
+            # Clean up old .env backups (keep last 3)
+            echo "🧹 Cleaning up old .env backups..."
+            ls -1t .env.backup.* 2>/dev/null | tail -n +4 | xargs rm -f 2>/dev/null || true
             
             # Success
             echo ""
