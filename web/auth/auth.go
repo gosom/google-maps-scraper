@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/clerk/clerk-sdk-go/v2"
@@ -33,6 +34,9 @@ const (
 	UserIDKey ContextKey = "user_id"
 	// AuthHeaderName is the name of the authentication header
 	AuthHeaderName = "Authorization"
+	// DevUserHeaderName allows local integration tests to bypass Clerk auth when explicitly enabled.
+	// This MUST remain opt-in via BRAZA_DEV_AUTH_BYPASS=1 to avoid production misuse.
+	DevUserHeaderName = "X-Braza-Dev-User"
 )
 
 // NewAuthMiddleware creates a new AuthMiddleware
@@ -72,7 +76,7 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 		clerkhttp.AuthorizationJWTExtractor(extractToken),
 	)
 
-	return clerkAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	clerkHandler := clerkAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Retrieve verified session claims from context
 		claims, ok := clerk.SessionClaimsFromContext(r.Context())
 		if !ok || claims == nil || claims.Subject == "" {
@@ -136,6 +140,24 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 		ctx := context.WithValue(r.Context(), UserIDKey, userID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	}))
+
+	// Optional dev bypass for local integration tests. This avoids depending on
+	// Clerk connectivity from the test runner environment.
+	if strings.TrimSpace(os.Getenv("BRAZA_DEV_AUTH_BYPASS")) == "1" {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if devUserID := strings.TrimSpace(r.Header.Get(DevUserHeaderName)); devUserID != "" {
+				if m.logger != nil {
+					m.logger.Warn("dev_auth_bypass", slog.String("user_id", devUserID))
+				}
+				ctx := context.WithValue(r.Context(), UserIDKey, devUserID)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+			clerkHandler.ServeHTTP(w, r)
+		})
+	}
+
+	return clerkHandler
 }
 
 // grantSignupBonus awards the signup bonus credit to a newly created user.

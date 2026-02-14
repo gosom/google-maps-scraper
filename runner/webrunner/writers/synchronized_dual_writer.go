@@ -55,73 +55,98 @@ func (w *SynchronizedDualWriter) Run(ctx context.Context, in <-chan scrapemate.R
 			slog.Debug("synchronized_dual_writer_stopped_context_cancelled",
 				slog.Int("results_written", resultCount),
 			)
-			// Flush CSV before returning
+			// Flush CSV before returning to avoid leaving buffered data unwritten.
+			// Close() on the underlying file does NOT flush encoding/csv's internal buffer.
 			w.csvWriter.Flush()
+			if err := w.csvWriter.Error(); err != nil {
+				return fmt.Errorf("csv flush error on context cancellation: %w", err)
+			}
 			return ctx.Err()
 		default:
 		}
 
 		// Validate result
-		entry, ok := result.Data.(*gmaps.Entry)
-		if !ok {
+		var entries []*gmaps.Entry
+		switch v := result.Data.(type) {
+		case *gmaps.Entry:
+			entries = []*gmaps.Entry{v}
+		case []*gmaps.Entry:
+			entries = v
+		default:
 			return errors.New("invalid data type")
 		}
 
-		// Write CSV headers on first result
-		if !w.headersWritten {
-			if err := w.csvWriter.Write(entry.CsvHeaders()); err != nil {
-				return fmt.Errorf("failed to write CSV headers: %w", err)
+		for _, entry := range entries {
+			if entry == nil {
+				continue
 			}
-			w.headersWritten = true
-			slog.Debug("synchronized_dual_writer_csv_headers_written")
-		}
 
-		// Log what we're processing
-		if entry.Title != "" {
-			slog.Debug("synchronized_dual_writer_processing_result",
-				slog.Int("result_number", resultCount+1),
-				slog.String("title", entry.Title),
-			)
-		} else {
-			slog.Debug("synchronized_dual_writer_processing_result_empty_title",
-				slog.Int("result_number", resultCount+1),
-			)
-		}
-
-		// Write to BOTH destinations atomically
-		if err := w.writeToPostgreSQL(ctx, entry); err != nil {
-			slog.Error("synchronized_dual_writer_postgres_write_failed",
-				slog.String("title", entry.Title),
-				slog.Any("error", err),
-			)
-			return fmt.Errorf("PostgreSQL write failed: %w", err)
-		}
-
-		if err := w.writeToCSV(entry); err != nil {
-			slog.Error("synchronized_dual_writer_csv_write_failed",
-				slog.String("title", entry.Title),
-				slog.Any("error", err),
-			)
-			return fmt.Errorf("CSV write failed: %w", err)
-		}
-
-		// Both writes succeeded, increment counter
-		resultCount++
-
-		// Notify exit monitor
-		if w.exitMonitor != nil {
-			w.exitMonitor.IncrResultsWritten(1)
-			slog.Debug("synchronized_dual_writer_result_written",
-				slog.Int("result_number", resultCount),
-			)
-		}
-
-		// Flush CSV periodically to ensure data is written
-		if resultCount%10 == 0 {
-			w.csvWriter.Flush()
-			if err := w.csvWriter.Error(); err != nil {
-				return fmt.Errorf("CSV flush error: %w", err)
+			// Check for cancellation between batched entries.
+			select {
+			case <-ctx.Done():
+				w.csvWriter.Flush()
+				if err := w.csvWriter.Error(); err != nil {
+					return fmt.Errorf("csv flush error on context cancellation: %w", err)
+				}
+				return ctx.Err()
+			default:
 			}
+
+			// Write CSV headers on first result
+			if !w.headersWritten {
+				if err := w.csvWriter.Write(entry.CsvHeaders()); err != nil {
+					return fmt.Errorf("failed to write CSV headers: %w", err)
+				}
+				w.csvWriter.Flush()
+				if err := w.csvWriter.Error(); err != nil {
+					return fmt.Errorf("failed to flush CSV headers: %w", err)
+				}
+				w.headersWritten = true
+				slog.Debug("synchronized_dual_writer_csv_headers_written")
+			}
+
+			// Log what we're processing
+			if entry.Title != "" {
+				slog.Debug("synchronized_dual_writer_processing_result",
+					slog.Int("result_number", resultCount+1),
+					slog.String("title", entry.Title),
+				)
+			} else {
+				slog.Debug("synchronized_dual_writer_processing_result_empty_title",
+					slog.Int("result_number", resultCount+1),
+				)
+			}
+
+			// Write to BOTH destinations atomically
+			if err := w.writeToPostgreSQL(ctx, entry); err != nil {
+				slog.Error("synchronized_dual_writer_postgres_write_failed",
+					slog.String("title", entry.Title),
+					slog.Any("error", err),
+				)
+				return fmt.Errorf("PostgreSQL write failed: %w", err)
+			}
+
+			if err := w.writeToCSV(entry); err != nil {
+				slog.Error("synchronized_dual_writer_csv_write_failed",
+					slog.String("title", entry.Title),
+					slog.Any("error", err),
+				)
+				return fmt.Errorf("CSV write failed: %w", err)
+			}
+
+			// Both writes succeeded, increment counter
+			resultCount++
+
+			// Notify exit monitor
+			if w.exitMonitor != nil {
+				w.exitMonitor.IncrResultsWritten(1)
+				slog.Debug("synchronized_dual_writer_result_written",
+					slog.Int("result_number", resultCount),
+				)
+			}
+
+			// Note: per-row flushing happens inside writeToCSV to protect against
+			// forced shutdown paths that may close the underlying file early.
 		}
 	}
 
@@ -222,5 +247,15 @@ func (w *SynchronizedDualWriter) writeToPostgreSQL(ctx context.Context, entry *g
 func (w *SynchronizedDualWriter) writeToCSV(entry *gmaps.Entry) error {
 	// Use the Entry's own CsvRow() method which properly formats ALL fields
 	// including JSON serialization of complex types
-	return w.csvWriter.Write(entry.CsvRow())
+	if err := w.csvWriter.Write(entry.CsvRow()); err != nil {
+		return err
+	}
+
+	// Flush after each row so that even if the job is force-completed and the
+	// underlying file is closed early, we don't lose buffered data mid-record.
+	w.csvWriter.Flush()
+	if err := w.csvWriter.Error(); err != nil {
+		return fmt.Errorf("csv flush error: %w", err)
+	}
+	return nil
 }

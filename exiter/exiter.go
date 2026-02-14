@@ -261,6 +261,17 @@ func (e *exiter) isDone() bool {
 		return false
 	}
 
+	// 2b. Seeds are complete but no places were found. Without this, the exit
+	// monitor can wait forever on an empty job graph (no place jobs to finish).
+	if e.seedCount > 0 && e.seedCompleted >= e.seedCount && e.placesFound == 0 {
+		slog.Debug("exit_done_zero_places_found",
+			slog.Int("seed_completed", e.seedCompleted),
+			slog.Int("seed_count", e.seedCount),
+			slog.Int("places_found", e.placesFound),
+		)
+		return true
+	}
+
 	// 3. For unlimited results (maxResults = 0), check if all places are processed
 	if e.maxResults == 0 {
 		if e.placesFound > 0 && e.placesCompleted >= e.placesFound {
