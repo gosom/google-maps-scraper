@@ -637,40 +637,65 @@ func (m *ScrollAllTabMethod) scrollAndCollectImages(ctx context.Context, page pl
 	var allImages []BusinessImage
 	scrollCount := 0
 	stableCount := 0
-	maxScrolls := 10 // Reduced from 25 to 10 for speed
-	maxStable := 2   // Reduced from 5 to 2 (less patient, faster)
+	maxScrolls := 5 // HARD LIMIT: max 5 scrolls to prevent infinite loops
+	maxStable := 1  // Exit after 1 scroll with no new images
+	startTime := time.Now()
+	maxDuration := 10 * time.Second // HARD TIMEOUT: 10 seconds max
 
-	fmt.Printf("DEBUG: Starting FAST scroll in All tab...\n")
+	fmt.Printf("DEBUG: Starting FAST scroll in All tab (max %d scrolls, %v timeout)...\n", maxScrolls, maxDuration)
+
+	// ALWAYS extract images from initial view first (before scrolling)
+	fmt.Printf("DEBUG: Extracting visible images from initial view...\n")
+	initialImages := m.extractVisibleImages(page)
+	fmt.Printf("DEBUG: Found %d images in initial view\n", len(initialImages))
+	for _, img := range initialImages {
+		if !urlSet[img.URL] {
+			urlSet[img.URL] = true
+			allImages = append(allImages, img)
+		}
+	}
 
 	for scrollCount < maxScrolls {
+		// Hard timeout check
+		if time.Since(startTime) > maxDuration {
+			fmt.Printf("DEBUG: Hard timeout reached after %v, stopping\n", maxDuration)
+			break
+		}
+
 		select {
 		case <-ctx.Done():
+			fmt.Printf("DEBUG: Context cancelled, stopping\n")
 			return allImages, nil
 		default:
 		}
 
 		previousCount := len(urlSet)
 
-		// Fast scroll
+		// Fast scroll with logging
+		fmt.Printf("DEBUG: Attempting scroll %d/%d...\n", scrollCount+1, maxScrolls)
 		scrolled := m.scrollGallery(page)
 		if !scrolled {
-			fmt.Printf("DEBUG: Can't scroll anymore, stopping\n")
+			fmt.Printf("DEBUG: Can't scroll anymore after %d attempts, stopping with %d images\n", scrollCount, len(allImages))
 			break
 		}
+		fmt.Printf("DEBUG: Scroll %d successful\n", scrollCount+1)
 
 		scrollCount++
 
-		// Minimal wait for lazy loading - reduced from 1.5s to 400ms
-		time.Sleep(400 * time.Millisecond)
+		// Minimal wait for lazy loading - reduced to 200ms for speed
+		time.Sleep(200 * time.Millisecond)
 
-		// Extract visible images
+		// Extract visible images after scroll
+		fmt.Printf("DEBUG: Extracting visible images after scroll %d...\n", scrollCount)
 		newImages := m.extractVisibleImages(page)
+		fmt.Printf("DEBUG: Found %d new image elements\n", len(newImages))
 		for _, img := range newImages {
 			if !urlSet[img.URL] {
 				urlSet[img.URL] = true
 				allImages = append(allImages, img)
 			}
 		}
+		fmt.Printf("DEBUG: Unique images so far: %d\n", len(allImages))
 
 		newFound := len(urlSet) - previousCount
 		fmt.Printf("DEBUG: Scroll %d: +%d images (total: %d)\n", scrollCount, newFound, len(urlSet))
@@ -693,10 +718,12 @@ func (m *ScrollAllTabMethod) scrollAndCollectImages(ctx context.Context, page pl
 func (m *ScrollAllTabMethod) scrollGallery(page playwright.Page) bool {
 	scrolled, err := page.Evaluate(`() => {
 		const selectors = [
-			'div[role="main"]',
+			'div.m6QErb.XiKgde',          // New: nested photo container
+			'div.EGN8xd',                  // New: photo grid container
+			'div[role="tabpanel"][aria-label="Photos"]',  // Photos tab panel
 			'div.m6QErb.DxyBCb',
+			'div[role="main"]',
 			'div[jslog]',
-			'div[class*="gallery"]',
 		];
 		
 		let scrolledAny = false;
@@ -758,12 +785,13 @@ func (m *ScrollAllTabMethod) scrollGallery(page playwright.Page) bool {
 
 func (m *ScrollAllTabMethod) extractVisibleImages(page playwright.Page) []BusinessImage {
 	selectors := []string{
+		`button.xUc6Hf img[src*="googleusercontent.com"]`, // New: photo button imgs
+		`div.y5gUld img[src*="googleusercontent.com"]`,    // New: photo container imgs
 		`img[src*="googleusercontent.com"]`,
 		`img[src*="gstatic.com"]`,
 		`div[style*="googleusercontent.com"]`,    // Background images
 		`img[data-src*="googleusercontent.com"]`, // Lazy loaded
-		`a[data-photo-index] img`,                // Photo gallery links
-		`button[data-photo-index] img`,           // Photo buttons
+		`button[data-photo-id] img`,              // New: photo ID buttons
 	}
 
 	var images []BusinessImage
