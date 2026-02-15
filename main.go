@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
+	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	"github.com/gosom/google-maps-scraper/runner"
 	"github.com/gosom/google-maps-scraper/runner/databaserunner"
 	"github.com/gosom/google-maps-scraper/runner/filerunner"
@@ -20,6 +21,10 @@ import (
 
 func main() {
 	_ = godotenv.Load() // Load .env file if present
+
+	// Set structured JSON logging as the global default before anything else.
+	slog.SetDefault(pkglogger.New(os.Getenv("LOG_LEVEL")))
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Parse config first so banner can reflect debug mode
@@ -32,7 +37,7 @@ func main() {
 	go func() {
 		<-sigChan
 
-		log.Println("Received signal, shutting down...")
+		slog.Info("signal_received", slog.String("action", "shutting_down"))
 
 		cancel()
 	}()

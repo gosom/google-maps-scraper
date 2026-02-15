@@ -3,6 +3,7 @@ package gmaps
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -129,8 +130,11 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 
 	log := scrapemate.GetLoggerFromContext(ctx)
 
-	// DEBUG: Log GmapJob flags
-	log.Info(fmt.Sprintf("DEBUG: GmapJob %s processing - ExtractImages: %v, ExtractEmail: %v", j.ID, j.ExtractImages, j.ExtractEmail))
+	log.Debug("gmap_job_processing",
+		slog.String("job_id", j.ID),
+		slog.Bool("extract_images", j.ExtractImages),
+		slog.Bool("extract_email", j.ExtractEmail),
+	)
 
 	doc, ok := resp.Document.(*goquery.Document)
 	if !ok {
@@ -152,18 +156,28 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 			jopts = append(jopts, WithPlaceJobExitMonitor(j.ExitMonitor))
 		}
 
-		log.Info(fmt.Sprintf("DEBUG: Creating single PlaceJob from direct place URL with ExtractImages: %v", j.ExtractImages))
+		log.Debug("gmap_job_creating_single_place_job",
+			slog.String("job_id", j.ID),
+			slog.Bool("extract_images", j.ExtractImages),
+			slog.String("url", resp.URL),
+		)
 		placeJob := NewPlaceJob(j.ID, j.LangCode, resp.URL, j.ExtractEmail, j.ExtractImages, j.ReviewsMax, jopts...)
 
 		next = append(next, placeJob)
 	} else {
-		log.Info(fmt.Sprintf("DEBUG: Processing search results page - will create PlaceJobs with ExtractImages: %v", j.ExtractImages))
+		log.Debug("gmap_job_processing_search_results",
+			slog.String("job_id", j.ID),
+			slog.Bool("extract_images", j.ExtractImages),
+		)
 
 		// Get max results limit from ExitMonitor if available
 		maxResults := 0
 		if j.ExitMonitor != nil {
 			maxResults = j.ExitMonitor.GetMaxResults()
-			log.Info(fmt.Sprintf("DEBUG: Max results limit set to: %d", maxResults))
+			log.Debug("gmap_job_max_results_limit",
+				slog.String("job_id", j.ID),
+				slog.Int("max_results", maxResults),
+			)
 		}
 
 		doc.Find(`div[role=feed] div[jsaction]>a`).Each(func(i int, s *goquery.Selection) {
@@ -183,7 +197,11 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 					jopts = append(jopts, WithPlaceJobExitMonitor(j.ExitMonitor))
 				}
 
-				log.Info(fmt.Sprintf("DEBUG: Creating PlaceJob %d from search result with ExtractImages: %v", i+1, j.ExtractImages))
+				log.Debug("gmap_job_creating_place_job_from_search_result",
+					slog.String("job_id", j.ID),
+					slog.Int("result_index", i+1),
+					slog.Bool("extract_images", j.ExtractImages),
+				)
 				nextJob := NewPlaceJob(j.ID, j.LangCode, href, j.ExtractEmail, j.ExtractImages, j.ReviewsMax, jopts...)
 
 				if j.Deduper == nil || j.Deduper.AddIfNotExists(ctx, href) {
@@ -205,7 +223,10 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 		j.ExitMonitor.IncrSeedCompleted(1)
 	}
 
-	log.Info(fmt.Sprintf("DEBUG: Created %d PlaceJobs from GmapJob %s", len(next), j.ID))
+	log.Debug("gmap_job_place_jobs_created",
+		slog.String("job_id", j.ID),
+		slog.Int("place_jobs_count", len(next)),
+	)
 
 	return nil, next, nil
 }
@@ -306,11 +327,11 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 
 	// Debug: log the current URL to see if we're being redirected
 	log := scrapemate.GetLoggerFromContext(ctx)
-	log.Info(fmt.Sprintf("DEBUG: Current page URL after navigation: %s", page.URL()))
+	log.Debug("gmap_job_current_page_url", slog.String("url", page.URL()))
 
 	if singlePlace {
 		resp.URL = page.URL()
-		log.Info(fmt.Sprintf("DEBUG: Detected single place redirect to: %s", resp.URL))
+		log.Debug("gmap_job_single_place_redirect_detected", slog.String("url", resp.URL))
 
 		var body string
 
@@ -321,18 +342,18 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 		}
 
 		resp.Body = []byte(body)
-		log.Info(fmt.Sprintf("DEBUG: Single place content length: %d", len(resp.Body)))
+		log.Debug("gmap_job_single_place_content_loaded", slog.Int("content_length", len(resp.Body)))
 
 		return resp
 	}
 
 	// Debug: Check if the feed selector exists
-	log.Info("DEBUG: Looking for search results feed...")
+	log.Debug("Looking for search results feed...")
 	_, feedErr := page.QuerySelector(`div[role='feed']`)
 	if feedErr != nil {
-		log.Info(fmt.Sprintf("DEBUG: Feed selector not found: %v", feedErr))
+		log.Debug("gmap_job_feed_selector_not_found", slog.Any("error", feedErr))
 	} else {
-		log.Info("DEBUG: Feed selector found successfully")
+		log.Debug("gmap_job_feed_selector_found")
 	}
 
 	scrollSelector := `div[role='feed']`

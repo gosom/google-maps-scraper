@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"regexp"
 	"strings"
@@ -92,13 +93,20 @@ func (f *fetcher) fetch(ctx context.Context) (fetchReviewsResponse, error) {
 
 		reviewURL, err = f.generateURL(f.params.mapURL, nextPageToken, currentPageSize, requestIDForSession)
 		if err != nil {
-			fmt.Printf("Error generating URL for token %s: %v\n", nextPageToken, err)
+			slog.Error("reviews_generate_url_failed",
+				slog.String("next_page_token", nextPageToken),
+				slog.Any("error", err),
+			)
 			break
 		}
 
 		currentPageBody, err = f.fetchReviewPage(ctx, reviewURL)
 		if err != nil {
-			fmt.Printf("Error fetching review page with token %s: %v (%s)\n", nextPageToken, err, reviewURL)
+			slog.Error("reviews_fetch_page_failed",
+				slog.String("next_page_token", nextPageToken),
+				slog.String("review_url", reviewURL),
+				slog.Any("error", err),
+			)
 			break
 		}
 

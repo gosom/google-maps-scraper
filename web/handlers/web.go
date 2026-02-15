@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -42,7 +43,7 @@ func (f formData) KeywordsString() string { return strings.Join(f.Keywords, "\n"
 // HealthCheck responds with service and database health info.
 func (h *WebHandlers) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
-		h.Deps.Logger.Printf("GET %s", r.URL.Path)
+		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
 	}
 
 	dbStatus := "not_configured"
@@ -75,7 +76,7 @@ func (h *WebHandlers) HealthCheck(w http.ResponseWriter, r *http.Request) {
 // Redoc serves the API documentation page.
 func (h *WebHandlers) Redoc(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
-		h.Deps.Logger.Printf("GET %s", r.URL.Path)
+		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
 	}
 	if h.Deps.Templates == nil {
 		http.Error(w, "missing tpl", http.StatusInternalServerError)
@@ -99,7 +100,7 @@ func renderJSON(w http.ResponseWriter, code int, data any) {
 // Index mirrors Server.index
 func (h *WebHandlers) Index(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
-		h.Deps.Logger.Printf("GET %s", r.URL.Path)
+		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
 	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -117,7 +118,7 @@ func (h *WebHandlers) Index(w http.ResponseWriter, r *http.Request) {
 // Jobs mirrors Server.jobs
 func (h *WebHandlers) Jobs(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
-		h.Deps.Logger.Printf("GET %s", r.URL.Path)
+		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
 	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -139,7 +140,7 @@ func (h *WebHandlers) Jobs(w http.ResponseWriter, r *http.Request) {
 // Scrape mirrors Server.scrape
 func (h *WebHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
-		h.Deps.Logger.Printf("POST %s", r.URL.Path)
+		h.Deps.Logger.Info("request", slog.String("method", "POST"), slog.String("path", r.URL.Path))
 	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -232,7 +233,7 @@ func (h *WebHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 // Download mirrors Server.download with S3 support
 func (h *WebHandlers) Download(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
-		h.Deps.Logger.Printf("GET %s", r.URL.Path)
+		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
 	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -247,14 +248,14 @@ func (h *WebHandlers) Download(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		http.Error(w, "Missing ID", http.StatusUnprocessableEntity)
 		if h.Deps.Logger != nil {
-			h.Deps.Logger.Printf("Missing ID for download")
+			h.Deps.Logger.Warn("download_missing_id")
 		}
 		return
 	}
 	if _, err := uuid.Parse(id); err != nil {
 		http.Error(w, "Invalid ID format", http.StatusUnprocessableEntity)
 		if h.Deps.Logger != nil {
-			h.Deps.Logger.Printf("Invalid ID format for download: %v", err)
+			h.Deps.Logger.Warn("download_invalid_id", slog.Any("error", err))
 		}
 		return
 	}
@@ -264,7 +265,7 @@ func (h *WebHandlers) Download(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "Job not found", http.StatusNotFound)
 		if h.Deps.Logger != nil {
-			h.Deps.Logger.Printf("Job %s not found for download: %v", id, err)
+			h.Deps.Logger.Warn("download_job_not_found", slog.String("job_id", id), slog.Any("error", err))
 		}
 		return
 	}
@@ -273,7 +274,7 @@ func (h *WebHandlers) Download(w http.ResponseWriter, r *http.Request) {
 	if job.Status == "failed" {
 		http.Error(w, "Cannot download results: billing failed for this job. Please ensure you have sufficient credits.", http.StatusPaymentRequired)
 		if h.Deps.Logger != nil {
-			h.Deps.Logger.Printf("Download blocked for failed job %s (user: %s)", id, job.UserID)
+			h.Deps.Logger.Warn("download_blocked_failed_job", slog.String("job_id", id), slog.String("user_id", job.UserID))
 		}
 		return
 	}
@@ -283,7 +284,7 @@ func (h *WebHandlers) Download(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		if h.Deps.Logger != nil {
-			h.Deps.Logger.Printf("Failed to get CSV for job %s: %v", id, err)
+			h.Deps.Logger.Warn("download_csv_fetch_failed", slog.String("job_id", id), slog.Any("error", err))
 		}
 		return
 	}
@@ -295,20 +296,20 @@ func (h *WebHandlers) Download(w http.ResponseWriter, r *http.Request) {
 	_, err = io.Copy(w, reader)
 	if err != nil {
 		if h.Deps.Logger != nil {
-			h.Deps.Logger.Printf("Failed to send file %s: %v", fileName, err)
+			h.Deps.Logger.Error("download_send_failed", slog.String("file_name", fileName), slog.Any("error", err))
 		}
 		return
 	}
 
 	if h.Deps.Logger != nil {
-		h.Deps.Logger.Printf("Successfully served CSV file %s for job %s", fileName, id)
+		h.Deps.Logger.Info("csv_served", slog.String("file_name", fileName), slog.String("job_id", id))
 	}
 }
 
 // Delete mirrors Server.delete
 func (h *WebHandlers) Delete(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
-		h.Deps.Logger.Printf("DELETE %s", r.URL.Path)
+		h.Deps.Logger.Info("request", slog.String("method", "DELETE"), slog.String("path", r.URL.Path))
 	}
 	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

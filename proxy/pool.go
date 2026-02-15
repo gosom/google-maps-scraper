@@ -2,7 +2,7 @@ package proxy
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/url"
 	"sync"
@@ -19,10 +19,11 @@ type Pool struct {
 	nextProxyIndex int // For round-robin selection
 	mu             sync.RWMutex
 	blocked        map[string]time.Time // Track blocked proxies
+	logger         *slog.Logger
 }
 
 // NewPool creates a new proxy pool
-func NewPool(proxyURLs []string, portStart, portEnd int) (*Pool, error) {
+func NewPool(proxyURLs []string, portStart, portEnd int, logger *slog.Logger) (*Pool, error) {
 	if len(proxyURLs) == 0 {
 		return nil, fmt.Errorf("no proxy URLs provided")
 	}
@@ -32,24 +33,25 @@ func NewPool(proxyURLs []string, portStart, portEnd int) (*Pool, error) {
 	for i, proxyURL := range proxyURLs {
 		parsed, err := parseProxyURL(proxyURL)
 		if err != nil {
-			log.Printf("⚠️ Skipping invalid proxy URL %d: %s (%v)", i+1, proxyURL, err)
+			logger.Warn("skipping_invalid_proxy_url", slog.Int("index", i+1), slog.String("url", proxyURL), slog.Any("error", err))
 			continue
 		}
 		proxies = append(proxies, parsed)
-		log.Printf("✅ Added proxy %d: %s:%s", len(proxies), parsed.Address, parsed.Port)
+		logger.Info("proxy_added", slog.Int("index", len(proxies)), slog.String("host", parsed.Address), slog.String("port", parsed.Port))
 	}
 
 	if len(proxies) == 0 {
 		return nil, fmt.Errorf("no valid proxy URLs provided")
 	}
 
-	log.Printf("🔧 Configured %d proxies in pool", len(proxies))
+	logger.Info("proxies_configured_in_pool", slog.Int("count", len(proxies)))
 	return &Pool{
 		proxies:     proxies,
 		portStart:   portStart,
 		portEnd:     portEnd,
 		currentPort: portStart,
 		blocked:     make(map[string]time.Time),
+		logger:      logger,
 	}, nil
 }
 
@@ -58,7 +60,7 @@ func (p *Pool) GetServerForJob(jobID string) (*Server, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	log.Printf("DEBUG: Pool - Job %s requesting proxy from %d available proxies", jobID, len(p.proxies))
+	p.logger.Debug("pool_proxy_request", slog.String("job_id", jobID), slog.Int("available_proxies", len(p.proxies)))
 
 	// Find an available proxy using round-robin (not blocked)
 	var availableProxy *WebshareProxy
@@ -73,21 +75,21 @@ func (p *Pool) GetServerForJob(jobID string) (*Server, error) {
 			// Check if block has expired (5 minutes)
 			if time.Since(blockedTime) > 5*time.Minute {
 				delete(p.blocked, proxyKey)
-				log.Printf("🔄 Proxy %s unblocked after timeout", proxyKey)
+				p.logger.Info("proxy_unblocked_after_timeout", slog.String("proxy", proxyKey))
 			} else {
-				log.Printf("DEBUG: Pool - Proxy %d (%s) is blocked, skipping", index+1, proxyKey)
+				p.logger.Debug("pool_proxy_blocked_skipping", slog.Int("index", index+1), slog.String("proxy", proxyKey))
 				continue
 			}
 		}
 
 		availableProxy = proxy
 		p.nextProxyIndex = (index + 1) % len(p.proxies) // Move to next proxy for next job
-		log.Printf("DEBUG: Pool - Selected proxy %d (%s) for job %s (round-robin)", index+1, proxyKey, jobID)
+		p.logger.Debug("pool_proxy_selected", slog.Int("index", index+1), slog.String("proxy", proxyKey), slog.String("job_id", jobID))
 		break
 	}
 
 	if availableProxy == nil {
-		log.Printf("❌ Pool - No available proxies for job %s (all %d proxies blocked)", jobID, len(p.proxies))
+		p.logger.Error("pool_no_available_proxies", slog.String("job_id", jobID), slog.Int("total_proxies", len(p.proxies)))
 		return nil, fmt.Errorf("no available proxies (all blocked)")
 	}
 
@@ -98,7 +100,7 @@ func (p *Pool) GetServerForJob(jobID string) (*Server, error) {
 	}
 
 	// Create server for this specific proxy
-	server, err := NewServerFromProxy(availableProxy, port)
+	server, err := NewServerFromProxy(availableProxy, port, p.logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create proxy server: %w", err)
 	}
@@ -107,8 +109,7 @@ func (p *Pool) GetServerForJob(jobID string) (*Server, error) {
 		return nil, fmt.Errorf("failed to start proxy server: %w", err)
 	}
 
-	log.Printf("🎯 Job %s assigned proxy %s:%s on port %d",
-		jobID, availableProxy.Address, availableProxy.Port, port)
+	p.logger.Info("job_proxy_assigned", slog.String("job_id", jobID), slog.String("host", availableProxy.Address), slog.String("port", availableProxy.Port), slog.Int("local_port", port))
 
 	return server, nil
 }
@@ -120,7 +121,7 @@ func (p *Pool) MarkProxyBlocked(proxy *WebshareProxy) {
 
 	proxyKey := fmt.Sprintf("%s:%s", proxy.Address, proxy.Port)
 	p.blocked[proxyKey] = time.Now()
-	log.Printf("🚫 Proxy %s marked as blocked", proxyKey)
+	p.logger.Warn("proxy_marked_blocked", slog.String("proxy", proxyKey))
 }
 
 // findAvailablePort finds an available port in the range

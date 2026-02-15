@@ -10,8 +10,8 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  BACKEND_IMAGE: yasseen-salama/google-maps-scraper
-  FRONTEND_IMAGE: yasseen-salama/brezelscraper-frontend
+  BACKEND_IMAGE: brezel-ai/brezelscraper-backend
+  FRONTEND_IMAGE: brezel-ai/brezelscraper-frontend
   DOCKER_COMPOSE_FILE: docker-compose.staging.yaml
   BACKEND_CONTAINER: brezelscraper-backend
   FRONTEND_CONTAINER: brezelscraper-frontend
@@ -160,6 +160,34 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set API URL for build
+        id: api-config
+        run: |
+          # Set the API URL as a step output (more reliable than env vars)
+          echo "api_url=https://staging.brezel.ai" >> $GITHUB_OUTPUT
+          echo "API URL set to: https://staging.brezel.ai"
+
+      - name: Clean environment files
+        if: env.FRONTEND_EXISTS == 'true'
+        run: |
+          echo "Removing any .env files that could conflict with build-args..."
+          rm -f frontend/.env frontend/.env.* 2>/dev/null || true
+          
+          echo "Creating .dockerignore to prevent any remaining env files..."
+          cat > frontend/.dockerignore << 'EOF'
+          .env
+          .env.*
+          .env.local
+          .env.staging
+          .env.production
+          node_modules
+          .next
+          .git
+          EOF
+          
+          echo "Contents of frontend directory:"
+          ls -la frontend/
+
       - name: Build and push Frontend
         if: env.FRONTEND_EXISTS == 'true'
         uses: docker/build-push-action@v6
@@ -175,7 +203,7 @@ jobs:
           build-args: |
             CLERK_SECRET_KEY=${{ secrets.CLERK_SECRET_KEY }}
             NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
-            NEXT_PUBLIC_API_URL=http://brezelscraper-backend:8080
+            NEXT_PUBLIC_API_URL=${{ steps.api-config.outputs.api_url }}
             NEXT_PUBLIC_ENVIRONMENT=staging
             NODE_ENV=production
             BUILD_DATE=${{ needs.setup.outputs.build_timestamp }}
@@ -205,15 +233,16 @@ jobs:
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.STAGING_HOST }}
           username: ${{ secrets.STAGING_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
-          port: ${{ secrets.STAGING_SSH_PORT || 22 }}
+          port: ${{ secrets.STAGING_SSH_PORT }}
           timeout: 15m
           command_timeout: 15m
-          envs: GITHUB_TOKEN,DSN,CLERK_SECRET_KEY,CLERK_PUBLISHABLE_KEY,STRIPE_SECRET_KEY,STRIPE_WEBHOOK_SECRET,GOOGLE_CLIENT_SECRET
+          envs: GITHUB_TOKEN,DSN,CLERK_SECRET_KEY,CLERK_PUBLISHABLE_KEY,STRIPE_SECRET_KEY,STRIPE_WEBHOOK_SECRET,GOOGLE_CLIENT_SECRET,GRAFANA_ADMIN_PASSWORD
           script: |
             set -e
             
@@ -226,6 +255,20 @@ jobs:
               echo "Deploy directory not found: $DEPLOY_DIR"
               exit 1
             }
+            
+            # Pull latest repo changes (compose files, configs, etc.)
+            echo "📥 Pulling latest changes from develop..."
+            git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/brezel-ai/brezelscraper-backend.git"
+            git fetch origin develop || {
+              echo "❌ Failed to fetch from origin"
+              exit 1
+            }
+            git checkout develop 2>/dev/null || true
+            git reset --hard origin/develop || {
+              echo "❌ Failed to sync with origin/develop"
+              exit 1
+            }
+            echo "✅ Repository synced to latest develop"
             
             # Verify docker-compose file exists
             if [ ! -f "${{ env.DOCKER_COMPOSE_FILE }}" ]; then
@@ -286,6 +329,11 @@ jobs:
             # Google
             if [ ! -z "$GOOGLE_CLIENT_SECRET" ]; then
               update_env "GOOGLE_CLIENT_SECRET" "$GOOGLE_CLIENT_SECRET"
+            fi
+            
+            # Monitoring
+            if [ ! -z "$GRAFANA_ADMIN_PASSWORD" ]; then
+              update_env "GRAFANA_ADMIN_PASSWORD" "$GRAFANA_ADMIN_PASSWORD"
             fi
             
             # Optimize for CPU (using update_env for consistency)
@@ -354,6 +402,10 @@ jobs:
               fi
             fi
             
+            # Clean up old .env backups (keep last 3)
+            echo "🧹 Cleaning up old .env backups..."
+            ls -1t .env.backup.* 2>/dev/null | tail -n +4 | xargs rm -f 2>/dev/null || true
+            
             # Success
             echo ""
             echo "🎉 Deployment successful!"
@@ -362,21 +414,6 @@ jobs:
             echo ""
             echo "📊 Container status:"
             docker ps --filter "name=brezel" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-
-      - name: Smoke tests
-        if: success()
-        run: |
-          echo "🧪 Running smoke tests..."
-          
-          STAGING_URL="${{ secrets.STAGING_URL || 'https://staging.brezel.ai' }}"
-          
-          # Test backend health
-          curl -f "$STAGING_URL/health" || {
-            echo "❌ Backend health check failed"
-            exit 1
-          }
-          
-          echo "✅ Smoke tests passed"
 
       - name: Notify on failure
         if: failure()

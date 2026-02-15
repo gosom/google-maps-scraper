@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -64,7 +65,11 @@ func NewPlaceJob(parentID, langCode, u string, extractEmail, extractImages bool,
 
 	// DEBUG: Log the job creation with flags
 	log := scrapemate.GetLoggerFromContext(context.Background())
-	log.Info(fmt.Sprintf("DEBUG: Creating PlaceJob %s - ExtractImages: %v, ExtractEmail: %v", job.ID, extractImages, extractEmail))
+	log.Debug("place_job_created",
+		slog.String("job_id", job.ID),
+		slog.Bool("extract_images", extractImages),
+		slog.Bool("extract_email", extractEmail),
+	)
 
 	for _, opt := range opts {
 		opt(&job)
@@ -85,15 +90,27 @@ func (j *PlaceJob) processExtractedImages(entry *Entry, resp *scrapemate.Respons
 
 	// DEBUG: Log the current state before processing
 	originalImageCount := len(entry.Images)
-	log.Info(fmt.Sprintf("DEBUG: Processing images for %s - Original JSON images: %d", entry.Title, originalImageCount))
+	log.Debug("place_job_processing_images",
+		slog.String("job_id", j.ID),
+		slog.String("title", entry.Title),
+		slog.Int("original_json_images", originalImageCount),
+	)
 
 	imageResult, imgOk := resp.Meta["images_data"].([]images.BusinessImage)
 	if !imgOk || len(imageResult) == 0 {
-		log.Info(fmt.Sprintf("DEBUG: No enhanced images found for %s - keeping JSON images (%d)", entry.Title, originalImageCount))
+		log.Debug("place_job_no_enhanced_images",
+			slog.String("job_id", j.ID),
+			slog.String("title", entry.Title),
+			slog.Int("original_json_images", originalImageCount),
+		)
 		return
 	}
 
-	log.Info(fmt.Sprintf("DEBUG: Enhanced extraction found %d images for %s", len(imageResult), entry.Title))
+	log.Debug("place_job_enhanced_images_found",
+		slog.String("job_id", j.ID),
+		slog.String("title", entry.Title),
+		slog.Int("enhanced_image_count", len(imageResult)),
+	)
 
 	// Convert images package types to gmaps package types
 	enhancedImages := make([]BusinessImage, len(imageResult))
@@ -121,11 +138,19 @@ func (j *PlaceJob) processExtractedImages(entry *Entry, resp *scrapemate.Respons
 			LoadTime:      imageMetadata.LoadTime,
 			ScrollActions: imageMetadata.ScrollActions,
 		}
-		log.Info(fmt.Sprintf("DEBUG: Enhanced metadata - Load time: %dms, Scroll actions: %d", imageMetadata.LoadTime, imageMetadata.ScrollActions))
+		log.Debug("place_job_enhanced_image_metadata",
+			slog.String("job_id", j.ID),
+			slog.Int("load_time_ms", imageMetadata.LoadTime),
+			slog.Int("scroll_actions", imageMetadata.ScrollActions),
+		)
 	}
 
 	// CRITICAL FIX: Merge enhanced images with JSON images instead of overwriting
-	log.Info(fmt.Sprintf("DEBUG: BEFORE merge - JSON images: %d, Enhanced images: %d", len(entry.Images), len(enhancedImages)))
+	log.Debug("place_job_image_merge_before",
+		slog.String("job_id", j.ID),
+		slog.Int("json_images", len(entry.Images)),
+		slog.Int("enhanced_images", len(enhancedImages)),
+	)
 
 	// Create a map to avoid duplicates
 	imageURLMap := make(map[string]Image)
@@ -152,7 +177,10 @@ func (j *PlaceJob) processExtractedImages(entry *Entry, resp *scrapemate.Respons
 
 	// DEBUG: Log duplicate filtering stats
 	if skippedCount > 0 {
-		log.Info(fmt.Sprintf("DEBUG: Skipped %d duplicate images during merge", skippedCount))
+		log.Debug("place_job_image_merge_duplicates_skipped",
+			slog.String("job_id", j.ID),
+			slog.Int("duplicates_skipped", skippedCount),
+		)
 	}
 
 	// Convert back to slice
@@ -162,11 +190,19 @@ func (j *PlaceJob) processExtractedImages(entry *Entry, resp *scrapemate.Respons
 	}
 	entry.Images = mergedImages
 
-	log.Info(fmt.Sprintf("DEBUG: AFTER merge - Total images: %d (added %d new from enhanced)", len(entry.Images), addedCount))
+	log.Debug("place_job_image_merge_after",
+		slog.String("job_id", j.ID),
+		slog.Int("total_images", len(entry.Images)),
+		slog.Int("enhanced_images_added", addedCount),
+	)
 
 	// DEBUG: Double-check image count for troubleshooting
 	if len(entry.Images) != len(imageURLMap) {
-		log.Warn(fmt.Sprintf("DEBUG: Image count mismatch! entry.Images: %d, imageURLMap: %d", len(entry.Images), len(imageURLMap)))
+		log.Warn("place_job_image_count_mismatch",
+			slog.String("job_id", j.ID),
+			slog.Int("entry_images", len(entry.Images)),
+			slog.Int("image_url_map", len(imageURLMap)),
+		)
 	}
 
 	// Organize images by category for the ImageCategories field
@@ -200,7 +236,10 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 	raw, ok := resp.Meta["json"].([]byte)
 	if !ok {
 		// JSON extraction failed - create minimal fallback entry
-		log.Warn(fmt.Sprintf("FALLBACK: PlaceJob %s - JSON extraction failed, creating minimal entry with URL only", j.ID))
+		log.Warn("place_job_json_extraction_failed_fallback",
+			slog.String("job_id", j.ID),
+			slog.String("url", j.GetURL()),
+		)
 		entry = Entry{
 			ID:          j.ParentID,
 			Link:        j.GetURL(),
@@ -220,7 +259,11 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 	parsedEntry, err := EntryFromJSON(raw)
 	if err != nil {
 		// JSON parsing failed - create minimal fallback entry
-		log.Warn(fmt.Sprintf("FALLBACK: PlaceJob %s - JSON parsing failed (%v), creating minimal entry with URL only", j.ID, err))
+		log.Warn("place_job_json_parsing_failed_fallback",
+			slog.String("job_id", j.ID),
+			slog.String("url", j.GetURL()),
+			slog.Any("error", err),
+		)
 		entry = Entry{
 			ID:          j.ParentID,
 			Link:        j.GetURL(),
@@ -258,7 +301,10 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 	// CRITICAL FIX: Always write the place entry to database FIRST, even if we're going to extract emails
 	// This ensures we don't lose place data if email extraction fails
 	if j.ExtractEmail && entry.IsWebsiteValidForEmail() {
-		log.Info(fmt.Sprintf("PlaceJob %s - Will extract emails from %s but writing place data first", j.ID, entry.WebSite))
+		log.Info("place_job_email_extraction_queued",
+			slog.String("job_id", j.ID),
+			slog.String("website", entry.WebSite),
+		)
 
 		// Count this place as completed since we have the data
 		if j.ExitMonitor != nil {
@@ -283,7 +329,7 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 	}
 
 	if !entryCreated {
-		log.Error(fmt.Sprintf("CRITICAL: PlaceJob %s - No entry was created!", j.ID))
+		log.Error("place_job_no_entry_created", slog.String("job_id", j.ID))
 		return nil, nil, fmt.Errorf("no entry created")
 	}
 
@@ -295,14 +341,17 @@ func (j *PlaceJob) extractImages(ctx context.Context, page playwright.Page, resp
 	log := scrapemate.GetLoggerFromContext(ctx)
 
 	// DEBUG: Always log whether extraction is enabled or not
-	log.Info(fmt.Sprintf("DEBUG: ExtractImages flag is %v for job %s", j.ExtractImages, j.ID))
+	log.Debug("place_job_extract_images_flag",
+		slog.String("job_id", j.ID),
+		slog.Bool("extract_images", j.ExtractImages),
+	)
 
 	if !j.ExtractImages {
-		log.Info(fmt.Sprintf("DEBUG: Multi-image extraction DISABLED for job %s - skipping", j.ID))
+		log.Debug("place_job_image_extraction_disabled", slog.String("job_id", j.ID))
 		return
 	}
 
-	log.Info(fmt.Sprintf("DEBUG: Multi-image extraction ENABLED for job %s - starting extraction", j.ID))
+	log.Debug("place_job_image_extraction_enabled", slog.String("job_id", j.ID))
 
 	// Create a separate context for image extraction with optimized timeout
 	imageCtx, imageCancel := context.WithTimeout(ctx, 30*time.Second) // Fast extraction should complete quickly
@@ -312,18 +361,27 @@ func (j *PlaceJob) extractImages(ctx context.Context, page playwright.Page, resp
 	imageResult, err := imageExtractor.ExtractAllImages(imageCtx)
 	if err != nil {
 		// Log error but don't fail the entire operation
-		log.Warn(fmt.Sprintf("DEBUG: Image extraction FAILED for job %s: %v", j.ID, err))
+		log.Warn("place_job_image_extraction_failed",
+			slog.String("job_id", j.ID),
+			slog.Any("error", err),
+		)
 		return
 	}
 
 	// Store images data and metadata for processing in Process method
 	resp.Meta["images_data"] = imageResult
 	resp.Meta["images_metadata"] = imageExtractor.GetMetadata()
-	log.Info(fmt.Sprintf("DEBUG: Image extraction SUCCESSFUL for job %s - extracted %d images", j.ID, len(imageResult)))
+	log.Debug("place_job_image_extraction_succeeded",
+		slog.String("job_id", j.ID),
+		slog.Int("image_count", len(imageResult)),
+	)
 
 	// DEBUG: Log some sample URLs to verify they're different from JSON
 	if len(imageResult) > 0 {
-		log.Info(fmt.Sprintf("DEBUG: Sample enhanced image URL: %s", imageResult[0].URL))
+		log.Debug("place_job_image_extraction_sample_url",
+			slog.String("job_id", j.ID),
+			slog.String("url", imageResult[0].URL),
+		)
 	}
 }
 

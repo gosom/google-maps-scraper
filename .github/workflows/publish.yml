@@ -10,7 +10,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: yasseen-salama/google-maps-scraper
+  IMAGE_NAME: brezel-ai/brezelscraper-backend
 
 jobs:
   push_to_registry:

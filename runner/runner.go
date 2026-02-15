@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"runtime"
 	"strconv"
@@ -30,7 +31,7 @@ func parseConcurrency(value string) (int, error) {
 	}
 
 	cpuCores := runtime.NumCPU()
-	fmt.Printf("DEBUG: System CPU cores detected: %d\n", cpuCores)
+	slog.Debug("cpu_cores_detected", slog.Int("cores", cpuCores))
 
 	value = strings.TrimSpace(strings.ToLower(value))
 
@@ -41,24 +42,24 @@ func parseConcurrency(value string) (int, error) {
 		if result < 1 {
 			result = 1
 		}
-		fmt.Printf("DEBUG: CONCURRENCY=auto -> %d (50%% of %d cores)\n", result, cpuCores)
+		slog.Debug("concurrency_resolved", slog.String("mode", "auto"), slog.Int("result", result), slog.Int("cores", cpuCores))
 		return result, nil
 	case "max":
-		fmt.Printf("DEBUG: CONCURRENCY=max -> %d (100%% of %d cores)\n", cpuCores, cpuCores)
+		slog.Debug("concurrency_resolved", slog.String("mode", "max"), slog.Int("result", cpuCores), slog.Int("cores", cpuCores))
 		return cpuCores, nil
 	case "conservative":
 		result := cpuCores / 4
 		if result < 1 {
 			result = 1
 		}
-		fmt.Printf("DEBUG: CONCURRENCY=conservative -> %d (25%% of %d cores)\n", result, cpuCores)
+		slog.Debug("concurrency_resolved", slog.String("mode", "conservative"), slog.Int("result", result), slog.Int("cores", cpuCores))
 		return result, nil
 	case "aggressive":
 		result := (cpuCores * 3) / 4
 		if result < 1 {
 			result = 1
 		}
-		fmt.Printf("DEBUG: CONCURRENCY=aggressive -> %d (75%% of %d cores)\n", result, cpuCores)
+		slog.Debug("concurrency_resolved", slog.String("mode", "aggressive"), slog.Int("result", result), slog.Int("cores", cpuCores))
 		return result, nil
 	}
 
@@ -76,7 +77,7 @@ func parseConcurrency(value string) (int, error) {
 		if result < 1 {
 			result = 1
 		}
-		fmt.Printf("DEBUG: CONCURRENCY=%s -> %d (%.1f%% of %d cores)\n", value, result, percent, cpuCores)
+		slog.Debug("concurrency_resolved", slog.String("mode", "percent"), slog.String("input", value), slog.Int("result", result), slog.Int("cores", cpuCores))
 		return result, nil
 	}
 
@@ -101,7 +102,7 @@ func parseConcurrency(value string) (int, error) {
 		if result < 1 {
 			result = 1
 		}
-		fmt.Printf("DEBUG: CONCURRENCY=%s -> %d (%.1f/%.1f of %d cores)\n", value, result, numerator, denominator, cpuCores)
+		slog.Debug("concurrency_resolved", slog.String("mode", "fraction"), slog.String("input", value), slog.Int("result", result), slog.Int("cores", cpuCores))
 		return result, nil
 	}
 
@@ -113,7 +114,7 @@ func parseConcurrency(value string) (int, error) {
 	if number < 1 {
 		return 0, fmt.Errorf("concurrency must be at least 1: %d", number)
 	}
-	fmt.Printf("DEBUG: CONCURRENCY=%s -> %d (direct number)\n", value, number)
+	slog.Debug("concurrency_resolved", slog.String("mode", "direct"), slog.String("input", value), slog.Int("result", number))
 	return number, nil
 }
 
@@ -252,13 +253,13 @@ func ParseConfig() *Config {
 	if concurrencyEnv := os.Getenv("CONCURRENCY"); concurrencyEnv != "" {
 		if c, err := parseConcurrency(concurrencyEnv); err == nil {
 			cfg.Concurrency = c
-			fmt.Printf("DEBUG: Final concurrency set to: %d\n", cfg.Concurrency)
+			slog.Debug("concurrency_override", slog.Int("concurrency", cfg.Concurrency))
 		} else {
-			fmt.Printf("WARNING: Invalid CONCURRENCY value '%s': %v. Using default: %d\n", concurrencyEnv, err, cfg.Concurrency)
+			slog.Warn("invalid_concurrency_env", slog.String("value", concurrencyEnv), slog.Any("error", err), slog.Int("default", cfg.Concurrency))
 		}
 	} else {
 		cpuCores := runtime.NumCPU()
-		fmt.Printf("DEBUG: Using default concurrency: %d (no CONCURRENCY env var set, system has %d cores)\n", cfg.Concurrency, cpuCores)
+		slog.Debug("default_concurrency", slog.Int("concurrency", cfg.Concurrency), slog.Int("cpu_cores", cpuCores))
 	}
 
 	// Do not force concurrency in debug mode; keep user/provider choice intact
@@ -291,17 +292,15 @@ func ParseConfig() *Config {
 		panic("Dsn must be provided when using ProduceOnly")
 	}
 
-	fmt.Printf("DEBUG: PROXIES env var: '%s'\n", os.Getenv("PROXIES"))
-	fmt.Printf("DEBUG: CLI proxies flag: '%s'\n", proxies)
+	slog.Debug("proxy_config", slog.String("proxies_env", os.Getenv("PROXIES")), slog.String("cli_proxies_flag", proxies))
 
 	// Priority: CLI proxies > Webshare API > No proxies
 	if proxies != "" {
 		cfg.Proxies = strings.Split(proxies, ",")
-		fmt.Printf("DEBUG: CLI proxies configured: %d entries\n", len(cfg.Proxies))
-		fmt.Printf("DEBUG: CLI proxy values: %v\n", cfg.Proxies)
+		slog.Debug("cli_proxies_configured", slog.Int("count", len(cfg.Proxies)))
 	} else if os.Getenv("PROXIES") != "" {
 		// Informative log: PROXIES env is set but ignored unless -proxies flag is provided
-		fmt.Println("DEBUG: PROXIES env detected but not used; pass with -proxies to enable")
+		slog.Debug("proxies_env_ignored", slog.String("hint", "pass with -proxies flag to enable"))
 	}
 
 	// Check for Webshare API key
@@ -311,22 +310,26 @@ func ParseConfig() *Config {
 
 	// Fetch proxies from Webshare API if no manual proxies provided and API key exists
 	if len(cfg.Proxies) == 0 && cfg.WebshareAPIKey != "" {
-		fmt.Println("🔧 Webshare API key detected, fetching proxies dynamically...")
-		webshareClient := webshare.NewClient(cfg.WebshareAPIKey)
+		slog.Info("webshare_api_key_detected_fetching_proxies")
+		webshareClient := webshare.NewClient(cfg.WebshareAPIKey, slog.Default())
 
 		// Ensure IP is authorized
 		if err := webshareClient.EnsureIPAuthorized(); err != nil {
-			fmt.Printf("⚠️ Warning: Failed to authorize IP with Webshare: %v\n", err)
-			fmt.Println("⚠️ Continuing without proxies. You may need to manually authorize your IP.")
+			slog.Warn("webshare_ip_authorization_failed",
+				slog.Any("error", err),
+				slog.String("action", "continuing_without_proxies"),
+			)
 		} else {
 			// Fetch proxy list
 			proxyList, err := webshareClient.GetProxiesForScraper("direct")
 			if err != nil {
-				fmt.Printf("⚠️ Warning: Failed to fetch proxies from Webshare: %v\n", err)
-				fmt.Println("⚠️ Continuing without proxies.")
+				slog.Warn("webshare_proxy_fetch_failed",
+					slog.Any("error", err),
+					slog.String("action", "continuing_without_proxies"),
+				)
 			} else {
 				cfg.Proxies = proxyList
-				fmt.Printf("✅ Successfully loaded %d proxies from Webshare API\n", len(cfg.Proxies))
+				slog.Info("webshare_proxies_loaded", slog.Int("proxy_count", len(cfg.Proxies)))
 			}
 		}
 	}

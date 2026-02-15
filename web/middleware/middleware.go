@@ -1,10 +1,13 @@
 package middleware
 
 import (
-	"log"
+	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
+	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	"github.com/gosom/google-maps-scraper/web/auth"
 )
 
@@ -56,7 +59,38 @@ func SecurityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// RequestLogger logs method, path, status, duration, and userID (if any).
+// ---------------------------------------------------------------------------
+// Request ID
+// ---------------------------------------------------------------------------
+
+type requestIDKey struct{}
+
+// GetRequestID extracts the request ID from the context.
+// Returns an empty string if no request ID is present.
+func GetRequestID(ctx context.Context) string {
+	if id, ok := ctx.Value(requestIDKey{}).(string); ok {
+		return id
+	}
+	return ""
+}
+
+// RequestID generates a UUID, stores it in context, and sets the
+// X-Request-ID response header.
+func RequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := uuid.New().String()
+		ctx := context.WithValue(r.Context(), requestIDKey{}, id)
+		w.Header().Set("X-Request-ID", id)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Request Logger
+// ---------------------------------------------------------------------------
+
+// RequestLogger logs method, path, status, duration, userID, and request_id.
+// It is a factory that returns a middleware so callers can inject their logger.
 type loggingResponseWriter struct {
 	http.ResponseWriter
 	status int
@@ -67,14 +101,42 @@ func (lrw *loggingResponseWriter) WriteHeader(code int) {
 	lrw.ResponseWriter.WriteHeader(code)
 }
 
-func RequestLogger(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		lrw := &loggingResponseWriter{ResponseWriter: w, status: 200}
-		next.ServeHTTP(lrw, r)
-		dur := time.Since(start)
+func RequestLogger(log *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			lrw := &loggingResponseWriter{ResponseWriter: w, status: 200}
+			next.ServeHTTP(lrw, r)
+			dur := time.Since(start)
 
-		userID, _ := auth.GetUserID(r.Context())
-		log.Printf("%s %s %d %s user_id=%s", r.Method, r.URL.Path, lrw.status, dur.String(), userID)
-	})
+			userID, _ := auth.GetUserID(r.Context())
+			requestID := GetRequestID(r.Context())
+
+			log.Info("http_request",
+				slog.String("method", r.Method),
+				slog.String("path", r.URL.Path),
+				slog.Int("status", lrw.status),
+				slog.String("duration", dur.String()),
+				slog.String("user_id", userID),
+				slog.String("request_id", requestID),
+			)
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Inject Logger
+// ---------------------------------------------------------------------------
+
+// InjectLogger creates a child logger with request_id and stores it in context
+// via pkg/logger.WithContext, so downstream handlers can retrieve it with
+// pkglogger.FromContext(ctx).
+func InjectLogger(log *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			child := log.With(slog.String("request_id", GetRequestID(r.Context())))
+			ctx := pkglogger.WithContext(r.Context(), child)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
 }

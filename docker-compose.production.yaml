@@ -7,6 +7,7 @@ services:
       - DATA_FOLDER=${DATA_FOLDER:-/gmapsdata}
       - WEB_ADDR=${WEB_ADDR:-:8080}
       - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_OUTPUT=${LOG_OUTPUT:-stdout}
       - CONCURRENCY=${CONCURRENCY}
       - CLERK_SECRET_KEY=${CLERK_SECRET_KEY}
       - DISABLE_TELEMETRY=${DISABLE_TELEMETRY:-0}
@@ -30,8 +31,12 @@ services:
           memory: 512M
           cpus: '0.25'
     logging:
-      driver: "json-file"
+      driver: loki
       options:
+        loki-url: "http://localhost:3100/loki/api/v1/push"
+        loki-batch-size: "400"
+        loki-retries: "3"
+        loki-external-labels: "environment=production,service=backend"
         max-size: "100m"
         max-file: "3"
 
@@ -50,8 +55,36 @@ services:
     profiles:
       - with-proxy
 
+  loki:
+    image: grafana/loki:3.4.2
+    container_name: loki
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki-data:/loki
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.6.0
+    container_name: grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-changeme}
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - loki
+    restart: unless-stopped
+
 volumes:
   gmapsdata:
+  loki-data:
+  grafana-data:
 
     # Environment variables needed:
     # DSN=postgres://username:password@host:5432/database?sslmode=disable
@@ -61,3 +94,5 @@ volumes:
     # NGINX_SSL_PORT=443
     # DISABLE_TELEMETRY=0
     # CLERK_SECRET_KEY=your_clerk_secret_key
+    # GRAFANA_ADMIN_USER=admin
+    # GRAFANA_ADMIN_PASSWORD=your_secure_password

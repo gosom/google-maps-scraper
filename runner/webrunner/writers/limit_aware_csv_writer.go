@@ -3,7 +3,7 @@ package writers
 import (
 	"context"
 	"errors"
-	"fmt"
+	"log/slog"
 
 	"github.com/gosom/google-maps-scraper/gmaps"
 	"github.com/gosom/scrapemate"
@@ -38,7 +38,7 @@ func (w *CancellationAwareCSVWriter) Run(ctx context.Context, in <-chan scrapema
 		// Check for cancellation from exit monitor
 		select {
 		case <-ctx.Done():
-			fmt.Printf("DEBUG: CSV Writer - Context cancelled, stopping\n")
+			slog.Debug("csv_writer_stopped_context_cancelled")
 			close(filteredChan)
 			return ctx.Err()
 		default:
@@ -53,9 +53,11 @@ func (w *CancellationAwareCSVWriter) Run(ctx context.Context, in <-chan scrapema
 
 		// Log for debugging (but don't filter)
 		if entry.Title == "" {
-			fmt.Printf("DEBUG: CSV Writer - Processing result with empty title\n")
+			slog.Debug("csv_writer_processing_result_empty_title")
 		} else {
-			fmt.Printf("DEBUG: CSV Writer - Processing result: %s\n", entry.Title)
+			slog.Debug("csv_writer_processing_result",
+				slog.String("title", entry.Title),
+			)
 		}
 
 		// Pass result to wrapped writer

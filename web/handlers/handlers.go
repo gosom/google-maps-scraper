@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"html/template"
 	"io"
-	"log"
+	"log/slog"
 
 	"github.com/gosom/google-maps-scraper/billing"
 	"github.com/gosom/google-maps-scraper/models"
@@ -16,7 +16,7 @@ import (
 
 // Dependencies aggregates shared services used by handlers.
 type Dependencies struct {
-	Logger          *log.Logger
+	Logger          *slog.Logger
 	DB              *sql.DB
 	BillingSvc      *billing.Service
 	Templates       map[string]*template.Template

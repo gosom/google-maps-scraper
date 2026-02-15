@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +14,7 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
+	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 )
 
 /*
@@ -29,14 +30,14 @@ where version is a numeric identifier (e.g., 000001) that determines execution o
 type MigrationRunner struct {
 	dsn           string
 	migrationsDir string
-	logger        *log.Logger
+	logger        *slog.Logger
 	timeout       time.Duration
 }
 
 func NewMigrationRunner(dsn string) *MigrationRunner {
 	return &MigrationRunner{
 		dsn:     dsn,
-		logger:  log.New(os.Stdout, "[Migration] ", log.LstdFlags),
+		logger:  pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "migration"),
 		timeout: 30 * time.Second,
 	}
 }
@@ -72,7 +73,7 @@ func (m *MigrationRunner) RunMigrations() error {
 		return fmt.Errorf("failed to find migrations directory: %w", err)
 	}
 
-	m.logger.Printf("Using migrations from: %s", migrationsDir)
+	m.logger.Info("using_migrations", slog.String("dir", migrationsDir))
 
 	migrator, err := m.createMigrator(ctx, migrationsDir)
 	if err != nil {
@@ -81,13 +82,13 @@ func (m *MigrationRunner) RunMigrations() error {
 
 	if err := migrator.Up(); err != nil {
 		if errors.Is(err, migrate.ErrNoChange) {
-			m.logger.Println("No migrations to apply - database is up to date")
+			m.logger.Info("no_migrations_to_apply")
 			return nil
 		}
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 
-	m.logger.Println("Successfully applied migrations")
+	m.logger.Info("migrations_applied_successfully")
 	return nil
 }
 
@@ -150,7 +151,7 @@ func (m *MigrationRunner) findMigrationsDir() (string, error) {
 	}
 
 	migrationsPath := filepath.Join(workingDir, "scripts", "migrations")
-	m.logger.Printf("Looking for migrations in: %s", migrationsPath)
+	m.logger.Info("looking_for_migrations", slog.String("path", migrationsPath))
 
 	if _, err := os.Stat(migrationsPath); err != nil {
 		return "", fmt.Errorf("migrations directory not found at %s: %w", migrationsPath, err)

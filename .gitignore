@@ -30,3 +30,6 @@ google-maps-scraper
 go.work.sum
 brezel-api
 .gitignore
+*.DS_Store
+.DS_Store
+.claude/

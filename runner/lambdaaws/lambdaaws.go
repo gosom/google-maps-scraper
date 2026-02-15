@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -70,7 +70,7 @@ func (l *lambdaAwsRunner) handler(ctx context.Context, input lInput) error {
 	defer func() {
 		if !outClosed {
 			if err := out.Close(); err != nil {
-				log.Printf("ERROR: Lambda runner - Failed to close CSV file in defer: %v", err)
+				slog.Error("lambda_csv_close_defer_failed", slog.Any("error", err))
 			}
 		}
 	}()
@@ -129,11 +129,11 @@ func (l *lambdaAwsRunner) handler(ctx context.Context, input lInput) error {
 	// CRITICAL: Close the CSV file and check for errors before upload
 	// For writable files, Close() can return I/O errors indicating data loss
 	if err := out.Close(); err != nil {
-		log.Printf("ERROR: Lambda runner - Failed to close CSV file: %v", err)
+		slog.Error("lambda_csv_close_failed", slog.Any("error", err))
 		return fmt.Errorf("failed to close CSV file: %w", err)
 	}
 	outClosed = true
-	log.Printf("Lambda runner - CSV file closed successfully")
+	slog.Info("lambda_csv_closed")
 
 	if l.uploader != nil {
 		key := fmt.Sprintf("%s-%d.csv", input.JobID, input.Part)
@@ -149,9 +149,9 @@ func (l *lambdaAwsRunner) handler(ctx context.Context, input lInput) error {
 			return err
 		}
 
-		log.Printf("Lambda job %s part %d: S3 upload successful (ETag: %s)", input.JobID, input.Part, result.ETag)
+		slog.Info("lambda_s3_upload_success", slog.String("job_id", input.JobID), slog.Int("part", input.Part), slog.String("etag", result.ETag))
 	} else {
-		log.Println("no uploader set results are at ", out.Name())
+		slog.Warn("no_uploader_set", slog.String("output_file", out.Name()))
 	}
 
 	return nil

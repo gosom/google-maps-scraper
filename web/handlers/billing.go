@@ -3,8 +3,9 @@ package handlers
 import (
 	"encoding/json"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/gosom/google-maps-scraper/billing"
 	"github.com/gosom/google-maps-scraper/models"
@@ -93,24 +94,62 @@ func (h *BillingHandlers) Reconcile(w http.ResponseWriter, r *http.Request) {
 
 func (h *BillingHandlers) HandleStripeWebhook(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.BillingSvc == nil {
-		log.Printf("ERROR: BillingSvc is nil in webhook handler")
+		slog.Error("billing_svc_nil_in_webhook_handler")
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 	payload, err := io.ReadAll(r.Body)
 	if err != nil {
-		log.Printf("ERROR: Failed to read webhook payload: %v", err)
+		slog.Error("webhook_payload_read_failed", slog.Any("error", err))
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	sig := r.Header.Get("Stripe-Signature")
-	log.Printf("DEBUG: Webhook received - payload length: %d, signature present: %t", len(payload), sig != "")
+	slog.Debug("webhook_received", slog.Int("payload_length", len(payload)), slog.Bool("signature_present", sig != ""))
 
 	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc)
 	code, err := cs.HandleWebhook(r.Context(), payload, sig)
 	if err != nil {
-		log.Printf("ERROR: Webhook processing failed: %v", err)
+		slog.Error("webhook_processing_failed", slog.Any("error", err))
 	}
-	log.Printf("DEBUG: Webhook response code: %d", code)
+	slog.Debug("webhook_response", slog.Int("code", code))
 	w.WriteHeader(code)
+}
+
+func (h *BillingHandlers) GetBillingHistory(w http.ResponseWriter, r *http.Request) {
+	if h.Deps.DB == nil {
+		renderJSON(w, http.StatusServiceUnavailable, models.APIError{Code: http.StatusServiceUnavailable, Message: "database not available"})
+		return
+	}
+	if h.Deps.Auth == nil {
+		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "Authentication not configured"})
+		return
+	}
+	userID, err := auth.GetUserID(r.Context())
+	if err != nil || userID == "" {
+		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
+		return
+	}
+
+	// Parse pagination params
+	limit := 50
+	offset := 0
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 && parsed <= 100 {
+			limit = parsed
+		}
+	}
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc)
+	resp, err := cs.GetBillingHistory(r.Context(), userID, limit, offset)
+	if err != nil {
+		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: err.Error()})
+		return
+	}
+	renderJSON(w, http.StatusOK, resp)
 }

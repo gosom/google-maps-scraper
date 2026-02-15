@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -156,7 +157,7 @@ func (r *enhancedResultWriterWithExiter) Run(ctx context.Context, in <-chan scra
 		// Check for cancellation first
 		select {
 		case <-ctx.Done():
-			fmt.Printf("DEBUG: Result writer stopped due to cancellation\n")
+			slog.Debug("postgres_result_writer_stopped_context_cancelled")
 			return ctx.Err()
 		default:
 		}
@@ -175,7 +176,11 @@ func (r *enhancedResultWriterWithExiter) Run(ctx context.Context, in <-chan scra
 				var currentCount int
 				err := r.db.QueryRow("SELECT COUNT(*) FROM results WHERE job_id = $1", r.jobID).Scan(&currentCount)
 				if err == nil && currentCount >= maxResults {
-					fmt.Printf("DEBUG: PostgreSQL Writer - already at limit (%d/%d), stopping\n", currentCount, maxResults)
+					slog.Debug("postgres_result_writer_limit_reached",
+						slog.Int("current_count", currentCount),
+						slog.Int("max_results", maxResults),
+						slog.String("job_id", r.jobID),
+					)
 					return nil
 				}
 			}
@@ -186,11 +191,15 @@ func (r *enhancedResultWriterWithExiter) Run(ctx context.Context, in <-chan scra
 
 		// DEBUG: Log detailed result validation
 		if !isValidResult {
-			fmt.Printf("DEBUG: Skipping invalid result - Title: '%s' (empty title)\n", entry.Title)
+			slog.Debug("postgres_result_writer_skipping_invalid_result",
+				slog.String("title", entry.Title),
+			)
 		} else {
-			fmt.Printf("DEBUG: Valid result received - %s (will count after DB save)\n", entry.Title)
-			// Additional debug info
-			fmt.Printf("DEBUG: Result details - Link: '%s', Cid: '%s'\n", entry.Link, entry.Cid)
+			slog.Debug("postgres_result_writer_valid_result_received",
+				slog.String("title", entry.Title),
+				slog.String("link", entry.Link),
+				slog.String("cid", entry.Cid),
+			)
 		}
 
 		buff = append(buff, entry)
@@ -204,7 +213,9 @@ func (r *enhancedResultWriterWithExiter) Run(ctx context.Context, in <-chan scra
 
 			// NOW count only actually inserted results
 			if r.exitMonitor != nil && insertedCount > 0 {
-				fmt.Printf("DEBUG: Successfully inserted %d results, notifying exit monitor\n", insertedCount)
+				slog.Debug("postgres_result_writer_batch_inserted",
+					slog.Int("inserted_count", insertedCount),
+				)
 				r.exitMonitor.IncrResultsWritten(insertedCount)
 			}
 
@@ -220,7 +231,9 @@ func (r *enhancedResultWriterWithExiter) Run(ctx context.Context, in <-chan scra
 
 		// NOW count only actually inserted results
 		if r.exitMonitor != nil && insertedCount > 0 {
-			fmt.Printf("DEBUG: Final batch - Successfully inserted %d results, notifying exit monitor\n", insertedCount)
+			slog.Debug("postgres_result_writer_final_batch_inserted",
+				slog.Int("inserted_count", insertedCount),
+			)
 			r.exitMonitor.IncrResultsWritten(insertedCount)
 		}
 	}
@@ -373,8 +386,11 @@ func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []
 	// Remove ON CONFLICT clause temporarily to avoid constraint issues
 	// q += " ON CONFLICT (cid, job_id) DO NOTHING" // Prevent duplicates within the same job
 
-	// Log the operation for debugging
-	fmt.Printf("[PostgreSQL Writer] Attempting to insert %d entries for user %s, job %s\n", len(entries), r.userID, r.jobID)
+	slog.Debug("postgres_enhanced_writer_insert_attempt",
+		slog.Int("entry_count", len(entries)),
+		slog.String("user_id", r.userID),
+		slog.String("job_id", r.jobID),
+	)
 
 	tx, err := r.db.BeginTx(dbCtx, nil)
 	if err != nil {
@@ -387,18 +403,28 @@ func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []
 
 	_, err = tx.ExecContext(dbCtx, q, args...)
 	if err != nil {
-		fmt.Printf("[PostgreSQL Writer] ERROR: Failed to execute insert: %v\n", err)
-		fmt.Printf("[PostgreSQL Writer] Query: %s\n", q[:200]+"...") // Log first 200 chars of query
+		queryPreview := q
+		if len(queryPreview) > 200 {
+			queryPreview = queryPreview[:200] + "..."
+		}
+		slog.Error("postgres_enhanced_writer_insert_exec_failed",
+			slog.Any("error", err),
+			slog.String("query_preview", queryPreview),
+		)
 		return fmt.Errorf("failed to insert results: %w", err)
 	}
 
 	err = tx.Commit()
 	if err != nil {
-		fmt.Printf("[PostgreSQL Writer] ERROR: Failed to commit transaction: %v\n", err)
+		slog.Error("postgres_enhanced_writer_commit_failed", slog.Any("error", err))
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	fmt.Printf("[PostgreSQL Writer] Successfully inserted %d entries for user %s, job %s\n", len(entries), r.userID, r.jobID)
+	slog.Debug("postgres_enhanced_writer_insert_success",
+		slog.Int("entry_count", len(entries)),
+		slog.String("user_id", r.userID),
+		slog.String("job_id", r.jobID),
+	)
 	return nil
 }
 
@@ -499,8 +525,11 @@ func (r *enhancedResultWriterWithExiter) batchSaveEnhancedWithCount(ctx context.
 	q += strings.Join(elements, ", ")
 	// Note: Removed ON CONFLICT clause - no unique constraint exists on cid column
 
-	// Log the operation for debugging
-	fmt.Printf("[PostgreSQL Writer WITH EXITER] Attempting to insert %d entries for user %s, job %s\n", len(entries), r.userID, r.jobID)
+	slog.Debug("postgres_exiter_writer_insert_attempt",
+		slog.Int("entry_count", len(entries)),
+		slog.String("user_id", r.userID),
+		slog.String("job_id", r.jobID),
+	)
 
 	tx, err := r.db.BeginTx(dbCtx, nil)
 	if err != nil {
@@ -513,26 +542,30 @@ func (r *enhancedResultWriterWithExiter) batchSaveEnhancedWithCount(ctx context.
 
 	result, err := tx.ExecContext(dbCtx, q, args...)
 	if err != nil {
-		fmt.Printf("[PostgreSQL Writer WITH EXITER] ERROR: Failed to execute insert: %v\n", err)
+		slog.Error("postgres_exiter_writer_insert_exec_failed", slog.Any("error", err))
 		return 0, fmt.Errorf("failed to insert results: %w", err)
 	}
 
 	err = tx.Commit()
 	if err != nil {
-		fmt.Printf("[PostgreSQL Writer WITH EXITER] ERROR: Failed to commit transaction: %v\n", err)
+		slog.Error("postgres_exiter_writer_commit_failed", slog.Any("error", err))
 		return 0, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	// Get the number of rows affected (inserted)
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		fmt.Printf("[PostgreSQL Writer WITH EXITER] Warning: Could not get rows affected: %v\n", err)
+		slog.Warn("postgres_exiter_writer_rows_affected_failed", slog.Any("error", err))
 		// Assume all entries were inserted if we can't get the count
 		rowsAffected = int64(len(entries))
 	}
 
 	insertedCount := int(rowsAffected)
-	fmt.Printf("[PostgreSQL Writer WITH EXITER] Successfully inserted %d entries for user %s, job %s\n", insertedCount, r.userID, r.jobID)
+	slog.Debug("postgres_exiter_writer_insert_success",
+		slog.Int("inserted_count", insertedCount),
+		slog.String("user_id", r.userID),
+		slog.String("job_id", r.jobID),
+	)
 
 	return insertedCount, nil
 }

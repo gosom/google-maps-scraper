@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/gosom/google-maps-scraper/models"
+	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	"github.com/gosom/google-maps-scraper/s3uploader"
 )
 
@@ -50,6 +52,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if strings.Contains(id, "/") || strings.Contains(id, "\\") || strings.Contains(id, "..") {
 		return fmt.Errorf("invalid file name")
 	}
+	log := pkglogger.FromContext(ctx)
 
 	// First check the current job status
 	job, err := s.repo.Get(ctx, id)
@@ -59,7 +62,10 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 			// Try to cancel the job first
 			if cancelErr := s.repo.Cancel(ctx, id); cancelErr != nil {
 				// Log the error but continue with deletion
-				fmt.Printf("Warning: Failed to cancel job %s before deletion: %v\n", id, cancelErr)
+				log.Warn("cancel_before_delete_failed",
+					slog.String("job_id", id),
+					slog.Any("error", cancelErr),
+				)
 			}
 		}
 	}
@@ -92,39 +98,53 @@ func (s *Service) GetCSVReader(ctx context.Context, id string) (io.ReadCloser, s
 	if strings.Contains(id, "/") || strings.Contains(id, "\\") || strings.Contains(id, "..") {
 		return nil, "", fmt.Errorf("invalid file name")
 	}
+	log := pkglogger.FromContext(ctx)
 
-	fmt.Printf("DEBUG GetCSVReader: Looking for CSV for job %s\n", id)
-	fmt.Printf("DEBUG GetCSVReader: S3 configured? jobFileRepo=%v, s3Uploader=%v, s3Bucket=%s\n",
-		s.jobFileRepo != nil, s.s3Uploader != nil, s.s3Bucket)
+	log.Debug("get_csv_reader_start", slog.String("job_id", id))
+	log.Debug("get_csv_reader_s3_config",
+		slog.Bool("job_file_repo_configured", s.jobFileRepo != nil),
+		slog.Bool("s3_uploader_configured", s.s3Uploader != nil),
+		slog.Bool("s3_bucket_configured", s.s3Bucket != ""),
+	)
 
 	// Try S3 first if configured
 	if s.jobFileRepo != nil && s.s3Uploader != nil && s.s3Bucket != "" {
-		fmt.Printf("DEBUG GetCSVReader: Querying job_files table for job %s\n", id)
+		log.Debug("get_csv_reader_query_job_file", slog.String("job_id", id))
 		jobFile, err := s.jobFileRepo.GetByJobID(ctx, id, models.JobFileTypeCSV)
 		if err != nil {
-			fmt.Printf("DEBUG GetCSVReader: job_files query error: %v\n", err)
+			log.Debug("get_csv_reader_job_file_query_failed", slog.Any("error", err))
 		} else {
-			fmt.Printf("DEBUG GetCSVReader: Found job file - bucket=%s, key=%s, status=%s\n",
-				jobFile.BucketName, jobFile.ObjectKey, jobFile.Status)
+			log.Debug("get_csv_reader_job_file_found",
+				slog.String("bucket", jobFile.BucketName),
+				slog.String("object_key", jobFile.ObjectKey),
+				slog.String("status", string(jobFile.Status)),
+			)
 
 			if jobFile.Status == models.JobFileStatusAvailable {
 				// File found in S3, download it
-				fmt.Printf("DEBUG GetCSVReader: Attempting S3 download from bucket=%s, key=%s\n",
-					jobFile.BucketName, jobFile.ObjectKey)
+				log.Debug("get_csv_reader_s3_download_attempt",
+					slog.String("bucket", jobFile.BucketName),
+					slog.String("object_key", jobFile.ObjectKey),
+				)
 				reader, err := s.s3Uploader.Download(ctx, jobFile.BucketName, jobFile.ObjectKey)
 				if err == nil {
 					fileName := id + ".csv"
-					fmt.Printf("DEBUG GetCSVReader: S3 download successful for job %s\n", id)
+					log.Debug("get_csv_reader_s3_download_success", slog.String("job_id", id))
 					return reader, fileName, nil
 				}
 				// If S3 download fails, fall through to local filesystem
-				fmt.Printf("WARNING: S3 download failed for job %s: %v, trying local filesystem\n", id, err)
+				log.Warn("get_csv_reader_s3_download_failed",
+					slog.String("job_id", id),
+					slog.Any("error", err),
+				)
 			} else {
-				fmt.Printf("DEBUG GetCSVReader: Job file status is %s (not available), trying local filesystem\n", jobFile.Status)
+				log.Debug("get_csv_reader_job_file_not_available",
+					slog.String("status", string(jobFile.Status)),
+				)
 			}
 		}
 	} else {
-		fmt.Printf("DEBUG GetCSVReader: S3 not configured, using local filesystem\n")
+		log.Debug("get_csv_reader_s3_not_configured")
 	}
 
 	// Fall back to local filesystem
@@ -173,32 +193,48 @@ func (s *Service) GetCSV(_ context.Context, id string) (string, error) {
 }
 
 func (s *Service) Cancel(ctx context.Context, id string) error {
-	fmt.Printf("DEBUG: Service.Cancel called for job %s\n", id)
+	log := pkglogger.FromContext(ctx)
+	log.Debug("service_cancel_called", slog.String("job_id", id))
 
 	// Get current job status before cancellation
 	job, err := s.repo.Get(ctx, id)
 	if err != nil {
-		fmt.Printf("DEBUG: Failed to get job %s before cancellation: %v\n", id, err)
+		log.Debug("service_cancel_get_job_before_failed",
+			slog.String("job_id", id),
+			slog.Any("error", err),
+		)
 		return err
 	}
 
-	fmt.Printf("DEBUG: Job %s current status before cancel: %s\n", id, job.Status)
+	log.Debug("service_cancel_status_before",
+		slog.String("job_id", id),
+		slog.String("status", string(job.Status)),
+	)
 
 	// Call repository Cancel method
 	err = s.repo.Cancel(ctx, id)
 	if err != nil {
-		fmt.Printf("DEBUG: Failed to cancel job %s: %v\n", id, err)
+		log.Debug("service_cancel_repo_cancel_failed",
+			slog.String("job_id", id),
+			slog.Any("error", err),
+		)
 		return err
 	}
 
-	fmt.Printf("DEBUG: Job %s cancel operation completed\n", id)
+	log.Debug("service_cancel_repo_cancel_completed", slog.String("job_id", id))
 
 	// Verify the status was updated
 	updatedJob, err := s.repo.Get(ctx, id)
 	if err != nil {
-		fmt.Printf("DEBUG: Failed to get job %s after cancellation: %v\n", id, err)
+		log.Debug("service_cancel_get_job_after_failed",
+			slog.String("job_id", id),
+			slog.Any("error", err),
+		)
 	} else {
-		fmt.Printf("DEBUG: Job %s status after cancel: %s\n", id, updatedJob.Status)
+		log.Debug("service_cancel_status_after",
+			slog.String("job_id", id),
+			slog.String("status", string(updatedJob.Status)),
+		)
 	}
 
 	return nil
