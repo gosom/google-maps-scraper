@@ -17,6 +17,7 @@ import (
 	"github.com/gosom/google-maps-scraper/config"
 	"github.com/gosom/google-maps-scraper/deduper"
 	"github.com/gosom/google-maps-scraper/exiter"
+	"github.com/gosom/google-maps-scraper/gmaps"
 	"github.com/gosom/google-maps-scraper/models"
 	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	"github.com/gosom/google-maps-scraper/postgres"
@@ -200,6 +201,18 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 	if s3Upload != nil && s3BucketName != "" && jobFileRepo != nil {
 		svc.SetS3Config(jobFileRepo, s3Upload, s3BucketName)
 		slog.Info("s3_download_configured", slog.String("bucket", s3BucketName))
+	}
+
+	// Initialize Google cookies for authenticated scraping (reviews access)
+	cookiesFile := cfg.CookiesFile
+	if cookiesFile == "" {
+		cookiesFile = os.Getenv("GOOGLE_COOKIES_FILE")
+	}
+	if cookiesFile != "" {
+		gmaps.SetCookiesFile(cookiesFile)
+		slog.Info("google_cookies_configured", slog.String("file", cookiesFile))
+	} else {
+		slog.Info("google_cookies_not_configured", slog.String("detail", "reviews may be restricted without authentication"))
 	}
 
 	ans := webrunner{

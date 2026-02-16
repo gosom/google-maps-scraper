@@ -388,6 +388,11 @@ func (j *PlaceJob) extractImages(ctx context.Context, page playwright.Page, resp
 func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scrapemate.Response {
 	var resp scrapemate.Response
 
+	// Inject Google cookies for authenticated access (reviews, full data)
+	if err := InjectCookiesIntoPage(page); err != nil {
+		slog.Debug("place_cookies_inject_skipped", slog.Any("error", err))
+	}
+
 	pageResponse, err := page.Goto(j.GetURL(), playwright.PageGotoOptions{
 		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
 	})

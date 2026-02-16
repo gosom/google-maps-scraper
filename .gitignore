@@ -33,3 +33,4 @@ brezel-api
 *.DS_Store
 .DS_Store
 .claude/
+google_cookies.json

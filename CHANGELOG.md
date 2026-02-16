@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2026-02-16]
 
+### Added
+
+- **Google Account Cookie Injection for Authenticated Scraping**
+  - Google Maps now restricts review access for unauthenticated users ("Die Ansicht ist beschränkt" / restricted view)
+  - New `gmaps/cookies.go` — loads Google cookies from JSON file (EditThisCookie export format), injects into Playwright browser context + HTTP review fetcher
+  - Cookies injected via `page.Context().AddCookies()` BEFORE page navigation in both search (`job.go`) and place (`place.go`) browser actions
+  - Review RPC endpoint (`/maps/rpc/listugcposts`) now uses authenticated `net/http` client with cookie header, falls back to stealth fetcher if no cookies configured
+  - Config: set `GOOGLE_COOKIES_FILE` env var or `CookiesFile` in runner config pointing to exported JSON
+  - Graceful degradation — scraper works without cookies (reviews may be limited), logs warning on startup
+  - Cookie file added to `.gitignore` for security
+
+- **Modified files:**
+  - `gmaps/cookies.go` — NEW: cookie loading, Playwright injection, HTTP header generation
+  - `gmaps/place.go` — `InjectCookiesIntoPage()` before place page navigation
+  - `gmaps/job.go` — `InjectCookiesIntoPage()` before search page navigation
+  - `gmaps/reviews.go` — `fetchWithCookies()` authenticated HTTP fallback for review RPC, added `net/http`, `io`, `time` imports
+  - `runner/runner.go` — `CookiesFile` field added to Config struct
+  - `runner/webrunner/webrunner.go` — reads `CookiesFile` config or `GOOGLE_COOKIES_FILE` env var, calls `gmaps.SetCookiesFile()` on startup
+
 ### Fixed
 
 - **Job cancellation stuck in "aborting" state** — Cancel now sets status directly to "cancelled" instead of intermediate "aborting" state. Runner still detects cancellation and cleans up within ~2s, but frontend sees "cancelled" immediately. (postgres/repository.go)

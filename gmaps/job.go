@@ -234,6 +234,11 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scrapemate.Response {
 	var resp scrapemate.Response
 
+	// Inject Google cookies for authenticated access (reviews, full data)
+	if err := InjectCookiesIntoPage(page); err != nil {
+		slog.Debug("search_cookies_inject_skipped", slog.Any("error", err))
+	}
+
 	// Check for cancellation before starting
 	select {
 	case <-ctx.Done():

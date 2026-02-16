@@ -173,6 +173,7 @@ type Config struct {
 	FunctionName             string
 	AwsLambdaChunkSize       int
 	FastMode                 bool
+	CookiesFile              string
 	Radius                   float64
 	Addr                     string
 	DisablePageReuse         bool

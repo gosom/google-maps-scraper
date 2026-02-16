@@ -7,10 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/gosom/scrapemate"
 	"github.com/gosom/scrapemate/adapters/fetchers/stealth"
@@ -154,6 +157,16 @@ func (f *fetcher) generateURL(mapURL, pageToken string, pageSize int, requestID 
 }
 
 func (f *fetcher) fetchReviewPage(ctx context.Context, u string) ([]byte, error) {
+	// Try authenticated fetch with Google cookies (bypasses restricted view)
+	if cookieHeader := GetCookieHeader(); cookieHeader != "" {
+		body, err := fetchWithCookies(ctx, u, cookieHeader)
+		if err == nil {
+			return body, nil
+		}
+		slog.Debug("authenticated_review_fetch_failed_falling_back", slog.Any("error", err))
+	}
+
+	// Fallback to unauthenticated stealth fetch
 	job := scrapemate.Job{
 		Method: "GET",
 		URL:    u,
@@ -169,6 +182,37 @@ func (f *fetcher) fetchReviewPage(ctx context.Context, u string) ([]byte, error)
 	}
 
 	return resp.Body, nil
+}
+
+// fetchWithCookies performs an HTTP GET with Google auth cookies using net/http.
+func fetchWithCookies(ctx context.Context, u string, cookieHeader string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Cookie", cookieHeader)
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.5")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("authenticated fetch returned status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	return body, nil
 }
 
 func extractNextPageToken(data []byte) string {
