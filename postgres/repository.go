@@ -169,12 +169,8 @@ func (repo *repository) Cancel(ctx context.Context, id string) error {
 		return fmt.Errorf("job with status '%s' cannot be cancelled", currentStatus)
 	}
 
-	// Set status to cancelling/aborting
-	newStatus := models.StatusAborting
-	if currentStatus == models.StatusPending {
-		// If job is pending, mark it as cancelled immediately
-		newStatus = models.StatusCancelled
-	}
+	// Set status directly to cancelled (skip aborting intermediate state)
+	newStatus := models.StatusCancelled
 
 	const q = `UPDATE jobs SET status = $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL`
 

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2026-02-16]
+
+### Fixed
+
+- **Job cancellation stuck in "aborting" state** — Cancel now sets status directly to "cancelled" instead of intermediate "aborting" state. Runner still detects cancellation and cleans up within ~2s, but frontend sees "cancelled" immediately. (postgres/repository.go)
+
+## [2026-02-15 / 2026-02-16]
+
+### Fixed
+
+- **Job cancellation stuck in aborting state** — Cancel now sets status directly to  instead of intermediate  state. Runner still detects cancellation and cleans up within ~2s, but frontend sees cancelled immediately. ()
+
 ### Fixed
 
 #### Image Extraction — Full Rewrite for Feb 2026 Google Maps DOM (2026-02-15 / 2026-02-16)
