@@ -449,15 +449,19 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 
 	resp.Meta["json"] = raw
 
-	// Extract images using the enhanced approach (only if ExtractImages is enabled)
-	j.extractImages(ctx, page, &resp)
+	// IMPORTANT: Save the place URL BEFORE image extraction navigates away from the page.
+	// Image extraction clicks the "Photos" button and navigates to a different view,
+	// which changes page.URL(). Reviews need the original place URL to build the RPC request.
+	placeURL := page.URL()
 
+	// Extract reviews FIRST (before images), because image extraction navigates away
+	// from the place page to the Photos tab, breaking the review URL extraction.
 	if j.ExtractExtraReviews {
 		reviewCount := j.getReviewCount(raw)
 		if reviewCount > 8 { // we have more reviews
 			params := fetchReviewsParams{
 				page:        page,
-				mapURL:      page.URL(),
+				mapURL:      placeURL,
 				reviewCount: reviewCount,
 				maxReviews:  j.ReviewsMax, // Pass the review limit
 			}
@@ -466,12 +470,15 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 
 			reviewData, err := reviewFetcher.fetch(ctx)
 			if err != nil {
-				return resp
+				slog.Warn("review_extraction_failed", slog.Any("error", err))
+			} else {
+				resp.Meta["reviews_raw"] = reviewData
 			}
-
-			resp.Meta["reviews_raw"] = reviewData
 		}
 	}
+
+	// Extract images AFTER reviews (image extraction navigates to Photos tab)
+	j.extractImages(ctx, page, &resp)
 
 	return resp
 }

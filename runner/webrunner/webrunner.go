@@ -501,11 +501,19 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		}
 
 		if job.Data.MaxTime > 0 {
-			if job.Data.MaxTime.Seconds() < 180 {
-				allowedSeconds = 180
-			} else {
-				allowedSeconds = int(job.Data.MaxTime.Seconds())
+			userMaxTime := int(job.Data.MaxTime.Seconds())
+			if userMaxTime < 180 {
+				userMaxTime = 180
 			}
+			// Ensure user-specified max_time doesn't override the 1-hour minimum for deep scrapes
+			if job.Data.Depth > 0 && userMaxTime < 3600 {
+				slog.Info("max_time_overridden_for_deep_scrape",
+					slog.Int("user_max_time", userMaxTime),
+					slog.Int("enforced_min", 3600),
+				)
+				userMaxTime = 3600
+			}
+			allowedSeconds = userMaxTime
 		}
 
 		w.logger.Info("job_running", slog.String("job_id", job.ID), slog.Int("seed_jobs", len(seedJobs)), slog.Int("allowed_seconds", allowedSeconds), slog.Int("max_results", job.Data.MaxResults))

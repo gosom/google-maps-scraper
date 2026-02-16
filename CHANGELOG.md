@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2026-02-16]
 
+### Fixed
+
+- **Reviews not extracted when images enabled** — Image extraction navigates to Photos tab, which changed `page.URL()` and broke the review RPC request. Fixed by extracting reviews FIRST, then images. Also saves `placeURL` before any navigation as safeguard.
+- **Job timeout killing deep scrapes at ~40 places** — Frontend `max_time` (default 300s) was overriding the 1-hour minimum for `depth > 0` scrapes. Now enforces 3600s minimum for deep scrapes regardless of user-specified `max_time`.
+
 ### Added
 
 - **Google Account Cookie Injection for Authenticated Scraping**
