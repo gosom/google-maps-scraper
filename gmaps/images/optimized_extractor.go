@@ -785,13 +785,15 @@ func (m *ScrollAllTabMethod) scrollGallery(page playwright.Page) bool {
 
 func (m *ScrollAllTabMethod) extractVisibleImages(page playwright.Page) []BusinessImage {
 	selectors := []string{
-		`button.xUc6Hf img[src*="googleusercontent.com"]`, // New: photo button imgs
-		`div.y5gUld img[src*="googleusercontent.com"]`,    // New: photo container imgs
-		`img[src*="googleusercontent.com"]`,
-		`img[src*="gstatic.com"]`,
-		`div[style*="googleusercontent.com"]`,    // Background images
-		`img[data-src*="googleusercontent.com"]`, // Lazy loaded
-		`button[data-photo-id] img`,              // New: photo ID buttons
+		`img.kSOdnb.Lyrzac[src*="googleusercontent.com"]`, // Feb 2026: main place photos
+		`img.QUPxxe[src*="googleusercontent.com"]`,        // Feb 2026: additional photos
+		`button.xUc6Hf img[src*="googleusercontent.com"]`, // Old: photo button imgs
+		`div.y5gUld img[src*="googleusercontent.com"]`,    // Old: photo container imgs
+		`img[src*="googleusercontent.com"]`,               // Generic googleusercontent
+		`img[src*="gstatic.com"]`,                         // Thumbnails/placeholders
+		`div[style*="googleusercontent.com"]`,             // Background images
+		`img[data-src*="googleusercontent.com"]`,          // Lazy loaded
+		`button[data-photo-id] img`,                       // Old: photo ID buttons
 	}
 
 	var images []BusinessImage
