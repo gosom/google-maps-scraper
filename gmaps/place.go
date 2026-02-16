@@ -412,6 +412,12 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 		return resp
 	}
 
+	// Re-inject cookies AFTER consent handling — the consent dialog may have
+	// cleared or overwritten our auth cookies when clicking reject/accept.
+	if err := InjectCookiesIntoPage(page); err != nil {
+		slog.Debug("place_cookies_reinject_skipped", slog.Any("error", err))
+	}
+
 	const defaultTimeout = 5000
 
 	err = page.WaitForURL(page.URL(), playwright.PageWaitForURLOptions{

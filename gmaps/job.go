@@ -273,6 +273,11 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 		return resp
 	}
 
+	// Re-inject cookies AFTER consent handling
+	if err := InjectCookiesIntoPage(page); err != nil {
+		slog.Debug("job_cookies_reinject_skipped", slog.Any("error", err))
+	}
+
 	// Wait for main content to be ready
 	const defaultTimeout = 10000
 

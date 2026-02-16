@@ -87,7 +87,7 @@ func InjectCookiesIntoPage(page playwright.Page) error {
 
 	var pwCookies []playwright.OptionalCookie
 	for _, c := range cookies {
-		sameSite := playwright.SameSiteAttributeNone // default
+		sameSite := playwright.SameSiteAttributeLax // default (matches Chrome's default for "unspecified")
 		switch strings.ToLower(c.SameSite) {
 		case "lax":
 			sameSite = playwright.SameSiteAttributeLax
@@ -95,6 +95,9 @@ func InjectCookiesIntoPage(page playwright.Page) error {
 			sameSite = playwright.SameSiteAttributeStrict
 		case "none", "no_restriction":
 			sameSite = playwright.SameSiteAttributeNone
+		case "unspecified", "":
+			// Chrome's "unspecified" means browser default = Lax
+			sameSite = playwright.SameSiteAttributeLax
 		}
 
 		cookie := playwright.OptionalCookie{
