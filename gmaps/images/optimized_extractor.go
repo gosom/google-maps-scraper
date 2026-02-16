@@ -601,17 +601,24 @@ func (m *ScrollAllTabMethod) Extract(ctx context.Context, page playwright.Page) 
 	// Step 1: Try to navigate to images section
 	if err := m.navigateToImages(page); err != nil {
 		fmt.Printf("DEBUG: Could not navigate to photos section: %v - extracting from current page\n", err)
-	} else {
-		time.Sleep(1500 * time.Millisecond) // Wait for Photos to load
 	}
 
-	// Step 2: Try JavaScript-based extraction first (most reliable in headless)
-	jsImages, err := m.extractViaJavaScript(page)
-	if err == nil && len(jsImages) > 3 {
-		fmt.Printf("DEBUG: JavaScript extraction found %d images - using these\n", len(jsImages))
-		return jsImages, nil
+	// Step 2: Try JavaScript-based extraction (most reliable in headless)
+	// Retry up to 3 times with increasing waits if we get 0 images
+	var jsImages []BusinessImage
+	for attempt := 1; attempt <= 3; attempt++ {
+		var err error
+		jsImages, err = m.extractViaJavaScript(page)
+		if err == nil && len(jsImages) > 3 {
+			fmt.Printf("DEBUG: JavaScript extraction found %d images on attempt %d - using these\n", len(jsImages), attempt)
+			return jsImages, nil
+		}
+		if attempt < 3 {
+			fmt.Printf("DEBUG: JavaScript extraction found only %d images on attempt %d, waiting 2s and retrying...\n", len(jsImages), attempt)
+			time.Sleep(2 * time.Second)
+		}
 	}
-	fmt.Printf("DEBUG: JavaScript extraction found only %d images, trying scroll method\n", len(jsImages))
+	fmt.Printf("DEBUG: JavaScript extraction found only %d images after 3 attempts, trying scroll method\n", len(jsImages))
 
 	// Step 3: Fall back to scroll and collect
 	scrollImages, err := m.scrollAndCollectImages(ctx, page)
@@ -645,7 +652,13 @@ func (m *ScrollAllTabMethod) extractViaJavaScript(page playwright.Page) ([]Busin
 		const urls = new Set();
 		
 		function collectImages() {
-			// Background-image styles (WHERE GOOGLE HIDES PHOTOS)
+			// Background-image from inline style attribute (most reliable)
+			document.querySelectorAll('[style*="googleusercontent"]').forEach(el => {
+				const match = el.getAttribute('style').match(/url\(["']?(https:\/\/[^"')]+googleusercontent[^"')]+)["']?\)/);
+				if (match) urls.add(match[1]);
+			});
+			
+			// Background-image via computed styles (WHERE GOOGLE HIDES PHOTOS)
 			document.querySelectorAll('*').forEach(el => {
 				const computed = window.getComputedStyle(el);
 				if (computed.backgroundImage && computed.backgroundImage !== 'none') {
@@ -661,10 +674,18 @@ func (m *ScrollAllTabMethod) extractViaJavaScript(page playwright.Page) ([]Busin
 			});
 		}
 		
-		// Find scrollable photos container
-		const container = document.querySelector('.m6QErb.DxyBCb.kA9KIf.dS8AEf.XiKgde') 
-			|| document.querySelector('.m6QErb.DxyBCb.XiKgde')
-			|| document.querySelector('.m6QErb.DxyBCb');
+		// Find scrollable photos container (retry if not loaded yet)
+		let container = null;
+		for (let retry = 0; retry < 3; retry++) {
+			container = document.querySelector('.m6QErb.DxyBCb.kA9KIf.dS8AEf.XiKgde') 
+				|| document.querySelector('.m6QErb.DxyBCb.XiKgde')
+				|| document.querySelector('.m6QErb.DxyBCb');
+			
+			collectImages();
+			if (container || urls.size > 0) break;
+			// Gallery not loaded yet — wait and retry
+			await new Promise(r => setTimeout(r, 2000));
+		}
 		
 		if (container && container.scrollHeight > container.clientHeight) {
 			// Scroll and collect incrementally
@@ -751,8 +772,26 @@ func (m *ScrollAllTabMethod) navigateToImages(page playwright.Page) error {
 		element := page.Locator(selector).First()
 		if visible, _ := element.IsVisible(); visible {
 			if err := element.Click(); err == nil {
-				fmt.Printf("DEBUG: Clicked photos button\n")
-				time.Sleep(1500 * time.Millisecond) // Wait 1.5s for Photos tab to load
+				fmt.Printf("DEBUG: Clicked photos button using selector: %s\n", selector)
+				time.Sleep(3000 * time.Millisecond) // Wait 3s for Photos tab to load (proxy can be slow)
+
+				// Debug: dump what's on the page after click
+				url, _ := page.Evaluate(`() => window.location.href`)
+				fmt.Printf("DEBUG: Current URL after photos click: %v\n", url)
+
+				// Check what containers exist
+				containerCheck, _ := page.Evaluate(`() => {
+					const containers = [];
+					document.querySelectorAll('[class*="m6QErb"]').forEach(el => {
+						containers.push(el.className + ' scrollH=' + el.scrollHeight + ' clientH=' + el.clientHeight);
+					});
+					const imgCount = document.querySelectorAll('img[src*="googleusercontent"]').length;
+					const bgCount = document.querySelectorAll('[style*="googleusercontent"]').length;
+					const allImgs = document.querySelectorAll('img').length;
+					return {containers, imgCount, bgCount, allImgs};
+				}`)
+				fmt.Printf("DEBUG: Page state after photos click: %v\n", containerCheck)
+
 				return nil
 			}
 		}

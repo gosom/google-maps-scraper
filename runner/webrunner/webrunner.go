@@ -478,7 +478,14 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	if len(seedJobs) > 0 {
 		exitMonitor.SetSeedCount(len(seedJobs))
 
-		allowedSeconds := max(60, len(seedJobs)*10*job.Data.Depth/50+120)
+		// Base timeout: generous default since we can't predict how many places Google returns
+		// Old formula was too aggressive: 1 seed * 10 * depth / 50 + 120 = ~300s
+		// Reality: a single search can return 100+ places, each taking 10-25s with images
+		// New default: 1 hour for any job with depth > 0 (place detail scraping)
+		allowedSeconds := max(300, len(seedJobs)*10*job.Data.Depth/50+120)
+		if job.Data.Depth > 0 {
+			allowedSeconds = max(allowedSeconds, 3600) // 1 hour minimum for place scraping
+		}
 
 		if job.Data.MaxTime > 0 {
 			if job.Data.MaxTime.Seconds() < 180 {
