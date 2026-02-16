@@ -13,6 +13,7 @@ services:
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_COOKIES_FILE=${GOOGLE_COOKIES_FILE:-/app/google_cookies.json}
       - STRIPE_SUCCESS_URL=${STRIPE_SUCCESS_URL:-https://staging.brezel.ai/dashboard/credits?session_id={CHECKOUT_SESSION_ID}}
       - STRIPE_CANCEL_URL=${STRIPE_CANCEL_URL:-https://staging.brezel.ai/dashboard/credits}
       - DISABLE_TELEMETRY=${DISABLE_TELEMETRY:-0}
@@ -24,6 +25,7 @@ services:
       - "8080:8080"
     volumes:
       - ./gmapsdata:/gmapsdata
+      - ./google_cookies.json:/app/google_cookies.json:ro
     restart: unless-stopped
     networks:
       - gmaps
