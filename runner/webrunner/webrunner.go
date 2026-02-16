@@ -560,7 +560,31 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			// Backup timeout - force completion
 			w.logger.Debug("backup_timeout_triggered", slog.String("job_id", job.ID))
 			cancel() // Cancel the mate context
-			<-done   // Wait for mate.Start to actually finish
+
+			// Wait for mate.Start with a timeout - workers may be stuck in long extraction cycles
+			backupWait := time.NewTimer(30 * time.Second)
+			select {
+			case <-done:
+				w.logger.Debug("mate_finished_after_backup_cancel", slog.String("job_id", job.ID))
+			case <-backupWait.C:
+				w.logger.Warn("mate_stuck_after_backup_timeout", slog.String("job_id", job.ID))
+				// Force close mate to kill stuck Playwright workers
+				go func() {
+					w.logger.Debug("force_closing_mate_backup", slog.String("job_id", job.ID))
+					mate.Close()
+				}()
+				// Give it one more chance
+				finalWait := time.NewTimer(15 * time.Second)
+				select {
+				case <-done:
+					w.logger.Debug("mate_finished_after_force_close", slog.String("job_id", job.ID))
+				case <-finalWait.C:
+					w.logger.Warn("mate_unresponsive_proceeding", slog.String("job_id", job.ID))
+				}
+				finalWait.Stop()
+			}
+			backupWait.Stop()
+
 			err = mateErr
 			w.logger.Debug("forced_completion", slog.String("job_id", job.ID), slog.Any("error", err))
 		case <-forcedCompletionTimeout.C:

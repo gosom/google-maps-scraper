@@ -281,32 +281,37 @@ func (e *exiter) isDone() bool {
 			)
 			return true
 		}
-		// Add timeout protection - if we've been waiting too long for the last place
+		// Add timeout protection - if we've been waiting too long without progress
 		// and we have results, consider it done (handles stuck/failed jobs)
 		if e.placesFound > 0 && e.resultsWritten > 0 {
-			// Check for inactivity timeout (30 seconds without progress)
 			inactivityDuration := time.Since(e.lastProgressTime)
-			const maxInactivity = 30 * time.Second
-
-			// If we're missing only 1-2 places and haven't made progress, exit
 			missingPlaces := e.placesFound - e.placesCompleted
-			if (missingPlaces <= 2 && missingPlaces > 0) && inactivityDuration > maxInactivity {
+
+			// Scale timeout based on missing places: 30s for 1-2 missing, 60s for more
+			var maxInactivity time.Duration
+			if missingPlaces <= 2 {
+				maxInactivity = 30 * time.Second
+			} else {
+				maxInactivity = 60 * time.Second
+			}
+
+			if missingPlaces > 0 && inactivityDuration > maxInactivity {
 				slog.Debug("exit_done_unlimited_inactivity_timeout",
 					slog.Duration("inactivity", inactivityDuration),
 					slog.Int("missing_places", missingPlaces),
+					slog.Int("results_written", e.resultsWritten),
 				)
 				return true
-			} else if missingPlaces <= 1 && missingPlaces > 0 {
-				// Only exit for 1 missing place if we have a decent number of results
-				// AND we haven't had recent activity
-				if e.resultsWritten >= 10 && inactivityDuration > (10*time.Second) {
-					slog.Debug("exit_done_unlimited_accept_missing_place",
-						slog.Int("missing_places", missingPlaces),
-						slog.Int("results_written", e.resultsWritten),
-						slog.Duration("inactivity", inactivityDuration),
-					)
-					return true
-				}
+			}
+
+			// Hard cap: if no progress for 2 minutes, exit regardless
+			if inactivityDuration > 2*time.Minute {
+				slog.Debug("exit_done_unlimited_hard_inactivity_cap",
+					slog.Duration("inactivity", inactivityDuration),
+					slog.Int("missing_places", missingPlaces),
+					slog.Int("results_written", e.resultsWritten),
+				)
+				return true
 			}
 		}
 		inactivityDuration := time.Since(e.lastProgressTime)
