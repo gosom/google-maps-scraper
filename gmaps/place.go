@@ -126,12 +126,8 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page scrapemate.BrowserPa
 
 	const defaultTimeout = 5 * time.Second
 
-	err = page.WaitForURL(page.URL(), defaultTimeout)
-	if err != nil {
-		resp.Error = err
-
-		return resp
-	}
+	// Ignore WaitForURL errors — Google Maps may redirect slowly especially via proxy
+	_ = page.WaitForURL(page.URL(), defaultTimeout)
 
 	resp.URL = pageResponse.URL
 	resp.StatusCode = pageResponse.StatusCode
@@ -152,7 +148,7 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page scrapemate.BrowserPa
 
 	if j.ExtractExtraReviews {
 		reviewCount := j.getReviewCount(raw)
-		if reviewCount > 8 { // we have more reviews
+		if reviewCount > 0 { // download reviews for any place that has them
 			params := fetchReviewsParams{
 				page:        page,
 				mapURL:      page.URL(),
