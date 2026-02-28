@@ -18,8 +18,9 @@ type EmailExtractJobOptions func(*EmailExtractJob)
 type EmailExtractJob struct {
 	scrapemate.Job
 
-	Entry       *Entry
-	ExitMonitor exiter.Exiter
+	Entry                   *Entry
+	ExitMonitor             exiter.Exiter
+	WriterManagedCompletion bool
 }
 
 func NewEmailJob(parentID string, entry *Entry, opts ...EmailExtractJobOptions) *EmailExtractJob {
@@ -54,6 +55,12 @@ func WithEmailJobExitMonitor(exitMonitor exiter.Exiter) EmailExtractJobOptions {
 	}
 }
 
+func WithEmailJobWriterManagedCompletion() EmailExtractJobOptions {
+	return func(j *EmailExtractJob) {
+		j.WriterManagedCompletion = true
+	}
+}
+
 func (j *EmailExtractJob) Process(ctx context.Context, resp *scrapemate.Response) (any, []scrapemate.IJob, error) {
 	defer func() {
 		resp.Document = nil
@@ -61,7 +68,7 @@ func (j *EmailExtractJob) Process(ctx context.Context, resp *scrapemate.Response
 	}()
 
 	defer func() {
-		if j.ExitMonitor != nil {
+		if j.ExitMonitor != nil && !j.WriterManagedCompletion {
 			j.ExitMonitor.IncrPlacesCompleted(1)
 		}
 	}()

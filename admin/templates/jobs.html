@@ -1,0 +1,131 @@
+{{define "jobs.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    {{template "head"}}
+    <title>Jobs - Maps Scraper</title>
+</head>
+<body>
+    {{template "navbar" .}}
+
+    <main class="container">
+        {{if .Success}}<div class="alert alert-success">{{.Success}}</div>{{end}}
+        {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+
+        <div class="page-header">
+            <h1>Jobs</h1>
+            <p>View and manage scrape jobs</p>
+        </div>
+
+        <!-- State Filter -->
+        <div class="card" style="padding: 1rem 1.5rem;">
+            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
+                <span style="font-weight: 500; color: var(--text-secondary); margin-right: 0.5rem;">Filter:</span>
+                <a href="/admin/jobs" style="padding: 0.375rem 0.75rem; border-radius: 6px; text-decoration: none; font-size: 0.875rem;{{if eq .CurrentState ""}} background: var(--primary); color: #fff;{{else}} background: var(--bg-primary); color: var(--text-secondary);{{end}}">All</a>
+                <a href="/admin/jobs?state=available" style="padding: 0.375rem 0.75rem; border-radius: 6px; text-decoration: none; font-size: 0.875rem;{{if eq .CurrentState "available"}} background: var(--primary); color: #fff;{{else}} background: var(--bg-primary); color: var(--text-secondary);{{end}}">Pending</a>
+                <a href="/admin/jobs?state=running" style="padding: 0.375rem 0.75rem; border-radius: 6px; text-decoration: none; font-size: 0.875rem;{{if eq .CurrentState "running"}} background: var(--primary); color: #fff;{{else}} background: var(--bg-primary); color: var(--text-secondary);{{end}}">Running</a>
+                <a href="/admin/jobs?state=completed" style="padding: 0.375rem 0.75rem; border-radius: 6px; text-decoration: none; font-size: 0.875rem;{{if eq .CurrentState "completed"}} background: var(--primary); color: #fff;{{else}} background: var(--bg-primary); color: var(--text-secondary);{{end}}">Completed</a>
+                <a href="/admin/jobs?state=discarded" style="padding: 0.375rem 0.75rem; border-radius: 6px; text-decoration: none; font-size: 0.875rem;{{if eq .CurrentState "discarded"}} background: var(--primary); color: #fff;{{else}} background: var(--bg-primary); color: var(--text-secondary);{{end}}">Failed</a>
+            </div>
+        </div>
+
+        <!-- Jobs Table -->
+        <div class="card">
+            {{if .Jobs}}
+            <form method="POST" action="/admin/jobs/delete" style="margin: 0;">
+                <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                {{if .CurrentState}}<input type="hidden" name="state" value="{{.CurrentState}}">{{end}}
+                {{if .CurrentCursor}}<input type="hidden" name="cursor" value="{{.CurrentCursor}}">{{end}}
+                <div style="padding: 0.75rem 1rem; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; gap: 0.75rem;">
+                    <label style="display: flex; align-items: center; gap: 0.4rem; color: var(--text-secondary); font-size: 0.875rem; cursor: pointer;">
+                        <input id="select-all-jobs" type="checkbox">
+                        Select all on page
+                    </label>
+                    <button type="submit" onclick="return confirm('Delete selected jobs on this page?');" style="background: none; border: 1px solid var(--danger); color: var(--danger); padding: 0.375rem 0.75rem; font-size: 0.8rem; border-radius: 6px; cursor: pointer; width: auto;">Delete Selected</button>
+                    <button type="submit" formaction="/admin/jobs/delete-filtered" formmethod="POST" onclick="return confirm('Delete ALL jobs in the current filter across all pages?');" style="background: none; border: 1px solid var(--danger); color: var(--danger); padding: 0.375rem 0.75rem; font-size: 0.8rem; border-radius: 6px; cursor: pointer; width: auto;">Delete All Filtered</button>
+                </div>
+            <div style="overflow-x: auto;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
+                    <thead>
+                        <tr style="border-bottom: 1px solid var(--border-color); text-align: left;">
+                            <th style="padding: 0.75rem 0.5rem; width: 36px;"></th>
+                            <th style="padding: 0.75rem 0.5rem; font-weight: 500; color: var(--text-secondary);">Keyword</th>
+                            <th style="padding: 0.75rem 0.5rem; font-weight: 500; color: var(--text-secondary);">Status</th>
+                            <th style="padding: 0.75rem 0.5rem; font-weight: 500; color: var(--text-secondary);">Results</th>
+                            <th style="padding: 0.75rem 0.5rem; font-weight: 500; color: var(--text-secondary);">Created</th>
+                            <th style="padding: 0.75rem 0.5rem; font-weight: 500; color: var(--text-secondary);">Started</th>
+                            <th style="padding: 0.75rem 0.5rem; font-weight: 500; color: var(--text-secondary);">Completed</th>
+                            <th style="padding: 0.75rem 0.5rem; font-weight: 500; color: var(--text-secondary);">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range .Jobs}}
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 0.75rem 0.5rem;">
+                                <input type="checkbox" class="job-checkbox" name="job_ids" value="{{.JobID}}">
+                            </td>
+                            <td style="padding: 0.75rem 0.5rem; font-weight: 500; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{.Keyword}}">{{.Keyword}}</td>
+                            <td style="padding: 0.75rem 0.5rem;">
+                                {{if eq .Status "completed"}}
+                                <span class="status success">Completed</span>
+                                {{else if eq .Status "running"}}
+                                <span class="status warning">Running</span>
+                                {{else if eq .Status "pending"}}
+                                <span class="status warning">Pending</span>
+                                {{else if eq .Status "failed"}}
+                                <span class="status danger">Failed</span>
+                                {{if .Error}}<div style="font-size: 0.75rem; color: var(--danger); margin-top: 0.25rem; max-width: 250px; word-break: break-word;">{{.Error}}</div>{{end}}
+                                {{else}}
+                                <span class="status">{{.Status}}</span>
+                                {{end}}
+                            </td>
+                            <td style="padding: 0.75rem 0.5rem; color: var(--text-secondary);">{{.ResultCount}}</td>
+                            <td style="padding: 0.75rem 0.5rem; color: var(--text-secondary);">{{.CreatedAt.Format "Jan 02, 2006 15:04"}}</td>
+                            <td style="padding: 0.75rem 0.5rem; color: var(--text-secondary);">{{if .StartedAt}}{{.StartedAt.Format "Jan 02, 2006 15:04"}}{{else}}&mdash;{{end}}</td>
+                            <td style="padding: 0.75rem 0.5rem; color: var(--text-secondary);">{{if .CompletedAt}}{{.CompletedAt.Format "Jan 02, 2006 15:04"}}{{else}}&mdash;{{end}}</td>
+                            <td style="padding: 0.75rem 0.5rem;">
+                                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                                    {{if and (eq .Status "completed") (gt .ResultCount 0)}}
+                                    <a href="/admin/jobs/{{.JobID}}/download" style="background: none; border: 1px solid var(--primary); color: var(--primary); padding: 0.375rem 0.75rem; font-size: 0.8rem; border-radius: 6px; text-decoration: none; white-space: nowrap;">Download</a>
+                                    {{end}}
+                                    <button type="submit" formaction="/admin/jobs/{{.JobID}}/delete" formmethod="POST" onclick="return confirm('Are you sure you want to delete this job?');" style="background: none; border: 1px solid var(--danger); color: var(--danger); padding: 0.375rem 0.75rem; font-size: 0.8rem; border-radius: 6px; cursor: pointer; width: auto;">Delete</button>
+                                </div>
+                            </td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+            </form>
+
+            {{if .HasMore}}
+            <div style="text-align: center; padding: 1rem 0;">
+                <a href="{{.NextPageURL}}" style="padding: 0.5rem 1.5rem; border-radius: 6px; text-decoration: none; background: var(--bg-primary); color: var(--text-secondary); border: 1px solid var(--border-color);">Next Page &rarr;</a>
+            </div>
+            {{end}}
+
+            {{else}}
+            <p style="color: var(--text-secondary); text-align: center; padding: 2rem 0;">No jobs found.</p>
+            {{end}}
+        </div>
+    </main>
+    <script>
+    (() => {
+        const selectAll = document.getElementById("select-all-jobs");
+        if (!selectAll) return;
+        const checkboxes = Array.from(document.querySelectorAll(".job-checkbox"));
+        selectAll.addEventListener("change", () => {
+            for (const cb of checkboxes) {
+                cb.checked = selectAll.checked;
+            }
+        });
+        for (const cb of checkboxes) {
+            cb.addEventListener("change", () => {
+                selectAll.checked = checkboxes.length > 0 && checkboxes.every((c) => c.checked);
+            });
+        }
+    })();
+    </script>
+</body>
+</html>
+{{end}}

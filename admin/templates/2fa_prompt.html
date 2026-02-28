@@ -1,0 +1,25 @@
+{{define "2fa_prompt.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    {{template "head"}}
+    <title>Enable 2FA - Maps Scraper</title>
+</head>
+<body class="auth-layout">
+    <div class="auth-card">
+        <header>
+            <div class="icon-lg">&#x1F512;</div>
+            <h1>Secure Your Account</h1>
+            <p>Enable two-factor authentication</p>
+        </header>
+
+        <p>Add an extra layer of security. You'll need a code from your authenticator app each time you sign in.</p>
+
+        <div class="actions-grid" style="margin-top: 1.5rem;">
+            <a href="/admin/2fa/setup" class="btn-primary">Enable 2FA</a>
+            <a href="/admin" class="btn-secondary">Skip for now</a>
+        </div>
+    </div>
+</body>
+</html>
+{{end}}

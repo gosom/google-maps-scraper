@@ -14,6 +14,13 @@
 
 **A powerful, free, and open-source Google Maps scraper** for extracting business data at scale. Available as CLI, Web UI, REST API, or deployable to Kubernetes/AWS Lambda.
 
+> **SaaS Edition Available (BETA):** Deploy as a multi-user platform with REST API, admin dashboard,
+> job queue, and cloud provisioning. Try it now — just Docker required:
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/gosom/google-maps-scraper/main/PROVISION | sh
+> ```
+> [Read the SaaS documentation](docs/saas.md)
+
 ![Example GIF](img/example.gif)
 
 > 💡 **New:** Export leads directly to [LeadsDB](https://getleadsdb.com/) - manage via API, AI/MCP integration, or UI with custom filtering and exports.

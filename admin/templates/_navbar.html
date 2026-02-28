@@ -1,0 +1,21 @@
+{{define "navbar"}}
+<nav class="navbar">
+    <div>
+        <a href="/admin" class="brand">Maps Scraper</a>
+    </div>
+    <ul>
+        <li><a href="/riverui/">Queue</a></li>
+        <li><a href="/swagger/index.html">API Docs</a></li>
+        <li><a href="/admin/jobs">Jobs</a></li>
+        <li><a href="/admin/workers">Workers</a></li>
+        <li><a href="/admin/api-keys">API Keys</a></li>
+        <li><a href="/admin/settings">Settings</a></li>
+        <li>
+            <form method="POST" action="/admin/logout" style="display: inline;">
+                <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                <button type="submit" class="btn-link">Logout</button>
+            </form>
+        </li>
+    </ul>
+</nav>
+{{end}}
