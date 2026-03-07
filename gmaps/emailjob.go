@@ -7,9 +7,10 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/google/uuid"
-	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/scrapemate"
 	"github.com/mcnijman/go-emailaddress"
+
+	"github.com/gosom/google-maps-scraper/exiter"
 )
 
 type EmailExtractJobOptions func(*EmailExtractJob)
@@ -149,6 +150,7 @@ func normalizeGoogleURL(rawURL string) string {
 
 	if strings.HasPrefix(rawURL, "/url?q=") {
 		fullURL := "https://www.google.com" + rawURL
+
 		parsed, err := url.Parse(fullURL)
 		if err != nil {
 			return rawURL
