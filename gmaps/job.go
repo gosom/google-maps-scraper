@@ -165,12 +165,8 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page scrapemate.BrowserPag
 
 	const defaultTimeout = 5 * time.Second
 
-	err = page.WaitForURL(page.URL(), defaultTimeout)
-	if err != nil {
-		resp.Error = err
-
-		return resp
-	}
+	// Ignore WaitForURL errors — Google Maps may redirect slowly especially via proxy
+	_ = page.WaitForURL(page.URL(), defaultTimeout)
 
 	resp.URL = pageResponse.URL
 	resp.StatusCode = pageResponse.StatusCode
@@ -180,7 +176,7 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page scrapemate.BrowserPag
 	// check element scroll
 	sel := `div[role='feed']`
 
-	err = page.WaitForSelector(sel, 700*time.Millisecond)
+	err = page.WaitForSelector(sel, 10*time.Second)
 
 	var singlePlace bool
 

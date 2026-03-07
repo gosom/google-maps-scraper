@@ -2,6 +2,7 @@ package gmaps
 
 import (
 	"context"
+	"net/url"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
@@ -31,7 +32,7 @@ func NewEmailJob(parentID string, entry *Entry, opts ...EmailExtractJobOptions) 
 			ID:         uuid.New().String(),
 			ParentID:   parentID,
 			Method:     "GET",
-			URL:        entry.WebSite,
+			URL:        normalizeGoogleURL(entry.WebSite),
 			MaxRetries: defaultMaxRetries,
 			Priority:   defaultPrio,
 		},
@@ -136,4 +137,31 @@ func getValidEmail(s string) (string, error) {
 	}
 
 	return email.String(), nil
+}
+
+// normalizeGoogleURL extracts the actual target URL from Google redirect URLs.
+// Google Maps sometimes returns URLs like "/url?q=http://example.com/&opi=..."
+// for external website links.
+func normalizeGoogleURL(rawURL string) string {
+	if rawURL == "" {
+		return rawURL
+	}
+
+	if strings.HasPrefix(rawURL, "/url?q=") {
+		fullURL := "https://www.google.com" + rawURL
+		parsed, err := url.Parse(fullURL)
+		if err != nil {
+			return rawURL
+		}
+
+		if target := parsed.Query().Get("q"); target != "" {
+			return target
+		}
+	}
+
+	if strings.HasPrefix(rawURL, "/") {
+		return "https://www.google.com" + rawURL
+	}
+
+	return rawURL
 }
