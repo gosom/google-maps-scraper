@@ -1,0 +1,80 @@
+{{define "settings.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    {{template "head"}}
+    <title>Settings - Maps Scraper</title>
+</head>
+<body>
+    {{template "navbar" .}}
+
+    <main class="container">
+        {{if .Success}}<div class="alert alert-success">{{.Success}}</div>{{end}}
+        {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+
+        <div class="page-header">
+            <h1>Settings</h1>
+            <p>Manage your account settings</p>
+        </div>
+
+        <!-- Change Password -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Change Password</h2>
+            </div>
+            <form method="POST" action="/admin/settings/password">
+                <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+
+                <label for="current_password">Current Password</label>
+                <input type="password" id="current_password" name="current_password" required autocomplete="current-password">
+
+                <label for="new_password">New Password</label>
+                <input type="password" id="new_password" name="new_password" required minlength="8" autocomplete="new-password">
+                <small>Must be at least 8 characters</small>
+
+                <label for="confirm_password">Confirm New Password</label>
+                <input type="password" id="confirm_password" name="confirm_password" required minlength="8" autocomplete="new-password">
+
+                <button type="submit" style="margin-top: 1rem;">Update Password</button>
+            </form>
+        </div>
+
+        <!-- Two-Factor Authentication -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Two-Factor Authentication</h2>
+                {{if .TOTPEnabled}}
+                <span class="status success">Enabled</span>
+                {{else}}
+                <span class="status warning">Disabled</span>
+                {{end}}
+            </div>
+
+            {{if .TOTPEnabled}}
+            <p>Two-factor authentication is enabled on your account. This adds an extra layer of security by requiring a code from your authenticator app when logging in.</p>
+            <div class="actions-grid" style="max-width: 300px;">
+                <a href="/admin/2fa/setup" class="btn-secondary">Manage 2FA</a>
+            </div>
+            <details style="margin-top: 1.5rem;">
+                <summary>Disable Two-Factor Authentication</summary>
+                <p style="margin: 1rem 0; color: var(--text-secondary);">
+                    Disabling 2FA will make your account less secure. You will need to enter your password to confirm.
+                </p>
+                <form method="POST" action="/admin/2fa/disable">
+                    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                    <label for="disable_password">Enter your password to disable 2FA</label>
+                    <input type="password" id="disable_password" name="password" required autocomplete="current-password">
+                    <button type="submit" class="btn-danger" style="margin-top: 0.5rem;">Disable 2FA</button>
+                </form>
+            </details>
+            {{else}}
+            <p>Two-factor authentication adds an extra layer of security to your account. When enabled, you'll need to enter a code from your authenticator app in addition to your password when logging in.</p>
+            <div class="actions-grid" style="max-width: 300px; margin-top: 1rem;">
+                <a href="/admin/2fa/setup" class="btn-primary">Enable 2FA</a>
+            </div>
+            {{end}}
+        </div>
+    </main>
+</body>
+</html>
+{{end}}

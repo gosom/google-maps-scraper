@@ -1,0 +1,61 @@
+# Build stage
+FROM golang:1.26.1-alpine AS builder
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apk add --no-cache git ca-certificates
+
+# Copy go mod files
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the gmapssaas binary (stripped and optimized)
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /gmapssaas ./cmd/gmapssaas
+
+# Final stage - Debian slim with Playwright Chromium dependencies
+FROM debian:bookworm-slim
+LABEL org.opencontainers.image.source=https://github.com/gosom/google-maps-scraper
+
+WORKDIR /app
+
+# Install Playwright dependencies for Chromium only + cleanup in same layer
+# These are the system libraries that Playwright's Chromium needs to run
+# The browser itself is downloaded at runtime by playwright-go
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libdbus-1-3 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libasound2 \
+    libpango-1.0-0 \
+    libcairo2 \
+    fonts-liberation \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+    && rm -rf /usr/share/doc /usr/share/man /usr/share/locale
+
+# Copy binary from builder
+COPY --from=builder /gmapssaas /app/gmapssaas
+
+# Copy migrations (needed for server mode)
+COPY --from=builder /app/migrations /app/migrations
+
+EXPOSE 8080
+
+# Default to serve mode, can be overridden with "worker" argument
+ENTRYPOINT ["/app/gmapssaas"]
+CMD ["serve"]

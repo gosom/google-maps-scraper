@@ -1,0 +1,45 @@
+{{define "2fa_verify.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    {{template "head"}}
+    <title>Verify - Maps Scraper</title>
+</head>
+<body class="auth-layout">
+    <div class="auth-card">
+        <header>
+            <h1>Two-Factor Authentication</h1>
+            <p>Enter your verification code</p>
+        </header>
+
+        {{if .Error}}
+        <div class="alert alert-error">{{.Error}}</div>
+        {{end}}
+
+        <form method="POST" action="/admin/login/2fa">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <label>
+                Code
+                <input type="text" name="code" class="code" required
+                       autocomplete="one-time-code" autofocus
+                       placeholder="000000" maxlength="9">
+            </label>
+            <small>Or use a backup code (xxxx-xxxx)</small>
+            <button type="submit">Verify</button>
+        </form>
+
+        <footer>
+            <a href="/admin/login">&larr; Back to login</a>
+        </footer>
+    </div>
+
+    <script>
+        document.querySelector('.code').addEventListener('input', function() {
+            if (/^\d{6}$/.test(this.value) || /^[a-f0-9]{4}-[a-f0-9]{4}$/i.test(this.value)) {
+                this.form.submit();
+            }
+        });
+    </script>
+</body>
+</html>
+{{end}}

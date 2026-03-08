@@ -1,0 +1,69 @@
+{{define "dashboard.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    {{template "head"}}
+    <title>Dashboard - Maps Scraper</title>
+</head>
+<body>
+    {{template "navbar" .}}
+
+    <main class="container">
+        {{if .Success}}<div class="alert alert-success">{{.Success}}</div>{{end}}
+        {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+
+        <div class="page-header">
+            <h1>Dashboard</h1>
+            <p>Welcome back, {{.Username}}</p>
+        </div>
+
+        {{if .StatsError}}<div class="alert alert-error">{{.StatsError}}</div>{{end}}
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="label">Jobs Today</div>
+                <div class="value">{{if .JobsToday}}{{.JobsToday}}{{else}}0{{end}}</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Total Results</div>
+                <div class="value">{{if .TotalResults}}{{.TotalResults}}{{else}}0{{end}}</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Security</div>
+                {{if .TOTPEnabled}}
+                <div class="value success">&#10003;</div>
+                {{else}}
+                <div class="value warning">&#10007;</div>
+                {{end}}
+            </div>
+            <div class="stat-card">
+                <div class="label">Workers (Up/Total)</div>
+                <div class="value">{{if .WorkersReachable}}{{.WorkersReachable}}{{else}}0{{end}} / {{if .WorkersTotal}}{{.WorkersTotal}}{{else}}0{{end}}</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Cluster Throughput</div>
+                <div class="value">{{if .ClusterResultsPerMinute}}{{printf "%.1f" .ClusterResultsPerMinute}}{{else}}0{{end}} res/min</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h2>Quick Actions</h2>
+                {{if .TOTPEnabled}}
+                <span class="status success">2FA Enabled</span>
+                {{else}}
+                <span class="status warning">2FA Disabled</span>
+                {{end}}
+            </div>
+            <div class="actions-grid">
+                <a href="/riverui/" class="btn-primary">Job Queue</a>
+                <a href="/swagger/index.html" class="btn-secondary">API Docs</a>
+                <a href="/admin/2fa/setup" class="btn-secondary">
+                    {{if .TOTPEnabled}}Manage 2FA{{else}}Enable 2FA{{end}}
+                </a>
+            </div>
+        </div>
+    </main>
+</body>
+</html>
+{{end}}

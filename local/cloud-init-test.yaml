@@ -1,0 +1,2 @@
+ssh_authorized_keys:
+  - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFs8wzrByKVWMsgbq3p8mWHktyfozbBvanNPa4ZXxsxp maps-test-key"

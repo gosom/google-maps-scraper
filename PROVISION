@@ -1,0 +1,32 @@
+#!/bin/sh
+set -e
+
+IMAGE="ghcr.io/gosom/google-maps-scraper-saas:latest"
+STATE_DIR="$HOME/.gmapssaas"
+
+# --- helpers ---
+info()  { printf '\033[1;32m✓\033[0m %s\n' "$1"; }
+fail()  { printf '\033[1;31m✗\033[0m %s\n' "$1" >&2; exit 1; }
+
+# --- preflight checks ---
+command -v docker >/dev/null 2>&1 || fail "Docker is required but not installed. See https://docs.docker.com/get-docker/"
+docker info >/dev/null 2>&1      || fail "Docker daemon is not running. Please start Docker and try again."
+info "Docker is available"
+
+# --- prepare state directory ---
+mkdir -p "$STATE_DIR"
+info "State directory ready ($STATE_DIR)"
+
+# --- determine command (default: provision) ---
+CMD="${1:-provision}"
+
+# --- run (attach /dev/tty so interactive prompts work even via curl|sh) ---
+exec docker run --rm -it \
+  -e HOME="$HOME" \
+  -e XDG_CACHE_HOME=/tmp/.cache \
+  -e GMAPSSAAS_IMAGE="$IMAGE" \
+  -v "$STATE_DIR:$STATE_DIR" \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$HOME/.ssh:$HOME/.ssh:ro" \
+  --user "$(id -u):$(id -g)" \
+  "$IMAGE" "$CMD" < /dev/tty

@@ -1,0 +1,363 @@
+{{define "workers.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    {{template "head"}}
+    <title>Workers - Maps Scraper</title>
+</head>
+<body>
+    {{template "navbar" .}}
+
+    <main class="container">
+        {{if .Success}}<div class="alert alert-success">{{.Success}}</div>{{end}}
+        {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+
+        <div class="page-header">
+            <h1>Workers</h1>
+            <p>Manage cloud worker instances on DigitalOcean or Hetzner Cloud</p>
+        </div>
+
+        <!-- Provider Setup -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Cloud Provider Tokens</h2>
+            </div>
+            <p style="color: var(--text-secondary); margin-bottom: 1rem;">Configure API tokens for the cloud providers you want to use for worker provisioning.</p>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                <div>
+                    <form method="POST" action="/admin/workers/settings">
+                        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                        <input type="hidden" name="provider" value="digitalocean">
+                        <label for="do_token">DigitalOcean Token {{if .DOConfigured}}<span class="status success" style="font-size: 0.75rem;">Active</span>{{end}}</label>
+                        <input type="password" id="do_token" name="token" placeholder="dop_v1_...">
+                        <button type="submit" style="margin-top: 0.5rem;">{{if .DOConfigured}}Update{{else}}Save{{end}} Token</button>
+                    </form>
+                </div>
+                <div>
+                    <form method="POST" action="/admin/workers/settings">
+                        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                        <input type="hidden" name="provider" value="hetzner">
+                        <label for="hetzner_token">Hetzner Cloud Token {{if .HetznerConfigured}}<span class="status success" style="font-size: 0.75rem;">Active</span>{{end}}</label>
+                        <input type="password" id="hetzner_token" name="token" placeholder="API token...">
+                        <button type="submit" style="margin-top: 0.5rem;">{{if .HetznerConfigured}}Update{{else}}Save{{end}} Token</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        {{if .AnyConfigured}}
+        <!-- Provision Worker -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Provision Worker</h2>
+            </div>
+            <form method="POST" action="/admin/workers" id="provisionForm">
+                <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+
+                <label for="provider">Cloud Provider</label>
+                <select id="provider" name="provider" required onchange="updateProviderOptions()">
+                    <option value="">Select a provider...</option>
+                    {{if .DOConfigured}}<option value="digitalocean">DigitalOcean</option>{{end}}
+                    {{if .HetznerConfigured}}<option value="hetzner">Hetzner Cloud</option>{{end}}
+                </select>
+
+                <label for="name">Name</label>
+                <input type="text" id="name" name="name" required placeholder="e.g. worker-eu-1">
+
+                <label for="region">Region</label>
+                <select id="region" name="region" required onchange="updateSizeOptions()">
+                    <option value="">Select a provider first...</option>
+                </select>
+
+                <label for="size">Size</label>
+                <select id="size" name="size" required>
+                    <option value="">Select a provider first...</option>
+                </select>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div>
+                        <label for="concurrency">Worker Containers</label>
+                        <input type="number" id="concurrency" name="concurrency" value="8" min="1" max="64">
+                        <small style="color: var(--text-secondary);">Number of worker containers to run on this host</small>
+                    </div>
+                    <div>
+                        <label for="max_jobs_per_cycle">Max Jobs Per Cycle</label>
+                        <input type="number" id="max_jobs_per_cycle" name="max_jobs_per_cycle" value="100" min="1">
+                    </div>
+                </div>
+
+                <div style="margin-top: 1rem;">
+                    <label>
+                        <input type="checkbox" name="fast_mode">
+                        Fast Mode (stealth HTTP, requires geo_coordinates)
+                    </label>
+                </div>
+
+                <label for="proxies" style="margin-top: 1rem;">Proxies (optional, comma-separated)</label>
+                <input type="text" id="proxies" name="proxies" placeholder="http://user:pass@host:port, ...">
+
+                <button type="submit" style="margin-top: 1rem;">Provision Worker</button>
+            </form>
+        </div>
+
+        <script>
+        var doRegions = [{{range .DORegions}}{slug:"{{.Slug}}",name:"{{.Name}}"},{{end}}];
+        var doSizes = [{{range .DOSizes}}{slug:"{{.Slug}}",desc:"{{.Description}}",vcpus:{{.VCPUs}},mem:{{.Memory}},disk:{{.Disk}},price:{{printf "%.0f" .PriceMonthly}},regions:[]},{{end}}];
+        var hetznerRegions = [{{range .HetznerRegions}}{slug:"{{.Slug}}",name:"{{.Name}}"},{{end}}];
+        var hetznerSizes = [{{range .HetznerSizes}}{slug:"{{.Slug}}",desc:"{{.Description}}",vcpus:{{.VCPUs}},mem:{{.Memory}},disk:{{.Disk}},price:{{printf "%.0f" .PriceMonthly}},regions:[{{range .Regions}}"{{.}}",{{end}}]},{{end}}];
+
+        function updateProviderOptions() {
+            var provider = document.getElementById('provider').value;
+            var regionSel = document.getElementById('region');
+            var sizeSel = document.getElementById('size');
+            var regions = provider === 'digitalocean' ? doRegions : provider === 'hetzner' ? hetznerRegions : [];
+
+            regionSel.innerHTML = '<option value="">Select a region...</option>';
+            regions.forEach(function(r) {
+                regionSel.innerHTML += '<option value="'+r.slug+'">'+r.name+' ('+r.slug+')</option>';
+            });
+
+            sizeSel.innerHTML = '<option value="">Select a region first...</option>';
+        }
+
+        function updateSizeOptions() {
+            var provider = document.getElementById('provider').value;
+            var region = document.getElementById('region').value;
+            var sizeSel = document.getElementById('size');
+            var allSizes = provider === 'digitalocean' ? doSizes : provider === 'hetzner' ? hetznerSizes : [];
+
+            var sizes = allSizes.filter(function(s) {
+                return s.regions.length === 0 || s.regions.indexOf(region) !== -1;
+            });
+
+            sizeSel.innerHTML = '<option value="">Select a size...</option>';
+            sizes.forEach(function(s) {
+                sizeSel.innerHTML += '<option value="'+s.slug+'">'+s.desc+' &mdash; '+s.vcpus+' vCPUs, '+s.mem+'MB RAM, '+s.disk+'GB &mdash; $'+s.price+'/mo</option>';
+            });
+        }
+        </script>
+        {{end}}
+
+        <!-- Workers Table -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Your Workers</h2>
+            </div>
+            <div id="workers-table-wrapper" style="overflow-x: auto;{{if not .Workers}} display: none;{{end}}">
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
+                    <thead>
+                        <tr style="border-bottom: 1px solid var(--border-color); text-align: left;">
+                            <th style="padding: 0.75rem 0.5rem; font-weight: 500; color: var(--text-secondary);">Name</th>
+                            <th style="padding: 0.75rem 0.5rem; font-weight: 500; color: var(--text-secondary);">Provider</th>
+                            <th style="padding: 0.75rem 0.5rem; font-weight: 500; color: var(--text-secondary);">Region</th>
+                            <th style="padding: 0.75rem 0.5rem; font-weight: 500; color: var(--text-secondary);">Size</th>
+                            <th style="padding: 0.75rem 0.5rem; font-weight: 500; color: var(--text-secondary);">Status</th>
+                            <th style="padding: 0.75rem 0.5rem; font-weight: 500; color: var(--text-secondary);">Health</th>
+                            <th style="padding: 0.75rem 0.5rem; font-weight: 500; color: var(--text-secondary);">Stats</th>
+                            <th style="padding: 0.75rem 0.5rem; font-weight: 500; color: var(--text-secondary);">IP Address</th>
+                            <th style="padding: 0.75rem 0.5rem; font-weight: 500; color: var(--text-secondary);"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="workers-tbody">
+                        {{range .Workers}}
+                        <tr data-worker-id="{{.ID}}" style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 0.75rem 0.5rem; font-weight: 500;">{{.Name}}</td>
+                            <td style="padding: 0.75rem 0.5rem; color: var(--text-secondary); text-transform: capitalize;">{{.Provider}}</td>
+                            <td style="padding: 0.75rem 0.5rem; color: var(--text-secondary);">{{.Region}}</td>
+                            <td style="padding: 0.75rem 0.5rem; color: var(--text-secondary);">{{.Size}}</td>
+                            <td style="padding: 0.75rem 0.5rem;">
+                                {{if eq .Status "active"}}
+                                <span class="status success">Active</span>
+                                {{else if eq .Status "provisioning"}}
+                                <span class="status warning">Provisioning</span>
+                                {{else if eq .Status "deleting"}}
+                                <span class="status warning">Deleting</span>
+                                {{else if eq .Status "failed"}}
+                                <span class="status danger">Failed</span>
+                                {{if .ErrorMessage}}<div style="font-size: 0.75rem; color: var(--danger); margin-top: 0.25rem; max-width: 200px; word-break: break-word;">{{.ErrorMessage}}</div>{{end}}
+                                {{else}}
+                                <span class="status">{{.Status}}</span>
+                                {{end}}
+                            </td>
+                            <td style="padding: 0.75rem 0.5rem;">
+                                {{if .Health}}
+                                    {{if .Health.Reachable}}
+                                    <span class="status success" title="Worker responding">OK</span>
+                                    {{else}}
+                                    <span class="status danger" title="Worker not responding">Down</span>
+                                    {{end}}
+                                {{else}}
+                                <span style="color: var(--text-secondary);">&mdash;</span>
+                                {{end}}
+                            </td>
+                            <td style="padding: 0.75rem 0.5rem; font-size: 0.8rem; color: var(--text-secondary);">
+                                {{if and .Health .Health.Reachable}}
+                                    {{if .Health.ResultsPerMinute}}Speed: {{printf "%.1f" .Health.ResultsPerMinute}} res/min<br>{{end}}
+                                    {{if .Health.ResultsCollected}}Results: {{.Health.ResultsCollected}}<br>{{end}}
+                                    {{if .Health.Uptime}}Up: {{.Health.Uptime}}<br>{{end}}
+                                    {{if .Health.CheckedAt}}<span style="font-size: 0.7rem; opacity: 0.7;">Checked: {{.Health.CheckedAt}}</span>{{end}}
+                                {{else}}
+                                &mdash;
+                                {{end}}
+                            </td>
+                            <td style="padding: 0.75rem 0.5rem; font-family: ui-monospace, SFMono-Regular, monospace; color: var(--text-secondary);">{{if .IPAddress}}{{.IPAddress}}{{else}}&mdash;{{end}}</td>
+                            <td style="padding: 0.75rem 0.5rem;">
+                                {{if and (ne .Status "deleting") (ne .Status "deleted")}}
+                                {{if and .IPAddress (eq .Status "active")}}
+                                <button onclick="window.open('/admin/workers/{{.ID}}/terminal', '_blank', 'width=900,height=600')" style="background: none; border: 1px solid var(--primary); color: var(--primary); padding: 0.375rem 0.75rem; font-size: 0.8rem; border-radius: 6px; cursor: pointer; width: auto; margin-right: 0.5rem;">Terminal</button>
+                                {{end}}
+                                <form method="POST" action="/admin/workers/{{.ID}}/delete" style="display: inline; margin: 0;" onsubmit="return confirm('Are you sure you want to delete this worker? This will destroy the server.');">
+                                    <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                                    <button type="submit" style="background: none; border: 1px solid var(--danger); color: var(--danger); padding: 0.375rem 0.75rem; font-size: 0.8rem; border-radius: 6px; cursor: pointer; width: auto;">Delete</button>
+                                </form>
+                                {{end}}
+                            </td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+            <p id="no-workers-msg" style="color: var(--text-secondary); text-align: center; padding: 2rem 0;{{if .Workers}} display: none;{{end}}">No workers yet. Configure a provider and provision one to get started.</p>
+        </div>
+
+        <!-- SSH Key Pair -->
+        <div class="card">
+            <div class="card-header">
+                <h2>SSH Key Pair</h2>
+                {{if .SSHKeyExists}}
+                <span class="status success">Generated</span>
+                {{else}}
+                <span class="status warning">Not Generated</span>
+                {{end}}
+            </div>
+
+            {{if .SSHKeyExists}}
+            <p>The application SSH key pair is used to connect to provisioned workers. Download the private key to connect via SSH.</p>
+            <div class="actions-grid" style="max-width: 500px; margin-top: 1rem;">
+                <a href="/admin/workers/ssh-key/private" class="btn-primary" download>Download Private Key</a>
+                <a href="/admin/workers/ssh-key/public" class="btn-secondary" download>Download Public Key</a>
+            </div>
+            <small style="display: block; margin-top: 0.5rem;">After downloading, set permissions: <code>chmod 600 gmapspro_id_ed25519</code></small>
+            <small>Connect to a worker: <code>ssh -p 2222 -i gmapspro_id_ed25519 root@&lt;worker-ip&gt;</code></small>
+            {{else}}
+            <p>No SSH key pair has been generated yet. A key pair will be automatically generated when you provision your first worker.</p>
+            {{end}}
+        </div>
+        <script>
+        (function() {
+            var csrfToken = '{{.CSRFToken}}';
+            var tbody = document.getElementById('workers-tbody');
+            var tableWrapper = document.getElementById('workers-table-wrapper');
+            var noWorkersMsg = document.getElementById('no-workers-msg');
+
+            function escapeHtml(s) {
+                var div = document.createElement('div');
+                div.appendChild(document.createTextNode(s));
+                return div.innerHTML;
+            }
+
+            function renderStatus(w) {
+                if (w.Status === 'active') return '<span class="status success">Active</span>';
+                if (w.Status === 'provisioning') return '<span class="status warning">Provisioning</span>';
+                if (w.Status === 'deleting') return '<span class="status warning">Deleting</span>';
+                if (w.Status === 'failed') {
+                    var html = '<span class="status danger">Failed</span>';
+                    if (w.ErrorMessage) html += '<div style="font-size: 0.75rem; color: var(--danger); margin-top: 0.25rem; max-width: 200px; word-break: break-word;">'+escapeHtml(w.ErrorMessage)+'</div>';
+                    return html;
+                }
+                return '<span class="status">'+escapeHtml(w.Status)+'</span>';
+            }
+
+            function renderHealth(w) {
+                if (!w.Health) return '<span style="color: var(--text-secondary);">&mdash;</span>';
+                if (w.Health.reachable) return '<span class="status success" title="Worker responding">OK</span>';
+                return '<span class="status danger" title="Worker not responding">Down</span>';
+            }
+
+            function renderStats(w) {
+                if (!w.Health || !w.Health.reachable) return '&mdash;';
+                var parts = [];
+                if (w.Health.results_per_minute) parts.push('Speed: '+w.Health.results_per_minute.toFixed(1)+' res/min');
+                if (w.Health.results_collected) parts.push('Results: '+w.Health.results_collected);
+                if (w.Health.uptime) parts.push('Up: '+escapeHtml(w.Health.uptime));
+                return parts.join('<br>') || '&mdash;';
+            }
+
+            function renderActions(w) {
+                if (w.Status === 'deleting' || w.Status === 'deleted') return '';
+                var html = '';
+                if (w.IPAddress && w.Status === 'active') {
+                    html += '<button onclick="window.open(\'/admin/workers/'+w.ID+'/terminal\', \'_blank\', \'width=900,height=600\')" style="background: none; border: 1px solid var(--primary); color: var(--primary); padding: 0.375rem 0.75rem; font-size: 0.8rem; border-radius: 6px; cursor: pointer; width: auto; margin-right: 0.5rem;">Terminal</button>';
+                }
+                html += '<form method="POST" action="/admin/workers/'+w.ID+'/delete" style="display: inline; margin: 0;" onsubmit="return confirm(\'Are you sure you want to delete this worker? This will destroy the server.\');">';
+                html += '<input type="hidden" name="csrf_token" value="'+csrfToken+'">';
+                html += '<button type="submit" style="background: none; border: 1px solid var(--danger); color: var(--danger); padding: 0.375rem 0.75rem; font-size: 0.8rem; border-radius: 6px; cursor: pointer; width: auto;">Delete</button>';
+                html += '</form>';
+                return html;
+            }
+
+            function buildRow(w) {
+                var tr = document.createElement('tr');
+                tr.setAttribute('data-worker-id', w.ID);
+                tr.style.borderBottom = '1px solid var(--border-color)';
+                tr.innerHTML =
+                    '<td style="padding: 0.75rem 0.5rem; font-weight: 500;">'+escapeHtml(w.Name)+'</td>'+
+                    '<td style="padding: 0.75rem 0.5rem; color: var(--text-secondary); text-transform: capitalize;">'+escapeHtml(w.Provider)+'</td>'+
+                    '<td style="padding: 0.75rem 0.5rem; color: var(--text-secondary);">'+escapeHtml(w.Region)+'</td>'+
+                    '<td style="padding: 0.75rem 0.5rem; color: var(--text-secondary);">'+escapeHtml(w.Size)+'</td>'+
+                    '<td style="padding: 0.75rem 0.5rem;">'+renderStatus(w)+'</td>'+
+                    '<td style="padding: 0.75rem 0.5rem;">'+renderHealth(w)+'</td>'+
+                    '<td style="padding: 0.75rem 0.5rem; font-size: 0.8rem; color: var(--text-secondary);">'+renderStats(w)+'</td>'+
+                    '<td style="padding: 0.75rem 0.5rem; font-family: ui-monospace, SFMono-Regular, monospace; color: var(--text-secondary);">'+(w.IPAddress ? escapeHtml(w.IPAddress) : '&mdash;')+'</td>'+
+                    '<td style="padding: 0.75rem 0.5rem;">'+renderActions(w)+'</td>';
+                return tr;
+            }
+
+            function updateRow(tr, w) {
+                var cells = tr.children;
+                cells[4].innerHTML = renderStatus(w);
+                cells[5].innerHTML = renderHealth(w);
+                cells[6].innerHTML = renderStats(w);
+                cells[7].innerHTML = w.IPAddress ? escapeHtml(w.IPAddress) : '&mdash;';
+                cells[8].innerHTML = renderActions(w);
+            }
+
+            var es = new EventSource('/admin/workers/stream');
+            es.onmessage = function(e) {
+                var data = JSON.parse(e.data);
+                var workers = data.workers || [];
+                var idSet = {};
+
+                for (var i = 0; i < workers.length; i++) {
+                    var w = workers[i];
+                    idSet[w.ID] = true;
+                    var existing = tbody.querySelector('tr[data-worker-id="'+w.ID+'"]');
+                    if (existing) {
+                        updateRow(existing, w);
+                    } else {
+                        tbody.appendChild(buildRow(w));
+                    }
+                }
+
+                var rows = tbody.querySelectorAll('tr[data-worker-id]');
+                for (var j = 0; j < rows.length; j++) {
+                    var rid = rows[j].getAttribute('data-worker-id');
+                    if (!idSet[rid]) {
+                        rows[j].remove();
+                    }
+                }
+
+                if (workers.length > 0) {
+                    tableWrapper.style.display = '';
+                    noWorkersMsg.style.display = 'none';
+                } else {
+                    tableWrapper.style.display = 'none';
+                    noWorkersMsg.style.display = '';
+                }
+            };
+        })();
+        </script>
+    </main>
+</body>
+</html>
+{{end}}

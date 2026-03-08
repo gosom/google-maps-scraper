@@ -17,10 +17,11 @@ type PlaceJobOptions func(*PlaceJob)
 type PlaceJob struct {
 	scrapemate.Job
 
-	UsageInResultststs  bool
-	ExtractEmail        bool
-	ExitMonitor         exiter.Exiter
-	ExtractExtraReviews bool
+	UsageInResultststs      bool
+	ExtractEmail            bool
+	ExitMonitor             exiter.Exiter
+	ExtractExtraReviews     bool
+	WriterManagedCompletion bool
 }
 
 func NewPlaceJob(parentID, langCode, u string, extractEmail, extraExtraReviews bool, opts ...PlaceJobOptions) *PlaceJob {
@@ -58,6 +59,16 @@ func WithPlaceJobExitMonitor(exitMonitor exiter.Exiter) PlaceJobOptions {
 	}
 }
 
+func WithPlaceJobWriterManagedCompletion() PlaceJobOptions {
+	return func(j *PlaceJob) {
+		j.WriterManagedCompletion = true
+	}
+}
+
+func (j *PlaceJob) ProcessOnFetchError() bool {
+	return true
+}
+
 func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, []scrapemate.IJob, error) {
 	defer func() {
 		resp.Document = nil
@@ -65,13 +76,29 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 		resp.Meta = nil
 	}()
 
+	if resp.Error != nil {
+		if j.ExitMonitor != nil {
+			j.ExitMonitor.IncrPlacesCompleted(1)
+		}
+
+		return nil, nil, resp.Error
+	}
+
 	raw, ok := resp.Meta["json"].([]byte)
 	if !ok {
+		if j.ExitMonitor != nil {
+			j.ExitMonitor.IncrPlacesCompleted(1)
+		}
+
 		return nil, nil, fmt.Errorf("could not convert to []byte")
 	}
 
 	entry, err := EntryFromJSON(raw)
 	if err != nil {
+		if j.ExitMonitor != nil {
+			j.ExitMonitor.IncrPlacesCompleted(1)
+		}
+
 		return nil, nil, err
 	}
 
@@ -100,12 +127,16 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 			opts = append(opts, WithEmailJobExitMonitor(j.ExitMonitor))
 		}
 
+		if j.WriterManagedCompletion {
+			opts = append(opts, WithEmailJobWriterManagedCompletion())
+		}
+
 		emailJob := NewEmailJob(j.ID, &entry, opts...)
 
 		j.UsageInResultststs = false
 
 		return nil, []scrapemate.IJob{emailJob}, nil
-	} else if j.ExitMonitor != nil {
+	} else if j.ExitMonitor != nil && !j.WriterManagedCompletion {
 		j.ExitMonitor.IncrPlacesCompleted(1)
 	}
 

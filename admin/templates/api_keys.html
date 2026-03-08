@@ -1,0 +1,96 @@
+{{define "api_keys.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    {{template "head"}}
+    <title>API Keys - Maps Scraper</title>
+</head>
+<body>
+    {{template "navbar" .}}
+
+    <main class="container">
+        {{if .Success}}<div class="alert alert-success">{{.Success}}</div>{{end}}
+        {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+
+        <div class="page-header">
+            <h1>API Keys</h1>
+            <p>Manage API keys for programmatic access</p>
+        </div>
+
+        {{if .NewKey}}
+        <div class="card" style="border-color: var(--success);">
+            <div class="card-header">
+                <h2>Your New API Key</h2>
+            </div>
+            <p style="color: var(--danger); font-weight: 500; margin-bottom: 1rem;">Copy this key now. You won't be able to see it again.</p>
+            <code style="display: block; padding: 1rem; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 6px; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.875rem; word-break: break-all;">{{.NewKey}}</code>
+        </div>
+        {{end}}
+
+        <!-- Create API Key -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Create API Key</h2>
+            </div>
+            <form method="POST" action="/admin/api-keys">
+                <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                <label for="name">Key Name</label>
+                <input type="text" id="name" name="name" required placeholder="e.g. Production, Testing">
+                <button type="submit" style="margin-top: 1rem;">Create Key</button>
+            </form>
+        </div>
+
+        <!-- API Keys Table -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Your API Keys</h2>
+            </div>
+            {{if .APIKeys}}
+            <div style="overflow-x: auto;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
+                    <thead>
+                        <tr style="border-bottom: 1px solid var(--border-color); text-align: left;">
+                            <th style="padding: 0.75rem 0.5rem; font-weight: 500; color: var(--text-secondary);">Name</th>
+                            <th style="padding: 0.75rem 0.5rem; font-weight: 500; color: var(--text-secondary);">Key Prefix</th>
+                            <th style="padding: 0.75rem 0.5rem; font-weight: 500; color: var(--text-secondary);">Created</th>
+                            <th style="padding: 0.75rem 0.5rem; font-weight: 500; color: var(--text-secondary);">Last Used</th>
+                            <th style="padding: 0.75rem 0.5rem; font-weight: 500; color: var(--text-secondary);">Status</th>
+                            <th style="padding: 0.75rem 0.5rem; font-weight: 500; color: var(--text-secondary);"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range .APIKeys}}
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 0.75rem 0.5rem; font-weight: 500;">{{.Name}}</td>
+                            <td style="padding: 0.75rem 0.5rem; font-family: ui-monospace, SFMono-Regular, monospace; color: var(--text-secondary);">{{.KeyPrefix}}...</td>
+                            <td style="padding: 0.75rem 0.5rem; color: var(--text-secondary);">{{.CreatedAt.Format "Jan 02, 2006"}}</td>
+                            <td style="padding: 0.75rem 0.5rem; color: var(--text-secondary);">{{if .LastUsedAt}}{{.LastUsedAt.Format "Jan 02, 2006"}}{{else}}Never{{end}}</td>
+                            <td style="padding: 0.75rem 0.5rem;">
+                                {{if .RevokedAt}}
+                                <span class="status danger">Revoked</span>
+                                {{else}}
+                                <span class="status success">Active</span>
+                                {{end}}
+                            </td>
+                            <td style="padding: 0.75rem 0.5rem;">
+                                {{if not .RevokedAt}}
+                                <form method="POST" action="/admin/api-keys/revoke" style="display: inline; margin: 0;" onsubmit="return confirm('Are you sure you want to revoke this API key? This cannot be undone.');">
+                                    <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                                    <input type="hidden" name="key_id" value="{{.ID}}">
+                                    <button type="submit" style="background: none; border: 1px solid var(--danger); color: var(--danger); padding: 0.375rem 0.75rem; font-size: 0.8rem; border-radius: 6px; cursor: pointer; width: auto;">Revoke</button>
+                                </form>
+                                {{end}}
+                            </td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+            {{else}}
+            <p style="color: var(--text-secondary); text-align: center; padding: 2rem 0;">No API keys yet. Create one to get started.</p>
+            {{end}}
+        </div>
+    </main>
+</body>
+</html>
+{{end}}
