@@ -525,16 +525,32 @@ func parseReviews(reviewsI []any) []Review {
 			continue
 		}
 
-		// Try multiple paths for images
-		optsI := getNthElementAndCast[[]any](el, 2, 2, 0, 1, 21, 7)
-		if len(optsI) == 0 {
-			optsI = getNthElementAndCast[[]any](el, 2, 2, 0, 1, 7)
+		// Try parsing the direct image URLs from their explicit paths
+		imagesI := getNthElementAndCast[[]any](el, 2, 2)
+		for j := range imagesI {
+			// Real image url is typically at p[1][6][0] for each photo element p in imagesI
+			url := getNthElementAndCast[string](imagesI, j, 1, 6, 0)
+			if url != "" {
+				review.Images = append(review.Images, url)
+			}
 		}
 
-		for j := range optsI {
-			val := getNthElementAndCast[string](optsI, j)
-			if val != "" && len(val) > 2 {
-				review.Images = append(review.Images, val[2:])
+		// Fallback to the original structure just in case there's legacy format
+		if len(review.Images) == 0 {
+			optsI := getNthElementAndCast[[]any](el, 2, 2, 0, 1, 21, 7)
+			if len(optsI) == 0 {
+				optsI = getNthElementAndCast[[]any](el, 2, 2, 0, 1, 7)
+			}
+
+			for j := range optsI {
+				val := getNthElementAndCast[string](optsI, j)
+				if val != "" && len(val) > 2 {
+					if strings.HasPrefix(val, "//") {
+						review.Images = append(review.Images, val[2:])
+					} else {
+						review.Images = append(review.Images, val)
+					}
+				}
 			}
 		}
 
