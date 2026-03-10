@@ -57,7 +57,7 @@ jobs:
   build-and-push-backend:
     name: Build and Push Backend
     needs: setup
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-latest
     if: |
       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') && 
       (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true))
@@ -103,7 +103,7 @@ jobs:
   build-and-push-frontend:
     name: Build and Push Frontend
     needs: setup
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-latest
     environment: staging
     if: |
       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') && 
