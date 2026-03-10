@@ -11,4 +11,9 @@ BEGIN;
         ADD COLUMN rating NUMERIC NOT NULL,
         ADD COLUMN latitude DOUBLE PRECISION NOT NULL DEFAULT 0,
         ADD COLUMN longitude DOUBLE PRECISION NOT NULL DEFAULT 0;
+
+
+        ALTER TABLE results 
+            DROP COLUMN data;
+    
 COMMIT;
