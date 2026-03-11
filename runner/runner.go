@@ -80,6 +80,11 @@ type Config struct {
 	DisablePageReuse         bool
 	ExtraReviews             bool
 	LeadsDBAPIKey            string
+
+	// Grid scraping — divide a bounding box into cells to bypass the ~120
+	// results-per-search limit imposed by Google Maps.
+	GridBBox   string  // "minLat,minLon,maxLat,maxLon"
+	GridCellKm float64 // size of each grid cell in km (default: 1.0)
 }
 
 func ParseConfig() *Config {
@@ -127,6 +132,8 @@ func ParseConfig() *Config {
 	flag.BoolVar(&cfg.DisablePageReuse, "disable-page-reuse", false, "disable page reuse in playwright")
 	flag.BoolVar(&cfg.ExtraReviews, "extra-reviews", false, "enable extra reviews collection")
 	flag.StringVar(&cfg.LeadsDBAPIKey, "leadsdb-api-key", "", "LeadsDB API key for exporting results to LeadsDB")
+	flag.StringVar(&cfg.GridBBox, "grid-bbox", "", "bounding box for grid scraping: 'minLat,minLon,maxLat,maxLon' (e.g. '40.30,-3.80,40.50,-3.60')")
+	flag.Float64Var(&cfg.GridCellKm, "grid-cell", 1.0, "grid cell size in km [default: 1.0]. Use with -grid-bbox")
 
 	flag.Parse()
 
