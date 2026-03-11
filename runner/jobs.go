@@ -10,9 +10,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/gosom/google-maps-scraper/deduper"
 	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/google-maps-scraper/gmaps"
+	"github.com/gosom/google-maps-scraper/grid"
 	"github.com/gosom/scrapemate"
 )
 
@@ -128,6 +130,117 @@ func CreateSeedJobs(
 	}
 
 	return jobs, scanner.Err()
+}
+
+// CreateGridSeedJobs reads search queries from r and produces one GmapJob per
+// (query, grid-cell) pair. Each cell covers approximately cellSizeKm × cellSizeKm
+// on the ground. The zoom level controls how much of the map Google Maps renders
+// per cell (use 14-16 for most cases).
+//
+// Deduplication across cells is handled automatically by the shared deduper.
+func CreateGridSeedJobs(
+	langCode string,
+	r io.Reader,
+	maxDepth int,
+	email bool,
+	bbox grid.BoundingBox,
+	cellSizeKm float64,
+	zoom int,
+	dedup deduper.Deduper,
+	exitMonitor exiter.Exiter,
+	extraReviews bool,
+) ([]scrapemate.IJob, error) {
+	cells := grid.GenerateCells(bbox, cellSizeKm)
+	if len(cells) == 0 {
+		return nil, fmt.Errorf("grid produced 0 cells — check bounding box and cell size")
+	}
+
+	queries, err := readQueries(r)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(queries) == 0 {
+		return nil, fmt.Errorf("no queries found in input")
+	}
+
+	var jobs []scrapemate.IJob
+
+	for _, q := range queries {
+		queryText := q.text
+		queryID := q.id
+
+		for _, cell := range cells {
+			// Each cell gets a unique ID derived from the query ID (or a new UUID).
+			cellID := uuid.New().String()
+			if queryID != "" {
+				cellID = fmt.Sprintf("%s-%s", queryID, cellID)
+			}
+
+			opts := []gmaps.GmapJobOptions{}
+
+			if dedup != nil {
+				opts = append(opts, gmaps.WithDeduper(dedup))
+			}
+
+			if exitMonitor != nil {
+				opts = append(opts, gmaps.WithExitMonitor(exitMonitor))
+			}
+
+			if extraReviews {
+				opts = append(opts, gmaps.WithExtraReviews())
+			}
+
+			job := gmaps.NewGmapJob(
+				cellID,
+				langCode,
+				queryText,
+				maxDepth,
+				email,
+				cell.GeoCoordinates(),
+				zoom,
+				opts...,
+			)
+
+			jobs = append(jobs, job)
+		}
+	}
+
+	return jobs, nil
+}
+
+// query holds a parsed input line.
+type query struct {
+	text string
+	id   string
+}
+
+// readQueries reads all non-empty lines from r and parses optional custom IDs
+// using the "#!#" delimiter (same format as CreateSeedJobs).
+func readQueries(r io.Reader) ([]query, error) {
+	var queries []query
+
+	scanner := bufio.NewScanner(r)
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		q := query{}
+
+		if before, after, ok := strings.Cut(line, "#!#"); ok {
+			q.text = strings.TrimSpace(before)
+			q.id = strings.TrimSpace(after)
+		} else {
+			q.text = line
+		}
+
+		queries = append(queries, q)
+	}
+
+	return queries, scanner.Err()
 }
 
 func LoadCustomWriter(pluginDir, pluginName string) (scrapemate.ResultWriter, error) {

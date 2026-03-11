@@ -11,6 +11,7 @@ import (
 
 	"github.com/gosom/google-maps-scraper/deduper"
 	"github.com/gosom/google-maps-scraper/exiter"
+	"github.com/gosom/google-maps-scraper/grid"
 	"github.com/gosom/google-maps-scraper/leadsdb"
 	"github.com/gosom/google-maps-scraper/runner"
 	"github.com/gosom/google-maps-scraper/tlmt"
@@ -76,19 +77,43 @@ func (r *fileRunner) Run(ctx context.Context) (err error) {
 	dedup := deduper.New()
 	exitMonitor := exiter.New()
 
-	seedJobs, err = runner.CreateSeedJobs(
-		r.cfg.FastMode,
-		r.cfg.LangCode,
-		r.input,
-		r.cfg.MaxDepth,
-		r.cfg.Email,
-		r.cfg.GeoCoordinates,
-		r.cfg.Zoom,
-		r.cfg.Radius,
-		dedup,
-		exitMonitor,
-		r.cfg.ExtraReviews,
-	)
+	if r.cfg.GridBBox != "" {
+		bbox, bboxErr := grid.ParseBoundingBox(r.cfg.GridBBox)
+		if bboxErr != nil {
+			return fmt.Errorf("invalid -grid-bbox: %w", bboxErr)
+		}
+
+		cellCount := grid.EstimateCellCount(bbox, r.cfg.GridCellKm)
+		fmt.Fprintf(os.Stderr, "grid scraping: ~%d cells (%.2f km each)\n", cellCount, r.cfg.GridCellKm)
+
+		seedJobs, err = runner.CreateGridSeedJobs(
+			r.cfg.LangCode,
+			r.input,
+			r.cfg.MaxDepth,
+			r.cfg.Email,
+			bbox,
+			r.cfg.GridCellKm,
+			r.cfg.Zoom,
+			dedup,
+			exitMonitor,
+			r.cfg.ExtraReviews,
+		)
+	} else {
+		seedJobs, err = runner.CreateSeedJobs(
+			r.cfg.FastMode,
+			r.cfg.LangCode,
+			r.input,
+			r.cfg.MaxDepth,
+			r.cfg.Email,
+			r.cfg.GeoCoordinates,
+			r.cfg.Zoom,
+			r.cfg.Radius,
+			dedup,
+			exitMonitor,
+			r.cfg.ExtraReviews,
+		)
+	}
+
 	if err != nil {
 		return err
 	}
