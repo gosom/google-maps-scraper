@@ -12,7 +12,7 @@ services:
       - CLERK_SECRET_KEY=${CLERK_SECRET_KEY}
       - DISABLE_TELEMETRY=${DISABLE_TELEMETRY:-0}
     ports:
-      - "${API_PORT:-8080}:8080"
+      - "127.0.0.1:${API_PORT:-8080}:8080"
     volumes:
       - gmapsdata:/gmapsdata
     restart: unless-stopped
@@ -59,7 +59,7 @@ services:
     image: grafana/loki:3.4.2
     container_name: loki
     ports:
-      - "3100:3100"
+      - "127.0.0.1:3100:3100"
     command: -config.file=/etc/loki/local-config.yaml
     volumes:
       - loki-data:/loki
@@ -69,7 +69,7 @@ services:
     image: grafana/grafana:11.6.0
     container_name: grafana
     ports:
-      - "3001:3000"
+      - "127.0.0.1:3001:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-changeme}

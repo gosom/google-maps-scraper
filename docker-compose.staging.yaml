@@ -22,7 +22,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     volumes:
       - ./gmapsdata:/gmapsdata
       - ./google_cookies.json:/app/google_cookies.json:ro
@@ -49,7 +49,7 @@ services:
     image: ghcr.io/brezel-ai/brezelscraper-frontend:staging
     container_name: brezelscraper-frontend
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       - NEXT_PUBLIC_API_URL=http://brezelscraper-backend:8080
       - NEXT_PUBLIC_ENVIRONMENT=${ENVIRONMENT:-staging}
