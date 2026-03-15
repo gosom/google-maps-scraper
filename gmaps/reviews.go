@@ -197,37 +197,50 @@ const hexMatchPattern = `0x[0-9a-fA-F]+:0x[0-9a-fA-F]+` // Hex format place ID
 
 // extractPlaceID extracts the place ID from various Google Maps URL formats
 func extractPlaceID(mapURL string) (string, error) {
-	patternsOnce.Do(func() {
-		// Try multiple patterns for extracting place ID
-		avail := []string{
-			`!1s([^!]+)`,                             // Standard format: !1s0x...
-			`place_id=([^&]+)`,                       // Query parameter format
-			`/place/[^/]+/@[^/]+/data=!.*!1s([^!]+)`, // Full place URL
-			hexMatchPattern,                          // Hex format place ID
-		}
+    patternsOnce.Do(func() {
+        // Try multiple patterns for extracting place ID
+        avail := []string{
+            `!1s(0x[0-9a-fA-F]+:0x[0-9a-fA-F]+)`,   // Hex place ID in !1s parameter
+            `!1s(ChIJ[A-Za-z0-9_-]+)`,                // ChIJ-style place ID in !1s
+            `!19s(ChIJ[A-Za-z0-9_-]+)`,               // ChIJ-style in !19s parameter
+            `place_id=(ChIJ[A-Za-z0-9_-]+)`,          // Query parameter format
+            `/place/[^/]+/@[^/]+/data=!.*!1s([^!]+)`, // Full place URL
+            `(0x[0-9a-fA-F]+:0x[0-9a-fA-F]+)`,       // Bare hex format (last resort)
+        }
 
-		for _, p := range avail {
-			patterns[p] = regexp.MustCompile(p)
-		}
-	})
+        patterns = make(map[string]*regexp.Regexp, len(avail))
 
-	for pattern, re := range patterns {
-		match := re.FindStringSubmatch(mapURL)
-		if len(match) >= 2 {
-			rawPlaceID, err := url.QueryUnescape(match[1])
-			if err != nil {
-				rawPlaceID = match[1]
-			}
+        for _, p := range avail {
+            patterns[p] = regexp.MustCompile(p)
+        }
+    })
 
-			return rawPlaceID, nil
-		}
-		// For hex format, match[0] is the full match
-		if pattern == hexMatchPattern && len(match) >= 1 {
-			return match[0], nil
-		}
-	}
+    // Use a fixed order instead of ranging over the map (map order is random)
+    orderedPatterns := []string{
+        `!1s(0x[0-9a-fA-F]+:0x[0-9a-fA-F]+)`,
+        `!1s(ChIJ[A-Za-z0-9_-]+)`,
+        `!19s(ChIJ[A-Za-z0-9_-]+)`,
+        `place_id=(ChIJ[A-Za-z0-9_-]+)`,
+        `/place/[^/]+/@[^/]+/data=!.*!1s([^!]+)`,
+        `(0x[0-9a-fA-F]+:0x[0-9a-fA-F]+)`,
+    }
 
-	return "", fmt.Errorf("could not extract place ID from URL: %s", mapURL)
+    for _, pattern := range orderedPatterns {
+        re := patterns[pattern]
+        if re == nil {
+            continue
+        }
+        match := re.FindStringSubmatch(mapURL)
+        if len(match) >= 2 {
+            rawPlaceID, err := url.QueryUnescape(match[1])
+            if err != nil {
+                rawPlaceID = match[1]
+            }
+            return rawPlaceID, nil
+        }
+    }
+
+    return "", fmt.Errorf("could not extract place ID from URL: %s", mapURL)
 }
 
 func (f *fetcher) generateURL(mapURL, pageToken string, pageSize int, requestID string) (string, error) {
