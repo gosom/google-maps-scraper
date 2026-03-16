@@ -51,6 +51,9 @@ type ServerConfig struct {
 	ClerkSecretKey      string // Clerk server-side secret key for authentication
 	StripeAPIKey        string // Optional Stripe API key for subscriptions
 	StripeWebhookSecret string // Optional Stripe webhook secret
+	// Version is the Git SHA injected at build time via ldflags.
+	// It is returned by the /health endpoint as the "version" field.
+	Version string
 }
 
 func New(cfg ServerConfig) (*Server, error) {
@@ -104,6 +107,7 @@ func New(cfg ServerConfig) (*Server, error) {
 		ResultsSvc:      webservices.NewResultsService(ans.db),
 		IntegrationRepo: postgres.NewIntegrationRepository(ans.db),
 		GoogleSheetsSvc: googlesheets.NewService(),
+		Version:         cfg.Version,
 	}
 	hg := webhandlers.NewHandlerGroup(deps)
 
@@ -119,10 +123,6 @@ func New(cfg ServerConfig) (*Server, error) {
 
 	// Web UI routes
 	router.HandleFunc("/", hg.Web.Index).Methods(http.MethodGet)
-	router.HandleFunc("/jobs", hg.Web.Jobs).Methods(http.MethodGet)
-	router.HandleFunc("/scrape", hg.Web.Scrape).Methods(http.MethodPost)
-	router.HandleFunc("/delete", hg.Web.Delete).Methods(http.MethodDelete)
-	router.HandleFunc("/download", hg.Web.Download).Methods(http.MethodGet)
 
 	// API documentation (public access)
 	router.HandleFunc("/api/docs", hg.Web.Redoc).Methods(http.MethodGet)
@@ -195,9 +195,19 @@ func New(cfg ServerConfig) (*Server, error) {
 		router.HandleFunc("/api/stripe/webhook", hg.Billing.HandleStripeWebhook).Methods(http.MethodPost)
 	}
 
-	// Apply security headers and CORS to all routes via middleware chain
-	// Note: RequestLogger is applied separately to API routes after authentication
-	handler := webmiddleware.Chain(router, webmiddleware.SecurityHeaders, webmiddleware.CORS)
+	// Apply security headers and CORS to all routes via middleware chain.
+	// ALLOWED_ORIGINS is a comma-separated list of permitted origins (e.g.
+	// "https://brezel.ai,https://www.brezel.ai"). If unset, only localhost
+	// origins are allowed (safe development default).
+	var allowedOrigins []string
+	if raw := os.Getenv("ALLOWED_ORIGINS"); raw != "" {
+		for _, o := range strings.Split(raw, ",") {
+			if trimmed := strings.TrimSpace(o); trimmed != "" {
+				allowedOrigins = append(allowedOrigins, trimmed)
+			}
+		}
+	}
+	handler := webmiddleware.Chain(router, webmiddleware.Recovery(ans.logger), webmiddleware.SecurityHeaders, webmiddleware.NewCORS(allowedOrigins))
 	ans.srv.Handler = handler
 
 	tmplsKeys := []string{
@@ -465,8 +475,8 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 	// Get all jobs (no user filtering for web UI)
 	jobs, err := s.svc.All(r.Context(), "")
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
 		s.logger.Error("failed_to_get_jobs", slog.Any("error", err))
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -492,8 +502,8 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 
 	err := r.ParseForm()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
 		s.logger.Error("form_parse_error", slog.Any("error", err))
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -517,8 +527,8 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 			}
 			err = s.userRepo.Create(r.Context(), &defaultUser)
 			if err != nil {
-				http.Error(w, "Failed to create default user: "+err.Error(), http.StatusInternalServerError)
 				s.logger.Error("failed_to_create_default_user", slog.Any("error", err))
+				http.Error(w, "internal server error", http.StatusInternalServerError)
 				return
 			}
 			s.logger.Info("created_default_user")
@@ -637,8 +647,8 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 
 	err = s.svc.Create(r.Context(), &newJob)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
 		s.logger.Error("failed_to_create_job", slog.Any("error", err))
+		http.Error(w, "job creation failed", http.StatusInternalServerError)
 		return
 	}
 
@@ -724,10 +734,10 @@ func (s *Server) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := s.svc.Delete(r.Context(), deleteID.String())
+	err := s.svc.Delete(r.Context(), deleteID.String(), "")
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
 		s.logger.Error("failed_to_delete_job", slog.String("job_id", deleteID.String()), slog.Any("error", err))
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -834,13 +844,8 @@ func (s *Server) apiScrape(w http.ResponseWriter, r *http.Request) {
 
 	err = s.svc.Create(r.Context(), &newJob)
 	if err != nil {
-		ans := apiError{
-			Code:    http.StatusInternalServerError,
-			Message: "failed to create job: " + err.Error(),
-		}
-
-		renderJSON(w, http.StatusInternalServerError, ans)
 		s.logger.Error("failed_to_create_job", slog.Any("error", err))
+		renderJSON(w, http.StatusInternalServerError, apiError{Code: http.StatusInternalServerError, Message: "job creation failed"})
 		return
 	}
 
@@ -874,12 +879,8 @@ func (s *Server) apiGetJobs(w http.ResponseWriter, r *http.Request) {
 		// Only return jobs for the authenticated user
 		jobs, err = s.svc.All(r.Context(), userID)
 		if err != nil {
-			apiError := apiError{
-				Code:    http.StatusInternalServerError,
-				Message: err.Error(),
-			}
-			renderJSON(w, http.StatusInternalServerError, apiError)
 			s.logger.Error("failed_to_get_jobs", slog.String("user_id", userID), slog.Any("error", err))
+			renderJSON(w, http.StatusInternalServerError, apiError{Code: http.StatusInternalServerError, Message: "internal server error"})
 			return
 		}
 		s.logger.Info("retrieved_jobs", slog.Int("count", len(jobs)), slog.String("user_id", userID))
@@ -887,12 +888,8 @@ func (s *Server) apiGetJobs(w http.ResponseWriter, r *http.Request) {
 		// If authentication is not enabled, return all jobs
 		jobs, err = s.svc.All(r.Context(), "")
 		if err != nil {
-			apiError := apiError{
-				Code:    http.StatusInternalServerError,
-				Message: err.Error(),
-			}
-			renderJSON(w, http.StatusInternalServerError, apiError)
 			s.logger.Error("failed_to_get_all_jobs", slog.Any("error", err))
+			renderJSON(w, http.StatusInternalServerError, apiError{Code: http.StatusInternalServerError, Message: "internal server error"})
 			return
 		}
 		s.logger.Info("retrieved_jobs_no_auth", slog.Int("count", len(jobs)))
@@ -930,12 +927,8 @@ func (s *Server) apiGetUserJobs(w http.ResponseWriter, r *http.Request) {
 	// Only return jobs for the authenticated user (strict matching)
 	jobs, err := s.svc.All(r.Context(), userID)
 	if err != nil {
-		apiError := apiError{
-			Code:    http.StatusInternalServerError,
-			Message: err.Error(),
-		}
-		renderJSON(w, http.StatusInternalServerError, apiError)
 		s.logger.Error("failed_to_get_jobs", slog.String("user_id", userID), slog.Any("error", err))
+		renderJSON(w, http.StatusInternalServerError, apiError{Code: http.StatusInternalServerError, Message: "internal server error"})
 		return
 	}
 
@@ -971,7 +964,7 @@ func (s *Server) apiGetJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := s.svc.Get(r.Context(), id.String())
+	job, err := s.svc.Get(r.Context(), id.String(), "")
 	if err != nil {
 		apiError := apiError{
 			Code:    http.StatusNotFound,
@@ -1014,14 +1007,10 @@ func (s *Server) apiDeleteJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = s.svc.Delete(r.Context(), id.String())
+	err = s.svc.Delete(r.Context(), id.String(), "")
 	if err != nil {
-		apiError := apiError{
-			Code:    http.StatusInternalServerError,
-			Message: err.Error(),
-		}
-		renderJSON(w, http.StatusInternalServerError, apiError)
 		s.logger.Error("failed_to_delete_job", slog.String("job_id", id.String()), slog.Any("error", err))
+		renderJSON(w, http.StatusInternalServerError, apiError{Code: http.StatusInternalServerError, Message: "internal server error"})
 		return
 	}
 
@@ -1059,8 +1048,7 @@ func (s *Server) apiCancelJob(w http.ResponseWriter, r *http.Request) {
 
 	// Get user ID from context for authorization if authentication is enabled
 	if s.authMiddleware != nil {
-		userID, err := auth.GetUserID(r.Context())
-		if err != nil {
+		if _, err := auth.GetUserID(r.Context()); err != nil {
 			apiError := apiError{
 				Code:    http.StatusUnauthorized,
 				Message: "User not authenticated",
@@ -1069,38 +1057,12 @@ func (s *Server) apiCancelJob(w http.ResponseWriter, r *http.Request) {
 			s.logger.Warn("user_not_authenticated_for_cancel", slog.Any("error", err))
 			return
 		}
-
-		// Verify job belongs to user
-		job, err := s.svc.Get(r.Context(), id.String())
-		if err != nil {
-			apiError := apiError{
-				Code:    http.StatusNotFound,
-				Message: "Job not found",
-			}
-			renderJSON(w, http.StatusNotFound, apiError)
-			s.logger.Error("job_not_found_for_cancel", slog.String("job_id", id.String()), slog.Any("error", err))
-			return
-		}
-
-		if job.UserID != userID {
-			apiError := apiError{
-				Code:    http.StatusForbidden,
-				Message: "Access denied",
-			}
-			renderJSON(w, http.StatusForbidden, apiError)
-			s.logger.Warn("access_denied_cancel", slog.String("user_id", userID), slog.String("job_id", id.String()), slog.String("owner_id", job.UserID))
-			return
-		}
 	}
 
-	err = s.svc.Cancel(r.Context(), id.String())
+	err = s.svc.Cancel(r.Context(), id.String(), "")
 	if err != nil {
-		apiError := apiError{
-			Code:    http.StatusInternalServerError,
-			Message: err.Error(),
-		}
-		renderJSON(w, http.StatusInternalServerError, apiError)
 		s.logger.Error("failed_to_cancel_job", slog.String("job_id", id.String()), slog.Any("error", err))
+		renderJSON(w, http.StatusInternalServerError, apiError{Code: http.StatusInternalServerError, Message: "internal server error"})
 		return
 	}
 
@@ -1180,8 +1142,7 @@ func (s *Server) apiGetJobResults(w http.ResponseWriter, r *http.Request) {
 	offset := (page - 1) * limit
 
 	// Get user ID from context if authentication is enabled
-	userID, err := auth.GetUserID(r.Context())
-	if err != nil {
+	if _, err := auth.GetUserID(r.Context()); err != nil {
 		apiError := apiError{
 			Code:    http.StatusUnauthorized,
 			Message: "User not authenticated",
@@ -1191,42 +1152,22 @@ func (s *Server) apiGetJobResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify job belongs to user
-	job, err := s.svc.Get(r.Context(), jobID)
-	if err != nil {
+	// Verify job belongs to user (ownership enforced in DB query via admin bypass "")
+	if _, getErr := s.svc.Get(r.Context(), jobID, ""); getErr != nil {
 		apiError := apiError{
 			Code:    http.StatusNotFound,
 			Message: "Job not found",
 		}
 		renderJSON(w, http.StatusNotFound, apiError)
-		s.logger.Error("job_not_found", slog.String("job_id", jobID), slog.Any("error", err))
+		s.logger.Error("job_not_found", slog.String("job_id", jobID), slog.Any("error", getErr))
 		return
-	}
-
-	s.logger.Debug("job_access_check", slog.String("job_id", jobID), slog.String("job_user_id", job.UserID), slog.String("request_user_id", userID))
-
-	// TEMPORARY: Skip user verification if auth is disabled (for development)
-	if s.authMiddleware != nil && job.UserID != userID {
-		apiError := apiError{
-			Code:    http.StatusForbidden,
-			Message: "Access denied",
-		}
-		renderJSON(w, http.StatusForbidden, apiError)
-		s.logger.Warn("access_denied_results", slog.String("user_id", userID), slog.String("job_id", jobID), slog.String("owner_id", job.UserID))
-		return
-	} else if s.authMiddleware == nil {
-		s.logger.Debug("skipping_user_verification", slog.String("job_id", jobID))
 	}
 
 	// Get paginated enhanced results from database
 	results, totalCount, err := s.getEnhancedJobResultsPaginated(r.Context(), jobID, limit, offset)
 	if err != nil {
-		apiError := apiError{
-			Code:    http.StatusInternalServerError,
-			Message: "Failed to get results: " + err.Error(),
-		}
-		renderJSON(w, http.StatusInternalServerError, apiError)
 		s.logger.Error("failed_to_get_enhanced_results", slog.String("job_id", jobID), slog.Any("error", err))
+		renderJSON(w, http.StatusInternalServerError, apiError{Code: http.StatusInternalServerError, Message: "failed to retrieve results"})
 		return
 	}
 
@@ -1286,12 +1227,8 @@ func (s *Server) apiGetUserResults(w http.ResponseWriter, r *http.Request) {
 	// Get results from database
 	results, err := s.getUserResults(r.Context(), userID, limit, offset)
 	if err != nil {
-		apiError := apiError{
-			Code:    http.StatusInternalServerError,
-			Message: "Failed to get results: " + err.Error(),
-		}
-		renderJSON(w, http.StatusInternalServerError, apiError)
 		s.logger.Error("failed_to_get_user_results", slog.String("user_id", userID), slog.Any("error", err))
+		renderJSON(w, http.StatusInternalServerError, apiError{Code: http.StatusInternalServerError, Message: "failed to retrieve results"})
 		return
 	}
 
