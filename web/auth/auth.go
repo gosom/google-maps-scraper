@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -13,47 +14,45 @@ import (
 	"github.com/clerk/clerk-sdk-go/v2"
 	clerkhttp "github.com/clerk/clerk-sdk-go/v2/http"
 	"github.com/clerk/clerk-sdk-go/v2/user"
+	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/postgres"
 )
 
-// SignupBonusAmount is the credit amount granted to new users on signup ($1.00)
+// SignupBonusAmount is the credit amount granted to new users on signup ($1.00).
 const SignupBonusAmount = 1.0
 
-// APIKeyPrefix is the required prefix for all programmatic API keys.
-// Tokens that begin with this prefix are treated as API keys rather than Clerk JWTs.
-const APIKeyPrefix = "bscraper_"
-
-// AuthMiddleware handles Clerk authentication and adds user info to the request context
+// AuthMiddleware handles Clerk authentication and adds user info to the request context.
 type AuthMiddleware struct {
-	db         *sql.DB
-	userAPI    *user.Client
-	userRepo   postgres.UserRepository
-	apiKeyRepo postgres.UserAPIKeyRepository // nil if API key auth is not configured
-	logger     *slog.Logger
+	db           *sql.DB
+	userAPI      *user.Client
+	userRepo     postgres.UserRepository
+	apiKeyRepo   models.APIKeyRepository // nil if API key auth is not configured
+	serverSecret []byte                  // HMAC secret for API key lookup hashes
+	logger       *slog.Logger
 }
 
-// ContextKey is used to store user information in the request context
+// ContextKey is used to store user information in the request context.
 type ContextKey string
 
 const (
-	// UserIDKey is the context key for storing the user ID
+	// UserIDKey is the context key for storing the user ID.
 	UserIDKey ContextKey = "user_id"
-	// APIKeyIDKey is the context key for the API key UUID (set only for API key auth)
+	// APIKeyIDKey is the context key for the API key UUID (set only for API key auth).
 	APIKeyIDKey ContextKey = "api_key_id"
-	// APIKeyPlanTierKey is the context key for the API key plan tier ("free" or "paid")
+	// APIKeyPlanTierKey is kept for rate-limiter compatibility; always empty with the
+	// full implementation (no plan tiers in api_keys schema).
 	APIKeyPlanTierKey ContextKey = "api_key_plan_tier"
-	// AuthHeaderName is the name of the authentication header
+	// AuthHeaderName is the name of the authentication header.
 	AuthHeaderName = "Authorization"
 	// DevUserHeaderName allows local integration tests to bypass Clerk auth when explicitly enabled.
-	// This MUST remain opt-in via BRAZA_DEV_AUTH_BYPASS=1 to avoid production misuse.
+	// MUST remain opt-in via BRAZA_DEV_AUTH_BYPASS=1 to avoid production misuse.
 	DevUserHeaderName = "X-Braza-Dev-User"
 )
 
 // NewAuthMiddleware creates a new AuthMiddleware.
-// apiKeyRepo may be nil; when nil, API key authentication is disabled and all
-// Bearer tokens are validated as Clerk JWTs.
-func NewAuthMiddleware(clerkAPIKey string, db *sql.DB, userRepo postgres.UserRepository, apiKeyRepo postgres.UserAPIKeyRepository, logger *slog.Logger) (*AuthMiddleware, error) {
-	// Configure Clerk SDK with the provided secret key
+// apiKeyRepo and serverSecret may be nil/empty; when either is nil/empty, API key
+// authentication is disabled and all Bearer tokens are validated as Clerk JWTs.
+func NewAuthMiddleware(clerkAPIKey string, db *sql.DB, userRepo postgres.UserRepository, apiKeyRepo models.APIKeyRepository, serverSecret []byte, logger *slog.Logger) (*AuthMiddleware, error) {
 	clerk.SetKey(clerkAPIKey)
 
 	return &AuthMiddleware{
@@ -63,9 +62,10 @@ func NewAuthMiddleware(clerkAPIKey string, db *sql.DB, userRepo postgres.UserRep
 				Key: clerk.String(clerkAPIKey),
 			},
 		}),
-		userRepo:   userRepo,
-		apiKeyRepo: apiKeyRepo,
-		logger:     logger,
+		userRepo:     userRepo,
+		apiKeyRepo:   apiKeyRepo,
+		serverSecret: serverSecret,
+		logger:       logger,
 	}, nil
 }
 
@@ -95,8 +95,6 @@ func extractBearerToken(r *http.Request) string {
 // Authenticate is the middleware function for authentication.
 // It dispatches to API key auth when the Bearer token has the APIKeyPrefix,
 // and falls back to Clerk JWT validation otherwise.
-// When both an API key header and a session cookie are present, the API key
-// takes precedence (programmatic access pattern).
 func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 	// Dev bypass: local integration tests only. Never enabled in production.
 	if strings.TrimSpace(os.Getenv("BRAZA_DEV_AUTH_BYPASS")) == "1" {
@@ -118,7 +116,6 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 
 // authenticateRequest builds the actual auth handler (API key or Clerk JWT).
 func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
-	// Build Clerk handler once; reused for all non-API-key requests.
 	clerkAuth := clerkhttp.RequireHeaderAuthorization(
 		clerkhttp.AuthorizationJWTExtractor(extractBearerToken),
 	)
@@ -175,21 +172,15 @@ func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
 	}))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Check Authorization header for API key prefix first.
-		// A request with both an API key header and a session cookie uses the API key
-		// path (programmatic access takes precedence over browser session).
 		authHeader := strings.TrimSpace(r.Header.Get(AuthHeaderName))
 		var bearerToken string
 		if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
 			bearerToken = strings.TrimSpace(authHeader[len("Bearer "):])
 		}
 
-		if m.apiKeyRepo != nil && strings.HasPrefix(bearerToken, APIKeyPrefix) {
-			// API key path: look up by hash, set context, then proceed.
-			hash := postgres.HashAPIKey(bearerToken)
-			apiKey, err := m.apiKeyRepo.GetByHash(r.Context(), hash)
+		if m.apiKeyRepo != nil && len(m.serverSecret) > 0 && strings.HasPrefix(bearerToken, APIKeyPrefix) {
+			userID, keyID, err := ValidateAPIKey(r.Context(), bearerToken, m.serverSecret, m.apiKeyRepo)
 			if err != nil {
-				// Key not found or revoked: reject before rate limiting.
 				m.logger.Warn("api_key_auth_rejected",
 					slog.String("reason", err.Error()),
 					slog.String("path", r.URL.Path),
@@ -198,17 +189,39 @@ func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
 				return
 			}
 
+			// Record API key usage asynchronously to avoid adding latency.
+			go func() {
+				ip := clientIP(r)
+				if err := m.apiKeyRepo.UpdateLastUsed(context.Background(), keyID, ip); err != nil {
+					m.logger.Warn("api_key_update_last_used_failed", slog.String("key_id", keyID), slog.Any("error", err))
+				}
+			}()
+
 			ctx := r.Context()
-			ctx = context.WithValue(ctx, UserIDKey, apiKey.UserID)
-			ctx = context.WithValue(ctx, APIKeyIDKey, apiKey.ID)
-			ctx = context.WithValue(ctx, APIKeyPlanTierKey, apiKey.PlanTier)
+			ctx = context.WithValue(ctx, UserIDKey, userID)
+			ctx = context.WithValue(ctx, APIKeyIDKey, keyID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 
-		// JWT / session cookie path (Clerk).
 		clerkHandler.ServeHTTP(w, r)
 	})
+}
+
+// clientIP extracts the client IP from the request, preferring X-Forwarded-For
+// when present (common behind reverse proxies). Only the first entry is trusted.
+func clientIP(r *http.Request) net.IP {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		first := strings.SplitN(xff, ",", 2)[0]
+		if ip := net.ParseIP(strings.TrimSpace(first)); ip != nil {
+			return ip
+		}
+	}
+	host, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if ip := net.ParseIP(host); ip != nil {
+		return ip
+	}
+	return nil
 }
 
 // GetAPIKeyID extracts the API key UUID from the request context.
@@ -218,8 +231,8 @@ func GetAPIKeyID(ctx context.Context) string {
 	return id
 }
 
-// GetAPIKeyPlanTier returns the plan tier ("free" or "paid") for API key requests.
-// Returns an empty string for non-API-key requests.
+// GetAPIKeyPlanTier returns the plan tier for rate-limiter compatibility.
+// Always returns an empty string with the full API key implementation (no plan tiers).
 func GetAPIKeyPlanTier(ctx context.Context) string {
 	tier, _ := ctx.Value(APIKeyPlanTierKey).(string)
 	return tier
@@ -234,8 +247,6 @@ func (m *AuthMiddleware) grantSignupBonus(ctx context.Context, userID string) er
 	}
 	defer tx.Rollback()
 
-	// Idempotency check: skip if this user already received a signup bonus.
-	// Uses FOR UPDATE to prevent concurrent grants via row-level locking.
 	var alreadyGranted bool
 	err = tx.QueryRowContext(ctx,
 		"SELECT EXISTS(SELECT 1 FROM credit_transactions WHERE user_id = $1 AND reference_id = 'signup_bonus' AND reference_type = 'system' FOR UPDATE)",
@@ -248,7 +259,6 @@ func (m *AuthMiddleware) grantSignupBonus(ctx context.Context, userID string) er
 		return nil
 	}
 
-	// Lock the user row and get current balance
 	var currentBalance float64
 	err = tx.QueryRowContext(ctx, "SELECT COALESCE(credit_balance, 0) FROM users WHERE id = $1 FOR UPDATE", userID).Scan(&currentBalance)
 	if err != nil {
@@ -257,9 +267,8 @@ func (m *AuthMiddleware) grantSignupBonus(ctx context.Context, userID string) er
 
 	newBalance := currentBalance + SignupBonusAmount
 
-	// Update user credit balance
 	_, err = tx.ExecContext(ctx, `
-		UPDATE users 
+		UPDATE users
 		SET credit_balance = COALESCE(credit_balance, 0) + $1::numeric,
 		    updated_at = NOW()
 		WHERE id = $2`, SignupBonusAmount, userID)
@@ -267,7 +276,6 @@ func (m *AuthMiddleware) grantSignupBonus(ctx context.Context, userID string) er
 		return err
 	}
 
-	// Insert credit transaction for audit
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO credit_transactions (user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
 		VALUES ($1, 'bonus', $2, $3, $4, 'Signup bonus', 'signup_bonus', 'system')`,
@@ -279,7 +287,7 @@ func (m *AuthMiddleware) grantSignupBonus(ctx context.Context, userID string) er
 	return tx.Commit()
 }
 
-// GetUserID extracts the user ID from the request context
+// GetUserID extracts the user ID from the request context.
 func GetUserID(ctx context.Context) (string, error) {
 	userID, ok := ctx.Value(UserIDKey).(string)
 	if !ok || userID == "" {

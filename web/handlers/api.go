@@ -91,9 +91,13 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pre-flight cost estimation and balance check
+	// Pre-flight cost estimation and balance check.
+	// The standalone balance check here is a fast-fail optimisation only. The
+	// authoritative, race-free check happens inside CreateJobWithLimit under
+	// a SELECT ... FOR UPDATE lock (see concurrent_limit.go).
+	var estimateOpts *webservices.JobLimitOpts
 	if h.Deps.DB != nil {
-		estimationSvc := webservices.NewEstimationService(h.Deps.DB)
+		estimationSvc := webservices.NewEstimationService(h.Deps.DB, h.Deps.PricingRuleRepo)
 
 		// Estimate job cost
 		estimate, err := estimationSvc.EstimateJobCost(r.Context(), &newJob.Data)
@@ -116,7 +120,8 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 			)
 		}
 
-		// Check if user has sufficient balance
+		// Fast-fail: reject obviously insufficient balances before taking a row lock.
+		// This avoids a transaction round-trip for users who clearly can't afford the job.
 		if err := estimationSvc.CheckSufficientBalance(r.Context(), userID, estimate); err != nil {
 			if h.Deps.Logger != nil {
 				h.Deps.Logger.Info("job_creation_blocked", slog.String("user_id", userID), slog.Any("error", err))
@@ -127,6 +132,30 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+
+		// Guard: reject unlimited jobs (max_results=0) from low-balance users.
+		// Without a results cap, an unlimited job can scrape 10,000+ places and
+		// cost far more than the conservative 50-place estimate used for billing
+		// pre-flight. Require max_results > 0 when balance is below threshold.
+		const unlimitedJobMinBalance = 5.0 // $5.00
+		if newJob.Data.MaxResults <= 0 {
+			var balance float64
+			if err := h.Deps.DB.QueryRowContext(r.Context(),
+				`SELECT COALESCE(credit_balance, 0) FROM users WHERE id = $1`, userID,
+			).Scan(&balance); err == nil && balance < unlimitedJobMinBalance {
+				renderJSON(w, http.StatusBadRequest, models.APIError{
+					Code:    http.StatusBadRequest,
+					Message: "Your balance is below $5.00. Set a max_results limit or add credit before running unlimited jobs.",
+				})
+				return
+			}
+		}
+
+		// Pass the estimate to createJob for the authoritative transactional check.
+		estimateOpts = &webservices.JobLimitOpts{
+			EstimatedCost:   estimate.TotalEstimatedCost,
+			EstimatedPlaces: estimate.EstimatedPlaces,
+		}
 	} else {
 		// If database is not available, log warning but allow job creation
 		// This maintains backward compatibility for non-billing deployments
@@ -135,7 +164,7 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := h.createJob(r.Context(), &newJob, w); err != nil {
+	if err := h.createJob(r.Context(), &newJob, w, estimateOpts); err != nil {
 		// createJob has already written the response on limit/error.
 		return
 	}
@@ -155,12 +184,14 @@ type concurrentLimitResponse struct {
 	Limit   int    `json:"limit"`
 }
 
-// createJob inserts a job, enforcing the concurrent job limit when the DB is
-// available. Returns a non-nil error only when it has already written a response
+// createJob inserts a job, enforcing the concurrent job limit and credit
+// balance check when the DB is available. The balance check inside the
+// transaction (via opts) is the authoritative check that prevents TOCTOU races.
+// Returns a non-nil error only when it has already written a response
 // to w (so callers must not write another response on non-nil return).
-func (h *APIHandlers) createJob(ctx context.Context, job *models.Job, w http.ResponseWriter) error {
+func (h *APIHandlers) createJob(ctx context.Context, job *models.Job, w http.ResponseWriter, opts *webservices.JobLimitOpts) error {
 	if h.Deps.ConcurrentLimitSvc != nil {
-		err := h.Deps.ConcurrentLimitSvc.CreateJobWithLimit(ctx, job)
+		err := h.Deps.ConcurrentLimitSvc.CreateJobWithLimit(ctx, job, opts)
 		if err != nil {
 			var limitErr webservices.ErrConcurrentJobLimitReached
 			if errors.As(err, &limitErr) {
@@ -169,6 +200,14 @@ func (h *APIHandlers) createJob(ctx context.Context, job *models.Job, w http.Res
 					Code:    http.StatusTooManyRequests,
 					Message: "concurrent job limit reached",
 					Limit:   limitErr.Limit,
+				})
+				return err
+			}
+			var balanceErr webservices.ErrInsufficientBalance
+			if errors.As(err, &balanceErr) {
+				renderJSON(w, http.StatusPaymentRequired, models.APIError{
+					Code:    http.StatusPaymentRequired,
+					Message: balanceErr.Error(),
 				})
 				return err
 			}
@@ -479,7 +518,7 @@ func (h *APIHandlers) EstimateJobCost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create estimation service
-	estimationSvc := webservices.NewEstimationService(h.Deps.DB)
+	estimationSvc := webservices.NewEstimationService(h.Deps.DB, h.Deps.PricingRuleRepo)
 
 	// Estimate job cost
 	estimate, err := estimationSvc.EstimateJobCost(r.Context(), &req.JobData)

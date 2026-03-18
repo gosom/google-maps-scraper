@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
+	"time"
 
 	"github.com/gosom/google-maps-scraper/models"
 	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
@@ -13,34 +15,46 @@ import (
 
 // EstimationService provides job cost estimation functionality
 type EstimationService struct {
-	db  *sql.DB
-	log *slog.Logger
+	db       *sql.DB
+	log      *slog.Logger
+	priceRepo models.PricingRuleRepository
 }
 
-// Cost estimation constants - average values based on typical Google Maps data
+// Estimation constants - average values based on typical Google Maps data
 const (
-	// Average number of reviews per place (Google Maps businesses typically have 10-50 reviews)
-	AvgReviewsPerPlace = 25
-
-	// Average number of images per place (typical business has 5-15 images)
-	AvgImagesPerPlace = 30
-
-	// Default max results when user specifies 0 (unlimited) - use conservative estimate
+	AvgReviewsPerPlace        = 25
+	AvgImagesPerPlace         = 30
 	DefaultEstimateForUnlimited = 50
-
-	// Threshold for detecting "unlimited" reviews_max (treat values >= this as unlimited)
-	// Frontend may send 9999 or 10000 to simulate unlimited
 	UnlimitedReviewsThreshold = 1000
 
-	// Pricing from billing_event_types and pricing_rules (migration 000017)
-	PriceActorStart        = 0.007  // Flat fee per job
-	PricePlaceScraped      = 0.004  // Per place
-	PriceFiltersApplied    = 0.001  // Per filter per place (not yet implemented)
-	PriceAdditionalDetails = 0.002  // Per place with extra details (not yet implemented)
-	PriceContactDetails    = 0.002  // Per place when email scraping enabled
-	PriceReview            = 0.0005 // Per review
-	PriceImage             = 0.0005 // Per image
+	// Default pricing fallbacks (used when DB has no active rules)
+	defaultPriceActorStart        = 0.007
+	defaultPricePlaceScraped      = 0.004
+	defaultPriceFiltersApplied    = 0.001
+	defaultPriceAdditionalDetails = 0.002
+	defaultPriceContactDetails    = 0.002
+	defaultPriceReview            = 0.0005
+	defaultPriceImage             = 0.0005
+
+	priceCacheTTL = 60 * time.Second
 )
+
+// Package-level pricing cache shared across per-request EstimationService instances.
+var (
+	priceCacheMu    sync.RWMutex
+	priceCacheData  map[string]float64
+	priceCacheTime  time.Time
+)
+
+var defaultPrices = map[string]float64{
+	"actor_start":             defaultPriceActorStart,
+	"place_scraped":           defaultPricePlaceScraped,
+	"filters_applied":         defaultPriceFiltersApplied,
+	"additional_place_details": defaultPriceAdditionalDetails,
+	"contact_details":         defaultPriceContactDetails,
+	"review":                  defaultPriceReview,
+	"image":                   defaultPriceImage,
+}
 
 // CostEstimate represents the estimated cost breakdown for a job
 type CostEstimate struct {
@@ -57,47 +71,102 @@ type CostEstimate struct {
 	Note                string  `json:"note"`
 }
 
-func NewEstimationService(db *sql.DB) *EstimationService {
+func NewEstimationService(db *sql.DB, priceRepo models.PricingRuleRepository) *EstimationService {
 	return &EstimationService{
-		db:  db,
-		log: pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "estimation"),
+		db:        db,
+		log:       pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "estimation"),
+		priceRepo: priceRepo,
 	}
 }
 
-// EstimateJobCost calculates the estimated cost for a job based on its parameters
-// Uses conservative estimates when user doesn't specify limits
+// getPrice returns the price for an event type, reading from a cached copy of the
+// pricing_rules table. Falls back to hardcoded defaults on DB error or missing rule.
+func (s *EstimationService) getPrice(ctx context.Context, eventType string) float64 {
+	prices := s.loadPrices(ctx)
+	if p, ok := prices[eventType]; ok {
+		return p
+	}
+	if p, ok := defaultPrices[eventType]; ok {
+		return p
+	}
+	return 0
+}
+
+// loadPrices returns the cached pricing map, refreshing from DB if stale.
+func (s *EstimationService) loadPrices(ctx context.Context) map[string]float64 {
+	priceCacheMu.RLock()
+	if priceCacheData != nil && time.Since(priceCacheTime) < priceCacheTTL {
+		defer priceCacheMu.RUnlock()
+		return priceCacheData
+	}
+	priceCacheMu.RUnlock()
+
+	priceCacheMu.Lock()
+	defer priceCacheMu.Unlock()
+
+	// Double-check after acquiring write lock.
+	if priceCacheData != nil && time.Since(priceCacheTime) < priceCacheTTL {
+		return priceCacheData
+	}
+
+	if s.priceRepo == nil {
+		return defaultPrices
+	}
+
+	prices, err := s.priceRepo.GetActiveDefaultPrices(ctx)
+	if err != nil {
+		s.log.Warn("failed to load pricing rules from DB, using defaults", slog.String("error", err.Error()))
+		return defaultPrices
+	}
+	if len(prices) == 0 {
+		s.log.Warn("no active pricing rules found in DB, using defaults")
+		return defaultPrices
+	}
+
+	priceCacheData = prices
+	priceCacheTime = time.Now()
+	s.log.Debug("pricing rules refreshed from DB", slog.Int("count", len(prices)))
+	return priceCacheData
+}
+
+// EstimateJobCost calculates the estimated cost for a job based on its parameters.
 func (s *EstimationService) EstimateJobCost(ctx context.Context, jobData *models.JobData) (*CostEstimate, error) {
 	estimate := &CostEstimate{}
 
+	priceActorStart := s.getPrice(ctx, "actor_start")
+	pricePlaceScraped := s.getPrice(ctx, "place_scraped")
+	priceContactDetails := s.getPrice(ctx, "contact_details")
+	priceReview := s.getPrice(ctx, "review")
+	priceImage := s.getPrice(ctx, "image")
+
 	// 1. Actor start cost (flat fee per job)
-	estimate.ActorStartCost = PriceActorStart
+	estimate.ActorStartCost = priceActorStart
 
 	// 2. Determine estimated number of places
 	estimatedPlaces := s.estimatePlaceCount(jobData)
 	estimate.EstimatedPlaces = estimatedPlaces
 
 	// 3. Calculate places cost
-	estimate.PlacesCost = float64(estimatedPlaces) * PricePlaceScraped
+	estimate.PlacesCost = float64(estimatedPlaces) * pricePlaceScraped
 
 	// 4. Calculate contact details cost (if email scraping is enabled)
 	if jobData.Email {
 		estimate.IncludesEmailScrape = true
-		estimate.ContactDetailsCost = float64(estimatedPlaces) * PriceContactDetails
+		estimate.ContactDetailsCost = float64(estimatedPlaces) * priceContactDetails
 	}
 
 	// 5. Calculate reviews cost (ONLY if reviews are explicitly requested)
-	// Note: ReviewsMax = 0 means no reviews, NOT unlimited
 	if jobData.ReviewsMax > 0 {
 		estimatedReviews := s.estimateReviewCount(jobData, estimatedPlaces)
 		estimate.EstimatedReviews = estimatedReviews
-		estimate.ReviewsCost = float64(estimatedReviews) * PriceReview
+		estimate.ReviewsCost = float64(estimatedReviews) * priceReview
 	}
 
 	// 6. Calculate images cost (if images are requested)
 	if jobData.Images {
 		estimatedImages := s.estimateImageCount(jobData, estimatedPlaces)
 		estimate.EstimatedImages = estimatedImages
-		estimate.ImagesCost = float64(estimatedImages) * PriceImage
+		estimate.ImagesCost = float64(estimatedImages) * priceImage
 	}
 
 	// 7. Calculate total
@@ -123,37 +192,23 @@ func (s *EstimationService) EstimateJobCost(ctx context.Context, jobData *models
 
 // estimatePlaceCount determines how many places will likely be scraped
 func (s *EstimationService) estimatePlaceCount(jobData *models.JobData) int {
-	// IMPORTANT: max_results = 0 means UNLIMITED scraping, not zero results!
-	// We must handle this specially to avoid underestimating costs
-
 	if jobData.MaxResults > 0 {
-		// User specified a limit, use that exact value
 		return jobData.MaxResults
 	}
-
-	// max_results = 0 or not specified means UNLIMITED scraping
-	// Use a conservative estimate to warn user about minimum expected cost
-	// This is a MINIMUM - actual cost could be much higher!
 	return DefaultEstimateForUnlimited
 }
 
 // estimateReviewCount determines how many reviews will likely be scraped
 func (s *EstimationService) estimateReviewCount(jobData *models.JobData, estimatedPlaces int) int {
 	reviewsPerPlace := jobData.ReviewsMax
-
-	// Treat unrealistically high values (>=1000) as "unlimited" and use average
-	// Frontend may send 9999 or 10000 to simulate unlimited reviews
 	if reviewsPerPlace <= 0 || reviewsPerPlace >= UnlimitedReviewsThreshold {
 		reviewsPerPlace = AvgReviewsPerPlace
 	}
-
 	return estimatedPlaces * reviewsPerPlace
 }
 
 // estimateImageCount determines how many images will likely be scraped
 func (s *EstimationService) estimateImageCount(jobData *models.JobData, estimatedPlaces int) int {
-	// Google Maps typically returns 5-15 images per place
-	// Use conservative average
 	return estimatedPlaces * AvgImagesPerPlace
 }
 
@@ -161,7 +216,6 @@ func (s *EstimationService) estimateImageCount(jobData *models.JobData, estimate
 func (s *EstimationService) generateEstimationNote(jobData *models.JobData) string {
 	var notes []string
 
-	// Check if max_results is unlimited
 	if jobData.MaxResults == 0 {
 		notes = append(notes, fmt.Sprintf(
 			"WARNING: max_results is set to unlimited (0). This estimate is for a MINIMUM of %d places. "+
@@ -172,7 +226,6 @@ func (s *EstimationService) generateEstimationNote(jobData *models.JobData) stri
 		notes = append(notes, "Estimate based on your specified max_results limit")
 	}
 
-	// Check if reviews_max is treated as unlimited
 	if jobData.ReviewsMax >= UnlimitedReviewsThreshold {
 		notes = append(notes, fmt.Sprintf(
 			"Note: reviews_max (%d) treated as unlimited - using average of %d reviews per place for estimation.",
@@ -180,7 +233,6 @@ func (s *EstimationService) generateEstimationNote(jobData *models.JobData) stri
 		))
 	}
 
-	// Combine notes
 	note := notes[0]
 	if len(notes) > 1 {
 		note = note + " " + notes[1]
@@ -191,13 +243,11 @@ func (s *EstimationService) generateEstimationNote(jobData *models.JobData) stri
 }
 
 // CheckSufficientBalance verifies if a user has enough credits for a job
-// Returns an error if balance is insufficient
 func (s *EstimationService) CheckSufficientBalance(ctx context.Context, userID string, estimate *CostEstimate) error {
 	if s.db == nil {
 		return fmt.Errorf("database not available")
 	}
 
-	// Get user's current credit balance
 	var creditBalance float64
 	const query = `SELECT COALESCE(credit_balance, 0) FROM users WHERE id = $1`
 	err := s.db.QueryRowContext(ctx, query, userID).Scan(&creditBalance)
@@ -208,7 +258,6 @@ func (s *EstimationService) CheckSufficientBalance(ctx context.Context, userID s
 		return fmt.Errorf("failed to retrieve credit balance: %w", err)
 	}
 
-	// Check if balance is sufficient
 	if creditBalance < estimate.TotalEstimatedCost {
 		s.log.Warn("insufficient_credits",
 			slog.String("user_id", userID),

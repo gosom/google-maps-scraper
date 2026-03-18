@@ -62,14 +62,24 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.Se
 	}
 
 	userRepo := postgres.NewUserRepository(db)
-	apiKeyRepo := postgres.NewUserAPIKeyRepository(db)
+	apiKeyRepo := postgres.NewAPIKeyRepository(db)
+	apiKeyServerSecret := []byte(os.Getenv("API_KEY_SERVER_SECRET"))
+
+	// Validate API_KEY_SERVER_SECRET: when API key auth is enabled (apiKeyRepo != nil),
+	// an empty or short secret silently disables API key authentication in the auth
+	// middleware (which checks len(serverSecret) > 0). Require ≥ 32 bytes to prevent
+	// this silent misconfiguration trap (TOCTOU between "repo exists" and "secret exists").
+	if apiKeyRepo != nil && len(apiKeyServerSecret) < 32 {
+		return web.ServerConfig{}, fmt.Errorf("API_KEY_SERVER_SECRET must be at least 32 bytes when API key auth is enabled (got %d bytes)", len(apiKeyServerSecret))
+	}
 
 	serverCfg := web.ServerConfig{
 		Service:             svc,
 		Addr:                cfg.Addr,
 		PgDB:                db,
 		UserRepo:            userRepo,
-		UserAPIKeyRepo:      apiKeyRepo,
+		APIKeyRepo:   apiKeyRepo,
+		ServerSecret: apiKeyServerSecret,
 		ClerkSecretKey:      clerkSecretKey,
 		StripeAPIKey:        stripeAPIKey,
 		StripeWebhookSecret: stripeWebhookSecret,

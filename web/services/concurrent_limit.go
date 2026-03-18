@@ -24,6 +24,21 @@ func (e ErrConcurrentJobLimitReached) Error() string {
 	return fmt.Sprintf("concurrent job limit reached (limit: %d)", e.Limit)
 }
 
+// ErrInsufficientBalance is returned when a user's credit balance is too low
+// to cover the estimated job cost. Callers should convert this to HTTP 402.
+type ErrInsufficientBalance struct {
+	Balance        float64
+	RequiredCost   float64
+	EstimatedCount int
+}
+
+func (e ErrInsufficientBalance) Error() string {
+	return fmt.Sprintf(
+		"insufficient credits: you have %.4f credits but this job requires a minimum of %.4f credits to start (estimated cost for %d places). Please purchase more credits to continue",
+		e.Balance, e.RequiredCost, e.EstimatedCount,
+	)
+}
+
 // ConcurrentLimitService enforces per-user concurrent job limits.
 // The check and insert are executed inside a single transaction, with the
 // user row locked FOR UPDATE to prevent race conditions between simultaneous
@@ -37,12 +52,26 @@ func NewConcurrentLimitService(db *sql.DB) *ConcurrentLimitService {
 	return &ConcurrentLimitService{db: db}
 }
 
+// JobLimitOpts holds optional parameters for CreateJobWithLimit.
+type JobLimitOpts struct {
+	// EstimatedCost is the pre-flight cost estimate for the job. When > 0,
+	// the user's credit_balance is checked inside the same transaction that
+	// locks the user row, preventing a TOCTOU race where two concurrent
+	// requests both pass the balance check before either debits.
+	EstimatedCost   float64
+	EstimatedPlaces int
+}
+
 // CreateJobWithLimit checks the user's concurrent job cap and, if not exceeded,
 // inserts the job — all within a single serialised transaction.
 //
+// When opts.EstimatedCost > 0, the credit balance is also verified under the
+// same FOR UPDATE lock to prevent concurrent overdraft (TOCTOU race).
+//
 // Returns ErrConcurrentJobLimitReached when the limit is hit.
+// Returns ErrInsufficientBalance when the credit balance is too low.
 // The job's CreatedAt/UpdatedAt timestamps are set to now if not already set.
-func (s *ConcurrentLimitService) CreateJobWithLimit(ctx context.Context, job *models.Job) error {
+func (s *ConcurrentLimitService) CreateJobWithLimit(ctx context.Context, job *models.Job, opts *JobLimitOpts) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("concurrent_limit: begin tx: %w", err)
@@ -50,19 +79,31 @@ func (s *ConcurrentLimitService) CreateJobWithLimit(ctx context.Context, job *mo
 	defer tx.Rollback() //nolint:errcheck
 
 	// Lock the user row to serialise concurrent submissions from the same user.
-	// COALESCE falls back to the compile-time default if the column is NULL
-	// (shouldn't happen with NOT NULL DEFAULT 2, but defensive).
+	// Also fetch credit_balance to perform an atomic balance check, preventing
+	// the TOCTOU race where two concurrent requests both pass a standalone
+	// SELECT balance check before either creates a job.
 	var limit int
+	var creditBalance float64
 	err = tx.QueryRowContext(ctx,
-		`SELECT COALESCE(max_concurrent_jobs, $1) FROM users WHERE id = $2 FOR UPDATE`,
+		`SELECT COALESCE(max_concurrent_jobs, $1), COALESCE(credit_balance, 0) FROM users WHERE id = $2 FOR UPDATE`,
 		DefaultMaxConcurrentJobs, job.UserID,
-	).Scan(&limit)
+	).Scan(&limit, &creditBalance)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// User row not yet provisioned — use the safe default.
 			limit = DefaultMaxConcurrentJobs
+			creditBalance = 0
 		} else {
 			return fmt.Errorf("concurrent_limit: get user limit: %w", err)
+		}
+	}
+
+	// Atomic credit balance check under the FOR UPDATE lock.
+	if opts != nil && opts.EstimatedCost > 0 && creditBalance < opts.EstimatedCost {
+		return ErrInsufficientBalance{
+			Balance:        creditBalance,
+			RequiredCost:   opts.EstimatedCost,
+			EstimatedCount: opts.EstimatedPlaces,
 		}
 	}
 

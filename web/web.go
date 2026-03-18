@@ -20,6 +20,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/gosom/google-maps-scraper/billing"
 	"github.com/gosom/google-maps-scraper/config"
+	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/pkg/googlesheets"
 	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	"github.com/gosom/google-maps-scraper/postgres"
@@ -50,8 +51,9 @@ type ServerConfig struct {
 	Addr                string
 	PgDB                *sql.DB // Optional PostgreSQL connection
 	UserRepo            postgres.UserRepository
-	UserAPIKeyRepo      postgres.UserAPIKeyRepository // Optional; enables API key auth when set
-	ClerkSecretKey      string                        // Clerk server-side secret key for authentication
+	APIKeyRepo     models.APIKeyRepository // Optional; enables API key auth when set
+	ServerSecret   []byte                  // HMAC secret for API key HMAC (from API_KEY_SERVER_SECRET env)
+	ClerkSecretKey      string                  // Clerk server-side secret key for authentication
 	StripeAPIKey        string                        // Optional Stripe API key for subscriptions
 	StripeWebhookSecret string                        // Optional Stripe webhook secret
 	// Version is the Git SHA injected at build time via ldflags.
@@ -79,7 +81,7 @@ func New(cfg ServerConfig) (*Server, error) {
 	// Initialize authentication middleware if Clerk secret key is provided
 	if cfg.ClerkSecretKey != "" && cfg.UserRepo != nil {
 		var err error
-		ans.authMiddleware, err = auth.NewAuthMiddleware(cfg.ClerkSecretKey, cfg.PgDB, cfg.UserRepo, cfg.UserAPIKeyRepo, ans.logger)
+		ans.authMiddleware, err = auth.NewAuthMiddleware(cfg.ClerkSecretKey, cfg.PgDB, cfg.UserRepo, cfg.APIKeyRepo, cfg.ServerSecret, ans.logger)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize authentication: %w", err)
 		}
@@ -107,6 +109,9 @@ func New(cfg ServerConfig) (*Server, error) {
 		Templates:       ans.tmpl,
 		Auth:            ans.authMiddleware,
 		App:             ans.svc,
+		APIKeyRepo:      cfg.APIKeyRepo,
+		ServerSecret:    cfg.ServerSecret,
+		PricingRuleRepo: postgres.NewPricingRuleRepository(ans.db),
 		ResultsSvc:      webservices.NewResultsService(ans.db),
 		IntegrationRepo: postgres.NewIntegrationRepository(ans.db),
 		GoogleSheetsSvc: googlesheets.NewService(),
@@ -182,6 +187,13 @@ func New(cfg ServerConfig) (*Server, error) {
 	apiRouter.HandleFunc("/jobs/{id}/costs", hg.API.GetJobCosts).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/estimate", hg.API.EstimateJobCost).Methods(http.MethodPost)
 	apiRouter.HandleFunc("/results", hg.API.GetUserResults).Methods(http.MethodGet)
+
+	// API key management endpoints
+	if cfg.APIKeyRepo != nil {
+		apiRouter.HandleFunc("/api-keys", hg.APIKey.ListAPIKeys).Methods(http.MethodGet)
+		apiRouter.HandleFunc("/api-keys", hg.APIKey.CreateAPIKey).Methods(http.MethodPost)
+		apiRouter.HandleFunc("/api-keys/{id}", hg.APIKey.RevokeAPIKey).Methods(http.MethodDelete)
+	}
 
 	// Protected integration endpoints (require authentication)
 	// Callback is protected because:

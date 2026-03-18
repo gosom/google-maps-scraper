@@ -2,66 +2,244 @@ package postgres
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"net"
 	"time"
+
+	"github.com/gosom/google-maps-scraper/models"
 )
 
-// APIKey represents a user-generated API key stored in the database.
-// The raw key is never persisted; only its SHA-256 hash is stored.
-type APIKey struct {
-	ID        string
-	UserID    string
-	KeyHash   string
-	PlanTier  string // "free" or "paid"
-	Name      string
-	CreatedAt time.Time
-	RevokedAt *time.Time
-}
-
-// ErrAPIKeyNotFound is returned when an API key hash has no matching active record.
-var ErrAPIKeyNotFound = errors.New("api key not found")
-
-// UserAPIKeyRepository manages user API key lookups.
-type UserAPIKeyRepository interface {
-	GetByHash(ctx context.Context, hash string) (APIKey, error)
-}
-
-type userAPIKeyRepository struct {
+// apiKeyRepository implements the models.APIKeyRepository interface.
+// It targets the api_keys table created by migration 000023.
+type apiKeyRepository struct {
 	db *sql.DB
 }
 
-// NewUserAPIKeyRepository creates a new UserAPIKeyRepository backed by PostgreSQL.
-func NewUserAPIKeyRepository(db *sql.DB) UserAPIKeyRepository {
-	return &userAPIKeyRepository{db: db}
+// NewAPIKeyRepository creates a new APIKeyRepository backed by PostgreSQL.
+func NewAPIKeyRepository(db *sql.DB) models.APIKeyRepository {
+	return &apiKeyRepository{db: db}
 }
 
-// HashAPIKey returns the lowercase hex SHA-256 hash of a raw API key string.
-// Use this before calling GetByHash.
-func HashAPIKey(rawKey string) string {
-	h := sha256.Sum256([]byte(rawKey))
-	return hex.EncodeToString(h[:])
-}
-
-// GetByHash retrieves an active (non-revoked) API key by its SHA-256 hash.
-// Returns ErrAPIKeyNotFound when no active record matches.
-func (r *userAPIKeyRepository) GetByHash(ctx context.Context, hash string) (APIKey, error) {
+// Create inserts a new API key record.
+func (r *apiKeyRepository) Create(ctx context.Context, apiKey *models.APIKey) error {
 	const q = `
-		SELECT id, user_id, key_hash, plan_tier, COALESCE(name, ''), created_at, revoked_at
-		FROM user_api_keys
-		WHERE key_hash = $1 AND revoked_at IS NULL`
+		INSERT INTO api_keys (
+			id, user_id, name, lookup_hash, key_hash, key_salt, hash_algorithm,
+			key_hint_prefix, key_hint_suffix, created_at, scopes
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 
-	var k APIKey
-	err := r.db.QueryRowContext(ctx, q, hash).Scan(
-		&k.ID, &k.UserID, &k.KeyHash, &k.PlanTier, &k.Name, &k.CreatedAt, &k.RevokedAt,
+	if apiKey.CreatedAt.IsZero() {
+		apiKey.CreatedAt = time.Now().UTC()
+	}
+
+	scopesJSON, err := json.Marshal(apiKey.Scopes)
+	if err != nil {
+		return err
+	}
+
+	_, err = r.db.ExecContext(ctx, q,
+		apiKey.ID,
+		apiKey.UserID,
+		apiKey.Name,
+		apiKey.LookupHash,
+		apiKey.KeyHash,
+		apiKey.KeySalt,
+		apiKey.HashAlgorithm,
+		apiKey.KeyHintPrefix,
+		apiKey.KeyHintSuffix,
+		apiKey.CreatedAt,
+		scopesJSON,
+	)
+	return err
+}
+
+// GetByID retrieves an API key by its UUID.
+func (r *apiKeyRepository) GetByID(ctx context.Context, id string) (*models.APIKey, error) {
+	const q = `
+		SELECT id, user_id, name, lookup_hash, key_hash, key_salt, hash_algorithm,
+		       key_hint_prefix, key_hint_suffix, last_used_at, last_used_ip, usage_count,
+		       created_at, revoked_at, scopes
+		FROM api_keys
+		WHERE id = $1`
+
+	return r.scanOne(r.db.QueryRowContext(ctx, q, id))
+}
+
+// GetByLookupHash retrieves an active (non-revoked) API key by its HMAC lookup hash.
+// Returns nil, nil when no matching active key exists (not an error during auth).
+func (r *apiKeyRepository) GetByLookupHash(ctx context.Context, lookupHash string) (*models.APIKey, error) {
+	const q = `
+		SELECT id, user_id, name, lookup_hash, key_hash, key_salt, hash_algorithm,
+		       key_hint_prefix, key_hint_suffix, last_used_at, last_used_ip, usage_count,
+		       created_at, revoked_at, scopes
+		FROM api_keys
+		WHERE lookup_hash = $1 AND revoked_at IS NULL`
+
+	key, err := r.scanOne(r.db.QueryRowContext(ctx, q, lookupHash))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return key, err
+}
+
+// ListByUserID retrieves all API keys for a user, including revoked ones.
+func (r *apiKeyRepository) ListByUserID(ctx context.Context, userID string) ([]*models.APIKey, error) {
+	const q = `
+		SELECT id, user_id, name, lookup_hash, key_hash, key_salt, hash_algorithm,
+		       key_hint_prefix, key_hint_suffix, last_used_at, last_used_ip, usage_count,
+		       created_at, revoked_at, scopes
+		FROM api_keys
+		WHERE user_id = $1
+		ORDER BY created_at DESC`
+
+	rows, err := r.db.QueryContext(ctx, q, userID)
+	return r.scanMany(rows, err)
+}
+
+// ListActiveByUserID retrieves all active (non-revoked) API keys for a user.
+func (r *apiKeyRepository) ListActiveByUserID(ctx context.Context, userID string) ([]*models.APIKey, error) {
+	const q = `
+		SELECT id, user_id, name, lookup_hash, key_hash, key_salt, hash_algorithm,
+		       key_hint_prefix, key_hint_suffix, last_used_at, last_used_ip, usage_count,
+		       created_at, revoked_at, scopes
+		FROM api_keys
+		WHERE user_id = $1 AND revoked_at IS NULL
+		ORDER BY created_at DESC`
+
+	rows, err := r.db.QueryContext(ctx, q, userID)
+	return r.scanMany(rows, err)
+}
+
+// UpdateLastUsed atomically increments usage_count and records last_used_at / last_used_ip.
+func (r *apiKeyRepository) UpdateLastUsed(ctx context.Context, id string, ipAddress net.IP) error {
+	const q = `
+		UPDATE api_keys
+		SET last_used_at = $1,
+		    last_used_ip = $2,
+		    usage_count  = usage_count + 1
+		WHERE id = $3`
+
+	_, err := r.db.ExecContext(ctx, q, time.Now().UTC(), ipAddress.String(), id)
+	return err
+}
+
+// Revoke soft-deletes an API key. ownerUserID prevents cross-user revocation.
+func (r *apiKeyRepository) Revoke(ctx context.Context, id string, ownerUserID string) error {
+	const q = `
+		UPDATE api_keys
+		SET revoked_at = $1
+		WHERE id = $2 AND user_id = $3 AND revoked_at IS NULL`
+
+	res, err := r.db.ExecContext(ctx, q, time.Now().UTC(), id, ownerUserID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return models.ErrAPIKeyNotFound
+	}
+	return nil
+}
+
+// LogUsage records an API key usage event to the audit log.
+func (r *apiKeyRepository) LogUsage(ctx context.Context, log *models.APIKeyUsageLog) error {
+	const q = `
+		INSERT INTO api_key_usage_log (
+			id, api_key_id, used_at, ip_address, endpoint, user_agent,
+			country_code, city, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+
+	now := time.Now().UTC()
+	if log.CreatedAt.IsZero() {
+		log.CreatedAt = now
+	}
+	if log.UsedAt.IsZero() {
+		log.UsedAt = now
+	}
+
+	_, err := r.db.ExecContext(ctx, q,
+		log.ID,
+		log.APIKeyID,
+		log.UsedAt,
+		log.IPAddress.String(),
+		log.Endpoint,
+		log.UserAgent,
+		log.CountryCode,
+		log.City,
+		log.CreatedAt,
+	)
+	return err
+}
+
+// ---- internal scan helpers ----
+
+func (r *apiKeyRepository) scanOne(row *sql.Row) (*models.APIKey, error) {
+	var k models.APIKey
+	var lastUsedAt sql.NullTime
+	var lastUsedIP sql.NullString
+	var revokedAt sql.NullTime
+	var scopesJSON []byte
+
+	err := row.Scan(
+		&k.ID, &k.UserID, &k.Name,
+		&k.LookupHash, &k.KeyHash, &k.KeySalt, &k.HashAlgorithm,
+		&k.KeyHintPrefix, &k.KeyHintSuffix,
+		&lastUsedAt, &lastUsedIP, &k.UsageCount,
+		&k.CreatedAt, &revokedAt, &scopesJSON,
 	)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return APIKey{}, ErrAPIKeyNotFound
-		}
-		return APIKey{}, err
+		return nil, err
 	}
-	return k, nil
+	apiKeyApplyNullable(&k, lastUsedAt, lastUsedIP, revokedAt, scopesJSON)
+	return &k, nil
+}
+
+func (r *apiKeyRepository) scanMany(rows *sql.Rows, queryErr error) ([]*models.APIKey, error) {
+	if queryErr != nil {
+		return nil, queryErr
+	}
+	defer rows.Close()
+
+	var keys []*models.APIKey
+	for rows.Next() {
+		var k models.APIKey
+		var lastUsedAt sql.NullTime
+		var lastUsedIP sql.NullString
+		var revokedAt sql.NullTime
+		var scopesJSON []byte
+
+		if err := rows.Scan(
+			&k.ID, &k.UserID, &k.Name,
+			&k.LookupHash, &k.KeyHash, &k.KeySalt, &k.HashAlgorithm,
+			&k.KeyHintPrefix, &k.KeyHintSuffix,
+			&lastUsedAt, &lastUsedIP, &k.UsageCount,
+			&k.CreatedAt, &revokedAt, &scopesJSON,
+		); err != nil {
+			return nil, err
+		}
+		apiKeyApplyNullable(&k, lastUsedAt, lastUsedIP, revokedAt, scopesJSON)
+		keys = append(keys, &k)
+	}
+	return keys, rows.Err()
+}
+
+func apiKeyApplyNullable(k *models.APIKey, lastUsedAt sql.NullTime, lastUsedIP sql.NullString, revokedAt sql.NullTime, scopesJSON []byte) {
+	if lastUsedAt.Valid {
+		k.LastUsedAt = &lastUsedAt.Time
+	}
+	if lastUsedIP.Valid {
+		ip := net.ParseIP(lastUsedIP.String)
+		k.LastUsedIP = &ip
+	}
+	if revokedAt.Valid {
+		k.RevokedAt = &revokedAt.Time
+	}
+	if len(scopesJSON) > 0 {
+		_ = json.Unmarshal(scopesJSON, &k.Scopes)
+	}
 }
