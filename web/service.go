@@ -44,23 +44,23 @@ func (s *Service) All(ctx context.Context, userID string) ([]Job, error) {
 	return s.repo.Select(ctx, SelectParams{UserID: userID})
 }
 
-func (s *Service) Get(ctx context.Context, id string) (Job, error) {
-	return s.repo.Get(ctx, id)
+func (s *Service) Get(ctx context.Context, id string, userID string) (Job, error) {
+	return s.repo.Get(ctx, id, userID)
 }
 
-func (s *Service) Delete(ctx context.Context, id string) error {
+func (s *Service) Delete(ctx context.Context, id string, userID string) error {
 	if strings.Contains(id, "/") || strings.Contains(id, "\\") || strings.Contains(id, "..") {
 		return fmt.Errorf("invalid file name")
 	}
 	log := pkglogger.FromContext(ctx)
 
-	// First check the current job status
-	job, err := s.repo.Get(ctx, id)
+	// First check the current job status using admin bypass (ownership enforced at Delete level)
+	job, err := s.repo.Get(ctx, id, "")
 	if err == nil {
 		// If job is still running, cancel it first
 		if job.Status == StatusWorking || job.Status == StatusPending {
-			// Try to cancel the job first
-			if cancelErr := s.repo.Cancel(ctx, id); cancelErr != nil {
+			// Try to cancel the job first (admin bypass since ownership is checked at Delete)
+			if cancelErr := s.repo.Cancel(ctx, id, ""); cancelErr != nil {
 				// Log the error but continue with deletion
 				log.Warn("cancel_before_delete_failed",
 					slog.String("job_id", id),
@@ -80,7 +80,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		return err
 	}
 
-	return s.repo.Delete(ctx, id)
+	return s.repo.Delete(ctx, id, userID)
 }
 
 func (s *Service) Update(ctx context.Context, job *Job) error {
@@ -192,12 +192,12 @@ func (s *Service) GetCSV(_ context.Context, id string) (string, error) {
 	return datapath, nil
 }
 
-func (s *Service) Cancel(ctx context.Context, id string) error {
+func (s *Service) Cancel(ctx context.Context, id string, userID string) error {
 	log := pkglogger.FromContext(ctx)
 	log.Debug("service_cancel_called", slog.String("job_id", id))
 
-	// Get current job status before cancellation
-	job, err := s.repo.Get(ctx, id)
+	// Get current job status before cancellation using admin bypass
+	job, err := s.repo.Get(ctx, id, "")
 	if err != nil {
 		log.Debug("service_cancel_get_job_before_failed",
 			slog.String("job_id", id),
@@ -211,8 +211,8 @@ func (s *Service) Cancel(ctx context.Context, id string) error {
 		slog.String("status", string(job.Status)),
 	)
 
-	// Call repository Cancel method
-	err = s.repo.Cancel(ctx, id)
+	// Call repository Cancel method with userID for ownership enforcement
+	err = s.repo.Cancel(ctx, id, userID)
 	if err != nil {
 		log.Debug("service_cancel_repo_cancel_failed",
 			slog.String("job_id", id),
@@ -223,8 +223,8 @@ func (s *Service) Cancel(ctx context.Context, id string) error {
 
 	log.Debug("service_cancel_repo_cancel_completed", slog.String("job_id", id))
 
-	// Verify the status was updated
-	updatedJob, err := s.repo.Get(ctx, id)
+	// Verify the status was updated using admin bypass
+	updatedJob, err := s.repo.Get(ctx, id, "")
 	if err != nil {
 		log.Debug("service_cancel_get_job_after_failed",
 			slog.String("job_id", id),

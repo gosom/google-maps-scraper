@@ -7,6 +7,8 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strconv"
+	"time"
 
 	// postgres driver
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -243,7 +245,33 @@ func openPsqlConn(dsn string) (conn *sql.DB, err error) {
 		return
 	}
 
-	conn.SetMaxOpenConns(10)
+	// connection pool settings — configurable via env vars
+	maxOpen := dbEnvInt("DB_MAX_OPEN_CONNS", 25)
+	if maxOpen == 0 {
+		slog.Warn("db_pool_unbounded", slog.String("detail", "DB_MAX_OPEN_CONNS=0 means unlimited connections"))
+	}
+	conn.SetMaxOpenConns(maxOpen)
+	conn.SetMaxIdleConns(dbEnvInt("DB_MAX_IDLE_CONNS", 10))
+	conn.SetConnMaxLifetime(dbEnvDuration("DB_CONN_MAX_LIFETIME", 5*time.Minute))
+	conn.SetConnMaxIdleTime(2 * time.Minute)
 
 	return
+}
+
+func dbEnvInt(key string, defaultVal int) int {
+	if s := os.Getenv(key); s != "" {
+		if v, err := strconv.Atoi(s); err == nil {
+			return v
+		}
+	}
+	return defaultVal
+}
+
+func dbEnvDuration(key string, defaultVal time.Duration) time.Duration {
+	if s := os.Getenv(key); s != "" {
+		if d, err := time.ParseDuration(s); err == nil {
+			return d
+		}
+	}
+	return defaultVal
 }

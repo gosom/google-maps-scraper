@@ -45,12 +45,12 @@ type SelectParams struct {
 
 // JobRepository defines the interface for job storage
 type JobRepository interface {
-	Get(ctx context.Context, id string) (Job, error)
+	Get(ctx context.Context, id string, userID string) (Job, error)
 	Create(ctx context.Context, job *Job) error
-	Delete(ctx context.Context, id string) error
+	Delete(ctx context.Context, id string, userID string) error
 	Select(ctx context.Context, params SelectParams) ([]Job, error)
 	Update(ctx context.Context, job *Job) error
-	Cancel(ctx context.Context, id string) error
+	Cancel(ctx context.Context, id string, userID string) error
 }
 
 // Common status constants

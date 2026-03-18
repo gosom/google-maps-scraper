@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -18,12 +19,17 @@ import (
 // SignupBonusAmount is the credit amount granted to new users on signup ($1.00)
 const SignupBonusAmount = 1.0
 
+// APIKeyPrefix is the required prefix for all programmatic API keys.
+// Tokens that begin with this prefix are treated as API keys rather than Clerk JWTs.
+const APIKeyPrefix = "bscraper_"
+
 // AuthMiddleware handles Clerk authentication and adds user info to the request context
 type AuthMiddleware struct {
-	db       *sql.DB
-	userAPI  *user.Client
-	userRepo postgres.UserRepository
-	logger   *slog.Logger
+	db         *sql.DB
+	userAPI    *user.Client
+	userRepo   postgres.UserRepository
+	apiKeyRepo postgres.UserAPIKeyRepository // nil if API key auth is not configured
+	logger     *slog.Logger
 }
 
 // ContextKey is used to store user information in the request context
@@ -32,6 +38,10 @@ type ContextKey string
 const (
 	// UserIDKey is the context key for storing the user ID
 	UserIDKey ContextKey = "user_id"
+	// APIKeyIDKey is the context key for the API key UUID (set only for API key auth)
+	APIKeyIDKey ContextKey = "api_key_id"
+	// APIKeyPlanTierKey is the context key for the API key plan tier ("free" or "paid")
+	APIKeyPlanTierKey ContextKey = "api_key_plan_tier"
 	// AuthHeaderName is the name of the authentication header
 	AuthHeaderName = "Authorization"
 	// DevUserHeaderName allows local integration tests to bypass Clerk auth when explicitly enabled.
@@ -39,8 +49,10 @@ const (
 	DevUserHeaderName = "X-Braza-Dev-User"
 )
 
-// NewAuthMiddleware creates a new AuthMiddleware
-func NewAuthMiddleware(clerkAPIKey string, db *sql.DB, userRepo postgres.UserRepository, logger *slog.Logger) (*AuthMiddleware, error) {
+// NewAuthMiddleware creates a new AuthMiddleware.
+// apiKeyRepo may be nil; when nil, API key authentication is disabled and all
+// Bearer tokens are validated as Clerk JWTs.
+func NewAuthMiddleware(clerkAPIKey string, db *sql.DB, userRepo postgres.UserRepository, apiKeyRepo postgres.UserAPIKeyRepository, logger *slog.Logger) (*AuthMiddleware, error) {
 	// Configure Clerk SDK with the provided secret key
 	clerk.SetKey(clerkAPIKey)
 
@@ -51,45 +63,75 @@ func NewAuthMiddleware(clerkAPIKey string, db *sql.DB, userRepo postgres.UserRep
 				Key: clerk.String(clerkAPIKey),
 			},
 		}),
-		userRepo: userRepo,
-		logger:   logger,
+		userRepo:   userRepo,
+		apiKeyRepo: apiKeyRepo,
+		logger:     logger,
 	}, nil
 }
 
-// Authenticate is the middleware function for authentication
+// writeUnauthorized writes a 401 JSON response.
+func writeUnauthorized(w http.ResponseWriter, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnauthorized)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"code":    http.StatusUnauthorized,
+		"message": msg,
+	})
+}
+
+// extractBearerToken returns the raw token from the Authorization header,
+// or the __session cookie value as a fallback (Clerk browser sessions).
+func extractBearerToken(r *http.Request) string {
+	authHeader := strings.TrimSpace(r.Header.Get(AuthHeaderName))
+	if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+		return strings.TrimSpace(authHeader[len("Bearer "):])
+	}
+	if sessionCookie, err := r.Cookie("__session"); err == nil && sessionCookie.Value != "" {
+		return sessionCookie.Value
+	}
+	return ""
+}
+
+// Authenticate is the middleware function for authentication.
+// It dispatches to API key auth when the Bearer token has the APIKeyPrefix,
+// and falls back to Clerk JWT validation otherwise.
+// When both an API key header and a session cookie are present, the API key
+// takes precedence (programmatic access pattern).
 func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
-	extractToken := func(r *http.Request) string {
-		// Prefer Authorization header
-		authHeader := strings.TrimSpace(r.Header.Get(AuthHeaderName))
-		if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
-			return strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
-		}
-		// Fallback to __session cookie (used by Clerk)
-		if sessionCookie, err := r.Cookie("__session"); err == nil && sessionCookie.Value != "" {
-			return sessionCookie.Value
-		}
-		return ""
+	// Dev bypass: local integration tests only. Never enabled in production.
+	if strings.TrimSpace(os.Getenv("BRAZA_DEV_AUTH_BYPASS")) == "1" {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if devUserID := strings.TrimSpace(r.Header.Get(DevUserHeaderName)); devUserID != "" {
+				if m.logger != nil {
+					m.logger.Warn("dev_auth_bypass", slog.String("user_id", devUserID))
+				}
+				ctx := context.WithValue(r.Context(), UserIDKey, devUserID)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+			m.authenticateRequest(next).ServeHTTP(w, r)
+		})
 	}
 
-	// Clerk middleware: verify token (header or cookie) and attach session claims
+	return m.authenticateRequest(next)
+}
+
+// authenticateRequest builds the actual auth handler (API key or Clerk JWT).
+func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
+	// Build Clerk handler once; reused for all non-API-key requests.
 	clerkAuth := clerkhttp.RequireHeaderAuthorization(
-		clerkhttp.AuthorizationJWTExtractor(extractToken),
+		clerkhttp.AuthorizationJWTExtractor(extractBearerToken),
 	)
 
 	clerkHandler := clerkAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Retrieve verified session claims from context
 		claims, ok := clerk.SessionClaimsFromContext(r.Context())
 		if !ok || claims == nil || claims.Subject == "" {
 			http.Error(w, "Unauthorized: invalid token", http.StatusUnauthorized)
 			return
 		}
-
 		userID := claims.Subject
 
-		// Check if user exists in our database
-		userRecord, err := m.userRepo.GetByID(r.Context(), userID)
-		if err != nil {
-			// If user doesn't exist, fetch from Clerk and create locally
+		if _, err := m.userRepo.GetByID(r.Context(), userID); err != nil {
 			clerkUser, err := m.userAPI.Get(r.Context(), userID)
 			if err != nil {
 				m.logger.Error("failed_to_retrieve_user_from_clerk", slog.String("user_id", userID), slog.Any("error", err))
@@ -97,7 +139,6 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 				return
 			}
 
-			// Get the primary email
 			var email string
 			if clerkUser.PrimaryEmailAddressID != nil {
 				primaryID := *clerkUser.PrimaryEmailAddressID
@@ -110,54 +151,78 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 			} else if len(clerkUser.EmailAddresses) > 0 {
 				email = clerkUser.EmailAddresses[0].EmailAddress
 			}
-
 			if email == "" {
 				m.logger.Error("user_has_no_email", slog.String("user_id", userID))
 				http.Error(w, "User has no email address", http.StatusBadRequest)
 				return
 			}
 
-			userRecord = postgres.User{
-				ID:    userID,
-				Email: email,
-			}
-			if err := m.userRepo.Create(r.Context(), &userRecord); err != nil {
+			newUser := postgres.User{ID: userID, Email: email}
+			if err := m.userRepo.Create(r.Context(), &newUser); err != nil {
 				m.logger.Error("failed_to_create_user", slog.String("user_id", userID), slog.Any("error", err))
 				http.Error(w, "Failed to create user record: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
-
-			// Grant signup bonus
 			if err := m.grantSignupBonus(r.Context(), userID); err != nil {
 				m.logger.Error("failed_to_grant_signup_bonus", slog.String("user_id", userID), slog.Any("error", err))
-				// Don't block signup if bonus fails
 			} else {
 				m.logger.Info("signup_bonus_granted", slog.Float64("amount", SignupBonusAmount), slog.String("user_id", userID))
 			}
 		}
 
-		// Add user ID to request context
 		ctx := context.WithValue(r.Context(), UserIDKey, userID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	}))
 
-	// Optional dev bypass for local integration tests. This avoids depending on
-	// Clerk connectivity from the test runner environment.
-	if strings.TrimSpace(os.Getenv("BRAZA_DEV_AUTH_BYPASS")) == "1" {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if devUserID := strings.TrimSpace(r.Header.Get(DevUserHeaderName)); devUserID != "" {
-				if m.logger != nil {
-					m.logger.Warn("dev_auth_bypass", slog.String("user_id", devUserID))
-				}
-				ctx := context.WithValue(r.Context(), UserIDKey, devUserID)
-				next.ServeHTTP(w, r.WithContext(ctx))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check Authorization header for API key prefix first.
+		// A request with both an API key header and a session cookie uses the API key
+		// path (programmatic access takes precedence over browser session).
+		authHeader := strings.TrimSpace(r.Header.Get(AuthHeaderName))
+		var bearerToken string
+		if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+			bearerToken = strings.TrimSpace(authHeader[len("Bearer "):])
+		}
+
+		if m.apiKeyRepo != nil && strings.HasPrefix(bearerToken, APIKeyPrefix) {
+			// API key path: look up by hash, set context, then proceed.
+			hash := postgres.HashAPIKey(bearerToken)
+			apiKey, err := m.apiKeyRepo.GetByHash(r.Context(), hash)
+			if err != nil {
+				// Key not found or revoked: reject before rate limiting.
+				m.logger.Warn("api_key_auth_rejected",
+					slog.String("reason", err.Error()),
+					slog.String("path", r.URL.Path),
+				)
+				writeUnauthorized(w, "invalid or revoked API key")
 				return
 			}
-			clerkHandler.ServeHTTP(w, r)
-		})
-	}
 
-	return clerkHandler
+			ctx := r.Context()
+			ctx = context.WithValue(ctx, UserIDKey, apiKey.UserID)
+			ctx = context.WithValue(ctx, APIKeyIDKey, apiKey.ID)
+			ctx = context.WithValue(ctx, APIKeyPlanTierKey, apiKey.PlanTier)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+
+		// JWT / session cookie path (Clerk).
+		clerkHandler.ServeHTTP(w, r)
+	})
+}
+
+// GetAPIKeyID extracts the API key UUID from the request context.
+// Returns an empty string when the request was not authenticated via an API key.
+func GetAPIKeyID(ctx context.Context) string {
+	id, _ := ctx.Value(APIKeyIDKey).(string)
+	return id
+}
+
+// GetAPIKeyPlanTier returns the plan tier ("free" or "paid") for API key requests.
+// Returns an empty string for non-API-key requests.
+func GetAPIKeyPlanTier(ctx context.Context) string {
+	tier, _ := ctx.Value(APIKeyPlanTierKey).(string)
+	return tier
 }
 
 // grantSignupBonus awards the signup bonus credit to a newly created user.
@@ -217,7 +282,7 @@ func (m *AuthMiddleware) grantSignupBonus(ctx context.Context, userID string) er
 // GetUserID extracts the user ID from the request context
 func GetUserID(ctx context.Context) (string, error) {
 	userID, ok := ctx.Value(UserIDKey).(string)
-	if !ok {
+	if !ok || userID == "" {
 		return "", errors.New("user not authenticated")
 	}
 	return userID, nil

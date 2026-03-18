@@ -3,16 +3,20 @@ package s3uploader
 import (
 	"context"
 	"io"
+	"log/slog"
+	"os"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 )
 
 type Uploader struct {
 	client *s3.Client
+	log    *slog.Logger
 }
 
 // UploadResult contains the response metadata from S3 upload
@@ -44,6 +48,7 @@ func New(accessKey, secretKey, region string) *Uploader {
 
 	return &Uploader{
 		client: client,
+		log:    pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "s3uploader"),
 	}
 }
 
@@ -57,8 +62,10 @@ func (u *Uploader) Upload(ctx context.Context, bucketName, key string, body io.R
 		ContentType: aws.String(contentType), // Set Content-Type header
 	}
 
+	u.log.Debug("s3_upload_started", slog.String("bucket", bucketName), slog.String("object_key", key), slog.String("content_type", contentType))
 	output, err := u.client.PutObject(ctx, input)
 	if err != nil {
+		u.log.Error("s3_upload_failed", slog.String("bucket", bucketName), slog.String("object_key", key), slog.Any("error", err))
 		return nil, err
 	}
 
@@ -68,6 +75,7 @@ func (u *Uploader) Upload(ctx context.Context, bucketName, key string, body io.R
 		etag = aws.ToString(output.ETag)
 	}
 
+	u.log.Info("s3_upload_success", slog.String("bucket", bucketName), slog.String("object_key", key), slog.String("etag", etag))
 	return &UploadResult{
 		ETag:      etag,
 		VersionID: output.VersionId, // May be nil if versioning not enabled
@@ -82,10 +90,13 @@ func (u *Uploader) Download(ctx context.Context, bucketName, key string) (io.Rea
 		Key:    aws.String(key),
 	}
 
+	u.log.Debug("s3_download_started", slog.String("bucket", bucketName), slog.String("object_key", key))
 	output, err := u.client.GetObject(ctx, input)
 	if err != nil {
+		u.log.Error("s3_download_failed", slog.String("bucket", bucketName), slog.String("object_key", key), slog.Any("error", err))
 		return nil, err
 	}
 
+	u.log.Debug("s3_download_success", slog.String("bucket", bucketName), slog.String("object_key", key))
 	return output.Body, nil
 }

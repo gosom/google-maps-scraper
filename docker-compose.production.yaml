@@ -1,7 +1,7 @@
 services:
   # Production deployment with external PostgreSQL
   brezel-api:
-    image: brezel-staging-test
+    image: ${DOCKER_IMAGE}:${DOCKER_IMAGE_TAG:-latest}
     environment:
       - DSN=${DSN}
       - DATA_FOLDER=${DATA_FOLDER:-/gmapsdata}
@@ -10,6 +10,7 @@ services:
       - LOG_OUTPUT=${LOG_OUTPUT:-stdout}
       - CONCURRENCY=${CONCURRENCY}
       - CLERK_SECRET_KEY=${CLERK_SECRET_KEY}
+      - APP_ENV=production
       - DISABLE_TELEMETRY=${DISABLE_TELEMETRY:-0}
     ports:
       - "127.0.0.1:${API_PORT:-8080}:8080"
@@ -72,8 +73,17 @@ services:
       - "127.0.0.1:3001:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-changeme}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
       - GF_AUTH_ANONYMOUS_ENABLED=false
+      # SMTP for ops billing alert emails (required for refund_cap_applied alerting)
+      - GF_SMTP_ENABLED=${GF_SMTP_ENABLED:-false}
+      - GF_SMTP_HOST=${GF_SMTP_HOST:-smtp.example.com:587}
+      - GF_SMTP_USER=${GF_SMTP_USER}
+      - GF_SMTP_PASSWORD=${GF_SMTP_PASSWORD}
+      - GF_SMTP_FROM_ADDRESS=${GF_SMTP_FROM_ADDRESS:-alerts@brezel.ai}
+      - GF_SMTP_FROM_NAME=${GF_SMTP_FROM_NAME:-Brezel Alerts}
+      # Ops recipient for billing alerts — used by Grafana alert provisioning
+      - OPS_ALERT_EMAIL=${OPS_ALERT_EMAIL:-ops@brezel.ai}
     volumes:
       - grafana-data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning
@@ -96,3 +106,11 @@ volumes:
     # CLERK_SECRET_KEY=your_clerk_secret_key
     # GRAFANA_ADMIN_USER=admin
     # GRAFANA_ADMIN_PASSWORD=your_secure_password
+    #
+    # Ops billing alerting (refund_cap_applied threshold alert):
+    # OPS_ALERT_EMAIL=ops@brezel.ai           — recipient for billing alerts
+    # GF_SMTP_ENABLED=true
+    # GF_SMTP_HOST=smtp.example.com:587
+    # GF_SMTP_USER=alerts@brezel.ai
+    # GF_SMTP_PASSWORD=your_smtp_password
+    # GF_SMTP_FROM_ADDRESS=alerts@brezel.ai

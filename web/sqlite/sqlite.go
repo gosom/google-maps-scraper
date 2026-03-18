@@ -25,10 +25,10 @@ func New(path string) (web.JobRepository, error) {
 	return &repo{db: db}, nil
 }
 
-func (repo *repo) Get(ctx context.Context, id string) (web.Job, error) {
-	const q = `SELECT * from jobs WHERE id = ?`
+func (repo *repo) Get(ctx context.Context, id string, userID string) (web.Job, error) {
+	const q = `SELECT * from jobs WHERE id = ? AND (user_id = ? OR ? = '')`
 
-	row := repo.db.QueryRowContext(ctx, q, id)
+	row := repo.db.QueryRowContext(ctx, q, id, userID, userID)
 
 	return rowToJob(row)
 }
@@ -49,10 +49,10 @@ func (repo *repo) Create(ctx context.Context, job *web.Job) error {
 	return nil
 }
 
-func (repo *repo) Delete(ctx context.Context, id string) error {
-	const q = `DELETE FROM jobs WHERE id = ?`
+func (repo *repo) Delete(ctx context.Context, id string, userID string) error {
+	const q = `DELETE FROM jobs WHERE id = ? AND (user_id = ? OR ? = '')`
 
-	_, err := repo.db.ExecContext(ctx, q, id)
+	_, err := repo.db.ExecContext(ctx, q, id, userID, userID)
 
 	return err
 }
@@ -70,7 +70,7 @@ func (repo *repo) Select(ctx context.Context, params web.SelectParams) ([]web.Jo
 
 	if params.UserID != "" {
 		// Add user_id condition if specified
-		conditions = append(conditions, `(user_id = ? OR user_id IS NULL)`)
+		conditions = append(conditions, `user_id = ?`)
 		args = append(args, params.UserID)
 	}
 
@@ -123,12 +123,13 @@ func (repo *repo) Update(ctx context.Context, job *web.Job) error {
 	return err
 }
 
-// Cancel marks a job as aborting
-func (repo *repo) Cancel(ctx context.Context, id string) error {
-	const q = `UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?`
+// Cancel marks a job as aborting.
+// Pass userID="" to bypass ownership check (admin access).
+func (repo *repo) Cancel(ctx context.Context, id string, userID string) error {
+	const q = `UPDATE jobs SET status = ?, updated_at = ? WHERE id = ? AND (user_id = ? OR ? = '')`
 
 	updatedAt := time.Now().UTC().Unix()
-	_, err := repo.db.ExecContext(ctx, q, web.StatusAborting, updatedAt, id)
+	_, err := repo.db.ExecContext(ctx, q, web.StatusAborting, updatedAt, id, userID, userID)
 
 	return err
 }

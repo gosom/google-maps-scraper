@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -18,6 +20,15 @@ import (
 )
 
 var validate = validator.New()
+
+// internalError logs err at ERROR level and writes a sanitized 500 response to w.
+// The raw error is never sent to the client; only the generic userMsg is.
+func internalError(w http.ResponseWriter, log *slog.Logger, err error, userMsg string) {
+	if log != nil {
+		log.Error("internal_error", slog.Any("error", err))
+	}
+	renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: userMsg})
+}
 
 type apiScrapeRequest struct {
 	Name string `validate:"required"`
@@ -124,8 +135,8 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := h.Deps.App.Create(r.Context(), &newJob); err != nil {
-		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: "failed to create job: " + err.Error()})
+	if err := h.createJob(r.Context(), &newJob, w); err != nil {
+		// createJob has already written the response on limit/error.
 		return
 	}
 
@@ -137,24 +148,59 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 	renderJSON(w, http.StatusCreated, models.ApiScrapeResponse{ID: newJob.ID})
 }
 
+// concurrentLimitResponse is the 429 body when a user has hit their job cap.
+type concurrentLimitResponse struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Limit   int    `json:"limit"`
+}
+
+// createJob inserts a job, enforcing the concurrent job limit when the DB is
+// available. Returns a non-nil error only when it has already written a response
+// to w (so callers must not write another response on non-nil return).
+func (h *APIHandlers) createJob(ctx context.Context, job *models.Job, w http.ResponseWriter) error {
+	if h.Deps.ConcurrentLimitSvc != nil {
+		err := h.Deps.ConcurrentLimitSvc.CreateJobWithLimit(ctx, job)
+		if err != nil {
+			var limitErr webservices.ErrConcurrentJobLimitReached
+			if errors.As(err, &limitErr) {
+				w.Header().Set("Retry-After", "60")
+				renderJSON(w, http.StatusTooManyRequests, concurrentLimitResponse{
+					Code:    http.StatusTooManyRequests,
+					Message: "concurrent job limit reached",
+					Limit:   limitErr.Limit,
+				})
+				return err
+			}
+			internalError(w, h.Deps.Logger, err, "job creation failed")
+			return err
+		}
+		return nil
+	}
+	// No DB available — fall back to plain create (non-billing deployments).
+	if err := h.Deps.App.Create(ctx, job); err != nil {
+		internalError(w, h.Deps.Logger, err, "job creation failed")
+		return err
+	}
+	return nil
+}
+
 func (h *APIHandlers) GetJobs(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
 		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
 	}
-	var jobs []models.Job
-	var err error
-	if h.Deps.Auth != nil {
-		userID, err := auth.GetUserID(r.Context())
-		if err != nil {
-			renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
-			return
-		}
-		jobs, err = h.Deps.App.All(r.Context(), userID)
-	} else {
-		jobs, err = h.Deps.App.All(r.Context(), "")
+	if h.Deps.Auth == nil {
+		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "Authentication not configured"})
+		return
 	}
+	userID, err := auth.GetUserID(r.Context())
 	if err != nil {
-		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: err.Error()})
+		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
+		return
+	}
+	jobs, err := h.Deps.App.All(r.Context(), userID)
+	if err != nil {
+		internalError(w, h.Deps.Logger, err, "internal server error")
 		return
 	}
 	renderJSON(w, http.StatusOK, jobs)
@@ -175,7 +221,7 @@ func (h *APIHandlers) GetUserJobs(w http.ResponseWriter, r *http.Request) {
 	}
 	jobs, err := h.Deps.App.All(r.Context(), userID)
 	if err != nil {
-		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: err.Error()})
+		internalError(w, h.Deps.Logger, err, "internal server error")
 		return
 	}
 	renderJSON(w, http.StatusOK, jobs)
@@ -195,7 +241,16 @@ func (h *APIHandlers) GetJob(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Invalid ID format"})
 		return
 	}
-	job, err := h.Deps.App.Get(r.Context(), id.String())
+	userID := ""
+	if h.Deps.Auth != nil {
+		uid, err := auth.GetUserID(r.Context())
+		if err != nil {
+			renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
+			return
+		}
+		userID = uid
+	}
+	job, err := h.Deps.App.Get(r.Context(), id.String(), userID)
 	if err != nil {
 		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: http.StatusText(http.StatusNotFound)})
 		return
@@ -217,8 +272,17 @@ func (h *APIHandlers) DeleteJob(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Invalid ID format"})
 		return
 	}
-	if err := h.Deps.App.Delete(r.Context(), id.String()); err != nil {
-		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: err.Error()})
+	userID := ""
+	if h.Deps.Auth != nil {
+		uid, err := auth.GetUserID(r.Context())
+		if err != nil {
+			renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
+			return
+		}
+		userID = uid
+	}
+	if err := h.Deps.App.Delete(r.Context(), id.String(), userID); err != nil {
+		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: http.StatusText(http.StatusNotFound)})
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -238,24 +302,17 @@ func (h *APIHandlers) CancelJob(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Invalid ID format"})
 		return
 	}
+	userID := ""
 	if h.Deps.Auth != nil {
-		userID, err := auth.GetUserID(r.Context())
+		uid, err := auth.GetUserID(r.Context())
 		if err != nil {
 			renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
 			return
 		}
-		job, err := h.Deps.App.Get(r.Context(), id.String())
-		if err != nil {
-			renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: "Job not found"})
-			return
-		}
-		if job.UserID != userID {
-			renderJSON(w, http.StatusForbidden, models.APIError{Code: http.StatusForbidden, Message: "Access denied"})
-			return
-		}
+		userID = uid
 	}
-	if err := h.Deps.App.Cancel(r.Context(), id.String()); err != nil {
-		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: err.Error()})
+	if err := h.Deps.App.Cancel(r.Context(), id.String(), userID); err != nil {
+		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: http.StatusText(http.StatusNotFound)})
 		return
 	}
 	renderJSON(w, http.StatusOK, map[string]any{"message": "Job cancellation initiated", "job_id": id.String()})
@@ -283,18 +340,18 @@ func (h *APIHandlers) GetJobResults(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	offset := (page - 1) * limit
-	userID, err := auth.GetUserID(r.Context())
-	if err != nil {
-		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
-		return
+	userID := ""
+	if h.Deps.Auth != nil {
+		uid, err := auth.GetUserID(r.Context())
+		if err != nil {
+			renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
+			return
+		}
+		userID = uid
 	}
-	job, err := h.Deps.App.Get(r.Context(), jobID)
+	job, err := h.Deps.App.Get(r.Context(), jobID, userID)
 	if err != nil {
 		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: "Job not found"})
-		return
-	}
-	if h.Deps.Auth != nil && job.UserID != userID {
-		renderJSON(w, http.StatusForbidden, models.APIError{Code: http.StatusForbidden, Message: "Access denied"})
 		return
 	}
 
@@ -309,7 +366,7 @@ func (h *APIHandlers) GetJobResults(w http.ResponseWriter, r *http.Request) {
 
 	results, total, err := h.Deps.ResultsSvc.GetEnhancedJobResultsPaginated(r.Context(), jobID, limit, offset)
 	if err != nil {
-		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: "Failed to get results: " + err.Error()})
+		internalError(w, h.Deps.Logger, err, "failed to retrieve results")
 		return
 	}
 	resp := models.PaginatedResultsResponse{Results: results, TotalCount: total, Page: page, Limit: limit, Offset: offset, TotalPages: (total + limit - 1) / limit, HasNext: offset+limit < total, HasPrev: page > 1}
@@ -338,14 +395,10 @@ func (h *APIHandlers) GetJobCosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Ensure the job belongs to the user
-	job, err := h.Deps.App.Get(r.Context(), jobID)
+	// Ensure the job belongs to the user (ownership enforced in DB query)
+	_, err = h.Deps.App.Get(r.Context(), jobID, userID)
 	if err != nil {
 		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: "Job not found"})
-		return
-	}
-	if job.UserID != userID {
-		renderJSON(w, http.StatusForbidden, models.APIError{Code: http.StatusForbidden, Message: "Access denied"})
 		return
 	}
 
@@ -357,7 +410,7 @@ func (h *APIHandlers) GetJobCosts(w http.ResponseWriter, r *http.Request) {
 	cs := webservices.NewCostsService(h.Deps.DB)
 	resp, err := cs.GetJobCosts(r.Context(), jobID)
 	if err != nil {
-		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: err.Error()})
+		internalError(w, h.Deps.Logger, err, "failed to retrieve job costs")
 		return
 	}
 	renderJSON(w, http.StatusOK, resp)
@@ -386,7 +439,7 @@ func (h *APIHandlers) GetUserResults(w http.ResponseWriter, r *http.Request) {
 	}
 	results, err := h.Deps.ResultsSvc.GetUserResults(r.Context(), userID, limit, offset)
 	if err != nil {
-		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: "Failed to get results: " + err.Error()})
+		internalError(w, h.Deps.Logger, err, "failed to retrieve results")
 		return
 	}
 	renderJSON(w, http.StatusOK, results)

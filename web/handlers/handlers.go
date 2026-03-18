@@ -12,20 +12,24 @@ import (
 	"github.com/gosom/google-maps-scraper/pkg/googlesheets"
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/web/auth"
+	webservices "github.com/gosom/google-maps-scraper/web/services"
 )
 
 // Dependencies aggregates shared services used by handlers.
 type Dependencies struct {
-	Logger          *slog.Logger
-	DB              *sql.DB
-	BillingSvc      *billing.Service
-	Templates       map[string]*template.Template
-	Auth            *auth.AuthMiddleware
-	App             JobService
-	UserRepo        postgres.UserRepository
-	ResultsSvc      ResultsService
-	IntegrationRepo models.IntegrationRepository
-	GoogleSheetsSvc *googlesheets.Service
+	Logger              *slog.Logger
+	DB                  *sql.DB
+	BillingSvc          *billing.Service
+	Templates           map[string]*template.Template
+	Auth                *auth.AuthMiddleware
+	App                 JobService
+	UserRepo            postgres.UserRepository
+	ResultsSvc          ResultsService
+	IntegrationRepo     models.IntegrationRepository
+	GoogleSheetsSvc     *googlesheets.Service
+	ConcurrentLimitSvc  *webservices.ConcurrentLimitService
+	// Version is the Git SHA injected at build time, used by the /health endpoint.
+	Version string
 }
 
 // HandlerGroup groups all handler categories for routing setup.
@@ -61,9 +65,9 @@ type BillingHandlers struct{ Deps Dependencies }
 type JobService interface {
 	Create(ctx context.Context, job *models.Job) error
 	All(ctx context.Context, userID string) ([]models.Job, error)
-	Get(ctx context.Context, id string) (models.Job, error)
-	Delete(ctx context.Context, id string) error
-	Cancel(ctx context.Context, id string) error
+	Get(ctx context.Context, id string, userID string) (models.Job, error)
+	Delete(ctx context.Context, id string, userID string) error
+	Cancel(ctx context.Context, id string, userID string) error
 	GetCSV(ctx context.Context, id string) (string, error)
 	GetCSVReader(ctx context.Context, id string) (io.ReadCloser, string, error)
 }

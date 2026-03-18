@@ -4,13 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
+	"os"
 
 	"github.com/gosom/google-maps-scraper/models"
+	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 )
 
 // EstimationService provides job cost estimation functionality
 type EstimationService struct {
-	db *sql.DB
+	db  *sql.DB
+	log *slog.Logger
 }
 
 // Cost estimation constants - average values based on typical Google Maps data
@@ -54,7 +58,10 @@ type CostEstimate struct {
 }
 
 func NewEstimationService(db *sql.DB) *EstimationService {
-	return &EstimationService{db: db}
+	return &EstimationService{
+		db:  db,
+		log: pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "estimation"),
+	}
 }
 
 // EstimateJobCost calculates the estimated cost for a job based on its parameters
@@ -102,6 +109,14 @@ func (s *EstimationService) EstimateJobCost(ctx context.Context, jobData *models
 
 	// 8. Add note about estimation
 	estimate.Note = s.generateEstimationNote(jobData)
+
+	s.log.Debug("job_cost_estimated",
+		slog.Int("estimated_places", estimate.EstimatedPlaces),
+		slog.Int("estimated_reviews", estimate.EstimatedReviews),
+		slog.Int("estimated_images", estimate.EstimatedImages),
+		slog.Bool("email_scrape", estimate.IncludesEmailScrape),
+		slog.Float64("total_estimated_cost", estimate.TotalEstimatedCost),
+	)
 
 	return estimate, nil
 }
@@ -195,6 +210,12 @@ func (s *EstimationService) CheckSufficientBalance(ctx context.Context, userID s
 
 	// Check if balance is sufficient
 	if creditBalance < estimate.TotalEstimatedCost {
+		s.log.Warn("insufficient_credits",
+			slog.String("user_id", userID),
+			slog.Float64("balance", creditBalance),
+			slog.Float64("required", estimate.TotalEstimatedCost),
+			slog.Int("estimated_places", estimate.EstimatedPlaces),
+		)
 		return fmt.Errorf(
 			"insufficient credits: you have %.4f credits but this job requires a minimum of %.4f credits to start (estimated cost for %d places). Please purchase more credits to continue",
 			creditBalance,

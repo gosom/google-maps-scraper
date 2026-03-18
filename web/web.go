@@ -27,6 +27,8 @@ import (
 	webhandlers "github.com/gosom/google-maps-scraper/web/handlers"
 	webmiddleware "github.com/gosom/google-maps-scraper/web/middleware"
 	webservices "github.com/gosom/google-maps-scraper/web/services"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"golang.org/x/time/rate"
 )
 
 //go:embed static
@@ -48,9 +50,10 @@ type ServerConfig struct {
 	Addr                string
 	PgDB                *sql.DB // Optional PostgreSQL connection
 	UserRepo            postgres.UserRepository
-	ClerkSecretKey      string // Clerk server-side secret key for authentication
-	StripeAPIKey        string // Optional Stripe API key for subscriptions
-	StripeWebhookSecret string // Optional Stripe webhook secret
+	UserAPIKeyRepo      postgres.UserAPIKeyRepository // Optional; enables API key auth when set
+	ClerkSecretKey      string                        // Clerk server-side secret key for authentication
+	StripeAPIKey        string                        // Optional Stripe API key for subscriptions
+	StripeWebhookSecret string                        // Optional Stripe webhook secret
 	// Version is the Git SHA injected at build time via ldflags.
 	// It is returned by the /health endpoint as the "version" field.
 	Version string
@@ -76,7 +79,7 @@ func New(cfg ServerConfig) (*Server, error) {
 	// Initialize authentication middleware if Clerk secret key is provided
 	if cfg.ClerkSecretKey != "" && cfg.UserRepo != nil {
 		var err error
-		ans.authMiddleware, err = auth.NewAuthMiddleware(cfg.ClerkSecretKey, cfg.PgDB, cfg.UserRepo, ans.logger)
+		ans.authMiddleware, err = auth.NewAuthMiddleware(cfg.ClerkSecretKey, cfg.PgDB, cfg.UserRepo, cfg.UserAPIKeyRepo, ans.logger)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize authentication: %w", err)
 		}
@@ -109,10 +112,17 @@ func New(cfg ServerConfig) (*Server, error) {
 		GoogleSheetsSvc: googlesheets.NewService(),
 		Version:         cfg.Version,
 	}
+	if ans.db != nil {
+		deps.ConcurrentLimitSvc = webservices.NewConcurrentLimitService(ans.db)
+	}
 	hg := webhandlers.NewHandlerGroup(deps)
 
 	// Health check endpoint (no authentication needed)
 	router.HandleFunc("/health", hg.Web.HealthCheck).Methods(http.MethodGet)
+
+	// Prometheus metrics endpoint — scrape from Grafana or any Prometheus-compatible tool.
+	// No auth: bind the API server to 127.0.0.1 to prevent external exposure.
+	router.Handle("/metrics", promhttp.Handler()).Methods(http.MethodGet)
 
 	// Version endpoint (no authentication needed, for monitoring and debugging)
 	router.HandleFunc("/api/version", hg.Version.GetVersion).Methods(http.MethodGet)
@@ -130,6 +140,8 @@ func New(cfg ServerConfig) (*Server, error) {
 	// Public API routes (no authentication required)
 	publicAPIRouter := router.PathPrefix("/api/v1").Subrouter()
 	publicAPIRouter.Use(
+		webmiddleware.MaxBodySize(1<<20),                 // 1 MB max body (CWE-400)
+		webmiddleware.PerIPRateLimit(rate.Limit(3), 10), // 3 req/s per IP, burst 10 (CWE-307)
 		webmiddleware.RequestID,
 		webmiddleware.InjectLogger(ans.logger),
 		webmiddleware.RequestLogger(ans.logger),
@@ -150,6 +162,9 @@ func New(cfg ServerConfig) (*Server, error) {
 	// Apply request ID, logger injection, and request logger after authentication
 	// so user_id is available in context
 	apiRouter.Use(
+		webmiddleware.MaxBodySize(1<<20), // 1 MB max body (CWE-400)
+		// API key: free=2 req/s burst 5, paid=10 req/s burst 30; session fallback=5 req/s burst 20 (CWE-307)
+		webmiddleware.PerAPIKeyRateLimit(rate.Limit(2), 5, rate.Limit(10), 30, rate.Limit(5), 20),
 		webmiddleware.RequestID,
 		webmiddleware.InjectLogger(ans.logger),
 		webmiddleware.RequestLogger(ans.logger),
@@ -188,11 +203,28 @@ func New(cfg ServerConfig) (*Server, error) {
 	}
 
 	// Webhook endpoints (public access, no authentication)
+	// Apply a 64 KB body limit — Stripe payloads are small; this prevents OOM from
+	// oversized requests (CWE-400).
+	webhookHandler := webmiddleware.MaxBodySize(64<<10)(http.HandlerFunc(hg.Billing.HandleStripeWebhook))
+	// goneHandler is returned on retired legacy webhook paths to surface any
+	// Stripe dashboard misconfiguration quickly.
+	goneHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "This endpoint has been retired. Configure your Stripe dashboard to POST to /api/v1/billing/webhook", http.StatusGone)
+	})
 	if ans.billingSvc != nil {
-		// Primary webhook path
-		router.HandleFunc("/webhooks/stripe", hg.Billing.HandleStripeWebhook).Methods(http.MethodPost)
-		// Backward-compatible alias used by some Stripe CLI setups
-		router.HandleFunc("/api/stripe/webhook", hg.Billing.HandleStripeWebhook).Methods(http.MethodPost)
+		// Canonical webhook path — configure this URL in the Stripe dashboard.
+		// Stripe does not mandate a specific path; they simply require a single,
+		// consistent HTTPS endpoint that responds 2xx quickly. Our versioned API
+		// namespace (/api/v1/billing/webhook) keeps the route consistent with the
+		// rest of the billing surface and makes WAF/firewall rules easier to manage.
+		publicAPIRouter.Handle("/billing/webhook", webhookHandler).Methods(http.MethodPost)
+
+		// Retired legacy paths — respond 410 Gone so any misconfigured Stripe
+		// dashboard endpoint surfaces as an obvious delivery failure rather than
+		// a silent auth error. Update the Stripe dashboard webhook URL before
+		// deploying this change or webhook delivery will fail on these paths.
+		router.Handle("/webhooks/stripe", goneHandler).Methods(http.MethodPost)
+		router.Handle("/api/stripe/webhook", goneHandler).Methods(http.MethodPost)
 	}
 
 	// Apply security headers and CORS to all routes via middleware chain.
@@ -286,7 +318,8 @@ func (s *Server) apiCreateCheckoutSession(w http.ResponseWriter, r *http.Request
 	}
 	out, err := s.billingSvc.CreateCheckoutSession(r.Context(), billing.CheckoutRequest{UserID: userID, Credits: req.Credits, Currency: req.Currency})
 	if err != nil {
-		renderJSON(w, http.StatusBadRequest, apiError{Code: http.StatusBadRequest, Message: err.Error()})
+		s.logger.Error("checkout_session_create_failed", slog.Any("error", err), slog.String("user_id", userID))
+		renderJSON(w, http.StatusBadRequest, apiError{Code: http.StatusBadRequest, Message: "failed to create checkout session"})
 		return
 	}
 	renderJSON(w, http.StatusOK, out)
@@ -301,13 +334,22 @@ func (s *Server) apiReconcile(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusServiceUnavailable, apiError{Code: http.StatusServiceUnavailable, Message: "billing not configured"})
 		return
 	}
+	if s.authMiddleware == nil {
+		renderJSON(w, http.StatusUnauthorized, apiError{Code: http.StatusUnauthorized, Message: "Authentication not configured"})
+		return
+	}
+	userID, err := auth.GetUserID(r.Context())
+	if err != nil || userID == "" {
+		renderJSON(w, http.StatusUnauthorized, apiError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
+		return
+	}
 	var req reconcileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.SessionID == "" {
 		renderJSON(w, http.StatusUnprocessableEntity, apiError{Code: http.StatusUnprocessableEntity, Message: "invalid payload"})
 		return
 	}
-	if err := s.billingSvc.ReconcileSession(r.Context(), req.SessionID); err != nil {
-		renderJSON(w, http.StatusBadRequest, apiError{Code: http.StatusBadRequest, Message: err.Error()})
+	if err := s.billingSvc.ReconcileSession(r.Context(), req.SessionID, userID); err != nil {
+		renderJSON(w, http.StatusNotFound, apiError{Code: http.StatusNotFound, Message: "session not found or does not belong to user"})
 		return
 	}
 	renderJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -328,27 +370,6 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(code)
 }
 
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Origin")
-		// Allow localhost origins for development
-		if origin == "http://localhost:3000" || origin == "http://localhost:3001" {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-		} else {
-			// For production, you should set specific allowed origins
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-		}
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		w.Header().Set("Access-Control-Allow-Credentials", "true")
-
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
 
 func (s *Server) Start(ctx context.Context) error {
 	go func() {

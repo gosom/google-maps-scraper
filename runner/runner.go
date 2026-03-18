@@ -180,15 +180,18 @@ type Config struct {
 	ExtraReviews             bool
 	MaxResults               int
 	WebshareAPIKey           string
+	// Version holds the Git SHA injected at build time via ldflags (-X main.version=...).
+	// It is propagated from main.go so that the /health endpoint can report it.
+	Version string
 }
 
-func ParseConfig() *Config {
+func ParseConfig() (*Config, error) {
 	cfg := Config{}
 
 	if os.Getenv("PLAYWRIGHT_INSTALL_ONLY") == "1" {
 		cfg.RunMode = RunModeInstallPlaywright
 
-		return &cfg
+		return &cfg, nil
 	}
 
 	var (
@@ -266,31 +269,31 @@ func ParseConfig() *Config {
 	// Do not force concurrency in debug mode; keep user/provider choice intact
 
 	if cfg.AwsLambdaInvoker && cfg.FunctionName == "" {
-		panic("FunctionName must be provided when using AwsLambdaInvoker")
+		return nil, fmt.Errorf("FunctionName must be provided when using AwsLambdaInvoker")
 	}
 
 	if cfg.AwsLambdaInvoker && cfg.S3Bucket == "" {
-		panic("S3Bucket must be provided when using AwsLambdaInvoker")
+		return nil, fmt.Errorf("S3Bucket must be provided when using AwsLambdaInvoker")
 	}
 
 	if cfg.AwsLambdaInvoker && cfg.InputFile == "" {
-		panic("InputFile must be provided when using AwsLambdaInvoker")
+		return nil, fmt.Errorf("InputFile must be provided when using AwsLambdaInvoker")
 	}
 
 	if cfg.Concurrency < 1 {
-		panic("Concurrency must be greater than 0")
+		return nil, fmt.Errorf("Concurrency must be greater than 0, got %d", cfg.Concurrency)
 	}
 
 	if cfg.MaxDepth < 1 {
-		panic("MaxDepth must be greater than 0")
+		return nil, fmt.Errorf("MaxDepth must be greater than 0, got %d", cfg.MaxDepth)
 	}
 
 	if cfg.Zoom < 0 || cfg.Zoom > 21 {
-		panic("Zoom must be between 0 and 21")
+		return nil, fmt.Errorf("Zoom must be between 0 and 21, got %d", cfg.Zoom)
 	}
 
 	if cfg.Dsn == "" && cfg.ProduceOnly {
-		panic("Dsn must be provided when using ProduceOnly")
+		return nil, fmt.Errorf("Dsn must be provided when using ProduceOnly")
 	}
 
 	slog.Debug("proxy_config", slog.String("proxies_env", os.Getenv("PROXIES")), slog.String("cli_proxies_flag", proxies))
@@ -353,10 +356,10 @@ func ParseConfig() *Config {
 	case cfg.Dsn != "":
 		cfg.RunMode = RunModeDatabase
 	default:
-		panic("Invalid configuration")
+		return nil, fmt.Errorf("invalid configuration: unable to determine run mode")
 	}
 
-	return &cfg
+	return &cfg, nil
 }
 
 var (

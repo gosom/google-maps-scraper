@@ -6,14 +6,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"os"
 	"time"
 
 	"github.com/gosom/google-maps-scraper/models"
+	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	_ "github.com/jackc/pgx/v5/stdlib" // PostgreSQL driver
 )
 
 type repository struct {
-	db *sql.DB
+	db  *sql.DB
+	log *slog.Logger
 }
 
 // NewRepository creates a new PostgreSQL implementation of models.JobRepository
@@ -23,15 +27,19 @@ func NewRepository(db *sql.DB) (models.JobRepository, error) {
 	}
 
 	// We don't create schema here anymore since we're using migrations
-	return &repository{db: db}, nil
+	return &repository{
+		db:  db,
+		log: pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "repository"),
+	}, nil
 }
 
-// Get retrieves a job by ID (only non-deleted jobs)
-func (repo *repository) Get(ctx context.Context, id string) (models.Job, error) {
-	const q = `SELECT id, name, status, data, extract(epoch from created_at), extract(epoch from updated_at), user_id, COALESCE(failure_reason, '') 
-               FROM jobs WHERE id = $1 AND deleted_at IS NULL`
+// Get retrieves a job by ID (only non-deleted jobs).
+// Pass userID="" to bypass ownership check (admin access).
+func (repo *repository) Get(ctx context.Context, id string, userID string) (models.Job, error) {
+	const q = `SELECT id, name, status, data, extract(epoch from created_at), extract(epoch from updated_at), user_id, COALESCE(failure_reason, '')
+               FROM jobs WHERE id = $1 AND (user_id = $2 OR $2 = '') AND deleted_at IS NULL`
 
-	row := repo.db.QueryRowContext(ctx, q, id)
+	row := repo.db.QueryRowContext(ctx, q, id, userID)
 
 	return rowToJob(row)
 }
@@ -43,24 +51,28 @@ func (repo *repository) Create(ctx context.Context, job *models.Job) error {
 		return err
 	}
 
-	const q = `INSERT INTO jobs (id, name, status, data, created_at, updated_at, user_id, failure_reason) 
+	const q = `INSERT INTO jobs (id, name, status, data, created_at, updated_at, user_id, failure_reason)
                VALUES ($1, $2, $3, $4, to_timestamp($5), to_timestamp($6), $7, $8)`
 
 	_, err = repo.db.ExecContext(ctx, q, item.ID, item.Name, item.Status, item.Data, item.CreatedAt, item.UpdatedAt, item.UserID, item.FailureReason)
 	if err != nil {
+		repo.log.Error("job_create_failed", slog.String("job_id", job.ID), slog.String("user_id", job.UserID), slog.Any("error", err))
 		return fmt.Errorf("failed to create job: %w", err)
 	}
 
+	repo.log.Info("job_created", slog.String("job_id", job.ID), slog.String("user_id", job.UserID), slog.String("status", job.Status))
 	return nil
 }
 
-// Delete marks a job as deleted (soft delete) without removing the valuable results data
-// This preserves all scraped results for potential future business use
-func (repo *repository) Delete(ctx context.Context, id string) error {
-	const q = `UPDATE jobs SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL`
+// Delete marks a job as deleted (soft delete) without removing the valuable results data.
+// This preserves all scraped results for potential future business use.
+// Pass userID="" to bypass ownership check (admin access).
+func (repo *repository) Delete(ctx context.Context, id string, userID string) error {
+	const q = `UPDATE jobs SET deleted_at = NOW() WHERE id = $1 AND (user_id = $2 OR $2 = '') AND deleted_at IS NULL`
 
-	result, err := repo.db.ExecContext(ctx, q, id)
+	result, err := repo.db.ExecContext(ctx, q, id, userID)
 	if err != nil {
+		repo.log.Error("job_delete_failed", slog.String("job_id", id), slog.String("user_id", userID), slog.Any("error", err))
 		return fmt.Errorf("failed to delete job: %w", err)
 	}
 
@@ -70,6 +82,7 @@ func (repo *repository) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("job with id %s not found or already deleted", id)
 	}
 
+	repo.log.Info("job_deleted", slog.String("job_id", id), slog.String("user_id", userID))
 	return nil
 }
 
@@ -91,7 +104,7 @@ func (repo *repository) Select(ctx context.Context, params models.SelectParams) 
 	}
 
 	if params.UserID != "" {
-		conditions = append(conditions, fmt.Sprintf("(user_id = $%d OR user_id IS NULL)", argNum))
+		conditions = append(conditions, fmt.Sprintf("user_id = $%d", argNum))
 		args = append(args, params.UserID)
 		argNum++
 	}
@@ -112,6 +125,7 @@ func (repo *repository) Select(ctx context.Context, params models.SelectParams) 
 
 	rows, err := repo.db.QueryContext(ctx, q, args...)
 	if err != nil {
+		repo.log.Error("job_select_failed", slog.String("user_id", params.UserID), slog.String("status", params.Status), slog.Any("error", err))
 		return nil, fmt.Errorf("failed to select jobs: %w", err)
 	}
 
@@ -132,6 +146,7 @@ func (repo *repository) Select(ctx context.Context, params models.SelectParams) 
 		return nil, err
 	}
 
+	repo.log.Debug("job_select_done", slog.String("user_id", params.UserID), slog.String("status", params.Status), slog.Int("count", len(ans)))
 	return ans, nil
 }
 
@@ -146,17 +161,20 @@ func (repo *repository) Update(ctx context.Context, job *models.Job) error {
 
 	_, err = repo.db.ExecContext(ctx, q, item.Name, item.Status, item.Data, item.UpdatedAt, item.UserID, item.FailureReason, item.ID)
 	if err != nil {
+		repo.log.Error("job_update_failed", slog.String("job_id", job.ID), slog.String("status", job.Status), slog.Any("error", err))
 		return fmt.Errorf("failed to update job: %w", err)
 	}
 
+	repo.log.Debug("job_updated", slog.String("job_id", job.ID), slog.String("status", job.Status))
 	return nil
 }
 
-// Cancel marks a job for cancellation
-func (repo *repository) Cancel(ctx context.Context, id string) error {
+// Cancel marks a job for cancellation.
+// Pass userID="" to bypass ownership check (admin access).
+func (repo *repository) Cancel(ctx context.Context, id string, userID string) error {
 	// First check if job exists and is in a cancellable state
 	var currentStatus string
-	err := repo.db.QueryRowContext(ctx, "SELECT status FROM jobs WHERE id = $1 AND deleted_at IS NULL", id).Scan(&currentStatus)
+	err := repo.db.QueryRowContext(ctx, "SELECT status FROM jobs WHERE id = $1 AND (user_id = $2 OR $2 = '') AND deleted_at IS NULL", id, userID).Scan(&currentStatus)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("job with id %s not found", id)
@@ -166,16 +184,18 @@ func (repo *repository) Cancel(ctx context.Context, id string) error {
 
 	// Check if job can be cancelled
 	if currentStatus == models.StatusOK || currentStatus == models.StatusFailed || currentStatus == models.StatusCancelled {
+		repo.log.Warn("job_cancel_invalid_status", slog.String("job_id", id), slog.String("user_id", userID), slog.String("status", currentStatus))
 		return fmt.Errorf("job with status '%s' cannot be cancelled", currentStatus)
 	}
 
 	// Set status directly to cancelled (skip aborting intermediate state)
 	newStatus := models.StatusCancelled
 
-	const q = `UPDATE jobs SET status = $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL`
+	const q = `UPDATE jobs SET status = $1, updated_at = NOW() WHERE id = $2 AND (user_id = $3 OR $3 = '') AND deleted_at IS NULL`
 
-	result, err := repo.db.ExecContext(ctx, q, newStatus, id)
+	result, err := repo.db.ExecContext(ctx, q, newStatus, id, userID)
 	if err != nil {
+		repo.log.Error("job_cancel_failed", slog.String("job_id", id), slog.String("user_id", userID), slog.Any("error", err))
 		return fmt.Errorf("failed to cancel job: %w", err)
 	}
 
@@ -185,6 +205,7 @@ func (repo *repository) Cancel(ctx context.Context, id string) error {
 		return fmt.Errorf("job with id %s not found or already deleted", id)
 	}
 
+	repo.log.Info("job_cancelled", slog.String("job_id", id), slog.String("user_id", userID))
 	return nil
 }
 
@@ -288,9 +309,11 @@ func (repo *repository) PermanentDelete(ctx context.Context, id string) error {
 
 	// Commit the transaction
 	if err := tx.Commit(); err != nil {
+		repo.log.Error("job_permanent_delete_commit_failed", slog.String("job_id", id), slog.Any("error", err))
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
+	repo.log.Info("job_permanently_deleted", slog.String("job_id", id))
 	return nil
 }
 

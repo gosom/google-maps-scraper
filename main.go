@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
@@ -19,8 +20,24 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// version is injected at build time via ldflags:
+//
+//	go build -ldflags "-X main.version=$(git rev-parse --short HEAD)"
+//
+// Falls back to "dev" when running without build flags.
+var version = "dev"
+
 func main() {
 	_ = godotenv.Load() // Load .env file if present
+
+	// Security guard: BRAZA_DEV_AUTH_BYPASS must never be enabled in production.
+	// If both flags are set simultaneously the server refuses to start to prevent
+	// accidental complete auth bypass on production deployments.
+	if strings.TrimSpace(os.Getenv("BRAZA_DEV_AUTH_BYPASS")) == "1" &&
+		strings.TrimSpace(os.Getenv("APP_ENV")) == "production" {
+		fmt.Fprintln(os.Stderr, "FATAL: BRAZA_DEV_AUTH_BYPASS=1 must not be set when APP_ENV=production — refusing to start")
+		os.Exit(1)
+	}
 
 	// Set structured JSON logging as the global default before anything else.
 	slog.SetDefault(pkglogger.New(os.Getenv("LOG_LEVEL")))
@@ -28,7 +45,16 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Parse config first so banner can reflect debug mode
-	cfg := runner.ParseConfig()
+	cfg, err := runner.ParseConfig()
+	if err != nil {
+		slog.Error("invalid_configuration", slog.Any("error", err))
+		cancel()
+		os.Exit(1)
+	}
+
+	// Propagate build-time version into config so the health endpoint can report it.
+	cfg.Version = version
+
 	runner.BannerWithDebug(cfg.Debug)
 
 	sigChan := make(chan os.Signal, 1)

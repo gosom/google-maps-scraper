@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -61,15 +62,18 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.Se
 	}
 
 	userRepo := postgres.NewUserRepository(db)
+	apiKeyRepo := postgres.NewUserAPIKeyRepository(db)
 
 	serverCfg := web.ServerConfig{
 		Service:             svc,
 		Addr:                cfg.Addr,
 		PgDB:                db,
 		UserRepo:            userRepo,
+		UserAPIKeyRepo:      apiKeyRepo,
 		ClerkSecretKey:      clerkSecretKey,
 		StripeAPIKey:        stripeAPIKey,
 		StripeWebhookSecret: stripeWebhookSecret,
+		Version:             cfg.Version,
 	}
 
 	slog.Info("auth_enabled", slog.String("provider", "clerk"))
@@ -99,13 +103,32 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		return nil, fmt.Errorf("failed to connect to PostgreSQL: %w", err)
 	}
 
-	// connection pool settings
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(5 * time.Minute)
+	// connection pool settings — configurable via env vars
+	maxOpen := envInt("DB_MAX_OPEN_CONNS", 25)
+	if maxOpen == 0 {
+		slog.Error("db_pool_misconfigured", "msg", "DB_MAX_OPEN_CONNS=0 creates unbounded pool — refusing to start")
+		os.Exit(1)
+	}
+	maxIdle := envInt("DB_MAX_IDLE_CONNS", 10)
+	connMaxLifetime := envDuration("DB_CONN_MAX_LIFETIME", 5*time.Minute)
+	db.SetMaxOpenConns(maxOpen)
+	db.SetMaxIdleConns(maxIdle)
+	db.SetConnMaxLifetime(connMaxLifetime)
+	db.SetConnMaxIdleTime(2 * time.Minute)
 
-	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("failed to ping PostgreSQL: %w", err)
+	// Startup validation: verify DB connectivity with a 10-second timeout before
+	// the HTTP server starts accepting traffic. This ensures the container/process
+	// fails fast and exits with code 1 rather than serving unhealthy requests.
+	{
+		pingCtx, pingCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer pingCancel()
+		if err := db.PingContext(pingCtx); err != nil {
+			slog.Error("startup_db_ping_failed",
+				slog.Any("error", err),
+				slog.String("detail", "cannot reach PostgreSQL within 10s; aborting startup"),
+			)
+			os.Exit(1)
+		}
 	}
 
 	// Run database migrations automatically on startup with meaningful logs
@@ -234,6 +257,21 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 func (w *webrunner) Run(ctx context.Context) error {
 	egroup, ctx := errgroup.WithContext(ctx)
 
+	// Start stuck-job reaper in its own goroutine. Reads interval and timeout
+	// from env vars STUCK_JOB_CHECK_INTERVAL_MINUTES (default 10) and
+	// STUCK_JOB_TIMEOUT_HOURS (default 4).
+	stuckCheckMins := envInt("STUCK_JOB_CHECK_INTERVAL_MINUTES", 10)
+	stuckTimeoutHours := envInt("STUCK_JOB_TIMEOUT_HOURS", 4)
+	checkInterval := time.Duration(stuckCheckMins) * time.Minute
+	go postgres.RunStuckJobReaper(ctx, w.db, w.logger, checkInterval, stuckTimeoutHours)
+
+	// Webhook event cleanup goroutine: removes processed_webhook_events older than
+	// WEBHOOK_EVENT_RETENTION_DAYS (default 90) in daily batches.
+	if w.billingSvc != nil {
+		retentionDays := envInt("WEBHOOK_EVENT_RETENTION_DAYS", 90)
+		go w.billingSvc.StartWebhookEventCleanup(ctx, retentionDays)
+	}
+
 	egroup.Go(func() error {
 		return w.work(ctx)
 	})
@@ -331,17 +369,21 @@ func (w *webrunner) work(ctx context.Context) error {
 func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	// Always persist the final job status on exit
 	defer func() {
-		if err := w.svc.Update(context.Background(), job); err != nil {
-			w.logger.Error("job_status_persist_failed", slog.String("job_id", job.ID), slog.Any("error", err))
-		} else {
-			w.logger.Debug("job_status_persisted", slog.String("job_id", job.ID), slog.String("status", string(job.Status)))
+		deferCtx, deferCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer deferCancel()
+		if err := w.svc.Update(deferCtx, job); err != nil {
+			w.logger.Error("job_status_persist_failed", slog.String("job_id", job.ID), slog.String("operation", "Update"), slog.Any("error", err))
+			return
 		}
+		w.logger.Debug("job_status_persisted", slog.String("job_id", job.ID), slog.String("status", string(job.Status)))
 	}()
 
 	// Charge actor_start at job start (requires sufficient balance)
 	if w.billingSvc != nil {
 		w.logger.Info("actor_start_charge_attempting", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
-		if err := w.billingSvc.ChargeActorStart(context.Background(), job.UserID, job.ID); err != nil {
+		actorStartCtx, actorStartCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer actorStartCancel()
+		if err := w.billingSvc.ChargeActorStart(actorStartCtx, job.UserID, job.ID); err != nil {
 			w.logger.Error("actor_start_charge_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 			job.Status = web.StatusFailed
 			job.FailureReason = "insufficient credit balance to start job"
@@ -373,8 +415,8 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 				w.logger.Debug("job_monitoring_stopped", slog.String("job_id", job.ID), slog.String("reason", "context_done"))
 				return
 			case <-ticker.C:
-				// Check current job status in database
-				currentJob, err := w.svc.Get(jobCtx, job.ID)
+				// Check current job status in database (admin bypass - internal monitoring)
+				currentJob, err := w.svc.Get(jobCtx, job.ID, "")
 				if err != nil {
 					w.logger.Debug("job_status_check_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 					continue
@@ -646,8 +688,10 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			if errors.Is(err, context.Canceled) {
 				w.logger.Debug("context_canceled_checking_reason", slog.String("job_id", job.ID))
 
-				// Check if it was user cancellation
-				currentJob, getErr := w.svc.Get(context.Background(), job.ID)
+				// Check if it was user cancellation (admin bypass - internal runner)
+				cancelCheckCtx, cancelCheckCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancelCheckCancel()
+				currentJob, getErr := w.svc.Get(cancelCheckCtx, job.ID, "")
 				if getErr != nil {
 					w.logger.Debug("status_check_after_cancel_failed", slog.String("job_id", job.ID), slog.Any("error", getErr))
 					// Assume it was cancelled if we can't get status
@@ -664,7 +708,9 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 						// Check if we actually produced results before marking as successful
 						var resultCount int
 						if w.db != nil {
-							if err := w.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM results WHERE job_id=$1`, job.ID).Scan(&resultCount); err != nil {
+							cancelCountCtx, cancelCountCancel := context.WithTimeout(context.Background(), 10*time.Second)
+							defer cancelCountCancel()
+							if err := w.db.QueryRowContext(cancelCountCtx, `SELECT COUNT(*) FROM results WHERE job_id=$1`, job.ID).Scan(&resultCount); err != nil {
 								w.logger.Debug("result_count_after_cancel_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 								resultCount = 0
 							}
@@ -684,7 +730,9 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 				// Check if we actually produced results before marking as successful
 				var resultCount int
 				if w.db != nil {
-					if err := w.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM results WHERE job_id=$1`, job.ID).Scan(&resultCount); err != nil {
+					deadlineCountCtx, deadlineCountCancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer deadlineCountCancel()
+					if err := w.db.QueryRowContext(deadlineCountCtx, `SELECT COUNT(*) FROM results WHERE job_id=$1`, job.ID).Scan(&resultCount); err != nil {
 						w.logger.Debug("result_count_after_timeout_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 						resultCount = 0
 					}
@@ -737,7 +785,9 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			w.logger.Debug("billing_condition_passed", slog.String("job_id", job.ID))
 			var resultCount int
 			if w.db != nil {
-				if err := w.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM results WHERE job_id=$1`, job.ID).Scan(&resultCount); err != nil {
+				billingCountCtx, billingCountCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer billingCountCancel()
+				if err := w.db.QueryRowContext(billingCountCtx, `SELECT COUNT(*) FROM results WHERE job_id=$1`, job.ID).Scan(&resultCount); err != nil {
 					w.logger.Error("result_count_query_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 					resultCount = 0
 				} else {
@@ -755,7 +805,9 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 				// If any charge fails, ALL charges are rolled back (all-or-nothing)
 				w.logger.Info("billing_charge_attempting", slog.String("job_id", job.ID), slog.Int("result_count", resultCount), slog.String("user_id", job.UserID))
 
-				if err := w.billingSvc.ChargeAllJobEvents(context.Background(), job.UserID, job.ID, resultCount); err != nil {
+				chargeAllCtx, chargeAllCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer chargeAllCancel()
+				if err := w.billingSvc.ChargeAllJobEvents(chargeAllCtx, job.UserID, job.ID, resultCount); err != nil {
 					w.logger.Error("billing_atomic_charge_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 					jobSuccess = false
 					job.Status = web.StatusFailed
@@ -897,8 +949,10 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 			w.logger.Debug("proxy_server_attached", slog.String("job_id", job.ID))
 		}
 	} else if len(job.Data.Proxies) > 0 {
-		// For job-level proxies, we need to start a separate proxy server
-		// This is more complex, so for now we'll log a warning
+		// User-supplied proxies (job.Data.Proxies) are intentionally NOT forwarded to the scraper.
+		// The production proxy system uses admin-configured proxyPool only. Passing user-supplied
+		// proxy URLs to the scraper without validation would be a CWE-918 (SSRF) risk — do not
+		// implement this without strict scheme enforcement (HTTPS only) and RFC1918 blocking.
 		w.logger.Debug("job_level_proxies_detected", slog.String("job_id", job.ID), slog.Int("proxy_count", len(job.Data.Proxies)))
 		w.logger.Warn("job_level_proxies_unsupported", slog.String("detail", "not yet supported with the new proxy system"))
 	} else {
@@ -1019,4 +1073,25 @@ func (w *webrunner) uploadToS3AndSaveMetadata(ctx context.Context, job *web.Job,
 	}
 
 	return nil
+}
+
+// envInt reads an integer env var, returning defaultVal if unset or invalid.
+func envInt(key string, defaultVal int) int {
+	if s := os.Getenv(key); s != "" {
+		if v, err := strconv.Atoi(s); err == nil {
+			return v
+		}
+	}
+	return defaultVal
+}
+
+// envDuration reads a time.Duration env var (e.g. "5m", "30s"), returning
+// defaultVal if unset or invalid.
+func envDuration(key string, defaultVal time.Duration) time.Duration {
+	if s := os.Getenv(key); s != "" {
+		if d, err := time.ParseDuration(s); err == nil {
+			return d
+		}
+	}
+	return defaultVal
 }

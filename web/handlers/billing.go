@@ -79,14 +79,23 @@ func (h *BillingHandlers) Reconcile(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusServiceUnavailable, models.APIError{Code: http.StatusServiceUnavailable, Message: "billing not configured"})
 		return
 	}
+	if h.Deps.Auth == nil {
+		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "Authentication not configured"})
+		return
+	}
+	userID, err := auth.GetUserID(r.Context())
+	if err != nil || userID == "" {
+		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
+		return
+	}
 	var req reconcileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.SessionID == "" {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "invalid payload"})
 		return
 	}
 	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc)
-	if err := cs.Reconcile(r.Context(), req.SessionID); err != nil {
-		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: err.Error()})
+	if err := cs.Reconcile(r.Context(), req.SessionID, userID); err != nil {
+		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: "session not found or does not belong to user"})
 		return
 	}
 	renderJSON(w, http.StatusOK, map[string]string{"status": "ok"})
