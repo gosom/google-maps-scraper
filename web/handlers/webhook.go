@@ -99,6 +99,9 @@ func (h *WebhookHandlers) CreateWebhook(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Limit request body size (defense in depth — middleware also enforces 1MB).
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<16) // 64 KB
+
 	var req createWebhookRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "invalid request body"})
@@ -191,6 +194,9 @@ func (h *WebhookHandlers) UpdateWebhook(w http.ResponseWriter, r *http.Request) 
 		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: "webhook id is required"})
 		return
 	}
+
+	// Limit request body size (defense in depth — middleware also enforces 1MB).
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<16) // 64 KB
 
 	var req updateWebhookRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
