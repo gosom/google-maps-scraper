@@ -184,10 +184,14 @@ func (h *WebhookHandlers) UpdateWebhook(w http.ResponseWriter, r *http.Request) 
 	// Fetch existing to merge partial update.
 	existing, err := h.Deps.WebhookConfigRepo.GetByID(r.Context(), webhookID)
 	if err != nil {
+		if err == models.ErrWebhookConfigNotFound {
+			renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: "webhook config not found"})
+			return
+		}
 		internalError(w, h.Deps.Logger, err, "failed to fetch webhook config")
 		return
 	}
-	if existing == nil || existing.UserID != userID {
+	if existing.UserID != userID {
 		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: "webhook config not found"})
 		return
 	}

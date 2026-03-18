@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net"
 	"time"
 
@@ -130,6 +131,9 @@ func (r *webhookConfigRepository) scanOne(row *sql.Row) (*models.WebhookConfig, 
 		&cfg.ID, &cfg.UserID, &cfg.Name, &cfg.URL, &cfg.SecretHash,
 		&resolvedIP, &verifiedAt, &cfg.CreatedAt, &cfg.UpdatedAt, &revokedAt,
 	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, models.ErrWebhookConfigNotFound
+	}
 	if err != nil {
 		return nil, err
 	}
