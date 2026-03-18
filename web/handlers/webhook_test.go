@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,15 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/web/auth"
+)
+
+// ---- test UUIDs ----
+
+const (
+	testWebhookID1 = "11111111-1111-1111-1111-111111111111"
+	testWebhookID2 = "22222222-2222-2222-2222-222222222222"
+	testWebhookID3 = "33333333-3333-3333-3333-333333333333"
+	testNonExistentID = "99999999-9999-9999-9999-999999999999"
 )
 
 // ---- mock repositories ----
@@ -156,9 +166,9 @@ func TestListWebhooks_Empty(t *testing.T) {
 func TestListWebhooks_ReturnsUserConfigs(t *testing.T) {
 	repo := &mockWebhookConfigRepo{
 		configs: []*models.WebhookConfig{
-			{ID: "wh-1", UserID: "user-1", Name: "Hook 1", URL: "https://example.com/1"},
-			{ID: "wh-2", UserID: "user-1", Name: "Hook 2", URL: "https://example.com/2"},
-			{ID: "wh-3", UserID: "user-other", Name: "Other", URL: "https://other.com"},
+			{ID: testWebhookID1, UserID: "user-1", Name: "Hook 1", URL: "https://example.com/1"},
+			{ID: testWebhookID2, UserID: "user-1", Name: "Hook 2", URL: "https://example.com/2"},
+			{ID: testWebhookID3, UserID: "user-other", Name: "Other", URL: "https://other.com"},
 		},
 	}
 	h := newWebhookHandlers(repo)
@@ -180,7 +190,7 @@ func TestListWebhooks_ReturnsUserConfigs(t *testing.T) {
 func TestListWebhooks_DoesNotLeakSecretHash(t *testing.T) {
 	repo := &mockWebhookConfigRepo{
 		configs: []*models.WebhookConfig{
-			{ID: "wh-1", UserID: "user-1", Name: "Hook 1", URL: "https://example.com/1", SecretHash: "supersecret123"},
+			{ID: testWebhookID1, UserID: "user-1", Name: "Hook 1", URL: "https://example.com/1", SecretHash: "supersecret123"},
 		},
 	}
 	h := newWebhookHandlers(repo)
@@ -304,7 +314,7 @@ func TestCreateWebhook_PerUserLimit(t *testing.T) {
 	configs := make([]*models.WebhookConfig, 10)
 	for i := range configs {
 		configs[i] = &models.WebhookConfig{
-			ID:     "wh-" + string(rune('a'+i)),
+			ID:     fmt.Sprintf("aaaaaaaa-aaaa-aaaa-aaaa-%012d", i),
 			UserID: "user-1",
 			Name:   "Hook",
 			URL:    "https://example.com",
@@ -436,7 +446,7 @@ func TestCreateWebhook_InvalidJSON(t *testing.T) {
 func TestUpdateWebhook_Unauthenticated(t *testing.T) {
 	h := newWebhookHandlers(&mockWebhookConfigRepo{})
 	req := webhookReq("PATCH", "/api/v1/webhooks/wh-1", updateWebhookRequest{Name: "new"})
-	req = withWebhookID(req, "wh-1")
+	req = withWebhookID(req, testWebhookID1)
 	rec := httptest.NewRecorder()
 	h.UpdateWebhook(rec, req)
 
@@ -450,7 +460,7 @@ func TestUpdateWebhook_NotFound(t *testing.T) {
 	h := newWebhookHandlers(repo)
 	req := webhookReq("PATCH", "/api/v1/webhooks/nonexistent", updateWebhookRequest{Name: "new"})
 	req = withUserID(req, "user-1")
-	req = withWebhookID(req, "nonexistent")
+	req = withWebhookID(req, testNonExistentID)
 	rec := httptest.NewRecorder()
 	h.UpdateWebhook(rec, req)
 
@@ -462,13 +472,13 @@ func TestUpdateWebhook_NotFound(t *testing.T) {
 func TestUpdateWebhook_WrongOwner(t *testing.T) {
 	repo := &mockWebhookConfigRepo{
 		configs: []*models.WebhookConfig{
-			{ID: "wh-1", UserID: "user-other", Name: "Hook", URL: "https://example.com"},
+			{ID: testWebhookID1, UserID: "user-other", Name: "Hook", URL: "https://example.com"},
 		},
 	}
 	h := newWebhookHandlers(repo)
 	req := webhookReq("PATCH", "/api/v1/webhooks/wh-1", updateWebhookRequest{Name: "hijack"})
 	req = withUserID(req, "user-attacker")
-	req = withWebhookID(req, "wh-1")
+	req = withWebhookID(req, testWebhookID1)
 	rec := httptest.NewRecorder()
 	h.UpdateWebhook(rec, req)
 
@@ -481,13 +491,13 @@ func TestUpdateWebhook_WrongOwner(t *testing.T) {
 func TestUpdateWebhook_NameOnly(t *testing.T) {
 	repo := &mockWebhookConfigRepo{
 		configs: []*models.WebhookConfig{
-			{ID: "wh-1", UserID: "user-1", Name: "Old Name", URL: "https://example.com/hook"},
+			{ID: testWebhookID1, UserID: "user-1", Name: "Old Name", URL: "https://example.com/hook"},
 		},
 	}
 	h := newWebhookHandlers(repo)
 	req := webhookReq("PATCH", "/api/v1/webhooks/wh-1", updateWebhookRequest{Name: "New Name"})
 	req = withUserID(req, "user-1")
-	req = withWebhookID(req, "wh-1")
+	req = withWebhookID(req, testWebhookID1)
 	rec := httptest.NewRecorder()
 	h.UpdateWebhook(rec, req)
 
@@ -499,13 +509,13 @@ func TestUpdateWebhook_NameOnly(t *testing.T) {
 func TestUpdateWebhook_URLChange_SSRFRejected(t *testing.T) {
 	repo := &mockWebhookConfigRepo{
 		configs: []*models.WebhookConfig{
-			{ID: "wh-1", UserID: "user-1", Name: "Hook", URL: "https://example.com/hook"},
+			{ID: testWebhookID1, UserID: "user-1", Name: "Hook", URL: "https://example.com/hook"},
 		},
 	}
 	h := newWebhookHandlers(repo)
 	req := webhookReq("PATCH", "/api/v1/webhooks/wh-1", updateWebhookRequest{URL: "https://localhost/evil"})
 	req = withUserID(req, "user-1")
-	req = withWebhookID(req, "wh-1")
+	req = withWebhookID(req, testWebhookID1)
 	rec := httptest.NewRecorder()
 	h.UpdateWebhook(rec, req)
 
@@ -517,13 +527,13 @@ func TestUpdateWebhook_URLChange_SSRFRejected(t *testing.T) {
 func TestUpdateWebhook_URLChange_HTTPRejected(t *testing.T) {
 	repo := &mockWebhookConfigRepo{
 		configs: []*models.WebhookConfig{
-			{ID: "wh-1", UserID: "user-1", Name: "Hook", URL: "https://example.com/hook"},
+			{ID: testWebhookID1, UserID: "user-1", Name: "Hook", URL: "https://example.com/hook"},
 		},
 	}
 	h := newWebhookHandlers(repo)
 	req := webhookReq("PATCH", "/api/v1/webhooks/wh-1", updateWebhookRequest{URL: "http://example.com/downgrade"})
 	req = withUserID(req, "user-1")
-	req = withWebhookID(req, "wh-1")
+	req = withWebhookID(req, testWebhookID1)
 	rec := httptest.NewRecorder()
 	h.UpdateWebhook(rec, req)
 
@@ -535,14 +545,14 @@ func TestUpdateWebhook_URLChange_HTTPRejected(t *testing.T) {
 func TestUpdateWebhook_InvalidJSON(t *testing.T) {
 	repo := &mockWebhookConfigRepo{
 		configs: []*models.WebhookConfig{
-			{ID: "wh-1", UserID: "user-1", Name: "Hook", URL: "https://example.com/hook"},
+			{ID: testWebhookID1, UserID: "user-1", Name: "Hook", URL: "https://example.com/hook"},
 		},
 	}
 	h := newWebhookHandlers(repo)
 	req := httptest.NewRequest("PATCH", "/api/v1/webhooks/wh-1", strings.NewReader("not json"))
 	req.Header.Set("Content-Type", "application/json")
 	req = withUserID(req, "user-1")
-	req = withWebhookID(req, "wh-1")
+	req = withWebhookID(req, testWebhookID1)
 	rec := httptest.NewRecorder()
 	h.UpdateWebhook(rec, req)
 
@@ -556,7 +566,7 @@ func TestUpdateWebhook_InvalidJSON(t *testing.T) {
 func TestRevokeWebhook_Unauthenticated(t *testing.T) {
 	h := newWebhookHandlers(&mockWebhookConfigRepo{})
 	req := webhookReq("DELETE", "/api/v1/webhooks/wh-1", nil)
-	req = withWebhookID(req, "wh-1")
+	req = withWebhookID(req, testWebhookID1)
 	rec := httptest.NewRecorder()
 	h.RevokeWebhook(rec, req)
 
@@ -570,7 +580,7 @@ func TestRevokeWebhook_NotFound(t *testing.T) {
 	h := newWebhookHandlers(repo)
 	req := webhookReq("DELETE", "/api/v1/webhooks/nonexistent", nil)
 	req = withUserID(req, "user-1")
-	req = withWebhookID(req, "nonexistent")
+	req = withWebhookID(req, testNonExistentID)
 	rec := httptest.NewRecorder()
 	h.RevokeWebhook(rec, req)
 
@@ -582,13 +592,13 @@ func TestRevokeWebhook_NotFound(t *testing.T) {
 func TestRevokeWebhook_WrongOwner(t *testing.T) {
 	repo := &mockWebhookConfigRepo{
 		configs: []*models.WebhookConfig{
-			{ID: "wh-1", UserID: "user-owner", Name: "Hook", URL: "https://example.com"},
+			{ID: testWebhookID1, UserID: "user-owner", Name: "Hook", URL: "https://example.com"},
 		},
 	}
 	h := newWebhookHandlers(repo)
 	req := webhookReq("DELETE", "/api/v1/webhooks/wh-1", nil)
 	req = withUserID(req, "user-attacker")
-	req = withWebhookID(req, "wh-1")
+	req = withWebhookID(req, testWebhookID1)
 	rec := httptest.NewRecorder()
 	h.RevokeWebhook(rec, req)
 
@@ -600,13 +610,13 @@ func TestRevokeWebhook_WrongOwner(t *testing.T) {
 func TestRevokeWebhook_Success(t *testing.T) {
 	repo := &mockWebhookConfigRepo{
 		configs: []*models.WebhookConfig{
-			{ID: "wh-1", UserID: "user-1", Name: "Hook", URL: "https://example.com"},
+			{ID: testWebhookID1, UserID: "user-1", Name: "Hook", URL: "https://example.com"},
 		},
 	}
 	h := newWebhookHandlers(repo)
 	req := webhookReq("DELETE", "/api/v1/webhooks/wh-1", nil)
 	req = withUserID(req, "user-1")
-	req = withWebhookID(req, "wh-1")
+	req = withWebhookID(req, testWebhookID1)
 	rec := httptest.NewRecorder()
 	h.RevokeWebhook(rec, req)
 
@@ -622,7 +632,7 @@ func TestRevokeWebhook_DBError(t *testing.T) {
 	h := newWebhookHandlers(repo)
 	req := webhookReq("DELETE", "/api/v1/webhooks/wh-1", nil)
 	req = withUserID(req, "user-1")
-	req = withWebhookID(req, "wh-1")
+	req = withWebhookID(req, testWebhookID1)
 	rec := httptest.NewRecorder()
 	h.RevokeWebhook(rec, req)
 
@@ -638,13 +648,13 @@ func TestRevokeWebhook_DBError(t *testing.T) {
 func TestUpdateWebhook_URLChange_Success(t *testing.T) {
 	repo := &mockWebhookConfigRepo{
 		configs: []*models.WebhookConfig{
-			{ID: "wh-1", UserID: "user-1", Name: "Hook", URL: "https://old.example.com/hook"},
+			{ID: testWebhookID1, UserID: "user-1", Name: "Hook", URL: "https://old.example.com/hook"},
 		},
 	}
 	h := newWebhookHandlers(repo)
 	req := webhookReq("PATCH", "/api/v1/webhooks/wh-1", updateWebhookRequest{URL: "https://example.com/new-hook"})
 	req = withUserID(req, "user-1")
-	req = withWebhookID(req, "wh-1")
+	req = withWebhookID(req, testWebhookID1)
 	rec := httptest.NewRecorder()
 	h.UpdateWebhook(rec, req)
 
@@ -656,14 +666,14 @@ func TestUpdateWebhook_URLChange_Success(t *testing.T) {
 func TestUpdateWebhook_DBUpdateError(t *testing.T) {
 	repo := &mockWebhookConfigRepo{
 		configs: []*models.WebhookConfig{
-			{ID: "wh-1", UserID: "user-1", Name: "Hook", URL: "https://example.com/hook"},
+			{ID: testWebhookID1, UserID: "user-1", Name: "Hook", URL: "https://example.com/hook"},
 		},
 		updateErr: errors.New("db timeout"),
 	}
 	h := newWebhookHandlers(repo)
 	req := webhookReq("PATCH", "/api/v1/webhooks/wh-1", updateWebhookRequest{Name: "Updated"})
 	req = withUserID(req, "user-1")
-	req = withWebhookID(req, "wh-1")
+	req = withWebhookID(req, testWebhookID1)
 	rec := httptest.NewRecorder()
 	h.UpdateWebhook(rec, req)
 
@@ -679,14 +689,14 @@ func TestUpdateWebhook_DBUpdateError(t *testing.T) {
 func TestUpdateWebhook_AlreadyRevoked(t *testing.T) {
 	repo := &mockWebhookConfigRepo{
 		configs: []*models.WebhookConfig{
-			{ID: "wh-1", UserID: "user-1", Name: "Hook", URL: "https://example.com/hook"},
+			{ID: testWebhookID1, UserID: "user-1", Name: "Hook", URL: "https://example.com/hook"},
 		},
 		updateErr: models.ErrWebhookConfigNotFound,
 	}
 	h := newWebhookHandlers(repo)
 	req := webhookReq("PATCH", "/api/v1/webhooks/wh-1", updateWebhookRequest{Name: "Updated"})
 	req = withUserID(req, "user-1")
-	req = withWebhookID(req, "wh-1")
+	req = withWebhookID(req, testWebhookID1)
 	rec := httptest.NewRecorder()
 	h.UpdateWebhook(rec, req)
 
@@ -777,8 +787,8 @@ func TestCreateWebhook_OversizedBody(t *testing.T) {
 func TestListWebhooks_IsolatedPerUser(t *testing.T) {
 	repo := &mockWebhookConfigRepo{
 		configs: []*models.WebhookConfig{
-			{ID: "wh-1", UserID: "user-1", Name: "User1 Hook", URL: "https://example.com/1"},
-			{ID: "wh-2", UserID: "user-2", Name: "User2 Hook", URL: "https://example.com/2"},
+			{ID: testWebhookID1, UserID: "user-1", Name: "User1 Hook", URL: "https://example.com/1"},
+			{ID: testWebhookID2, UserID: "user-2", Name: "User2 Hook", URL: "https://example.com/2"},
 		},
 	}
 	h := newWebhookHandlers(repo)
@@ -794,7 +804,7 @@ func TestListWebhooks_IsolatedPerUser(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("user-1 should see 1 config, got %d", len(items))
 	}
-	if items[0].ID != "wh-1" {
+	if items[0].ID != testWebhookID1 {
 		t.Errorf("user-1 should see wh-1, got %s", items[0].ID)
 	}
 
@@ -809,7 +819,43 @@ func TestListWebhooks_IsolatedPerUser(t *testing.T) {
 	if len(items2) != 1 {
 		t.Fatalf("user-2 should see 1 config, got %d", len(items2))
 	}
-	if items2[0].ID != "wh-2" {
+	if items2[0].ID != testWebhookID2 {
 		t.Errorf("user-2 should see wh-2, got %s", items2[0].ID)
+	}
+}
+
+// ---- UUID validation tests ----
+
+func TestUpdateWebhook_NonUUIDIDRejected(t *testing.T) {
+	h := newWebhookHandlers(&mockWebhookConfigRepo{})
+	req := webhookReq("PATCH", "/api/v1/webhooks/not-a-uuid", updateWebhookRequest{Name: "test"})
+	req = withUserID(req, "user-1")
+	req = withWebhookID(req, "not-a-uuid")
+	rec := httptest.NewRecorder()
+	h.UpdateWebhook(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for non-UUID webhook ID, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "invalid webhook id") {
+		t.Errorf("expected 'invalid webhook id' error, got: %s", body)
+	}
+}
+
+func TestRevokeWebhook_NonUUIDIDRejected(t *testing.T) {
+	h := newWebhookHandlers(&mockWebhookConfigRepo{})
+	req := webhookReq("DELETE", "/api/v1/webhooks/not-a-uuid", nil)
+	req = withUserID(req, "user-1")
+	req = withWebhookID(req, "not-a-uuid")
+	rec := httptest.NewRecorder()
+	h.RevokeWebhook(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for non-UUID webhook ID, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "invalid webhook id") {
+		t.Errorf("expected 'invalid webhook id' error, got: %s", body)
 	}
 }
