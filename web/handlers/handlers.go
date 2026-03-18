@@ -25,7 +25,8 @@ type Dependencies struct {
 	App                JobService
 	UserRepo           postgres.UserRepository
 	APIKeyRepo         models.APIKeyRepository     // nil if API key feature not configured
-	WebhookConfigRepo  models.WebhookConfigRepository // nil if webhook feature not configured
+	WebhookConfigRepo    models.WebhookConfigRepository     // nil if webhook feature not configured
+	WebhookDeliveryRepo models.JobWebhookDeliveryRepository // nil if webhook delivery not configured
 	PricingRuleRepo    models.PricingRuleRepository // nil-safe; estimation falls back to defaults
 	ServerSecret       []byte                       // HMAC secret for GenerateAPIKey
 	ResultsSvc         ResultsService
