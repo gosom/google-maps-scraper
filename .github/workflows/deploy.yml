@@ -206,6 +206,7 @@ jobs:
             NEXT_PUBLIC_API_URL=${{ steps.api-config.outputs.api_url }}
             NEXT_PUBLIC_ENVIRONMENT=staging
             NODE_ENV=production
+            API_BACKEND_URL=http://brezelscraper-backend:8080
             BUILD_DATE=${{ needs.setup.outputs.build_timestamp }}
             VERSION=${{ steps.frontend-prep.outputs.frontend_version }}
 
