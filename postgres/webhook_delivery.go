@@ -33,7 +33,7 @@ func (r *jobWebhookDeliveryRepository) Create(ctx context.Context, d *models.Job
 
 func (r *jobWebhookDeliveryRepository) ListByJobID(ctx context.Context, jobID string) ([]*models.JobWebhookDelivery, error) {
 	const q = `
-		SELECT job_id, webhook_config_id, attempts, last_attempt_at, delivered_at, status
+		SELECT job_id, webhook_config_id, attempts, max_attempts, last_attempt_at, next_retry_at, delivered_at, status
 		FROM job_webhook_deliveries
 		WHERE job_id = $1`
 
@@ -43,7 +43,7 @@ func (r *jobWebhookDeliveryRepository) ListByJobID(ctx context.Context, jobID st
 
 func (r *jobWebhookDeliveryRepository) ListPendingByJobID(ctx context.Context, jobID string) ([]*models.JobWebhookDelivery, error) {
 	const q = `
-		SELECT job_id, webhook_config_id, attempts, last_attempt_at, delivered_at, status
+		SELECT job_id, webhook_config_id, attempts, max_attempts, last_attempt_at, next_retry_at, delivered_at, status
 		FROM job_webhook_deliveries
 		WHERE job_id = $1 AND delivered_at IS NULL AND status != $2`
 
@@ -93,16 +93,20 @@ func (r *jobWebhookDeliveryRepository) scanMany(rows *sql.Rows, queryErr error) 
 	for rows.Next() {
 		var d models.JobWebhookDelivery
 		var lastAttemptAt sql.NullTime
+		var nextRetryAt sql.NullTime
 		var deliveredAt sql.NullTime
 
 		if err := rows.Scan(
-			&d.JobID, &d.WebhookConfigID, &d.Attempts,
-			&lastAttemptAt, &deliveredAt, &d.Status,
+			&d.JobID, &d.WebhookConfigID, &d.Attempts, &d.MaxAttempts,
+			&lastAttemptAt, &nextRetryAt, &deliveredAt, &d.Status,
 		); err != nil {
 			return nil, err
 		}
 		if lastAttemptAt.Valid {
 			d.LastAttemptAt = &lastAttemptAt.Time
+		}
+		if nextRetryAt.Valid {
+			d.NextRetryAt = &nextRetryAt.Time
 		}
 		if deliveredAt.Valid {
 			d.DeliveredAt = &deliveredAt.Time

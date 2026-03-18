@@ -37,7 +37,9 @@ type JobWebhookDelivery struct {
 	JobID           string
 	WebhookConfigID string
 	Attempts        int
+	MaxAttempts     int
 	LastAttemptAt   *time.Time
+	NextRetryAt     *time.Time
 	DeliveredAt     *time.Time
 	Status          string // pending | delivering | delivered | failed
 }

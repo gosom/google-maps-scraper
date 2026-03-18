@@ -39,7 +39,9 @@ CREATE TABLE IF NOT EXISTS job_webhook_deliveries (
 
   -- Delivery tracking
   attempts INT NOT NULL DEFAULT 0,
+  max_attempts INT NOT NULL DEFAULT 5,
   last_attempt_at TIMESTAMPTZ,
+  next_retry_at TIMESTAMPTZ,
   delivered_at TIMESTAMPTZ,  -- NULL until successful delivery
   status VARCHAR(20) NOT NULL DEFAULT 'pending',  -- pending | delivering | delivered | failed
 
