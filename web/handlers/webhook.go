@@ -2,17 +2,21 @@ package handlers
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
 	"net/http"
-
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/web/auth"
 )
+
+func generateID() string {
+	return uuid.New().String()
+}
 
 const maxWebhookConfigsPerUser = 10
 
@@ -113,6 +117,13 @@ func (h *WebhookHandlers) CreateWebhook(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Validate and resolve webhook URL (SSRF prevention).
+	resolvedIP, err := ValidateWebhookURL(req.URL)
+	if err != nil {
+		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: "invalid webhook URL: " + err.Error()})
+		return
+	}
+
 	// Enforce per-user limit.
 	active, err := h.Deps.WebhookConfigRepo.ListActiveByUserID(r.Context(), userID)
 	if err != nil {
@@ -127,9 +138,14 @@ func (h *WebhookHandlers) CreateWebhook(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Generate signing secret and hash it.
-	id := uuid.New().String()
-	plaintextSecret := uuid.New().String() // 36-char random secret
+	// Generate signing secret: 32 bytes of crypto/rand, hex-encoded (256-bit entropy).
+	id := generateID()
+	secretBytes := make([]byte, 32)
+	if _, err := rand.Read(secretBytes); err != nil {
+		internalError(w, h.Deps.Logger, err, "failed to generate signing secret")
+		return
+	}
+	plaintextSecret := hex.EncodeToString(secretBytes)
 
 	mac := hmac.New(sha256.New, h.Deps.ServerSecret)
 	mac.Write([]byte(plaintextSecret))
@@ -141,6 +157,7 @@ func (h *WebhookHandlers) CreateWebhook(w http.ResponseWriter, r *http.Request) 
 		Name:       req.Name,
 		URL:        req.URL,
 		SecretHash: secretHash,
+		ResolvedIP: &resolvedIP,
 	}
 
 	if err := h.Deps.WebhookConfigRepo.Create(r.Context(), cfg); err != nil {
@@ -200,7 +217,13 @@ func (h *WebhookHandlers) UpdateWebhook(w http.ResponseWriter, r *http.Request) 
 		existing.Name = req.Name
 	}
 	if req.URL != "" {
+		resolvedIP, err := ValidateWebhookURL(req.URL)
+		if err != nil {
+			renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: "invalid webhook URL: " + err.Error()})
+			return
+		}
 		existing.URL = req.URL
+		existing.ResolvedIP = &resolvedIP
 	}
 
 	if err := h.Deps.WebhookConfigRepo.Update(r.Context(), existing); err != nil {

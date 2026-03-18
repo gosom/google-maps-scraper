@@ -85,12 +85,18 @@ func (r *webhookConfigRepository) ListActiveByUserID(ctx context.Context, userID
 func (r *webhookConfigRepository) Update(ctx context.Context, cfg *models.WebhookConfig) error {
 	const q = `
 		UPDATE webhook_configs
-		SET name = $1, url = $2, updated_at = $3
-		WHERE id = $4 AND user_id = $5 AND revoked_at IS NULL`
+		SET name = $1, url = $2, resolved_ip = $3, updated_at = $4
+		WHERE id = $5 AND user_id = $6 AND revoked_at IS NULL`
 
 	cfg.UpdatedAt = time.Now().UTC()
 
-	res, err := r.db.ExecContext(ctx, q, cfg.Name, cfg.URL, cfg.UpdatedAt, cfg.ID, cfg.UserID)
+	var resolvedIP *string
+	if cfg.ResolvedIP != nil {
+		s := cfg.ResolvedIP.String()
+		resolvedIP = &s
+	}
+
+	res, err := r.db.ExecContext(ctx, q, cfg.Name, cfg.URL, resolvedIP, cfg.UpdatedAt, cfg.ID, cfg.UserID)
 	if err != nil {
 		return err
 	}
