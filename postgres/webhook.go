@@ -147,31 +147,6 @@ func (r *webhookConfigRepository) scanOne(row *sql.Row) (*models.WebhookConfig, 
 	return &cfg, nil
 }
 
-func (r *webhookConfigRepository) scanMany(rows *sql.Rows, queryErr error) ([]*models.WebhookConfig, error) {
-	if queryErr != nil {
-		return nil, queryErr
-	}
-	defer rows.Close()
-
-	var configs []*models.WebhookConfig
-	for rows.Next() {
-		var cfg models.WebhookConfig
-		var resolvedIP sql.NullString
-		var verifiedAt sql.NullTime
-		var revokedAt sql.NullTime
-
-		if err := rows.Scan(
-			&cfg.ID, &cfg.UserID, &cfg.Name, &cfg.URL, &cfg.SecretHash,
-			&resolvedIP, &verifiedAt, &cfg.CreatedAt, &cfg.UpdatedAt, &revokedAt,
-		); err != nil {
-			return nil, err
-		}
-		webhookApplyNullable(&cfg, resolvedIP, verifiedAt, revokedAt)
-		configs = append(configs, &cfg)
-	}
-	return configs, rows.Err()
-}
-
 // scanManyList scans rows without secret_hash (defense in depth for list queries).
 func (r *webhookConfigRepository) scanManyList(rows *sql.Rows, queryErr error) ([]*models.WebhookConfig, error) {
 	if queryErr != nil {

@@ -6,17 +6,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
+
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/web/auth"
 )
-
-func generateID() string {
-	return uuid.New().String()
-}
 
 const maxWebhookConfigsPerUser = 10
 
@@ -119,10 +117,15 @@ func (h *WebhookHandlers) CreateWebhook(w http.ResponseWriter, r *http.Request) 
 		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: "url is required"})
 		return
 	}
+	if len(req.URL) > 2048 {
+		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: "url must be 2048 characters or fewer"})
+		return
+	}
 
 	// Validate and resolve webhook URL (SSRF prevention).
 	resolvedIP, err := ValidateWebhookURL(req.URL)
 	if err != nil {
+		slog.Warn("webhook_url_rejected", slog.String("user_id", userID), slog.String("attempted_url", req.URL), slog.String("reason", err.Error()))
 		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: "invalid webhook URL: " + err.Error()})
 		return
 	}
@@ -134,6 +137,7 @@ func (h *WebhookHandlers) CreateWebhook(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if len(active) >= maxWebhookConfigsPerUser {
+		slog.Warn("webhook_config_limit_reached", slog.String("user_id", userID))
 		renderJSON(w, http.StatusConflict, models.APIError{
 			Code:    http.StatusConflict,
 			Message: "maximum number of active webhook configs reached (limit: 10); revoke an existing one before creating a new one",
@@ -142,7 +146,7 @@ func (h *WebhookHandlers) CreateWebhook(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Generate signing secret: 32 bytes of crypto/rand, hex-encoded (256-bit entropy).
-	id := generateID()
+	id := uuid.New().String()
 	secretBytes := make([]byte, 32)
 	if _, err := rand.Read(secretBytes); err != nil {
 		internalError(w, h.Deps.Logger, err, "failed to generate signing secret")
@@ -194,6 +198,10 @@ func (h *WebhookHandlers) UpdateWebhook(w http.ResponseWriter, r *http.Request) 
 		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: "webhook id is required"})
 		return
 	}
+	if _, err := uuid.Parse(webhookID); err != nil {
+		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: "invalid webhook id"})
+		return
+	}
 
 	// Limit request body size (defense in depth — middleware also enforces 1MB).
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<16) // 64 KB
@@ -207,7 +215,7 @@ func (h *WebhookHandlers) UpdateWebhook(w http.ResponseWriter, r *http.Request) 
 	// Fetch existing to merge partial update.
 	existing, err := h.Deps.WebhookConfigRepo.GetByID(r.Context(), webhookID)
 	if err != nil {
-		if err == models.ErrWebhookConfigNotFound {
+		if errors.Is(err, models.ErrWebhookConfigNotFound) {
 			renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: "webhook config not found"})
 			return
 		}
@@ -219,26 +227,37 @@ func (h *WebhookHandlers) UpdateWebhook(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	urlChanged := false
 	if req.Name != "" {
 		existing.Name = req.Name
 	}
 	if req.URL != "" {
+		if len(req.URL) > 2048 {
+			renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: "url must be 2048 characters or fewer"})
+			return
+		}
 		resolvedIP, err := ValidateWebhookURL(req.URL)
 		if err != nil {
+			slog.Warn("webhook_url_rejected", slog.String("user_id", userID), slog.String("attempted_url", req.URL), slog.String("reason", err.Error()))
 			renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: "invalid webhook URL: " + err.Error()})
 			return
 		}
 		existing.URL = req.URL
 		existing.ResolvedIP = &resolvedIP
+		urlChanged = true
 	}
 
 	if err := h.Deps.WebhookConfigRepo.Update(r.Context(), existing); err != nil {
-		if err == models.ErrWebhookConfigNotFound {
+		if errors.Is(err, models.ErrWebhookConfigNotFound) {
 			renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: "webhook config not found or already revoked"})
 			return
 		}
 		internalError(w, h.Deps.Logger, err, "failed to update webhook config")
 		return
+	}
+
+	if h.Deps.Logger != nil {
+		h.Deps.Logger.Info("webhook_config_updated", slog.String("user_id", userID), slog.String("webhook_id", webhookID), slog.Bool("url_changed", urlChanged))
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -258,9 +277,13 @@ func (h *WebhookHandlers) RevokeWebhook(w http.ResponseWriter, r *http.Request) 
 		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: "webhook id is required"})
 		return
 	}
+	if _, err := uuid.Parse(webhookID); err != nil {
+		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: "invalid webhook id"})
+		return
+	}
 
 	if err := h.Deps.WebhookConfigRepo.Revoke(r.Context(), webhookID, userID); err != nil {
-		if err == models.ErrWebhookConfigNotFound {
+		if errors.Is(err, models.ErrWebhookConfigNotFound) {
 			renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: "webhook config not found or already revoked"})
 			return
 		}

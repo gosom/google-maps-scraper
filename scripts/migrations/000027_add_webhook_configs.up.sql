@@ -13,8 +13,12 @@ CREATE TABLE IF NOT EXISTS webhook_configs (
   -- HMAC-SHA256 hash of the signing secret (plaintext shown once at creation)
   secret_hash TEXT NOT NULL,
 
-  -- DNS-rebinding prevention: resolved IP pinned at validation time
+  -- SECURITY: delivery must connect to resolved_ip, not re-resolve DNS (TOCTOU/DNS rebinding prevention)
   resolved_ip INET,
+
+  -- Defense-in-depth: prevent empty values even from direct DB inserts
+  CONSTRAINT chk_webhook_configs_name CHECK (name <> ''),
+  CONSTRAINT chk_webhook_configs_url CHECK (url <> ''),
 
   -- NULL until the first successful test delivery
   verified_at TIMESTAMPTZ,
@@ -60,6 +64,9 @@ CREATE TABLE IF NOT EXISTS job_webhook_deliveries (
 CREATE INDEX IF NOT EXISTS idx_job_webhook_deliveries_job ON job_webhook_deliveries(job_id) WHERE delivered_at IS NULL;
 -- 2. Find all deliveries for a webhook config (config detail page)
 CREATE INDEX IF NOT EXISTS idx_job_webhook_deliveries_config ON job_webhook_deliveries(webhook_config_id);
+
+-- 3. Retry worker: find deliveries due for retry
+CREATE INDEX IF NOT EXISTS idx_job_webhook_deliveries_retry ON job_webhook_deliveries(next_retry_at) WHERE status = 'pending' AND next_retry_at IS NOT NULL;
 
 -- Grant permissions to scraper user
 GRANT ALL PRIVILEGES ON TABLE webhook_configs TO scraper;

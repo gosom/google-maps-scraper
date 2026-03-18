@@ -8,9 +8,9 @@ import (
 )
 
 // ValidateWebhookURL parses and validates a webhook URL for safety.
-// It enforces HTTPS-only, resolves DNS, and checks the resolved IP against
+// It enforces HTTPS-only, resolves DNS, and checks ALL resolved IPs against
 // a blocklist of private/loopback/link-local/metadata ranges (SSRF prevention).
-// Returns the resolved net.IP on success.
+// Returns the first resolved net.IP on success.
 func ValidateWebhookURL(rawURL string) (net.IP, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -36,24 +36,24 @@ func ValidateWebhookURL(rawURL string) (net.IP, error) {
 		return nil, fmt.Errorf("DNS resolution returned no addresses for %q", host)
 	}
 
-	ip := net.ParseIP(addrs[0])
-	if ip == nil {
-		return nil, fmt.Errorf("could not parse resolved IP %q", addrs[0])
+	// Check ALL resolved addresses against the blocklist.
+	// A dual-homed host may return e.g. [8.8.8.8, 127.0.0.1] — if any IP is
+	// blocked we must reject the URL since the HTTP client may connect to any of them.
+	var firstIP net.IP
+	for _, addr := range addrs {
+		ip := net.ParseIP(addr)
+		if ip == nil {
+			return nil, fmt.Errorf("could not parse resolved IP %q", addr)
+		}
+		if err := checkIPBlocklist(ip); err != nil {
+			return nil, err
+		}
+		if firstIP == nil {
+			firstIP = ip
+		}
 	}
 
-	if err := checkIPBlocklist(ip); err != nil {
-		return nil, err
-	}
-
-	return ip, nil
-}
-
-// portFromURL returns the port from a URL, defaulting to 443 for https.
-func portFromURL(u *url.URL) string {
-	if p := u.Port(); p != "" {
-		return p
-	}
-	return "443"
+	return firstIP, nil
 }
 
 // checkIPBlocklist rejects IPs in private, loopback, link-local, and cloud

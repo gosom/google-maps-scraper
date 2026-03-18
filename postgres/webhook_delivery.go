@@ -57,8 +57,14 @@ func (r *jobWebhookDeliveryRepository) MarkDelivering(ctx context.Context, jobID
 		SET status = $1, attempts = attempts + 1, last_attempt_at = $2
 		WHERE job_id = $3 AND webhook_config_id = $4`
 
-	_, err := r.db.ExecContext(ctx, q, models.DeliveryStatusDelivering, time.Now().UTC(), jobID, webhookConfigID)
-	return err
+	res, err := r.db.ExecContext(ctx, q, models.DeliveryStatusDelivering, time.Now().UTC(), jobID, webhookConfigID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return models.ErrDeliveryNotFound
+	}
+	return nil
 }
 
 func (r *jobWebhookDeliveryRepository) MarkDelivered(ctx context.Context, jobID, webhookConfigID string) error {
@@ -67,8 +73,14 @@ func (r *jobWebhookDeliveryRepository) MarkDelivered(ctx context.Context, jobID,
 		SET status = $1, delivered_at = $2
 		WHERE job_id = $3 AND webhook_config_id = $4`
 
-	_, err := r.db.ExecContext(ctx, q, models.DeliveryStatusDelivered, time.Now().UTC(), jobID, webhookConfigID)
-	return err
+	res, err := r.db.ExecContext(ctx, q, models.DeliveryStatusDelivered, time.Now().UTC(), jobID, webhookConfigID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return models.ErrDeliveryNotFound
+	}
+	return nil
 }
 
 func (r *jobWebhookDeliveryRepository) MarkFailed(ctx context.Context, jobID, webhookConfigID string) error {
@@ -77,8 +89,14 @@ func (r *jobWebhookDeliveryRepository) MarkFailed(ctx context.Context, jobID, we
 		SET status = $1
 		WHERE job_id = $2 AND webhook_config_id = $3`
 
-	_, err := r.db.ExecContext(ctx, q, models.DeliveryStatusFailed, jobID, webhookConfigID)
-	return err
+	res, err := r.db.ExecContext(ctx, q, models.DeliveryStatusFailed, jobID, webhookConfigID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return models.ErrDeliveryNotFound
+	}
+	return nil
 }
 
 // ---- scan helpers ----
