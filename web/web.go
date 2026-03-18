@@ -49,15 +49,15 @@ type Server struct {
 type ServerConfig struct {
 	Service             *Service
 	Addr                string
-	PgDB                *sql.DB // Optional PostgreSQL connection
+	PgDB                *sql.DB                            // Optional PostgreSQL connection
 	UserRepo            postgres.UserRepository
-	APIKeyRepo          models.APIKeyRepository          // Optional; enables API key auth when set
-	WebhookConfigRepo   models.WebhookConfigRepository   // Optional; enables webhook config management
+	APIKeyRepo          models.APIKeyRepository            // Optional; enables API key auth when set
+	WebhookConfigRepo   models.WebhookConfigRepository     // Optional; enables webhook config management
 	WebhookDeliveryRepo models.JobWebhookDeliveryRepository // Optional; enables webhook delivery tracking
-	ServerSecret        []byte                           // HMAC secret for API key HMAC (from API_KEY_SERVER_SECRET env)
-	ClerkSecretKey      string                  // Clerk server-side secret key for authentication
-	StripeAPIKey        string                        // Optional Stripe API key for subscriptions
-	StripeWebhookSecret string                        // Optional Stripe webhook secret
+	ServerSecret        []byte                             // HMAC secret for API key HMAC (from API_KEY_SERVER_SECRET env)
+	ClerkSecretKey      string                             // Clerk server-side secret key for authentication
+	StripeAPIKey        string                             // Optional Stripe API key for subscriptions
+	StripeWebhookSecret string                             // Optional Stripe webhook secret
 	// Version is the Git SHA injected at build time via ldflags.
 	// It is returned by the /health endpoint as the "version" field.
 	Version string
