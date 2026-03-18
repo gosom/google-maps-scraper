@@ -270,7 +270,7 @@ func TestPerAPIKeyRateLimit_FreeKeyReturns429WhenExceeded(t *testing.T) {
 
 func TestPerAPIKeyRateLimit_PaidKeyUsesOwnBucket(t *testing.T) {
 	handler := PerAPIKeyRateLimit(
-		rate.Limit(0), 0,    // free: always denied
+		rate.Limit(0), 0, // free: always denied
 		rate.Limit(100), 100, // paid: generous
 		rate.Limit(100), 100,
 	)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -290,8 +290,8 @@ func TestPerAPIKeyRateLimit_PaidKeyUsesOwnBucket(t *testing.T) {
 
 func TestPerAPIKeyRateLimit_SessionAuthUseFallback_Allowed(t *testing.T) {
 	handler := PerAPIKeyRateLimit(
-		rate.Limit(0), 0,    // free: always denied (should not be used)
-		rate.Limit(0), 0,    // paid: always denied (should not be used)
+		rate.Limit(0), 0, // free: always denied (should not be used)
+		rate.Limit(0), 0, // paid: always denied (should not be used)
 		rate.Limit(100), 100, // fallback: generous
 	)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

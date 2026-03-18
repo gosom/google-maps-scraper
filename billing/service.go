@@ -744,9 +744,9 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 
 	// Look up the payment record using the payment intent ID to find the user and credits.
 	var (
-		userID          string
-		creditsGranted  float64
-		amountCents     int64
+		userID         string
+		creditsGranted float64
+		amountCents    int64
 	)
 
 	paymentIntentID := ""

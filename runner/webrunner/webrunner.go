@@ -63,6 +63,8 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.Se
 
 	userRepo := postgres.NewUserRepository(db)
 	apiKeyRepo := postgres.NewAPIKeyRepository(db)
+	webhookConfigRepo := postgres.NewWebhookConfigRepository(db)
+	webhookDeliveryRepo := postgres.NewJobWebhookDeliveryRepository(db)
 	apiKeyServerSecret := []byte(os.Getenv("API_KEY_SERVER_SECRET"))
 
 	// Validate API_KEY_SERVER_SECRET: when API key auth is enabled (apiKeyRepo != nil),
@@ -78,8 +80,10 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.Se
 		Addr:                cfg.Addr,
 		PgDB:                db,
 		UserRepo:            userRepo,
-		APIKeyRepo:   apiKeyRepo,
-		ServerSecret: apiKeyServerSecret,
+		APIKeyRepo:          apiKeyRepo,
+		WebhookConfigRepo:   webhookConfigRepo,
+		WebhookDeliveryRepo: webhookDeliveryRepo,
+		ServerSecret:        apiKeyServerSecret,
 		ClerkSecretKey:      clerkSecretKey,
 		StripeAPIKey:        stripeAPIKey,
 		StripeWebhookSecret: stripeWebhookSecret,
