@@ -60,26 +60,26 @@ func (r *webhookConfigRepository) GetByID(ctx context.Context, id string) (*mode
 
 func (r *webhookConfigRepository) ListByUserID(ctx context.Context, userID string) ([]*models.WebhookConfig, error) {
 	const q = `
-		SELECT id, user_id, name, url, secret_hash, resolved_ip,
+		SELECT id, user_id, name, url, resolved_ip,
 		       verified_at, created_at, updated_at, revoked_at
 		FROM webhook_configs
 		WHERE user_id = $1
 		ORDER BY created_at DESC`
 
 	rows, err := r.db.QueryContext(ctx, q, userID)
-	return r.scanMany(rows, err)
+	return r.scanManyList(rows, err)
 }
 
 func (r *webhookConfigRepository) ListActiveByUserID(ctx context.Context, userID string) ([]*models.WebhookConfig, error) {
 	const q = `
-		SELECT id, user_id, name, url, secret_hash, resolved_ip,
+		SELECT id, user_id, name, url, resolved_ip,
 		       verified_at, created_at, updated_at, revoked_at
 		FROM webhook_configs
 		WHERE user_id = $1 AND revoked_at IS NULL
 		ORDER BY created_at DESC`
 
 	rows, err := r.db.QueryContext(ctx, q, userID)
-	return r.scanMany(rows, err)
+	return r.scanManyList(rows, err)
 }
 
 func (r *webhookConfigRepository) Update(ctx context.Context, cfg *models.WebhookConfig) error {
@@ -162,6 +162,32 @@ func (r *webhookConfigRepository) scanMany(rows *sql.Rows, queryErr error) ([]*m
 
 		if err := rows.Scan(
 			&cfg.ID, &cfg.UserID, &cfg.Name, &cfg.URL, &cfg.SecretHash,
+			&resolvedIP, &verifiedAt, &cfg.CreatedAt, &cfg.UpdatedAt, &revokedAt,
+		); err != nil {
+			return nil, err
+		}
+		webhookApplyNullable(&cfg, resolvedIP, verifiedAt, revokedAt)
+		configs = append(configs, &cfg)
+	}
+	return configs, rows.Err()
+}
+
+// scanManyList scans rows without secret_hash (defense in depth for list queries).
+func (r *webhookConfigRepository) scanManyList(rows *sql.Rows, queryErr error) ([]*models.WebhookConfig, error) {
+	if queryErr != nil {
+		return nil, queryErr
+	}
+	defer rows.Close()
+
+	var configs []*models.WebhookConfig
+	for rows.Next() {
+		var cfg models.WebhookConfig
+		var resolvedIP sql.NullString
+		var verifiedAt sql.NullTime
+		var revokedAt sql.NullTime
+
+		if err := rows.Scan(
+			&cfg.ID, &cfg.UserID, &cfg.Name, &cfg.URL,
 			&resolvedIP, &verifiedAt, &cfg.CreatedAt, &cfg.UpdatedAt, &revokedAt,
 		); err != nil {
 			return nil, err
