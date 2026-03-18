@@ -54,19 +54,6 @@ CREATE TABLE IF NOT EXISTS api_key_usage_log (
 CREATE INDEX IF NOT EXISTS idx_api_key_usage_log_key_id ON api_key_usage_log(api_key_id, used_at DESC);
 CREATE INDEX IF NOT EXISTS idx_api_key_usage_log_ip ON api_key_usage_log(ip_address);
 
--- Add webhook support columns to jobs table
-ALTER TABLE jobs ADD COLUMN IF NOT EXISTS webhook_url TEXT;
-ALTER TABLE jobs ADD COLUMN IF NOT EXISTS webhook_secret TEXT;
-ALTER TABLE jobs ADD COLUMN IF NOT EXISTS webhook_resolved_ip INET;  -- Pin IP at validation (DNS rebinding prevention)
-ALTER TABLE jobs ADD COLUMN IF NOT EXISTS webhook_verified_at TIMESTAMPTZ;
-ALTER TABLE jobs ADD COLUMN IF NOT EXISTS webhook_attempts INT DEFAULT 0;
-ALTER TABLE jobs ADD COLUMN IF NOT EXISTS webhook_last_attempt TIMESTAMPTZ;
-
--- Add constraint: webhook_secret required if webhook_url provided
-ALTER TABLE jobs DROP CONSTRAINT IF EXISTS chk_webhook_secret;
-ALTER TABLE jobs ADD CONSTRAINT chk_webhook_secret
-  CHECK (webhook_url IS NULL OR webhook_secret IS NOT NULL);
-
 -- Grant permissions to scraper user
 GRANT ALL PRIVILEGES ON TABLE api_keys TO scraper;
 GRANT ALL PRIVILEGES ON TABLE api_key_usage_log TO scraper;
