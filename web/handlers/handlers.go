@@ -17,22 +17,22 @@ import (
 
 // Dependencies aggregates shared services used by handlers.
 type Dependencies struct {
-	Logger             *slog.Logger
-	DB                 *sql.DB
-	BillingSvc         *billing.Service
-	Templates          map[string]*template.Template
-	Auth               *auth.AuthMiddleware
-	App                JobService
-	UserRepo           postgres.UserRepository
-	APIKeyRepo         models.APIKeyRepository     // nil if API key feature not configured
-	WebhookConfigRepo    models.WebhookConfigRepository     // nil if webhook feature not configured
+	Logger              *slog.Logger
+	DB                  *sql.DB
+	BillingSvc          *billing.Service
+	Templates           map[string]*template.Template
+	Auth                *auth.AuthMiddleware
+	App                 JobService
+	UserRepo            postgres.UserRepository
+	APIKeyRepo          models.APIKeyRepository             // nil if API key feature not configured
+	WebhookConfigRepo   models.WebhookConfigRepository      // nil if webhook feature not configured
 	WebhookDeliveryRepo models.JobWebhookDeliveryRepository // nil if webhook delivery not configured
-	PricingRuleRepo    models.PricingRuleRepository // nil-safe; estimation falls back to defaults
-	ServerSecret       []byte                       // HMAC secret for GenerateAPIKey
-	ResultsSvc         ResultsService
-	IntegrationRepo    models.IntegrationRepository
-	GoogleSheetsSvc    *googlesheets.Service
-	ConcurrentLimitSvc *webservices.ConcurrentLimitService
+	PricingRuleRepo     models.PricingRuleRepository        // nil-safe; estimation falls back to defaults
+	ServerSecret        []byte                              // HMAC secret for GenerateAPIKey
+	ResultsSvc          ResultsService
+	IntegrationRepo     models.IntegrationRepository
+	GoogleSheetsSvc     *googlesheets.Service
+	ConcurrentLimitSvc  *webservices.ConcurrentLimitService
 	// Version is the Git SHA injected at build time, used by the /health endpoint.
 	Version string
 }

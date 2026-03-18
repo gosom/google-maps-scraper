@@ -19,7 +19,7 @@ type WebhookConfig struct {
 	UserID     string
 	Name       string
 	URL        string
-	SecretHash string  // HMAC-SHA256 hash; plaintext never stored
+	SecretHash string // HMAC-SHA256 hash; plaintext never stored
 	// SECURITY: delivery must connect to resolved_ip, not re-resolve DNS (TOCTOU/DNS rebinding prevention)
 	ResolvedIP *net.IP
 	VerifiedAt *time.Time

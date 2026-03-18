@@ -49,15 +49,15 @@ type Server struct {
 type ServerConfig struct {
 	Service             *Service
 	Addr                string
-	PgDB                *sql.DB                            // Optional PostgreSQL connection
+	PgDB                *sql.DB // Optional PostgreSQL connection
 	UserRepo            postgres.UserRepository
-	APIKeyRepo          models.APIKeyRepository            // Optional; enables API key auth when set
-	WebhookConfigRepo   models.WebhookConfigRepository     // Optional; enables webhook config management
+	APIKeyRepo          models.APIKeyRepository             // Optional; enables API key auth when set
+	WebhookConfigRepo   models.WebhookConfigRepository      // Optional; enables webhook config management
 	WebhookDeliveryRepo models.JobWebhookDeliveryRepository // Optional; enables webhook delivery tracking
-	ServerSecret        []byte                             // HMAC secret for API key HMAC (from API_KEY_SERVER_SECRET env)
-	ClerkSecretKey      string                             // Clerk server-side secret key for authentication
-	StripeAPIKey        string                             // Optional Stripe API key for subscriptions
-	StripeWebhookSecret string                             // Optional Stripe webhook secret
+	ServerSecret        []byte                              // HMAC secret for API key HMAC (from API_KEY_SERVER_SECRET env)
+	ClerkSecretKey      string                              // Clerk server-side secret key for authentication
+	StripeAPIKey        string                              // Optional Stripe API key for subscriptions
+	StripeWebhookSecret string                              // Optional Stripe webhook secret
 	// Version is the Git SHA injected at build time via ldflags.
 	// It is returned by the /health endpoint as the "version" field.
 	Version string
@@ -105,21 +105,21 @@ func New(cfg ServerConfig) (*Server, error) {
 
 	// Initialize modular handler group (incremental migration)
 	deps := webhandlers.Dependencies{
-		Logger:          ans.logger,
-		DB:              ans.db,
-		BillingSvc:      ans.billingSvc,
-		Templates:       ans.tmpl,
-		Auth:            ans.authMiddleware,
-		App:             ans.svc,
-		APIKeyRepo:        cfg.APIKeyRepo,
+		Logger:              ans.logger,
+		DB:                  ans.db,
+		BillingSvc:          ans.billingSvc,
+		Templates:           ans.tmpl,
+		Auth:                ans.authMiddleware,
+		App:                 ans.svc,
+		APIKeyRepo:          cfg.APIKeyRepo,
 		WebhookConfigRepo:   cfg.WebhookConfigRepo,
 		WebhookDeliveryRepo: cfg.WebhookDeliveryRepo,
-		ServerSecret:      cfg.ServerSecret,
-		PricingRuleRepo: postgres.NewPricingRuleRepository(ans.db),
-		ResultsSvc:      webservices.NewResultsService(ans.db),
-		IntegrationRepo: postgres.NewIntegrationRepository(ans.db),
-		GoogleSheetsSvc: googlesheets.NewService(),
-		Version:         cfg.Version,
+		ServerSecret:        cfg.ServerSecret,
+		PricingRuleRepo:     postgres.NewPricingRuleRepository(ans.db),
+		ResultsSvc:          webservices.NewResultsService(ans.db),
+		IntegrationRepo:     postgres.NewIntegrationRepository(ans.db),
+		GoogleSheetsSvc:     googlesheets.NewService(),
+		Version:             cfg.Version,
 	}
 	if ans.db != nil {
 		deps.ConcurrentLimitSvc = webservices.NewConcurrentLimitService(ans.db)
@@ -149,7 +149,7 @@ func New(cfg ServerConfig) (*Server, error) {
 	// Public API routes (no authentication required)
 	publicAPIRouter := router.PathPrefix("/api/v1").Subrouter()
 	publicAPIRouter.Use(
-		webmiddleware.MaxBodySize(1<<20),                 // 1 MB max body (CWE-400)
+		webmiddleware.MaxBodySize(1<<20),                // 1 MB max body (CWE-400)
 		webmiddleware.PerIPRateLimit(rate.Limit(3), 10), // 3 req/s per IP, burst 10 (CWE-307)
 		webmiddleware.RequestID,
 		webmiddleware.InjectLogger(ans.logger),
@@ -229,7 +229,7 @@ func New(cfg ServerConfig) (*Server, error) {
 	// Webhook endpoints (public access, no authentication)
 	// Apply a 64 KB body limit — Stripe payloads are small; this prevents OOM from
 	// oversized requests (CWE-400).
-	webhookHandler := webmiddleware.MaxBodySize(64<<10)(http.HandlerFunc(hg.Billing.HandleStripeWebhook))
+	webhookHandler := webmiddleware.MaxBodySize(64 << 10)(http.HandlerFunc(hg.Billing.HandleStripeWebhook))
 	// goneHandler is returned on retired legacy webhook paths to surface any
 	// Stripe dashboard misconfiguration quickly.
 	goneHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -393,7 +393,6 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) {
 	code, _ := s.billingSvc.HandleWebhook(r.Context(), payload, sig)
 	w.WriteHeader(code)
 }
-
 
 func (s *Server) Start(ctx context.Context) error {
 	go func() {

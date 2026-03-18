@@ -205,4 +205,3 @@ func (h *WebHandlers) Download(w http.ResponseWriter, r *http.Request) {
 		h.Deps.Logger.Info("csv_served", slog.String("file_name", fileName), slog.String("job_id", id))
 	}
 }
-

@@ -249,13 +249,13 @@ func (h *WebhookHandlers) UpdateWebhook(w http.ResponseWriter, r *http.Request) 
 		resolvedIP, err := ValidateWebhookURL(req.URL)
 		if err != nil {
 			if h.Deps.Logger != nil {
-			h.Deps.Logger.Warn("webhook_url_rejected",
-				slog.String("user_id", userID),
-				slog.String("webhook_id", webhookID),
-				slog.String("attempted_url", req.URL),
-				slog.String("reason", err.Error()),
-			)
-		}
+				h.Deps.Logger.Warn("webhook_url_rejected",
+					slog.String("user_id", userID),
+					slog.String("webhook_id", webhookID),
+					slog.String("attempted_url", req.URL),
+					slog.String("reason", err.Error()),
+				)
+			}
 			renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: "invalid webhook URL: " + err.Error()})
 			return
 		}
