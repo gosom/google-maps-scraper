@@ -15,17 +15,17 @@ import (
 
 // EstimationService provides job cost estimation functionality
 type EstimationService struct {
-	db       *sql.DB
-	log      *slog.Logger
+	db        *sql.DB
+	log       *slog.Logger
 	priceRepo models.PricingRuleRepository
 }
 
 // Estimation constants - average values based on typical Google Maps data
 const (
-	AvgReviewsPerPlace        = 25
-	AvgImagesPerPlace         = 30
+	AvgReviewsPerPlace          = 25
+	AvgImagesPerPlace           = 30
 	DefaultEstimateForUnlimited = 50
-	UnlimitedReviewsThreshold = 1000
+	UnlimitedReviewsThreshold   = 1000
 
 	// Default pricing fallbacks (used when DB has no active rules)
 	defaultPriceActorStart        = 0.007
@@ -41,19 +41,19 @@ const (
 
 // Package-level pricing cache shared across per-request EstimationService instances.
 var (
-	priceCacheMu    sync.RWMutex
-	priceCacheData  map[string]float64
-	priceCacheTime  time.Time
+	priceCacheMu   sync.RWMutex
+	priceCacheData map[string]float64
+	priceCacheTime time.Time
 )
 
 var defaultPrices = map[string]float64{
-	"actor_start":             defaultPriceActorStart,
-	"place_scraped":           defaultPricePlaceScraped,
-	"filters_applied":         defaultPriceFiltersApplied,
+	"actor_start":              defaultPriceActorStart,
+	"place_scraped":            defaultPricePlaceScraped,
+	"filters_applied":          defaultPriceFiltersApplied,
 	"additional_place_details": defaultPriceAdditionalDetails,
-	"contact_details":         defaultPriceContactDetails,
-	"review":                  defaultPriceReview,
-	"image":                   defaultPriceImage,
+	"contact_details":          defaultPriceContactDetails,
+	"review":                   defaultPriceReview,
+	"image":                    defaultPriceImage,
 }
 
 // CostEstimate represents the estimated cost breakdown for a job
