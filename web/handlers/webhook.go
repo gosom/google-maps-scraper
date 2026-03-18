@@ -125,7 +125,13 @@ func (h *WebhookHandlers) CreateWebhook(w http.ResponseWriter, r *http.Request) 
 	// Validate and resolve webhook URL (SSRF prevention).
 	resolvedIP, err := ValidateWebhookURL(req.URL)
 	if err != nil {
-		slog.Warn("webhook_url_rejected", slog.String("user_id", userID), slog.String("attempted_url", req.URL), slog.String("reason", err.Error()))
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Warn("webhook_url_rejected",
+				slog.String("user_id", userID),
+				slog.String("attempted_url", req.URL),
+				slog.String("reason", err.Error()),
+			)
+		}
 		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: "invalid webhook URL: " + err.Error()})
 		return
 	}
@@ -137,7 +143,11 @@ func (h *WebhookHandlers) CreateWebhook(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if len(active) >= maxWebhookConfigsPerUser {
-		slog.Warn("webhook_config_limit_reached", slog.String("user_id", userID))
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Warn("webhook_config_limit_reached",
+				slog.String("user_id", userID),
+			)
+		}
 		renderJSON(w, http.StatusConflict, models.APIError{
 			Code:    http.StatusConflict,
 			Message: "maximum number of active webhook configs reached (limit: 10); revoke an existing one before creating a new one",
@@ -238,7 +248,14 @@ func (h *WebhookHandlers) UpdateWebhook(w http.ResponseWriter, r *http.Request) 
 		}
 		resolvedIP, err := ValidateWebhookURL(req.URL)
 		if err != nil {
-			slog.Warn("webhook_url_rejected", slog.String("user_id", userID), slog.String("attempted_url", req.URL), slog.String("reason", err.Error()))
+			if h.Deps.Logger != nil {
+			h.Deps.Logger.Warn("webhook_url_rejected",
+				slog.String("user_id", userID),
+				slog.String("webhook_id", webhookID),
+				slog.String("attempted_url", req.URL),
+				slog.String("reason", err.Error()),
+			)
+		}
 			renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: "invalid webhook URL: " + err.Error()})
 			return
 		}
