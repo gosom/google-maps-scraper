@@ -51,8 +51,10 @@ type ServerConfig struct {
 	Addr                string
 	PgDB                *sql.DB // Optional PostgreSQL connection
 	UserRepo            postgres.UserRepository
-	APIKeyRepo     models.APIKeyRepository // Optional; enables API key auth when set
-	ServerSecret   []byte                  // HMAC secret for API key HMAC (from API_KEY_SERVER_SECRET env)
+	APIKeyRepo          models.APIKeyRepository          // Optional; enables API key auth when set
+	WebhookConfigRepo   models.WebhookConfigRepository   // Optional; enables webhook config management
+	WebhookDeliveryRepo models.JobWebhookDeliveryRepository // Optional; enables webhook delivery tracking
+	ServerSecret        []byte                           // HMAC secret for API key HMAC (from API_KEY_SERVER_SECRET env)
 	ClerkSecretKey      string                  // Clerk server-side secret key for authentication
 	StripeAPIKey        string                        // Optional Stripe API key for subscriptions
 	StripeWebhookSecret string                        // Optional Stripe webhook secret
@@ -109,8 +111,9 @@ func New(cfg ServerConfig) (*Server, error) {
 		Templates:       ans.tmpl,
 		Auth:            ans.authMiddleware,
 		App:             ans.svc,
-		APIKeyRepo:      cfg.APIKeyRepo,
-		ServerSecret:    cfg.ServerSecret,
+		APIKeyRepo:        cfg.APIKeyRepo,
+		WebhookConfigRepo: cfg.WebhookConfigRepo,
+		ServerSecret:      cfg.ServerSecret,
 		PricingRuleRepo: postgres.NewPricingRuleRepository(ans.db),
 		ResultsSvc:      webservices.NewResultsService(ans.db),
 		IntegrationRepo: postgres.NewIntegrationRepository(ans.db),
@@ -193,6 +196,14 @@ func New(cfg ServerConfig) (*Server, error) {
 		apiRouter.HandleFunc("/api-keys", hg.APIKey.ListAPIKeys).Methods(http.MethodGet)
 		apiRouter.HandleFunc("/api-keys", hg.APIKey.CreateAPIKey).Methods(http.MethodPost)
 		apiRouter.HandleFunc("/api-keys/{id}", hg.APIKey.RevokeAPIKey).Methods(http.MethodDelete)
+	}
+
+	// Webhook config management endpoints
+	if cfg.WebhookConfigRepo != nil {
+		apiRouter.HandleFunc("/webhooks", hg.Webhook.ListWebhooks).Methods(http.MethodGet)
+		apiRouter.HandleFunc("/webhooks", hg.Webhook.CreateWebhook).Methods(http.MethodPost)
+		apiRouter.HandleFunc("/webhooks/{id}", hg.Webhook.UpdateWebhook).Methods(http.MethodPatch)
+		apiRouter.HandleFunc("/webhooks/{id}", hg.Webhook.RevokeWebhook).Methods(http.MethodDelete)
 	}
 
 	// Protected integration endpoints (require authentication)

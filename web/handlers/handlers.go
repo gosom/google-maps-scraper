@@ -25,6 +25,7 @@ type Dependencies struct {
 	App                JobService
 	UserRepo           postgres.UserRepository
 	APIKeyRepo         models.APIKeyRepository     // nil if API key feature not configured
+	WebhookConfigRepo  models.WebhookConfigRepository // nil if webhook feature not configured
 	PricingRuleRepo    models.PricingRuleRepository // nil-safe; estimation falls back to defaults
 	ServerSecret       []byte                       // HMAC secret for GenerateAPIKey
 	ResultsSvc         ResultsService
@@ -40,6 +41,7 @@ type HandlerGroup struct {
 	Web         *WebHandlers
 	API         *APIHandlers
 	APIKey      *APIKeyHandlers
+	Webhook     *WebhookHandlers
 	Billing     *BillingHandlers
 	Integration *IntegrationHandler
 	Version     *VersionHandler
@@ -51,6 +53,7 @@ func NewHandlerGroup(deps Dependencies) *HandlerGroup {
 		Web:         &WebHandlers{Deps: deps},
 		API:         &APIHandlers{Deps: deps},
 		APIKey:      &APIKeyHandlers{Deps: deps},
+		Webhook:     &WebhookHandlers{Deps: deps},
 		Billing:     &BillingHandlers{Deps: deps},
 		Integration: NewIntegrationHandler(deps.IntegrationRepo, deps.App, deps.GoogleSheetsSvc),
 		Version:     NewVersionHandler(),
