@@ -31,6 +31,13 @@ CREATE INDEX IF NOT EXISTS idx_webhook_configs_user_id ON webhook_configs(user_i
 -- 2. List only active configs for a user (job creation dropdown)
 CREATE INDEX IF NOT EXISTS idx_webhook_configs_active ON webhook_configs(user_id) WHERE revoked_at IS NULL;
 
+-- Delivery status enum: prevents garbage strings in the status column.
+DO $$ BEGIN
+  CREATE TYPE webhook_delivery_status AS ENUM ('pending', 'delivering', 'delivered', 'failed');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
+
 -- Junction table: which webhooks should fire for which jobs, plus delivery state.
 -- Composite PK enforces one-delivery-per-webhook-per-job (BCNF).
 CREATE TABLE IF NOT EXISTS job_webhook_deliveries (
@@ -43,7 +50,7 @@ CREATE TABLE IF NOT EXISTS job_webhook_deliveries (
   last_attempt_at TIMESTAMPTZ,
   next_retry_at TIMESTAMPTZ,
   delivered_at TIMESTAMPTZ,  -- NULL until successful delivery
-  status VARCHAR(20) NOT NULL DEFAULT 'pending',  -- pending | delivering | delivered | failed
+  status webhook_delivery_status NOT NULL DEFAULT 'pending',
 
   PRIMARY KEY (job_id, webhook_config_id)
 );
