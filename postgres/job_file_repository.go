@@ -203,7 +203,8 @@ func (r *jobFileRepository) ListByJobID(ctx context.Context, jobID string) ([]*m
 			created_at, uploaded_at, last_accessed_at
 		FROM job_files
 		WHERE job_id = $1
-		ORDER BY created_at DESC`
+		ORDER BY created_at DESC
+		LIMIT 1000`
 
 	rows, err := r.db.QueryContext(ctx, q, jobID)
 	if err != nil {
@@ -253,7 +254,8 @@ func (r *jobFileRepository) ListByUserID(ctx context.Context, userID string) ([]
 			created_at, uploaded_at, last_accessed_at
 		FROM job_files
 		WHERE user_id = $1
-		ORDER BY created_at DESC`
+		ORDER BY created_at DESC
+		LIMIT 1000`
 
 	rows, err := r.db.QueryContext(ctx, q, userID)
 	if err != nil {
