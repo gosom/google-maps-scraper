@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/playwright-community/playwright-go"
@@ -613,53 +612,39 @@ func (e *ImageExtractor) extractPhotosFromGallery(ctx context.Context, categoryN
 	}
 
 	var images []BusinessImage
-	var mu sync.Mutex
-	var wg sync.WaitGroup
 	successCount := 0
 	failureCount := 0
 
-	// Process photos concurrently but with limits
-	semaphore := make(chan struct{}, 3) // Reduced concurrency for stability
-
+	// Process photos sequentially — Playwright Page objects are not goroutine-safe;
+	// calls are serialized over a single WebSocket anyway, so concurrency adds
+	// overhead without any parallelism benefit.
 	for i, photoElement := range photoElements {
-		wg.Add(1)
+		select {
+		case <-ctx.Done():
+			break
+		default:
+		}
 
-		go func(index int, element playwright.Locator) {
-			defer wg.Done()
+		// Add individual timeout for photo extraction
+		photoCtx, photoCancel := context.WithTimeout(ctx, 5*time.Second)
 
-			select {
-			case <-ctx.Done():
-				return
-			case semaphore <- struct{}{}:
-				defer func() { <-semaphore }()
+		img, err := e.extractPhotoFromElementWithTimeout(photoCtx, photoElement, i, categoryName)
+		photoCancel()
+
+		if err != nil {
+			failureCount++
+			// Only log first few failures to avoid spam
+			if failureCount <= 5 {
+				logf("Warning: Failed to extract photo %d from %s: %v\n", i, categoryName, err)
 			}
+			continue
+		}
 
-			// Add individual timeout for photo extraction
-			photoCtx, photoCancel := context.WithTimeout(ctx, 5*time.Second)
-			defer photoCancel()
-
-			img, err := e.extractPhotoFromElementWithTimeout(photoCtx, element, index, categoryName)
-			if err != nil {
-				mu.Lock()
-				failureCount++
-				// Only log first few failures to avoid spam
-				if failureCount <= 5 {
-					logf("Warning: Failed to extract photo %d from %s: %v\n", index, categoryName, err)
-				}
-				mu.Unlock()
-				return
-			}
-
-			if img != nil {
-				mu.Lock()
-				images = append(images, *img)
-				successCount++
-				mu.Unlock()
-			}
-		}(i, photoElement)
+		if img != nil {
+			images = append(images, *img)
+			successCount++
+		}
 	}
-
-	wg.Wait()
 
 	logf("DEBUG: Extracted %d images from tab %s (successes: %d, failures: %d)\n", len(images), categoryName, successCount, failureCount)
 
@@ -1106,41 +1091,27 @@ func (e *ImageExtractor) extractImagesFromDOM(ctx context.Context) ([]BusinessIm
 	}
 
 	var images []BusinessImage
-	var mu sync.Mutex
-	var wg sync.WaitGroup
 
-	// Process images concurrently for better performance
-	semaphore := make(chan struct{}, 10) // Limit concurrent operations
+	// Process images sequentially — Playwright Page objects are not goroutine-safe;
+	// calls are serialized over a single WebSocket anyway.
+	for i, loc := range imageLocators {
+		select {
+		case <-ctx.Done():
+			break
+		default:
+		}
 
-	for i, locator := range imageLocators {
-		wg.Add(1)
+		img, err := e.extractSingleImage(loc, i)
+		if err != nil {
+			// Log error but continue processing other images
+			logf("Warning: Failed to extract image %d: %v\n", i, err)
+			continue
+		}
 
-		go func(index int, loc playwright.Locator) {
-			defer wg.Done()
-
-			select {
-			case <-ctx.Done():
-				return
-			case semaphore <- struct{}{}:
-				defer func() { <-semaphore }()
-			}
-
-			img, err := e.extractSingleImage(loc, index)
-			if err != nil {
-				// Log error but continue processing other images
-				logf("Warning: Failed to extract image %d: %v\n", index, err)
-				return
-			}
-
-			if img != nil {
-				mu.Lock()
-				images = append(images, *img)
-				mu.Unlock()
-			}
-		}(i, locator)
+		if img != nil {
+			images = append(images, *img)
+		}
 	}
-
-	wg.Wait()
 
 	return images, nil
 }

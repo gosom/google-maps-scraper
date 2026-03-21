@@ -3,6 +3,7 @@ package images
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -38,7 +39,6 @@ func NewOptimizedImageExtractor(page playwright.Page) *OptimizedImageExtractor {
 			&DirectGalleryMethod{},
 			&TabBasedMethod{},
 			&LegacyDOMMethod{},
-			&AppStateMethod{},
 		},
 	}
 }
@@ -70,7 +70,7 @@ func (e *OptimizedImageExtractor) ExtractAllImagesOptimized(ctx context.Context)
 		default:
 		}
 
-		fmt.Printf("DEBUG: Trying extraction method %d: %s\n", i+1, method.Name())
+		slog.Debug("trying_extraction_method", slog.Int("method_index", i+1), slog.String("method", method.Name()))
 
 		// Create method-specific context with shorter timeout
 		methodTimeout := time.Duration(float64(e.maxTimeout) * 0.4) // 40% of total time per method
@@ -80,30 +80,30 @@ func (e *OptimizedImageExtractor) ExtractAllImagesOptimized(ctx context.Context)
 		methodCancel()
 
 		if err != nil {
-			fmt.Printf("Warning: Method %s failed: %v\n", method.Name(), err)
+			slog.Warn("extraction_method_failed", slog.String("method", method.Name()), slog.Any("error", err))
 			lastError = err
 
 			// CRITICAL: If ScrollAllTab method fails, still stop here - don't try TabBasedMethod
 			if method.Name() == "ScrollAllTab" {
-				fmt.Printf("DEBUG: ScrollAllTab method failed but stopping to avoid tab clicking\n")
+				slog.Debug("scroll_all_tab_failed_stopping", slog.String("reason", "avoid tab clicking"))
 				break
 			}
 			continue
 		}
 
 		if len(images) > 0 {
-			fmt.Printf("DEBUG: Method %s succeeded with %d images\n", method.Name(), len(images))
+			slog.Debug("extraction_method_succeeded", slog.String("method", method.Name()), slog.Int("count", len(images)))
 			allImages = e.mergeImages(allImages, images)
 
 			// CRITICAL: If ScrollAllTab succeeds with ANY images, stop immediately
 			if method.Name() == "ScrollAllTab" && len(allImages) > 0 {
-				fmt.Printf("DEBUG: ScrollAllTab got %d images, stopping to avoid tab clicking\n", len(allImages))
+				slog.Debug("scroll_all_tab_sufficient_stopping", slog.Int("count", len(allImages)), slog.String("reason", "avoid tab clicking"))
 				break
 			}
 
 			// If we have enough images, stop trying other methods
 			if len(allImages) >= 20 {
-				fmt.Printf("DEBUG: Sufficient images collected (%d), stopping extraction\n", len(allImages))
+				slog.Debug("sufficient_images_collected", slog.Int("count", len(allImages)))
 				break
 			}
 		}
@@ -117,7 +117,7 @@ func (e *OptimizedImageExtractor) ExtractAllImagesOptimized(ctx context.Context)
 		return nil, metadata, fmt.Errorf("all extraction methods failed, last error: %w", lastError)
 	}
 
-	fmt.Printf("DEBUG: Optimized extraction completed - %d images in %dms\n", len(allImages), metadata.LoadTime)
+	slog.Debug("optimized_extraction_completed", slog.Int("count", len(allImages)), slog.Int("duration_ms", metadata.LoadTime))
 	return allImages, metadata, nil
 }
 
@@ -169,7 +169,7 @@ func (m *DirectGalleryMethod) Extract(ctx context.Context, page playwright.Page)
 			continue
 		}
 
-		fmt.Printf("DEBUG: DirectGallery found %d elements with selector: %s\n", len(elements), selector)
+		slog.Debug("direct_gallery_elements_found", slog.Int("count", len(elements)), slog.String("selector", selector))
 
 		for i, element := range elements {
 			select {
@@ -364,11 +364,11 @@ func (m *TabBasedMethod) Extract(ctx context.Context, page playwright.Page) ([]B
 		default:
 		}
 
-		fmt.Printf("DEBUG: Processing tab %d: %s\n", i, tab.Name)
+		slog.Debug("processing_tab", slog.Int("tab_index", i), slog.String("tab_name", tab.Name))
 
 		tabImages, err := m.processTab(ctx, page, tab)
 		if err != nil {
-			fmt.Printf("Warning: Failed to process tab %s: %v\n", tab.Name, err)
+			slog.Warn("tab_processing_failed", slog.String("tab_name", tab.Name), slog.Any("error", err))
 			continue
 		}
 
@@ -577,18 +577,6 @@ func (m *LegacyDOMMethod) Extract(ctx context.Context, page playwright.Page) ([]
 	return images, err
 }
 
-// AppStateMethod tries to extract from APP_INITIALIZATION_STATE
-type AppStateMethod struct{}
-
-func (m *AppStateMethod) Name() string  { return "AppState" }
-func (m *AppStateMethod) Priority() int { return 40 }
-
-func (m *AppStateMethod) Extract(ctx context.Context, page playwright.Page) ([]BusinessImage, error) {
-	// This would implement APP_INITIALIZATION_STATE extraction
-	// For now, return empty to maintain interface compatibility
-	return []BusinessImage{}, fmt.Errorf("APP_INITIALIZATION_STATE extraction not implemented yet")
-}
-
 // ScrollAllTabMethod scrolls in "All" tab without clicking other tabs (FAST, no dialogs!)
 type ScrollAllTabMethod struct{}
 
@@ -596,11 +584,11 @@ func (m *ScrollAllTabMethod) Name() string  { return "ScrollAllTab" }
 func (m *ScrollAllTabMethod) Priority() int { return 110 } // Highest priority!
 
 func (m *ScrollAllTabMethod) Extract(ctx context.Context, page playwright.Page) ([]BusinessImage, error) {
-	fmt.Printf("DEBUG: ScrollAllTab method - FAST extraction starting\n")
+	slog.Debug("scroll_all_tab_extraction_starting")
 
 	// Step 1: Try to navigate to images section
 	if err := m.navigateToImages(page); err != nil {
-		fmt.Printf("DEBUG: Could not navigate to photos section: %v - extracting from current page\n", err)
+		slog.Debug("photos_navigation_failed_using_current_page", slog.Any("error", err))
 	}
 
 	// Step 2: Try JavaScript-based extraction (most reliable in headless)
@@ -610,15 +598,15 @@ func (m *ScrollAllTabMethod) Extract(ctx context.Context, page playwright.Page) 
 		var err error
 		jsImages, err = m.extractViaJavaScript(page)
 		if err == nil && len(jsImages) > 3 {
-			fmt.Printf("DEBUG: JavaScript extraction found %d images on attempt %d - using these\n", len(jsImages), attempt)
+			slog.Debug("js_extraction_succeeded", slog.Int("count", len(jsImages)), slog.Int("attempt", attempt))
 			return jsImages, nil
 		}
 		if attempt < 3 {
-			fmt.Printf("DEBUG: JavaScript extraction found only %d images on attempt %d, waiting 2s and retrying...\n", len(jsImages), attempt)
+			slog.Debug("js_extraction_insufficient_retrying", slog.Int("count", len(jsImages)), slog.Int("attempt", attempt))
 			time.Sleep(2 * time.Second)
 		}
 	}
-	fmt.Printf("DEBUG: JavaScript extraction found only %d images after 3 attempts, trying scroll method\n", len(jsImages))
+	slog.Debug("js_extraction_exhausted_trying_scroll", slog.Int("count", len(jsImages)), slog.Int("attempts", 3))
 
 	// Step 3: Fall back to scroll and collect
 	scrollImages, err := m.scrollAndCollectImages(ctx, page)
@@ -641,7 +629,7 @@ func (m *ScrollAllTabMethod) Extract(ctx context.Context, page playwright.Page) 
 			merged = append(merged, img)
 		}
 	}
-	fmt.Printf("DEBUG: Merged total: %d images (JS: %d + scroll: %d)\n", len(merged), len(jsImages), len(scrollImages))
+	slog.Debug("images_merged", slog.Int("total", len(merged)), slog.Int("js_count", len(jsImages)), slog.Int("scroll_count", len(scrollImages)))
 	return merged, nil
 }
 
@@ -659,7 +647,8 @@ func (m *ScrollAllTabMethod) extractViaJavaScript(page playwright.Page) ([]Busin
 			});
 			
 			// Background-image via computed styles (WHERE GOOGLE HIDES PHOTOS)
-			document.querySelectorAll('*').forEach(el => {
+			// Narrowed selector to avoid iterating ALL DOM nodes and forcing layout/style recomputation
+			document.querySelectorAll('div[style], span[style], img, [class*="photo"], [class*="image"], [class*="gallery"], [style*="background"]').forEach(el => {
 				const computed = window.getComputedStyle(el);
 				if (computed.backgroundImage && computed.backgroundImage !== 'none') {
 					const match = computed.backgroundImage.match(/url\(["']?(https:\/\/[^"')]+googleusercontent[^"')]+)["']?\)/);
@@ -729,13 +718,13 @@ func (m *ScrollAllTabMethod) extractViaJavaScript(page playwright.Page) ([]Busin
 	}`)
 
 	if err != nil {
-		fmt.Printf("DEBUG: JavaScript extraction error: %v\n", err)
+		slog.Debug("js_extraction_error", slog.Any("error", err))
 		return nil, err
 	}
 
 	urlList, ok := result.([]interface{})
 	if !ok {
-		fmt.Printf("DEBUG: JavaScript extraction returned unexpected type\n")
+		slog.Debug("js_extraction_unexpected_type")
 		return nil, fmt.Errorf("unexpected result type")
 	}
 
@@ -756,7 +745,7 @@ func (m *ScrollAllTabMethod) extractViaJavaScript(page playwright.Page) ([]Busin
 		})
 	}
 
-	fmt.Printf("DEBUG: JavaScript extraction found %d valid images\n", len(images))
+	slog.Debug("js_extraction_valid_images", slog.Int("count", len(images)))
 	return images, nil
 }
 
@@ -772,12 +761,12 @@ func (m *ScrollAllTabMethod) navigateToImages(page playwright.Page) error {
 		element := page.Locator(selector).First()
 		if visible, _ := element.IsVisible(); visible {
 			if err := element.Click(); err == nil {
-				fmt.Printf("DEBUG: Clicked photos button using selector: %s\n", selector)
+				slog.Debug("clicked_photos_button", slog.String("selector", selector))
 				time.Sleep(3000 * time.Millisecond) // Wait 3s for Photos tab to load (proxy can be slow)
 
 				// Debug: dump what's on the page after click
 				url, _ := page.Evaluate(`() => window.location.href`)
-				fmt.Printf("DEBUG: Current URL after photos click: %v\n", url)
+				slog.Debug("current_url_after_photos_click", slog.Any("url", url))
 
 				// Check what containers exist
 				containerCheck, _ := page.Evaluate(`() => {
@@ -790,7 +779,7 @@ func (m *ScrollAllTabMethod) navigateToImages(page playwright.Page) error {
 					const allImgs = document.querySelectorAll('img').length;
 					return {containers, imgCount, bgCount, allImgs};
 				}`)
-				fmt.Printf("DEBUG: Page state after photos click: %v\n", containerCheck)
+				slog.Debug("page_state_after_photos_click", slog.Any("state", containerCheck))
 
 				return nil
 			}
@@ -810,12 +799,12 @@ func (m *ScrollAllTabMethod) scrollAndCollectImages(ctx context.Context, page pl
 	startTime := time.Now()
 	maxDuration := 15 * time.Second // 15s timeout - balanced speed vs coverage
 
-	fmt.Printf("DEBUG: Starting FAST scroll in All tab (max %d scrolls, %v timeout)...\n", maxScrolls, maxDuration)
+	slog.Debug("scroll_starting", slog.Int("max_scrolls", maxScrolls), slog.Duration("timeout", maxDuration))
 
 	// ALWAYS extract images from initial view first (before scrolling)
-	fmt.Printf("DEBUG: Extracting visible images from initial view...\n")
+	slog.Debug("extracting_initial_view_images")
 	initialImages := m.extractVisibleImages(page)
-	fmt.Printf("DEBUG: Found %d images in initial view\n", len(initialImages))
+	slog.Debug("initial_view_images_found", slog.Int("count", len(initialImages)))
 	for _, img := range initialImages {
 		if !urlSet[img.URL] {
 			urlSet[img.URL] = true
@@ -826,13 +815,13 @@ func (m *ScrollAllTabMethod) scrollAndCollectImages(ctx context.Context, page pl
 	for scrollCount < maxScrolls {
 		// Hard timeout check
 		if time.Since(startTime) > maxDuration {
-			fmt.Printf("DEBUG: Hard timeout reached after %v, stopping\n", maxDuration)
+			slog.Debug("scroll_hard_timeout", slog.Duration("timeout", maxDuration))
 			break
 		}
 
 		select {
 		case <-ctx.Done():
-			fmt.Printf("DEBUG: Context cancelled, stopping\n")
+			slog.Debug("scroll_context_cancelled")
 			return allImages, nil
 		default:
 		}
@@ -840,13 +829,13 @@ func (m *ScrollAllTabMethod) scrollAndCollectImages(ctx context.Context, page pl
 		previousCount := len(urlSet)
 
 		// Fast scroll with logging
-		fmt.Printf("DEBUG: Attempting scroll %d/%d...\n", scrollCount+1, maxScrolls)
+		slog.Debug("attempting_scroll", slog.Int("scroll_number", scrollCount+1), slog.Int("max_scrolls", maxScrolls))
 		scrolled := m.scrollGallery(page)
 		if !scrolled {
-			fmt.Printf("DEBUG: Can't scroll anymore after %d attempts, stopping with %d images\n", scrollCount, len(allImages))
+			slog.Debug("scroll_exhausted", slog.Int("attempts", scrollCount), slog.Int("count", len(allImages)))
 			break
 		}
-		fmt.Printf("DEBUG: Scroll %d successful\n", scrollCount+1)
+		slog.Debug("scroll_successful", slog.Int("scroll_number", scrollCount+1))
 
 		scrollCount++
 
@@ -854,24 +843,24 @@ func (m *ScrollAllTabMethod) scrollAndCollectImages(ctx context.Context, page pl
 		time.Sleep(500 * time.Millisecond)
 
 		// Extract visible images after scroll
-		fmt.Printf("DEBUG: Extracting visible images after scroll %d...\n", scrollCount)
+		slog.Debug("extracting_images_after_scroll", slog.Int("scroll_number", scrollCount))
 		newImages := m.extractVisibleImages(page)
-		fmt.Printf("DEBUG: Found %d new image elements\n", len(newImages))
+		slog.Debug("new_image_elements_found", slog.Int("count", len(newImages)))
 		for _, img := range newImages {
 			if !urlSet[img.URL] {
 				urlSet[img.URL] = true
 				allImages = append(allImages, img)
 			}
 		}
-		fmt.Printf("DEBUG: Unique images so far: %d\n", len(allImages))
+		slog.Debug("unique_images_so_far", slog.Int("count", len(allImages)))
 
 		newFound := len(urlSet) - previousCount
-		fmt.Printf("DEBUG: Scroll %d: +%d images (total: %d)\n", scrollCount, newFound, len(urlSet))
+		slog.Debug("scroll_progress", slog.Int("scroll_number", scrollCount), slog.Int("new_found", newFound), slog.Int("total", len(urlSet)))
 
 		if newFound == 0 {
 			stableCount++
 			if stableCount >= maxStable {
-				fmt.Printf("DEBUG: No new images after %d scrolls, done\n", maxStable)
+				slog.Debug("no_new_images_stopping", slog.Int("stable_scrolls", maxStable))
 				break
 			}
 		} else {
@@ -879,7 +868,7 @@ func (m *ScrollAllTabMethod) scrollAndCollectImages(ctx context.Context, page pl
 		}
 	}
 
-	fmt.Printf("DEBUG: ScrollAllTab completed: %d images after %d scrolls\n", len(allImages), scrollCount)
+	slog.Debug("scroll_all_tab_completed", slog.Int("count", len(allImages)), slog.Int("scrolls", scrollCount))
 	return allImages, nil
 }
 
@@ -936,15 +925,15 @@ func (m *ScrollAllTabMethod) scrollGallery(page playwright.Page) bool {
 	}`)
 
 	if err != nil {
-		fmt.Printf("DEBUG: Scroll evaluation error: %v\n", err)
+		slog.Debug("scroll_evaluation_error", slog.Any("error", err))
 		return false
 	}
 
 	if b, ok := scrolled.(bool); ok {
 		if b {
-			fmt.Printf("DEBUG: ✅ Scroll successful\n")
+			slog.Debug("scroll_result_success")
 		} else {
-			fmt.Printf("DEBUG: ❌ Scroll failed - no scrollable container found\n")
+			slog.Debug("scroll_result_failed", slog.String("reason", "no scrollable container found"))
 		}
 		return b
 	}
@@ -967,7 +956,7 @@ func (m *ScrollAllTabMethod) extractVisibleImages(page playwright.Page) []Busine
 		if err != nil {
 			continue
 		}
-		fmt.Printf("DEBUG: BG selector '%s' found %d elements\n", selector, len(elements))
+		slog.Debug("bg_selector_elements_found", slog.String("selector", selector), slog.Int("count", len(elements)))
 
 		for i, element := range elements {
 			style, err := element.GetAttribute("style")
@@ -991,7 +980,7 @@ func (m *ScrollAllTabMethod) extractVisibleImages(page playwright.Page) []Busine
 		}
 	}
 
-	fmt.Printf("DEBUG: Found %d images from background-image styles\n", len(images))
+	slog.Debug("bg_style_images_found", slog.Int("count", len(images)))
 
 	// SECONDARY METHOD: <img> tags (for thumbnails, category previews)
 	imgSelectors := []string{
@@ -1005,7 +994,7 @@ func (m *ScrollAllTabMethod) extractVisibleImages(page playwright.Page) []Busine
 		if err != nil {
 			continue
 		}
-		fmt.Printf("DEBUG: IMG selector '%s' found %d elements\n", selector, len(elements))
+		slog.Debug("img_selector_elements_found", slog.String("selector", selector), slog.Int("count", len(elements)))
 
 		for i, element := range elements {
 			src, err := element.GetAttribute("src")
@@ -1030,7 +1019,7 @@ func (m *ScrollAllTabMethod) extractVisibleImages(page playwright.Page) []Busine
 		}
 	}
 
-	fmt.Printf("DEBUG: Extracted %d total unique images from DOM\n", len(images))
+	slog.Debug("total_unique_images_from_dom", slog.Int("count", len(images)))
 	return images
 }
 

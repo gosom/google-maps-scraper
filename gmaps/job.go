@@ -528,10 +528,11 @@ func scroll(ctx context.Context,
 			return cnt, err
 		}
 
-		height, ok := scrollHeight.(int)
+		heightF, ok := scrollHeight.(float64)
 		if !ok {
-			return cnt, fmt.Errorf("scrollHeight is not an int")
+			return cnt, fmt.Errorf("scrollHeight is not a number")
 		}
+		height := int(heightF)
 
 		if height == currentScrollHeight {
 			break
