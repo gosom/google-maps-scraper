@@ -330,6 +330,8 @@ type DOMReview struct {
 	RelativeTimeDescription string
 	Text                    string
 	Images                  []string
+	OwnerResponse           string
+	OwnerResponseTime       string
 }
 
 // ConvertDOMReviewsToReviews converts DOMReview slice to Review slice
@@ -338,12 +340,14 @@ func ConvertDOMReviewsToReviews(domReviews []DOMReview) []Review {
 
 	for _, dr := range domReviews {
 		review := Review{
-			Name:           dr.AuthorName,
-			ProfilePicture: dr.ProfilePicture,
-			Rating:         dr.Rating,
-			Description:    dr.Text,
-			When:           dr.RelativeTimeDescription,
-			Images:         dr.Images,
+			Name:              dr.AuthorName,
+			ProfilePicture:    dr.ProfilePicture,
+			Rating:            dr.Rating,
+			Description:       dr.Text,
+			When:              dr.RelativeTimeDescription,
+			Images:            dr.Images,
+			OwnerResponse:     dr.OwnerResponse,
+			OwnerResponseTime: dr.OwnerResponseTime,
 		}
 		if review.Name != "" {
 			reviews = append(reviews, review)
@@ -583,6 +587,29 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 							}
 						}
 
+						// Owner response - look for response container within the review
+						let ownerResponse = '';
+						let ownerResponseTime = '';
+						const responseSelectors = [
+							'.CDe7pd',           // Owner response container
+							'.wiI7pd.xwPlne',    // Alternative response text
+							'.review-response',  // Generic
+							'.owner-response',   // Generic
+						];
+						for (const sel of responseSelectors) {
+							const responseEl = element.querySelector(sel);
+							if (responseEl) {
+								ownerResponse = responseEl.textContent?.trim() || '';
+								// Try to find response time nearby
+								const responseTimeEl = responseEl.closest('.review-response-container')?.querySelector('.rsqaWe') ||
+								                       responseEl.parentElement?.querySelector('.rsqaWe, .dehysf');
+								if (responseTimeEl) {
+									ownerResponseTime = responseTimeEl.textContent?.trim() || '';
+								}
+								if (ownerResponse) break;
+							}
+						}
+
 						if (userName && (text || rating > 0)) {
 							reviews.push({
 								author_name: userName,
@@ -591,7 +618,9 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 								rating: rating,
 								relative_time_description: relativeTime,
 								text: text,
-								images: images
+								images: images,
+								owner_response: ownerResponse,
+								owner_response_time: ownerResponseTime
 							});
 						}
 					} catch (e) {
@@ -648,6 +677,14 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 								review.Images = append(review.Images, imgStr)
 							}
 						}
+					}
+
+					if v, ok := reviewMap["owner_response"].(string); ok {
+						review.OwnerResponse = v
+					}
+
+					if v, ok := reviewMap["owner_response_time"].(string); ok {
+						review.OwnerResponseTime = v
 					}
 
 					// Add if unique (check by author name and text prefix)
