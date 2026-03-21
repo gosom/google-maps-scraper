@@ -18,6 +18,7 @@ services:
       - STRIPE_CANCEL_URL=${STRIPE_CANCEL_URL:-https://staging.brezel.ai/dashboard/credits}
       - DISABLE_TELEMETRY=${DISABLE_TELEMETRY:-0}
       - ENVIRONMENT=${ENVIRONMENT:-staging}
+      - API_KEY_SERVER_SECRET=${API_KEY_SERVER_SECRET}
     command: [ "-web" ]
     extra_hosts:
       - "host.docker.internal:host-gateway"
