@@ -422,13 +422,14 @@ func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []
 		slog.Error("postgres_enhanced_writer_insert_exec_failed",
 			slog.Any("error", err),
 			slog.String("query_preview", queryPreview),
+			slog.String("job_id", r.jobID),
 		)
 		return fmt.Errorf("failed to insert results: %w", err)
 	}
 
 	err = tx.Commit()
 	if err != nil {
-		slog.Error("postgres_enhanced_writer_commit_failed", slog.Any("error", err))
+		slog.Error("postgres_enhanced_writer_commit_failed", slog.Any("error", err), slog.String("job_id", r.jobID))
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
@@ -554,13 +555,13 @@ func (r *enhancedResultWriterWithExiter) batchSaveEnhancedWithCount(ctx context.
 
 	result, err := tx.ExecContext(dbCtx, q, args...)
 	if err != nil {
-		slog.Error("postgres_exiter_writer_insert_exec_failed", slog.Any("error", err))
+		slog.Error("postgres_exiter_writer_insert_exec_failed", slog.Any("error", err), slog.String("job_id", r.jobID))
 		return 0, fmt.Errorf("failed to insert results: %w", err)
 	}
 
 	err = tx.Commit()
 	if err != nil {
-		slog.Error("postgres_exiter_writer_commit_failed", slog.Any("error", err))
+		slog.Error("postgres_exiter_writer_commit_failed", slog.Any("error", err), slog.String("job_id", r.jobID))
 		return 0, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 

@@ -52,7 +52,10 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 
 	var req apiScrapeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: err.Error()})
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Error("json_decode_failed", slog.String("path", r.URL.Path), slog.Any("error", err))
+		}
+		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Invalid request body"})
 		return
 	}
 
@@ -138,7 +141,7 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 			}
 			renderJSON(w, http.StatusPaymentRequired, models.APIError{
 				Code:    http.StatusPaymentRequired,
-				Message: err.Error(),
+				Message: "Failed to check balance",
 			})
 			return
 		}
@@ -497,7 +500,10 @@ func (h *APIHandlers) EstimateJobCost(w http.ResponseWriter, r *http.Request) {
 
 	var req apiScrapeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: err.Error()})
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Error("json_decode_failed", slog.String("path", r.URL.Path), slog.Any("error", err))
+		}
+		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Invalid request body"})
 		return
 	}
 

@@ -52,7 +52,7 @@ func (r *IntegrationRepository) Get(ctx context.Context, userID, provider string
 			if strings.Contains(err.Error(), "ENCRYPTION_KEY") {
 				slog.Debug("encryption not configured, using plaintext access_token", slog.String("user_id", i.UserID), slog.String("provider", i.Provider))
 			} else {
-				slog.Error("failed to decrypt access_token, data may be corrupted or wrong key", slog.String("user_id", i.UserID), slog.String("provider", i.Provider), slog.String("error", err.Error()))
+				slog.Error("failed to decrypt access_token, data may be corrupted or wrong key", slog.String("user_id", i.UserID), slog.String("provider", i.Provider), slog.Any("error", err))
 			}
 		} else {
 			i.AccessToken = []byte(decrypted)
@@ -64,7 +64,7 @@ func (r *IntegrationRepository) Get(ctx context.Context, userID, provider string
 			if strings.Contains(err.Error(), "ENCRYPTION_KEY") {
 				slog.Debug("encryption not configured, using plaintext refresh_token", slog.String("user_id", i.UserID), slog.String("provider", i.Provider))
 			} else {
-				slog.Error("failed to decrypt refresh_token, data may be corrupted or wrong key", slog.String("user_id", i.UserID), slog.String("provider", i.Provider), slog.String("error", err.Error()))
+				slog.Error("failed to decrypt refresh_token, data may be corrupted or wrong key", slog.String("user_id", i.UserID), slog.String("provider", i.Provider), slog.Any("error", err))
 			}
 		} else {
 			i.RefreshToken = []byte(decrypted)
