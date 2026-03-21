@@ -126,6 +126,7 @@ The scraper has [built-in LeadsDB integration](#export-to-leadsdb) - just add yo
   - [Web UI](#web-ui)
   - [Command Line](#command-line)
   - [REST API](#rest-api)
+- [AI Agent Skill](#ai-agent-skill)
 - [Installation](#installation)
 - [Features](#features)
 - [Extracted Data Points](#extracted-data-points)
@@ -210,6 +211,26 @@ When running the web server, a full REST API is available:
 | `/api/v1/jobs/{id}/download` | GET | Download results as CSV |
 
 Full OpenAPI 3.0.3 documentation available at http://localhost:8080/api/docs
+
+---
+
+## AI Agent Skill
+
+Use Google Maps Scraper directly from AI coding agents like [Claude Code](https://claude.com/claude-code), Cursor, GitHub Copilot, and [20+ other agents](https://agentskills.io). Just tell your agent to find businesses and it handles everything — query creation, scraping, and result analysis.
+
+**Install the skill:**
+
+```bash
+npx skills add gosom/google-maps-scraper
+```
+
+**Then just ask your agent:**
+
+> Find me all dentists in Berlin with their emails
+
+The agent will ask you a few setup questions, run the scraper in the background via Docker, and present the results with options to save, filter, analyze, or export.
+
+Requires Docker installed and running. See the [skill definition](skills/google-maps-scraper/SKILL.md) for details.
 
 ---
 
