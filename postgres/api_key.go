@@ -146,36 +146,6 @@ func (r *apiKeyRepository) Revoke(ctx context.Context, id string, ownerUserID st
 	return nil
 }
 
-// LogUsage records an API key usage event to the audit log.
-func (r *apiKeyRepository) LogUsage(ctx context.Context, log *models.APIKeyUsageLog) error {
-	const q = `
-		INSERT INTO api_key_usage_log (
-			id, api_key_id, used_at, ip_address, endpoint, user_agent,
-			country_code, city, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
-
-	now := time.Now().UTC()
-	if log.CreatedAt.IsZero() {
-		log.CreatedAt = now
-	}
-	if log.UsedAt.IsZero() {
-		log.UsedAt = now
-	}
-
-	_, err := r.db.ExecContext(ctx, q,
-		log.ID,
-		log.APIKeyID,
-		log.UsedAt,
-		log.IPAddress.String(),
-		log.Endpoint,
-		log.UserAgent,
-		log.CountryCode,
-		log.City,
-		log.CreatedAt,
-	)
-	return err
-}
-
 // ---- internal scan helpers ----
 
 func (r *apiKeyRepository) scanOne(row *sql.Row) (*models.APIKey, error) {

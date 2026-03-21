@@ -114,8 +114,9 @@ func (h *IntegrationHandler) HandleGoogleCallback(w http.ResponseWriter, r *http
 
 	token, err := h.googleConfig().Exchange(ctx, code)
 	if err != nil {
-		h.log.Error("google_oauth_token_exchange_failed", slog.Any("error", err))
-		http.Error(w, "Failed to exchange token: "+err.Error(), http.StatusInternalServerError)
+		h.log.Error("google_oauth_token_exchange_failed",
+			slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+		http.Error(w, "Failed to exchange token", http.StatusInternalServerError)
 		return
 	}
 
@@ -129,14 +130,16 @@ func (h *IntegrationHandler) HandleGoogleCallback(w http.ResponseWriter, r *http
 	// Encrypt tokens
 	encryptedAccessToken, err := encryption.Encrypt(token.AccessToken)
 	if err != nil {
-		h.log.Error("google_oauth_encrypt_access_token_failed", slog.String("user_id", userIDStr), slog.Any("error", err))
+		h.log.Error("google_oauth_encrypt_access_token_failed",
+			slog.String("user_id", userIDStr), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
 		http.Error(w, "Failed to encrypt access token", http.StatusInternalServerError)
 		return
 	}
 
 	encryptedRefreshToken, err := encryption.Encrypt(token.RefreshToken)
 	if err != nil {
-		h.log.Error("google_oauth_encrypt_refresh_token_failed", slog.String("user_id", userIDStr), slog.Any("error", err))
+		h.log.Error("google_oauth_encrypt_refresh_token_failed",
+			slog.String("user_id", userIDStr), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
 		http.Error(w, "Failed to encrypt refresh token", http.StatusInternalServerError)
 		return
 	}
@@ -152,8 +155,9 @@ func (h *IntegrationHandler) HandleGoogleCallback(w http.ResponseWriter, r *http
 	}
 
 	if err := h.repo.Save(ctx, integration); err != nil {
-		h.log.Error("google_oauth_save_integration_failed", slog.String("user_id", userIDStr), slog.Any("error", err))
-		http.Error(w, "Failed to save integration: "+err.Error(), http.StatusInternalServerError)
+		h.log.Error("google_oauth_save_integration_failed",
+			slog.String("user_id", userIDStr), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+		http.Error(w, "Failed to save integration", http.StatusInternalServerError)
 		return
 	}
 
@@ -182,7 +186,8 @@ func (h *IntegrationHandler) HandleGetStatus(w http.ResponseWriter, r *http.Requ
 			_, _ = w.Write([]byte(`{"connected": false}`))
 			return
 		}
-		http.Error(w, "Failed to get integration client: "+err.Error(), http.StatusInternalServerError)
+		slog.Error("failed_to_get_integration_client", slog.String("user_id", userID), slog.Any("error", err))
+		http.Error(w, "Failed to get integration client", http.StatusInternalServerError)
 		return
 	}
 
@@ -224,8 +229,9 @@ func (h *IntegrationHandler) HandleExportJob(w http.ResponseWriter, r *http.Requ
 	// Get CSV content
 	csvReader, filename, err := h.jobService.GetCSVReader(ctx, jobID)
 	if err != nil {
-		h.log.Error("google_sheets_get_csv_failed", slog.String("user_id", userID), slog.String("job_id", jobID), slog.Any("error", err))
-		http.Error(w, "Failed to get CSV: "+err.Error(), http.StatusInternalServerError)
+		h.log.Error("google_sheets_get_csv_failed",
+			slog.String("user_id", userID), slog.String("job_id", jobID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+		http.Error(w, "Failed to get CSV", http.StatusInternalServerError)
 		return
 	}
 	defer csvReader.Close()
@@ -233,7 +239,7 @@ func (h *IntegrationHandler) HandleExportJob(w http.ResponseWriter, r *http.Requ
 	client, err := h.getHTTPClient(ctx, userID)
 	if err != nil {
 		h.log.Warn("google_sheets_no_integration", slog.String("user_id", userID), slog.String("job_id", jobID))
-		http.Error(w, "Google integration not found or invalid: "+err.Error(), http.StatusNotFound)
+		http.Error(w, "Google integration not found or invalid", http.StatusNotFound)
 		return
 	}
 
@@ -276,8 +282,10 @@ func (h *IntegrationHandler) HandleExportJob(w http.ResponseWriter, r *http.Requ
 	h.log.Info("google_sheets_upload_started", slog.String("user_id", userID), slog.String("job_id", jobID), slog.String("filename", filename))
 	sheetURL, err := h.sheetsService.UploadCSV(ctx, client, filename, csvReader)
 	if err != nil {
-		h.log.Error("google_sheets_upload_failed", slog.String("user_id", userID), slog.String("job_id", jobID), slog.String("filename", filename), slog.Any("error", err))
-		http.Error(w, "Failed to upload to Google Sheets: "+err.Error(), http.StatusInternalServerError)
+		h.log.Error("google_sheets_upload_failed",
+			slog.String("user_id", userID), slog.String("job_id", jobID), slog.String("filename", filename),
+			slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+		http.Error(w, "Failed to upload to Google Sheets", http.StatusInternalServerError)
 		return
 	}
 

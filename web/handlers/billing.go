@@ -40,7 +40,11 @@ func (h *BillingHandlers) GetCreditBalance(w http.ResponseWriter, r *http.Reques
 	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc)
 	resp, err := cs.GetBalance(r.Context(), userID)
 	if err != nil {
-		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: err.Error()})
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Error("credit_balance_fetch_failed",
+				slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+		}
+		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: "Failed to retrieve credit balance"})
 		return
 	}
 	renderJSON(w, http.StatusOK, resp)
@@ -68,7 +72,11 @@ func (h *BillingHandlers) CreateCheckoutSession(w http.ResponseWriter, r *http.R
 	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc)
 	out, err := cs.CreateCheckoutSession(r.Context(), billing.CheckoutRequest{UserID: userID, Credits: req.Credits, Currency: req.Currency})
 	if err != nil {
-		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: err.Error()})
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Error("checkout_session_failed",
+				slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+		}
+		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: "Failed to create checkout session"})
 		return
 	}
 	renderJSON(w, http.StatusOK, out)
@@ -103,13 +111,15 @@ func (h *BillingHandlers) Reconcile(w http.ResponseWriter, r *http.Request) {
 
 func (h *BillingHandlers) HandleStripeWebhook(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.BillingSvc == nil {
-		slog.Error("billing_svc_nil_in_webhook_handler")
+		slog.Error("billing_svc_nil_in_webhook_handler",
+			slog.String("path", r.URL.Path), slog.String("method", r.Method))
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 	payload, err := io.ReadAll(r.Body)
 	if err != nil {
-		slog.Error("webhook_payload_read_failed", slog.Any("error", err))
+		slog.Error("webhook_payload_read_failed",
+			slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -119,7 +129,8 @@ func (h *BillingHandlers) HandleStripeWebhook(w http.ResponseWriter, r *http.Req
 	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc)
 	code, err := cs.HandleWebhook(r.Context(), payload, sig)
 	if err != nil {
-		slog.Error("webhook_processing_failed", slog.Any("error", err))
+		slog.Error("webhook_processing_failed",
+			slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
 	}
 	slog.Debug("webhook_response", slog.Int("code", code))
 	w.WriteHeader(code)
@@ -157,7 +168,11 @@ func (h *BillingHandlers) GetBillingHistory(w http.ResponseWriter, r *http.Reque
 	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc)
 	resp, err := cs.GetBillingHistory(r.Context(), userID, limit, offset)
 	if err != nil {
-		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: err.Error()})
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Error("billing_history_fetch_failed",
+				slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+		}
+		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: "Failed to retrieve billing history"})
 		return
 	}
 	renderJSON(w, http.StatusOK, resp)
