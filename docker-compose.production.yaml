@@ -75,15 +75,6 @@ services:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
       - GF_AUTH_ANONYMOUS_ENABLED=false
-      # SMTP for ops billing alert emails (required for refund_cap_applied alerting)
-      - GF_SMTP_ENABLED=${GF_SMTP_ENABLED:-false}
-      - GF_SMTP_HOST=${GF_SMTP_HOST:-smtp.example.com:587}
-      - GF_SMTP_USER=${GF_SMTP_USER}
-      - GF_SMTP_PASSWORD=${GF_SMTP_PASSWORD}
-      - GF_SMTP_FROM_ADDRESS=${GF_SMTP_FROM_ADDRESS:-alerts@brezel.ai}
-      - GF_SMTP_FROM_NAME=${GF_SMTP_FROM_NAME:-Brezel Alerts}
-      # Ops recipient for billing alerts — used by Grafana alert provisioning
-      - OPS_ALERT_EMAIL=${OPS_ALERT_EMAIL:-ops@brezel.ai}
     volumes:
       - grafana-data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning
@@ -107,10 +98,3 @@ volumes:
     # GRAFANA_ADMIN_USER=admin
     # GRAFANA_ADMIN_PASSWORD=your_secure_password
     #
-    # Ops billing alerting (refund_cap_applied threshold alert):
-    # OPS_ALERT_EMAIL=ops@brezel.ai           — recipient for billing alerts
-    # GF_SMTP_ENABLED=true
-    # GF_SMTP_HOST=smtp.example.com:587
-    # GF_SMTP_USER=alerts@brezel.ai
-    # GF_SMTP_PASSWORD=your_smtp_password
-    # GF_SMTP_FROM_ADDRESS=alerts@brezel.ai
