@@ -12,6 +12,7 @@ import (
 )
 
 const kmPerDegreeLat = 111.32
+const minCosLatitude = 1e-6
 
 // BoundingBox represents a geographic rectangle defined by two corners.
 type BoundingBox struct {
@@ -37,6 +38,10 @@ func ParseBoundingBox(s string) (BoundingBox, error) {
 			return BoundingBox{}, fmt.Errorf("invalid bounding box value %q: %w", p, err)
 		}
 
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return BoundingBox{}, fmt.Errorf("invalid bounding box value %q: must be finite", p)
+		}
+
 		vals[i] = v
 	}
 
@@ -53,6 +58,22 @@ func ParseBoundingBox(s string) (BoundingBox, error) {
 
 	if bbox.MinLon >= bbox.MaxLon {
 		return BoundingBox{}, fmt.Errorf("minLon (%f) must be less than maxLon (%f)", bbox.MinLon, bbox.MaxLon)
+	}
+
+	if bbox.MinLat < -90 || bbox.MinLat > 90 {
+		return BoundingBox{}, fmt.Errorf("minLat (%f) must be between -90 and 90", bbox.MinLat)
+	}
+
+	if bbox.MaxLat < -90 || bbox.MaxLat > 90 {
+		return BoundingBox{}, fmt.Errorf("maxLat (%f) must be between -90 and 90", bbox.MaxLat)
+	}
+
+	if bbox.MinLon < -180 || bbox.MinLon > 180 {
+		return BoundingBox{}, fmt.Errorf("minLon (%f) must be between -180 and 180", bbox.MinLon)
+	}
+
+	if bbox.MaxLon < -180 || bbox.MaxLon > 180 {
+		return BoundingBox{}, fmt.Errorf("maxLon (%f) must be between -180 and 180", bbox.MaxLon)
 	}
 
 	return bbox, nil
@@ -78,16 +99,13 @@ func (c Cell) GeoCoordinates() string {
 //
 // Example: a 20×20 km area with cellSizeKm=1 produces ~400 cells.
 func GenerateCells(bbox BoundingBox, cellSizeKm float64) []Cell {
-	if cellSizeKm <= 0 {
-		cellSizeKm = 1.0
-	}
+	cellSizeKm = normalizeCellSizeKm(cellSizeKm)
 
 	// Latitude step is constant everywhere.
 	latStep := cellSizeKm / kmPerDegreeLat
 
 	// Longitude step varies with latitude; use the midpoint for a good estimate.
-	midLat := (bbox.MinLat + bbox.MaxLat) / 2
-	lonStep := cellSizeKm / (kmPerDegreeLat * math.Cos(midLat*math.Pi/180))
+	lonStep := calculateLonStep(bbox, cellSizeKm)
 
 	var cells []Cell
 
@@ -104,13 +122,10 @@ func GenerateCells(bbox BoundingBox, cellSizeKm float64) []Cell {
 // EstimateCellCount returns how many cells GenerateCells would produce
 // without allocating them. Useful for logging or validation.
 func EstimateCellCount(bbox BoundingBox, cellSizeKm float64) int {
-	if cellSizeKm <= 0 {
-		cellSizeKm = 1.0
-	}
+	cellSizeKm = normalizeCellSizeKm(cellSizeKm)
 
 	latStep := cellSizeKm / kmPerDegreeLat
-	midLat := (bbox.MinLat + bbox.MaxLat) / 2
-	lonStep := cellSizeKm / (kmPerDegreeLat * math.Cos(midLat*math.Pi/180))
+	lonStep := calculateLonStep(bbox, cellSizeKm)
 
 	latCells := int(math.Ceil((bbox.MaxLat - bbox.MinLat) / latStep))
 	lonCells := int(math.Ceil((bbox.MaxLon - bbox.MinLon) / lonStep))
@@ -124,4 +139,27 @@ func EstimateCellCount(bbox BoundingBox, cellSizeKm float64) int {
 	}
 
 	return latCells * lonCells
+}
+
+func normalizeCellSizeKm(cellSizeKm float64) float64 {
+	if cellSizeKm <= 0 {
+		return 1.0
+	}
+
+	return cellSizeKm
+}
+
+func calculateLonStep(bbox BoundingBox, cellSizeKm float64) float64 {
+	midLat := (bbox.MinLat + bbox.MaxLat) / 2
+	cosMidLat := math.Cos(midLat * math.Pi / 180)
+
+	if math.Abs(cosMidLat) < minCosLatitude {
+		if cosMidLat < 0 {
+			cosMidLat = -minCosLatitude
+		} else {
+			cosMidLat = minCosLatitude
+		}
+	}
+
+	return cellSizeKm / (kmPerDegreeLat * cosMidLat)
 }

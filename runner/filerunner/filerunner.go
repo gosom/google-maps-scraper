@@ -78,6 +78,10 @@ func (r *fileRunner) Run(ctx context.Context) (err error) {
 	exitMonitor := exiter.New()
 
 	if r.cfg.GridBBox != "" {
+		if r.cfg.FastMode {
+			return fmt.Errorf("-fast-mode cannot be used together with -grid-bbox")
+		}
+
 		bbox, bboxErr := grid.ParseBoundingBox(r.cfg.GridBBox)
 		if bboxErr != nil {
 			return fmt.Errorf("invalid -grid-bbox: %w", bboxErr)

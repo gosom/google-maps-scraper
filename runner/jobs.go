@@ -73,17 +73,17 @@ func CreateSeedJobs(
 	scanner := bufio.NewScanner(r)
 
 	for scanner.Scan() {
-		query := strings.TrimSpace(scanner.Text())
-		if query == "" {
+		q, ok, parseErr := parseQueryLine(scanner.Text())
+		if parseErr != nil {
+			return nil, parseErr
+		}
+
+		if !ok {
 			continue
 		}
 
-		var id string
-
-		if before, after, ok := strings.Cut(query, "#!#"); ok {
-			query = strings.TrimSpace(before)
-			id = strings.TrimSpace(after)
-		}
+		query := q.text
+		id := q.id
 
 		var job scrapemate.IJob
 
@@ -150,6 +150,10 @@ func CreateGridSeedJobs(
 	exitMonitor exiter.Exiter,
 	extraReviews bool,
 ) ([]scrapemate.IJob, error) {
+	if zoom < 1 || zoom > 21 {
+		return nil, fmt.Errorf("invalid zoom level: %d", zoom)
+	}
+
 	cells := grid.GenerateCells(bbox, cellSizeKm)
 	if len(cells) == 0 {
 		return nil, fmt.Errorf("grid produced 0 cells — check bounding box and cell size")
@@ -223,24 +227,41 @@ func readQueries(r io.Reader) ([]query, error) {
 	scanner := bufio.NewScanner(r)
 
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
+		q, ok, parseErr := parseQueryLine(scanner.Text())
+		if parseErr != nil {
+			return nil, parseErr
 		}
 
-		q := query{}
-
-		if before, after, ok := strings.Cut(line, "#!#"); ok {
-			q.text = strings.TrimSpace(before)
-			q.id = strings.TrimSpace(after)
-		} else {
-			q.text = line
+		if !ok {
+			continue
 		}
 
 		queries = append(queries, q)
 	}
 
 	return queries, scanner.Err()
+}
+
+func parseQueryLine(line string) (query, bool, error) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return query{}, false, nil
+	}
+
+	var q query
+
+	if before, after, ok := strings.Cut(line, "#!#"); ok {
+		q.text = strings.TrimSpace(before)
+		q.id = strings.TrimSpace(after)
+	} else {
+		q.text = line
+	}
+
+	if q.text == "" {
+		return query{}, false, fmt.Errorf("invalid query line %q: empty query text", line)
+	}
+
+	return q, true, nil
 }
 
 func LoadCustomWriter(pluginDir, pluginName string) (scrapemate.ResultWriter, error) {
