@@ -9,8 +9,25 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"time"
 	"sync"
+	"sync/atomic"
 )
+
+// sanitizeProxyURL strips credentials from a proxy URL for safe logging.
+func sanitizeProxyURL(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "<invalid-url>"
+	}
+	if parsed.Host == "" {
+		return "<invalid-url>"
+	}
+	if parsed.Scheme != "" {
+		return parsed.Scheme + "://" + parsed.Host
+	}
+	return parsed.Host
+}
 
 // Server handles proxy authentication and forwarding with fallback support
 type Server struct {
@@ -18,7 +35,7 @@ type Server struct {
 	currentProxy int
 	localPort    int
 	listener     net.Listener
-	running      bool
+	running      atomic.Bool
 	wg           sync.WaitGroup
 	mu           sync.RWMutex
 	logger       *slog.Logger
@@ -85,13 +102,13 @@ func NewServerWithFallback(proxyURLs []string, localPort int, logger *slog.Logge
 	for i, proxyURL := range proxyURLs {
 		parsed, err := url.Parse(proxyURL)
 		if err != nil {
-			logger.Warn("skipping_invalid_proxy_url", slog.Int("index", i+1), slog.String("url", proxyURL), slog.Any("error", err))
+			logger.Warn("skipping_invalid_proxy_url", slog.Int("index", i+1), slog.String("url", sanitizeProxyURL(proxyURL)), slog.Any("error", err))
 			continue
 		}
 
 		host, port, err := net.SplitHostPort(parsed.Host)
 		if err != nil {
-			logger.Warn("skipping_invalid_proxy_host_port", slog.Int("index", i+1), slog.String("url", proxyURL), slog.Any("error", err))
+			logger.Warn("skipping_invalid_proxy_host_port", slog.Int("index", i+1), slog.String("url", sanitizeProxyURL(proxyURL)), slog.Any("error", err))
 			continue
 		}
 
@@ -132,7 +149,7 @@ func (ps *Server) Start() error {
 		return fmt.Errorf("failed to start proxy server: %w", err)
 	}
 
-	ps.running = true
+	ps.running.Store(true)
 	ps.mu.RLock()
 	currentProxy := ps.proxies[ps.currentProxy]
 	ps.mu.RUnlock()
@@ -147,7 +164,7 @@ func (ps *Server) Start() error {
 
 // Stop stops the proxy server
 func (ps *Server) Stop() {
-	ps.running = false
+	ps.running.Store(false)
 	if ps.listener != nil {
 		ps.listener.Close()
 	}
@@ -162,10 +179,10 @@ func (ps *Server) GetLocalURL() string {
 
 func (ps *Server) run() {
 	defer ps.wg.Done()
-	for ps.running {
+	for ps.running.Load() {
 		conn, err := ps.listener.Accept()
 		if err != nil {
-			if ps.running {
+			if ps.running.Load() {
 				ps.logger.Error("proxy_accept_error", slog.Any("error", err))
 			}
 			continue
@@ -214,6 +231,10 @@ func (ps *Server) handleHTTPS(clientConn net.Conn, target string) {
 			_, _ = clientConn.Write([]byte("HTTP/1.1 500 All proxies failed\r\n\r\n"))
 			return
 		}
+		// Re-read currentProxy after successful fallback to use correct credentials
+		ps.mu.RLock()
+		currentProxy = ps.proxies[ps.currentProxy]
+		ps.mu.RUnlock()
 	}
 	defer proxyConn.Close()
 
@@ -273,6 +294,10 @@ func (ps *Server) handleHTTP(clientConn net.Conn, reader *bufio.Reader, firstLin
 			ps.logger.Error("all_proxies_failed_http", slog.Any("error", err))
 			return
 		}
+		// Re-read currentProxy after successful fallback to use correct credentials
+		ps.mu.RLock()
+		currentProxy = ps.proxies[ps.currentProxy]
+		ps.mu.RUnlock()
 	}
 	defer proxyConn.Close()
 
@@ -314,7 +339,7 @@ func (ps *Server) tunnelData(clientConn, proxyConn net.Conn) {
 // tryConnectToProxy attempts to connect to a specific proxy
 func (ps *Server) tryConnectToProxy(proxy *WebshareProxy, target string) (net.Conn, error) {
 	address := net.JoinHostPort(proxy.Address, proxy.Port)
-	conn, err := net.Dial("tcp", address)
+	conn, err := net.DialTimeout("tcp", address, 10*time.Second)
 	if err != nil {
 		ps.logger.Warn("proxy_connect_failed", slog.String("host", proxy.Address), slog.String("port", proxy.Port), slog.Any("error", err))
 		return nil, err

@@ -27,6 +27,10 @@ const (
 // ErrInvalidAPIKey is returned when API key validation fails.
 var ErrInvalidAPIKey = errors.New("invalid API key")
 
+// argon2Semaphore limits concurrent Argon2id computations to prevent memory
+// exhaustion from parallel requests (each operation allocates 64 MB).
+var argon2Semaphore = make(chan struct{}, 4)
+
 // base62 alphabet used for encoding random bytes.
 const base62Chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
@@ -93,6 +97,14 @@ func ValidateAPIKey(ctx context.Context, providedKey string, serverSecret []byte
 	} else {
 		// Deterministic dummy salt — prevents timing distinguishability.
 		salt = dummySalt(providedKey)
+	}
+
+	// Acquire semaphore to limit concurrent Argon2 operations (DoS mitigation).
+	select {
+	case argon2Semaphore <- struct{}{}:
+		defer func() { <-argon2Semaphore }()
+	case <-ctx.Done():
+		return "", "", ctx.Err()
 	}
 
 	computedHash := argon2.IDKey([]byte(providedKey), salt, 1, 64*1024, 4, 32)

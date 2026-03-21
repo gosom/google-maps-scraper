@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -23,9 +24,17 @@ var validate = validator.New()
 
 // internalError logs err at ERROR level and writes a sanitized 500 response to w.
 // The raw error is never sent to the client; only the generic userMsg is.
-func internalError(w http.ResponseWriter, log *slog.Logger, err error, userMsg string) {
+// Extra slog.Attr values (e.g. user_id, job_id, path, method) can be appended
+// for Grafana/Loki traceability.
+func internalError(w http.ResponseWriter, log *slog.Logger, err error, userMsg string, extra ...slog.Attr) {
 	if log != nil {
-		log.Error("internal_error", slog.Any("error", err))
+		attrs := []slog.Attr{slog.Any("error", err)}
+		attrs = append(attrs, extra...)
+		args := make([]any, len(attrs))
+		for i, a := range attrs {
+			args[i] = a
+		}
+		log.Error("internal_error", args...)
 	}
 	renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: userMsg})
 }
@@ -103,7 +112,8 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 		estimate, err := estimationSvc.EstimateJobCost(r.Context(), &newJob.Data)
 		if err != nil {
 			if h.Deps.Logger != nil {
-				h.Deps.Logger.Error("job_cost_estimation_failed", slog.String("user_id", userID), slog.Any("error", err))
+				h.Deps.Logger.Error("job_cost_estimation_failed",
+					slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
 			}
 			renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: "failed to estimate job cost"})
 			return
@@ -137,17 +147,21 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 		// Without a results cap, an unlimited job can scrape 10,000+ places and
 		// cost far more than the conservative 50-place estimate used for billing
 		// pre-flight. Require max_results > 0 when balance is below threshold.
-		const unlimitedJobMinBalance = 5.0 // $5.00
+		const unlimitedJobMinBalanceMicro int64 = 5_000_000 // $5.00 in micro-credits
 		if newJob.Data.MaxResults <= 0 {
-			var balance float64
+			var bStr string
 			if err := h.Deps.DB.QueryRowContext(r.Context(),
-				`SELECT COALESCE(credit_balance, 0) FROM users WHERE id = $1`, userID,
-			).Scan(&balance); err == nil && balance < unlimitedJobMinBalance {
-				renderJSON(w, http.StatusBadRequest, models.APIError{
-					Code:    http.StatusBadRequest,
-					Message: "Your balance is below $5.00. Set a max_results limit or add credit before running unlimited jobs.",
-				})
-				return
+				`SELECT COALESCE(credit_balance, 0)::text FROM users WHERE id = $1`, userID,
+			).Scan(&bStr); err == nil {
+				if bFloat, pErr := strconv.ParseFloat(bStr, 64); pErr == nil {
+					if int64(math.Round(bFloat*models.MicroUnit)) < unlimitedJobMinBalanceMicro {
+						renderJSON(w, http.StatusBadRequest, models.APIError{
+							Code:    http.StatusBadRequest,
+							Message: "Your balance is below $5.00. Set a max_results limit or add credit before running unlimited jobs.",
+						})
+						return
+					}
+				}
 			}
 		}
 
@@ -211,14 +225,16 @@ func (h *APIHandlers) createJob(ctx context.Context, job *models.Job, w http.Res
 				})
 				return err
 			}
-			internalError(w, h.Deps.Logger, err, "job creation failed")
+			internalError(w, h.Deps.Logger, err, "job creation failed",
+				slog.String("user_id", job.UserID), slog.String("job_id", job.ID))
 			return err
 		}
 		return nil
 	}
 	// No DB available — fall back to plain create (non-billing deployments).
 	if err := h.Deps.App.Create(ctx, job); err != nil {
-		internalError(w, h.Deps.Logger, err, "job creation failed")
+		internalError(w, h.Deps.Logger, err, "job creation failed",
+			slog.String("user_id", job.UserID), slog.String("job_id", job.ID))
 		return err
 	}
 	return nil
@@ -239,7 +255,8 @@ func (h *APIHandlers) GetJobs(w http.ResponseWriter, r *http.Request) {
 	}
 	jobs, err := h.Deps.App.All(r.Context(), userID)
 	if err != nil {
-		internalError(w, h.Deps.Logger, err, "internal server error")
+		internalError(w, h.Deps.Logger, err, "internal server error",
+			slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
 		return
 	}
 	renderJSON(w, http.StatusOK, jobs)
@@ -260,7 +277,8 @@ func (h *APIHandlers) GetUserJobs(w http.ResponseWriter, r *http.Request) {
 	}
 	jobs, err := h.Deps.App.All(r.Context(), userID)
 	if err != nil {
-		internalError(w, h.Deps.Logger, err, "internal server error")
+		internalError(w, h.Deps.Logger, err, "internal server error",
+			slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
 		return
 	}
 	renderJSON(w, http.StatusOK, jobs)
@@ -280,14 +298,10 @@ func (h *APIHandlers) GetJob(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Invalid ID format"})
 		return
 	}
-	userID := ""
-	if h.Deps.Auth != nil {
-		uid, err := auth.GetUserID(r.Context())
-		if err != nil {
-			renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
-			return
-		}
-		userID = uid
+	userID, err := auth.GetUserID(r.Context())
+	if err != nil {
+		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
+		return
 	}
 	job, err := h.Deps.App.Get(r.Context(), id.String(), userID)
 	if err != nil {
@@ -311,14 +325,10 @@ func (h *APIHandlers) DeleteJob(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Invalid ID format"})
 		return
 	}
-	userID := ""
-	if h.Deps.Auth != nil {
-		uid, err := auth.GetUserID(r.Context())
-		if err != nil {
-			renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
-			return
-		}
-		userID = uid
+	userID, err := auth.GetUserID(r.Context())
+	if err != nil {
+		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
+		return
 	}
 	if err := h.Deps.App.Delete(r.Context(), id.String(), userID); err != nil {
 		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: http.StatusText(http.StatusNotFound)})
@@ -341,14 +351,10 @@ func (h *APIHandlers) CancelJob(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Invalid ID format"})
 		return
 	}
-	userID := ""
-	if h.Deps.Auth != nil {
-		uid, err := auth.GetUserID(r.Context())
-		if err != nil {
-			renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
-			return
-		}
-		userID = uid
+	userID, err := auth.GetUserID(r.Context())
+	if err != nil {
+		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
+		return
 	}
 	if err := h.Deps.App.Cancel(r.Context(), id.String(), userID); err != nil {
 		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: http.StatusText(http.StatusNotFound)})
@@ -379,14 +385,10 @@ func (h *APIHandlers) GetJobResults(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	offset := (page - 1) * limit
-	userID := ""
-	if h.Deps.Auth != nil {
-		uid, err := auth.GetUserID(r.Context())
-		if err != nil {
-			renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
-			return
-		}
-		userID = uid
+	userID, err := auth.GetUserID(r.Context())
+	if err != nil {
+		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
+		return
 	}
 	job, err := h.Deps.App.Get(r.Context(), jobID, userID)
 	if err != nil {
@@ -405,7 +407,8 @@ func (h *APIHandlers) GetJobResults(w http.ResponseWriter, r *http.Request) {
 
 	results, total, err := h.Deps.ResultsSvc.GetEnhancedJobResultsPaginated(r.Context(), jobID, limit, offset)
 	if err != nil {
-		internalError(w, h.Deps.Logger, err, "failed to retrieve results")
+		internalError(w, h.Deps.Logger, err, "failed to retrieve results",
+			slog.String("user_id", userID), slog.String("job_id", jobID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
 		return
 	}
 	resp := models.PaginatedResultsResponse{Results: results, TotalCount: total, Page: page, Limit: limit, Offset: offset, TotalPages: (total + limit - 1) / limit, HasNext: offset+limit < total, HasPrev: page > 1}
@@ -449,7 +452,8 @@ func (h *APIHandlers) GetJobCosts(w http.ResponseWriter, r *http.Request) {
 	cs := webservices.NewCostsService(h.Deps.DB)
 	resp, err := cs.GetJobCosts(r.Context(), jobID)
 	if err != nil {
-		internalError(w, h.Deps.Logger, err, "failed to retrieve job costs")
+		internalError(w, h.Deps.Logger, err, "failed to retrieve job costs",
+			slog.String("user_id", userID), slog.String("job_id", jobID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
 		return
 	}
 	renderJSON(w, http.StatusOK, resp)
@@ -478,7 +482,8 @@ func (h *APIHandlers) GetUserResults(w http.ResponseWriter, r *http.Request) {
 	}
 	results, err := h.Deps.ResultsSvc.GetUserResults(r.Context(), userID, limit, offset)
 	if err != nil {
-		internalError(w, h.Deps.Logger, err, "failed to retrieve results")
+		internalError(w, h.Deps.Logger, err, "failed to retrieve results",
+			slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
 		return
 	}
 	renderJSON(w, http.StatusOK, results)
@@ -524,28 +529,41 @@ func (h *APIHandlers) EstimateJobCost(w http.ResponseWriter, r *http.Request) {
 	estimate, err := estimationSvc.EstimateJobCost(r.Context(), &req.JobData)
 	if err != nil {
 		if h.Deps.Logger != nil {
-			h.Deps.Logger.Error("job_cost_estimation_failed", slog.String("user_id", userID), slog.Any("error", err))
+			h.Deps.Logger.Error("job_cost_estimation_failed",
+				slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
 		}
 		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: "failed to estimate job cost"})
 		return
 	}
 
-	// Get user's current balance
-	var creditBalance float64
-	const query = `SELECT COALESCE(credit_balance, 0) FROM users WHERE id = $1`
-	if err := h.Deps.DB.QueryRowContext(r.Context(), query, userID).Scan(&creditBalance); err != nil {
+	// Get user's current balance — scan as text and convert to micro-credits
+	// for precise integer comparison, avoiding IEEE 754 float rounding errors.
+	var balanceStr string
+	const query = `SELECT COALESCE(credit_balance, 0)::text FROM users WHERE id = $1`
+	if err := h.Deps.DB.QueryRowContext(r.Context(), query, userID).Scan(&balanceStr); err != nil {
 		if h.Deps.Logger != nil {
-			h.Deps.Logger.Error("credit_balance_fetch_failed", slog.String("user_id", userID), slog.Any("error", err))
+			h.Deps.Logger.Error("credit_balance_fetch_failed",
+				slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
 		}
 		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: "failed to retrieve credit balance"})
 		return
 	}
+	balanceFloat, err := strconv.ParseFloat(balanceStr, 64)
+	if err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Error("credit_balance_parse_failed",
+				slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+		}
+		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: "failed to parse credit balance"})
+		return
+	}
+	balanceMicro := int64(math.Round(balanceFloat * models.MicroUnit))
 
 	// Build response with estimate and balance info
 	response := map[string]interface{}{
 		"estimate":               estimate,
-		"current_credit_balance": creditBalance,
-		"sufficient_balance":     creditBalance >= estimate.TotalEstimatedCost,
+		"current_credit_balance": balanceFloat,
+		"sufficient_balance":     balanceMicro >= estimate.TotalMicro(),
 	}
 
 	renderJSON(w, http.StatusOK, response)
