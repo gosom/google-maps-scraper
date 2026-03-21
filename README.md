@@ -818,6 +818,12 @@ Please use this scraper responsibly and in accordance with applicable laws and r
 
 ---
 
+## Custom Scraping Solutions
+
+Need a custom scraper tailored to your specific requirements? **[Book a consulting call](https://www.cal.eu/g-k-lsoknt/gosom)** to discuss your project.
+
+---
+
 <p align="center">
   <sub>Banner generated using OpenAI's DALL-E</sub>
 </p>
