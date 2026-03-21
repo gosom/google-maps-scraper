@@ -20,6 +20,10 @@
 > curl -fsSL https://raw.githubusercontent.com/gosom/google-maps-scraper/main/PROVISION | sh
 > ```
 > [Read the SaaS documentation](docs/saas.md)
+>
+> [Deploy your own Maps scraping API in 5 minutes (includes video walkthrough)](https://gosom.dev/deploy-your-own-maps-scraping-api-in-5-minutes/)
+>
+> [Video walkthrough (YouTube)](https://www.youtube.com/watch?v=STG9mZw_nac)
 
 ![Example GIF](img/example.gif)
 
@@ -762,6 +766,8 @@ See [AGENTS.md](AGENTS.md) for development guidelines.
 
 - [How to Extract Data from Google Maps Using Golang](https://blog.gkomninos.com/how-to-extract-data-from-google-maps-using-golang)
 - [Distributed Google Maps Scraping](https://blog.gkomninos.com/distributed-google-maps-scraping)
+- [Deploy your own Maps scraping API in 5 minutes (includes video walkthrough)](https://gosom.dev/deploy-your-own-maps-scraping-api-in-5-minutes/)
+- [Video walkthrough (YouTube)](https://www.youtube.com/watch?v=STG9mZw_nac)
 - [scrapemate](https://github.com/gosom/scrapemate) - The underlying web crawling framework
 - [omkarcloud/google-maps-scraper](https://github.com/omkarcloud/google-maps-scraper) - Inspiration for JS data extraction
 
