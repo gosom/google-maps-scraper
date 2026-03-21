@@ -97,16 +97,6 @@ func (r *fallbackResultWriter) insertSingleEntry(ctx context.Context, entry *gma
 	dbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Check if entry with this cid already exists
-	if entry.Cid != "" {
-		var count int
-		err := r.db.QueryRowContext(dbCtx, "SELECT COUNT(*) FROM results WHERE cid = $1", entry.Cid).Scan(&count)
-		if err == nil && count > 0 {
-			// Entry already exists, skip
-			return nil
-		}
-	}
-
 	// Serialize JSON fields
 	openHoursJSON, _ := json.Marshal(entry.OpenHours)
 	popularTimesJSON, _ := json.Marshal(entry.PopularTimes)
@@ -137,7 +127,7 @@ func (r *fallbackResultWriter) insertSingleEntry(ctx context.Context, entry *gma
 		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
 		$17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
 		$31, $32, $33, $34, $35, $36, $37, $38
-	)`
+	) ON CONFLICT (cid, job_id) DO NOTHING`
 
 	_, err := r.db.ExecContext(dbCtx, query,
 		r.userID,                // $1 user_id

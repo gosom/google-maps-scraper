@@ -20,6 +20,8 @@ import (
 	"github.com/playwright-community/playwright-go"
 )
 
+const maxReviewPages = 500
+
 type fetchReviewsParams struct {
 	page        playwright.Page
 	mapURL      string
@@ -75,23 +77,35 @@ func (f *fetcher) fetch(ctx context.Context) (fetchReviewsResponse, error) {
 	reviewsCollected := pageSize
 
 	nextPageToken := extractNextPageToken(currentPageBody)
+	pageCount := 1
 
 	for nextPageToken != "" {
+		select {
+		case <-ctx.Done():
+			return ans, ctx.Err()
+		default:
+		}
+
+		// Hard upper limit on pages to prevent unbounded fetching
+		if pageCount >= maxReviewPages {
+			break
+		}
+
 		// Stop if we've reached the limit
 		if f.params.maxReviews > 0 && reviewsCollected >= f.params.maxReviews {
 			break
 		}
 
-		// Calculate remaining reviews needed
-		remainingNeeded := f.params.maxReviews - reviewsCollected
-		if remainingNeeded <= 0 {
-			break
-		}
-
-		// Adjust page size for remaining reviews
+		// Adjust page size for remaining reviews when a limit is set
 		currentPageSize := pageSize
-		if f.params.maxReviews > 0 && remainingNeeded < pageSize {
-			currentPageSize = remainingNeeded
+		if f.params.maxReviews > 0 {
+			remainingNeeded := f.params.maxReviews - reviewsCollected
+			if remainingNeeded <= 0 {
+				break
+			}
+			if remainingNeeded < pageSize {
+				currentPageSize = remainingNeeded
+			}
 		}
 
 		reviewURL, err = f.generateURL(f.params.mapURL, nextPageToken, currentPageSize, requestIDForSession)
@@ -115,6 +129,7 @@ func (f *fetcher) fetch(ctx context.Context) (fetchReviewsResponse, error) {
 
 		ans.pages = append(ans.pages, currentPageBody)
 		reviewsCollected += currentPageSize
+		pageCount++
 		nextPageToken = extractNextPageToken(currentPageBody)
 	}
 

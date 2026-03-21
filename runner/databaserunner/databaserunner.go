@@ -3,6 +3,7 @@ package databaserunner
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -118,7 +119,7 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 	if !cfg.DisablePageReuse {
 		opts = append(opts,
 			scrapemateapp.WithPageReuseLimit(2),
-			scrapemateapp.WithPageReuseLimit(200),
+			scrapemateapp.WithBrowserReuseLimit(200),
 		)
 	}
 
@@ -167,15 +168,14 @@ func (d *dbrunner) Run(ctx context.Context) error {
 }
 
 func (d *dbrunner) Close(context.Context) error {
+	var errs []error
 	if d.app != nil {
-		return d.app.Close()
+		errs = append(errs, d.app.Close())
 	}
-
 	if d.conn != nil {
-		return d.conn.Close()
+		errs = append(errs, d.conn.Close())
 	}
-
-	return nil
+	return errors.Join(errs...)
 }
 
 func (d *dbrunner) produceSeedJobs(ctx context.Context) error {

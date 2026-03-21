@@ -33,7 +33,7 @@ func NewPool(proxyURLs []string, portStart, portEnd int, logger *slog.Logger) (*
 	for i, proxyURL := range proxyURLs {
 		parsed, err := parseProxyURL(proxyURL)
 		if err != nil {
-			logger.Warn("skipping_invalid_proxy_url", slog.Int("index", i+1), slog.String("url", proxyURL), slog.Any("error", err))
+			logger.Warn("skipping_invalid_proxy_url", slog.Int("index", i+1), slog.String("url", sanitizeProxyURL(proxyURL)), slog.Any("error", err))
 			continue
 		}
 		proxies = append(proxies, parsed)
@@ -93,20 +93,10 @@ func (p *Pool) GetServerForJob(jobID string) (*Server, error) {
 		return nil, fmt.Errorf("no available proxies (all blocked)")
 	}
 
-	// Find an available port
-	port := p.findAvailablePort()
-	if port == -1 {
-		return nil, fmt.Errorf("no available ports in range %d-%d", p.portStart, p.portEnd)
-	}
-
-	// Create server for this specific proxy
-	server, err := NewServerFromProxy(availableProxy, port, p.logger)
+	// Try ports directly, avoiding TOCTOU race by combining port check with server start
+	server, port, err := p.tryStartOnAvailablePort(availableProxy)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create proxy server: %w", err)
-	}
-
-	if err := server.Start(); err != nil {
-		return nil, fmt.Errorf("failed to start proxy server: %w", err)
+		return nil, err
 	}
 
 	p.logger.Info("job_proxy_assigned", slog.String("job_id", jobID), slog.String("host", availableProxy.Address), slog.String("port", availableProxy.Port), slog.Int("local_port", port))
@@ -124,34 +114,42 @@ func (p *Pool) MarkProxyBlocked(proxy *WebshareProxy) {
 	p.logger.Warn("proxy_marked_blocked", slog.String("proxy", proxyKey))
 }
 
-// findAvailablePort finds an available port in the range
-func (p *Pool) findAvailablePort() int {
+// tryStartOnAvailablePort attempts to create and start a proxy server on each
+// port in the range, returning the first one that succeeds. This avoids the
+// TOCTOU race of checking port availability separately from binding.
+func (p *Pool) tryStartOnAvailablePort(proxy *WebshareProxy) (*Server, int, error) {
+	try := func(port int) (*Server, error) {
+		server, err := NewServerFromProxy(proxy, port, p.logger)
+		if err != nil {
+			return nil, err
+		}
+		if err := server.Start(); err != nil {
+			return nil, err
+		}
+		return server, nil
+	}
+
+	// Try from currentPort to portEnd
 	for port := p.currentPort; port <= p.portEnd; port++ {
-		if p.isPortAvailable(port) {
-			p.currentPort = port + 1
-			return port
+		server, err := try(port)
+		if err != nil {
+			continue
 		}
+		p.currentPort = port + 1
+		return server, port, nil
 	}
 
-	// Reset and try again
+	// Wrap around: try from portStart to currentPort
 	for port := p.portStart; port < p.currentPort; port++ {
-		if p.isPortAvailable(port) {
-			p.currentPort = port + 1
-			return port
+		server, err := try(port)
+		if err != nil {
+			continue
 		}
+		p.currentPort = port + 1
+		return server, port, nil
 	}
 
-	return -1
-}
-
-// isPortAvailable checks if a port is available
-func (p *Pool) isPortAvailable(port int) bool {
-	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-	if err != nil {
-		return false
-	}
-	listener.Close()
-	return true
+	return nil, -1, fmt.Errorf("no available ports in range %d-%d", p.portStart, p.portEnd)
 }
 
 // GetStats returns pool statistics

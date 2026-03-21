@@ -118,12 +118,21 @@ func (w *SynchronizedDualWriter) Run(ctx context.Context, in <-chan scrapemate.R
 			}
 
 			// Write to BOTH destinations atomically
-			if err := w.writeToPostgreSQL(ctx, entry); err != nil {
+			inserted, err := w.writeToPostgreSQL(ctx, entry)
+			if err != nil {
 				slog.Error("synchronized_dual_writer_postgres_write_failed",
 					slog.String("title", entry.Title),
 					slog.Any("error", err),
 				)
 				return fmt.Errorf("PostgreSQL write failed: %w", err)
+			}
+
+			if !inserted {
+				slog.Debug("synchronized_dual_writer_duplicate_skipped",
+					slog.String("cid", entry.Cid),
+					slog.String("title", entry.Title),
+				)
+				continue
 			}
 
 			if err := w.writeToCSV(entry); err != nil {
@@ -162,7 +171,7 @@ func (w *SynchronizedDualWriter) Run(ctx context.Context, in <-chan scrapemate.R
 	return nil
 }
 
-func (w *SynchronizedDualWriter) writeToPostgreSQL(ctx context.Context, entry *gmaps.Entry) error {
+func (w *SynchronizedDualWriter) writeToPostgreSQL(ctx context.Context, entry *gmaps.Entry) (bool, error) {
 	// Use a timeout context for database operations
 	dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -198,9 +207,9 @@ func (w *SynchronizedDualWriter) writeToPostgreSQL(ctx context.Context, entry *g
 		$11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
 		$21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
 		$31, $32, $33, $34, $35, $36, $37, $38
-	)`
+	) ON CONFLICT (cid, job_id) DO NOTHING`
 
-	_, err := w.db.ExecContext(dbCtx, q,
+	res, err := w.db.ExecContext(dbCtx, q,
 		w.userID,                // 1
 		w.jobID,                 // 2
 		entry.ID,                // 3
@@ -241,7 +250,11 @@ func (w *SynchronizedDualWriter) writeToPostgreSQL(ctx context.Context, entry *g
 		time.Now(),              // 38
 	)
 
-	return err
+	if err != nil {
+		return false, err
+	}
+	rowsAffected, _ := res.RowsAffected()
+	return rowsAffected > 0, nil
 }
 
 func (w *SynchronizedDualWriter) writeToCSV(entry *gmaps.Entry) error {

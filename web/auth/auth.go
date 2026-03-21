@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/clerk/clerk-sdk-go/v2"
 	clerkhttp "github.com/clerk/clerk-sdk-go/v2/http"
@@ -156,8 +157,9 @@ func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
 
 			newUser := postgres.User{ID: userID, Email: email}
 			if err := m.userRepo.Create(r.Context(), &newUser); err != nil {
-				m.logger.Error("failed_to_create_user", slog.String("user_id", userID), slog.Any("error", err))
-				http.Error(w, "Failed to create user record: "+err.Error(), http.StatusInternalServerError)
+				slog.Error("failed to create user record",
+					slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+				http.Error(w, "Failed to create user record", http.StatusInternalServerError)
 				return
 			}
 			if err := m.grantSignupBonus(r.Context(), userID); err != nil {
@@ -181,6 +183,8 @@ func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
 		if m.apiKeyRepo != nil && len(m.serverSecret) > 0 && strings.HasPrefix(bearerToken, APIKeyPrefix) {
 			userID, keyID, err := ValidateAPIKey(r.Context(), bearerToken, m.serverSecret, m.apiKeyRepo)
 			if err != nil {
+				// Small delay on failed attempts to slow brute-force attacks.
+				time.Sleep(100 * time.Millisecond)
 				m.logger.Warn("api_key_auth_rejected",
 					slog.String("reason", err.Error()),
 					slog.String("path", r.URL.Path),

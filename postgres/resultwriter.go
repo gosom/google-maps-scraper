@@ -152,6 +152,20 @@ func (r *enhancedResultWriterWithExiter) Run(ctx context.Context, in <-chan scra
 
 	buff := make([]*gmaps.Entry, 0, 1)
 
+	// Query the initial count ONCE at startup instead of on every result
+	var totalWritten int
+	if r.exitMonitor != nil {
+		err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM results WHERE job_id = $1", r.jobID).Scan(&totalWritten)
+		if err != nil {
+			slog.Warn("postgres_result_writer_initial_count_failed", slog.Any("error", err))
+			totalWritten = 0
+		}
+		slog.Debug("postgres_result_writer_initial_count",
+			slog.Int("initial_count", totalWritten),
+			slog.String("job_id", r.jobID),
+		)
+	}
+
 	// Use the provided context for cancellation support
 	for result := range in {
 		// Check for cancellation first
@@ -168,21 +182,16 @@ func (r *enhancedResultWriterWithExiter) Run(ctx context.Context, in <-chan scra
 			return errors.New("invalid data type")
 		}
 
-		// SIMPLE LIMIT CHECK: Stop if we already have enough results
+		// SIMPLE LIMIT CHECK: Stop if we already have enough results (using in-memory counter)
 		if r.exitMonitor != nil {
 			maxResults := r.exitMonitor.GetMaxResults()
-			if maxResults > 0 {
-				// Simple database count check
-				var currentCount int
-				err := r.db.QueryRow("SELECT COUNT(*) FROM results WHERE job_id = $1", r.jobID).Scan(&currentCount)
-				if err == nil && currentCount >= maxResults {
-					slog.Debug("postgres_result_writer_limit_reached",
-						slog.Int("current_count", currentCount),
-						slog.Int("max_results", maxResults),
-						slog.String("job_id", r.jobID),
-					)
-					return nil
-				}
+			if maxResults > 0 && totalWritten >= maxResults {
+				slog.Debug("postgres_result_writer_limit_reached",
+					slog.Int("current_count", totalWritten),
+					slog.Int("max_results", maxResults),
+					slog.String("job_id", r.jobID),
+				)
+				return nil
 			}
 		}
 
@@ -211,10 +220,12 @@ func (r *enhancedResultWriterWithExiter) Run(ctx context.Context, in <-chan scra
 				return err
 			}
 
-			// NOW count only actually inserted results
+			// Track actually inserted rows in memory and notify exiter
 			if r.exitMonitor != nil && insertedCount > 0 {
+				totalWritten += insertedCount
 				slog.Debug("postgres_result_writer_batch_inserted",
 					slog.Int("inserted_count", insertedCount),
+					slog.Int("total_written", totalWritten),
 				)
 				r.exitMonitor.IncrResultsWritten(insertedCount)
 			}
@@ -229,10 +240,12 @@ func (r *enhancedResultWriterWithExiter) Run(ctx context.Context, in <-chan scra
 			return err
 		}
 
-		// NOW count only actually inserted results
+		// Track actually inserted rows in memory and notify exiter
 		if r.exitMonitor != nil && insertedCount > 0 {
+			totalWritten += insertedCount
 			slog.Debug("postgres_result_writer_final_batch_inserted",
 				slog.Int("inserted_count", insertedCount),
+				slog.Int("total_written", totalWritten),
 			)
 			r.exitMonitor.IncrResultsWritten(insertedCount)
 		}
@@ -383,8 +396,7 @@ func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []
 	}
 
 	q += strings.Join(elements, ", ")
-	// Remove ON CONFLICT clause temporarily to avoid constraint issues
-	// q += " ON CONFLICT (cid, job_id) DO NOTHING" // Prevent duplicates within the same job
+	q += " ON CONFLICT (cid, job_id) DO NOTHING"
 
 	slog.Debug("postgres_enhanced_writer_insert_attempt",
 		slog.Int("entry_count", len(entries)),
@@ -523,7 +535,7 @@ func (r *enhancedResultWriterWithExiter) batchSaveEnhancedWithCount(ctx context.
 	}
 
 	q += strings.Join(elements, ", ")
-	// Note: Removed ON CONFLICT clause - no unique constraint exists on cid column
+	q += " ON CONFLICT (cid, job_id) DO NOTHING"
 
 	slog.Debug("postgres_exiter_writer_insert_attempt",
 		slog.Int("entry_count", len(entries)),

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"strconv"
 	"time"
 
 	"github.com/gosom/google-maps-scraper/models"
@@ -79,31 +81,40 @@ func (s *ConcurrentLimitService) CreateJobWithLimit(ctx context.Context, job *mo
 	defer tx.Rollback() //nolint:errcheck
 
 	// Lock the user row to serialise concurrent submissions from the same user.
-	// Also fetch credit_balance to perform an atomic balance check, preventing
-	// the TOCTOU race where two concurrent requests both pass a standalone
-	// SELECT balance check before either creates a job.
+	// Also fetch credit_balance as text to perform an atomic balance check
+	// using integer micro-credits, preventing both the TOCTOU race and
+	// IEEE 754 float rounding errors in monetary comparisons.
 	var limit int
-	var creditBalance float64
+	var balanceStr string
 	err = tx.QueryRowContext(ctx,
-		`SELECT COALESCE(max_concurrent_jobs, $1), COALESCE(credit_balance, 0) FROM users WHERE id = $2 FOR UPDATE`,
+		`SELECT COALESCE(max_concurrent_jobs, $1), COALESCE(credit_balance, 0)::text FROM users WHERE id = $2 FOR UPDATE`,
 		DefaultMaxConcurrentJobs, job.UserID,
-	).Scan(&limit, &creditBalance)
+	).Scan(&limit, &balanceStr)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// User row not yet provisioned — use the safe default.
 			limit = DefaultMaxConcurrentJobs
-			creditBalance = 0
+			balanceStr = "0"
 		} else {
 			return fmt.Errorf("concurrent_limit: get user limit: %w", err)
 		}
 	}
 
 	// Atomic credit balance check under the FOR UPDATE lock.
-	if opts != nil && opts.EstimatedCost > 0 && creditBalance < opts.EstimatedCost {
-		return ErrInsufficientBalance{
-			Balance:        creditBalance,
-			RequiredCost:   opts.EstimatedCost,
-			EstimatedCount: opts.EstimatedPlaces,
+	// Parse balance as string -> micro-credits for precise integer comparison.
+	if opts != nil && opts.EstimatedCost > 0 {
+		balanceFloat, parseErr := strconv.ParseFloat(balanceStr, 64)
+		if parseErr != nil {
+			return fmt.Errorf("concurrent_limit: parse credit balance: %w", parseErr)
+		}
+		balanceMicro := int64(math.Round(balanceFloat * models.MicroUnit))
+		costMicro := int64(math.Round(opts.EstimatedCost * models.MicroUnit))
+		if balanceMicro < costMicro {
+			return ErrInsufficientBalance{
+				Balance:        balanceFloat,
+				RequiredCost:   opts.EstimatedCost,
+				EstimatedCount: opts.EstimatedPlaces,
+			}
 		}
 	}
 

@@ -88,6 +88,11 @@ func (repo *repository) Delete(ctx context.Context, id string, userID string) er
 
 // Select finds jobs based on the provided parameters (only non-deleted jobs)
 func (repo *repository) Select(ctx context.Context, params models.SelectParams) ([]models.Job, error) {
+	// Apply default limit to prevent unbounded queries
+	if params.Limit == 0 {
+		params.Limit = 1000
+	}
+
 	q := `SELECT id, name, status, data, extract(epoch from created_at), extract(epoch from updated_at), user_id, COALESCE(failure_reason, '') FROM jobs`
 
 	var args []interface{}
@@ -337,6 +342,11 @@ func (repo *repository) RestoreJob(ctx context.Context, id string) error {
 
 // GetDeletedJobs retrieves all soft-deleted jobs (for admin purposes)
 func (repo *repository) GetDeletedJobs(ctx context.Context, params models.SelectParams) ([]models.Job, error) {
+	// Apply default limit to prevent unbounded queries
+	if params.Limit == 0 {
+		params.Limit = 1000
+	}
+
 	q := `SELECT id, name, status, data, extract(epoch from created_at), extract(epoch from updated_at), user_id, COALESCE(failure_reason, '') FROM jobs`
 
 	var args []interface{}
@@ -395,69 +405,4 @@ func (repo *repository) GetDeletedJobs(ctx context.Context, params models.Select
 	}
 
 	return ans, nil
-}
-
-// createSchema ensures the required database schema exists
-func createSchema(db *sql.DB) error {
-	// Create jobs table - split into individual statements for better error handling
-	_, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS jobs (
-			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL,
-			status TEXT NOT NULL,
-			data JSONB NOT NULL,
-			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-			updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-			user_id TEXT
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to create jobs table: %w", err)
-	}
-
-	// Create users table
-	_, err = db.Exec(`
-		CREATE TABLE IF NOT EXISTS users (
-			id TEXT PRIMARY KEY,
-			email TEXT NOT NULL UNIQUE,
-			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-			updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to create users table: %w", err)
-	}
-
-	// Add foreign key constraint for jobs to users if not exists
-	_, err = db.Exec(`
-		DO $$
-		BEGIN
-			IF EXISTS (
-				SELECT 1 FROM information_schema.tables 
-				WHERE table_schema = 'public' AND table_name = 'users'
-			) AND NOT EXISTS (
-				SELECT 1 FROM pg_constraint WHERE conname = 'jobs_user_id_fkey'
-			) THEN
-				ALTER TABLE jobs ADD CONSTRAINT jobs_user_id_fkey
-					FOREIGN KEY (user_id) REFERENCES users(id);
-			END IF;
-		END
-		$$;
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to add foreign key constraint: %w", err)
-	}
-
-	// Create indexes
-	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, created_at)`)
-	if err != nil {
-		return fmt.Errorf("failed to create status index: %w", err)
-	}
-
-	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_user_id ON jobs(user_id)`)
-	if err != nil {
-		return fmt.Errorf("failed to create user_id index: %w", err)
-	}
-
-	return nil
 }

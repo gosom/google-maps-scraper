@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -92,13 +93,6 @@ func (ip *ImageProcessor) processWithRetry(ctx context.Context, page playwright.
 		Errors: make([]string, 0),
 	}
 
-	// Ensure buffer is returned to pool
-	defer func() {
-		if result.Images != nil {
-			ip.memoryPool.Put(result.Images)
-		}
-	}()
-
 	// Create extractor with optimized settings
 	extractor := NewImageExtractor(page)
 
@@ -112,6 +106,8 @@ func (ip *ImageProcessor) processWithRetry(ctx context.Context, page playwright.
 
 		// For certain errors, retry immediately
 		if shouldRetryImmediately(err) {
+			// Return pooled buffer before retrying since we won't use it
+			ip.memoryPool.Put(result.Images)
 			return ip.processWithRetry(ctx, page, attempt+1)
 		}
 
@@ -121,6 +117,17 @@ func (ip *ImageProcessor) processWithRetry(ctx context.Context, page playwright.
 
 		if len(images) > 0 {
 			result.Images = append(result.Images, images...)
+		}
+
+		// Copy images before returning pooled buffer
+		if len(result.Images) > 0 {
+			imagesCopy := make([]BusinessImage, len(result.Images))
+			copy(imagesCopy, result.Images)
+			ip.memoryPool.Put(result.Images)
+			result.Images = imagesCopy
+		} else {
+			ip.memoryPool.Put(result.Images)
+			result.Images = nil
 		}
 
 		return result, nil // Don't return error to allow partial processing
@@ -133,9 +140,10 @@ func (ip *ImageProcessor) processWithRetry(ctx context.Context, page playwright.
 	result.ImageCount = len(images)
 	result.Metadata = extractor.GetMetadata()
 
-	// Create a copy to return (original buffer goes back to pool)
+	// Create a copy to return, then return original buffer to pool
 	resultCopy := make([]BusinessImage, len(result.Images))
 	copy(resultCopy, result.Images)
+	ip.memoryPool.Put(result.Images) // safe: we copied
 
 	return &ScrapeResult{
 		Images:     resultCopy,
@@ -239,27 +247,7 @@ func shouldRetryImmediately(err error) bool {
 
 // contains checks if a string contains a substring (case-insensitive)
 func contains(s, substr string) bool {
-	return len(s) >= len(substr) &&
-		(s == substr || len(s) > len(substr) &&
-			(s[:len(substr)] == substr || s[len(s)-len(substr):] == substr ||
-				indexSubstring(s, substr) >= 0))
-}
-
-// indexSubstring finds the index of a substring in a string
-func indexSubstring(s, substr string) int {
-	if len(substr) == 0 {
-		return 0
-	}
-	if len(substr) > len(s) {
-		return -1
-	}
-
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
+	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
 }
 
 // HybridImageExtractor combines APP_INITIALIZATION_STATE with DOM extraction
@@ -278,28 +266,14 @@ func NewHybridImageExtractor(page playwright.Page) *HybridImageExtractor {
 	}
 }
 
-// ExtractImagesHybrid attempts APP_INITIALIZATION_STATE first, then DOM extraction
+// ExtractImagesHybrid performs DOM extraction for business images
 func (h *HybridImageExtractor) ExtractImagesHybrid(ctx context.Context) (*ScrapeResult, error) {
 	result := &ScrapeResult{
 		Images: make([]BusinessImage, 0),
 		Errors: make([]string, 0),
 	}
 
-	// First, try to extract from APP_INITIALIZATION_STATE (faster method)
-	legacyImages, err := h.extractFromAppInitState()
-	if err == nil && len(legacyImages) > 0 {
-		result.Images = append(result.Images, legacyImages...)
-		result.ImageCount = len(legacyImages)
-
-		// If we got enough images from legacy method, return early
-		if len(legacyImages) >= 10 {
-			return result, nil
-		}
-	} else {
-		result.Errors = append(result.Errors, fmt.Sprintf("APP_INITIALIZATION_STATE extraction failed: %v", err))
-	}
-
-	// If legacy method failed or didn't return enough images, try DOM extraction
+	// Try DOM extraction
 	if h.fallbackDOM {
 		domResult, err := h.processor.ProcessBusiness(ctx, h.page)
 		if err != nil {
@@ -328,47 +302,4 @@ func (h *HybridImageExtractor) ExtractImagesHybrid(ctx context.Context) (*Scrape
 	}
 
 	return result, nil
-}
-
-// extractFromAppInitState attempts to extract images from APP_INITIALIZATION_STATE
-func (h *HybridImageExtractor) extractFromAppInitState() ([]BusinessImage, error) {
-	// Try to extract data using the legacy JavaScript method
-	rawI, err := h.page.Evaluate(`
-		function parseImages() {
-			const appState = window.APP_INITIALIZATION_STATE && window.APP_INITIALIZATION_STATE[3];
-			if (!appState) {
-				return null;
-			}
-			
-			// Look for image data in the usual locations
-			for (let i = 65; i <= 90; i++) {
-				const key = String.fromCharCode(i) + "f";
-				if (appState[key] && appState[key][6]) {
-					const data = appState[key][6];
-					// Try to find images at index 171 or nearby indices
-					for (let idx = 170; idx <= 175; idx++) {
-						if (data[idx] && data[idx][0]) {
-							return { dataArray: data, imageIndex: idx };
-						}
-					}
-				}
-			}
-			
-			return null;
-		}
-		
-		parseImages();
-	`)
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute APP_INITIALIZATION_STATE extraction: %w", err)
-	}
-
-	if rawI == nil {
-		return nil, fmt.Errorf("APP_INITIALIZATION_STATE data not found")
-	}
-
-	// For now, return empty slice - we'd need to implement the full parsing logic
-	// This is a placeholder that could be expanded to parse the APP_INITIALIZATION_STATE data
-	return []BusinessImage{}, nil
 }

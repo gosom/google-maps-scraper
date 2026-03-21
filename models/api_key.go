@@ -29,19 +29,6 @@ type APIKey struct {
 	Scopes        []string
 }
 
-// APIKeyUsageLog represents an audit log entry for API key usage
-type APIKeyUsageLog struct {
-	ID          string
-	APIKeyID    string
-	UsedAt      time.Time
-	IPAddress   net.IP
-	Endpoint    string
-	UserAgent   string
-	CountryCode string
-	City        string
-	CreatedAt   time.Time
-}
-
 // APIKeyRepository manages API key operations
 type APIKeyRepository interface {
 	// Create inserts a new API key
@@ -64,7 +51,4 @@ type APIKeyRepository interface {
 
 	// Revoke soft-deletes an API key by setting revoked_at
 	Revoke(ctx context.Context, id string, ownerUserID string) error
-
-	// LogUsage records an API key usage event
-	LogUsage(ctx context.Context, log *APIKeyUsageLog) error
 }

@@ -3,6 +3,7 @@ package filerunner
 import (
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -116,21 +117,19 @@ func (r *fileRunner) Run(ctx context.Context) (err error) {
 }
 
 func (r *fileRunner) Close(context.Context) error {
+	var errs []error
 	if r.app != nil {
-		return r.app.Close()
+		errs = append(errs, r.app.Close())
 	}
-
 	if r.input != nil {
 		if closer, ok := r.input.(io.Closer); ok {
-			return closer.Close()
+			errs = append(errs, closer.Close())
 		}
 	}
-
 	if r.outfile != nil {
-		return r.outfile.Close()
+		errs = append(errs, r.outfile.Close())
 	}
-
-	return nil
+	return errors.Join(errs...)
 }
 
 func (r *fileRunner) setInput() error {
@@ -223,7 +222,7 @@ func (r *fileRunner) setApp() error {
 	if !r.cfg.DisablePageReuse {
 		opts = append(opts,
 			scrapemateapp.WithPageReuseLimit(2),
-			scrapemateapp.WithPageReuseLimit(200),
+			scrapemateapp.WithBrowserReuseLimit(200),
 		)
 	}
 

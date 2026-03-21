@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	"github.com/gosom/google-maps-scraper/web/auth"
 )
 
 type formData struct {
@@ -160,8 +161,13 @@ func (h *WebHandlers) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check job status - block downloads for failed jobs (admin bypass for download)
-	job, err := h.Deps.App.Get(r.Context(), id, "")
+	userID, userErr := auth.GetUserID(r.Context())
+	if userErr != nil {
+		http.Error(w, "User not authenticated", http.StatusUnauthorized)
+		return
+	}
+
+	job, err := h.Deps.App.Get(r.Context(), id, userID)
 	if err != nil {
 		http.Error(w, "Job not found", http.StatusNotFound)
 		if h.Deps.Logger != nil {
@@ -182,15 +188,15 @@ func (h *WebHandlers) Download(w http.ResponseWriter, r *http.Request) {
 	// Use new GetCSVReader method which supports both S3 and local filesystem
 	reader, fileName, err := h.Deps.App.GetCSVReader(r.Context(), id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
 		if h.Deps.Logger != nil {
-			h.Deps.Logger.Warn("download_csv_fetch_failed", slog.String("job_id", id), slog.Any("error", err))
+			h.Deps.Logger.Warn("download_csv_fetch_failed", slog.String("user_id", userID), slog.String("job_id", id), slog.Any("error", err))
 		}
+		http.Error(w, "CSV file not found", http.StatusNotFound)
 		return
 	}
 	defer reader.Close()
 
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", fileName))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
 	w.Header().Set("Content-Type", "text/csv")
 
 	_, err = io.Copy(w, reader)

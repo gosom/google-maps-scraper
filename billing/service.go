@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"strconv" // ADDED: Required for strconv.Atoi on line 195
 	"time"
 
 	"github.com/gosom/google-maps-scraper/config"
+	"github.com/gosom/google-maps-scraper/models"
 	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	"github.com/gosom/google-maps-scraper/pkg/metrics"
 	"github.com/stripe/stripe-go/v82"
@@ -40,6 +42,10 @@ type CheckoutResponse struct {
 }
 
 func New(db *sql.DB, cfg *config.Service, stripeSecretKey, webhookSigningKey string) *Service {
+	// Set the Stripe API key once at startup to avoid a data race from
+	// concurrent goroutines writing the package-level global on every request.
+	stripe.Key = stripeSecretKey
+
 	return &Service{
 		db:                db,
 		cfg:               cfg,
@@ -65,9 +71,6 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, req CheckoutRequest
 
 	// MVP: fixed $1 per credit
 	unitPriceCents := 100
-
-	// Prepare Stripe client
-	stripe.Key = s.stripeSecretKey
 
 	// Build success/cancel URLs from config (env overrides allowed)
 	successURL, _ := s.cfg.GetString(ctx, "stripe_success_url", "https://example.com/success")
@@ -362,7 +365,6 @@ func (s *Service) ReconcileSession(ctx context.Context, sessionID, callerUserID 
 	if callerUserID == "" {
 		return fmt.Errorf("missing user id")
 	}
-	stripe.Key = s.stripeSecretKey
 	sess, err := checkoutsession.Get(sessionID, nil)
 	if err != nil {
 		return fmt.Errorf("failed to fetch session: %w", err)
@@ -390,21 +392,6 @@ func (s *Service) ReconcileSession(ctx context.Context, sessionID, callerUserID 
 		return fmt.Errorf("session not paid")
 	}
 
-	// Check if already processed in credit_transactions (idempotency)
-	var exists bool
-	err = s.db.QueryRowContext(ctx,
-		"SELECT EXISTS(SELECT 1 FROM credit_transactions WHERE reference_id=$1 AND reference_type='payment')",
-		sessionID).Scan(&exists)
-	if err != nil {
-		return fmt.Errorf("failed to check transaction existence: %w", err)
-	}
-	if exists {
-		// Update stripe_payments status even if credits already applied
-		_, _ = s.db.ExecContext(ctx, `UPDATE stripe_payments SET status='succeeded', completed_at=NOW() WHERE stripe_checkout_session_id=$1`, sessionID)
-		return nil
-	}
-
-	// Apply credits transactionally
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
 		Isolation: sql.LevelSerializable,
 	})
@@ -412,6 +399,20 @@ func (s *Service) ReconcileSession(ctx context.Context, sessionID, callerUserID 
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	var exists bool
+	err = tx.QueryRowContext(ctx,
+		"SELECT EXISTS(SELECT 1 FROM credit_transactions WHERE reference_id=$1 AND reference_type='payment')",
+		sessionID).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("failed to check transaction existence: %w", err)
+	}
+	if exists {
+		if _, err := tx.ExecContext(ctx, `UPDATE stripe_payments SET status='succeeded', completed_at=NOW() WHERE stripe_checkout_session_id=$1`, sessionID); err != nil {
+			return fmt.Errorf("failed to update payment status (idempotent path): %w", err)
+		}
+		return tx.Commit()
+	}
 
 	// Get current balance with row lock
 	var currentBalance float64
@@ -562,49 +563,43 @@ type BillingCounts struct {
 	PlacesWithContacts int
 }
 
-// CountBillableItems counts reviews, images, and contact details from job results.
-// This scans the results table and aggregates counts from JSONB fields.
-func (s *Service) CountBillableItems(ctx context.Context, jobID string) (*BillingCounts, error) {
-	if s.db == nil {
-		return nil, fmt.Errorf("db not configured")
-	}
+// queryRowContexter is satisfied by both *sql.DB and *sql.Tx.
+type queryRowContexter interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
 
+// billableItemsQuery is the shared SQL used by CountBillableItems and countBillableItemsWith.
+const billableItemsQuery = `
+	SELECT
+		COALESCE(SUM(
+			CASE
+				WHEN user_reviews IS NOT NULL AND jsonb_typeof(user_reviews) = 'array'
+				THEN jsonb_array_length(user_reviews)
+				ELSE 0
+			END +
+			CASE
+				WHEN user_reviews_extended IS NOT NULL AND jsonb_typeof(user_reviews_extended) = 'array'
+				THEN jsonb_array_length(user_reviews_extended)
+				ELSE 0
+			END
+		), 0) AS total_reviews,
+		COALESCE(SUM(
+			CASE
+				WHEN images IS NOT NULL AND jsonb_typeof(images) = 'array'
+				THEN jsonb_array_length(images)
+				ELSE 0
+			END
+		), 0) AS total_images,
+		COUNT(CASE WHEN emails IS NOT NULL AND emails != '' THEN 1 END) AS places_with_contacts
+	FROM results
+	WHERE job_id = $1
+`
+
+// countBillableItemsWith counts reviews, images, and contact details from job results
+// using the provided querier (either *sql.DB or *sql.Tx).
+func (s *Service) countBillableItemsWith(ctx context.Context, q queryRowContexter, jobID string) (*BillingCounts, error) {
 	counts := &BillingCounts{}
-
-	// Query to count billable items from results
-	// - user_reviews/user_reviews_extended: JSONB arrays of review objects
-	// - images: JSONB array of image objects
-	// - emails: TEXT field (non-empty means contact details extracted)
-	//
-	// IMPORTANT: We must check jsonb_typeof() before calling jsonb_array_length()
-	// because jsonb_array_length() will fail if the value is not an array (scalar, object, null, etc.)
-	const query = `
-		SELECT
-			COALESCE(SUM(
-				CASE
-					WHEN user_reviews IS NOT NULL AND jsonb_typeof(user_reviews) = 'array'
-					THEN jsonb_array_length(user_reviews)
-					ELSE 0
-				END +
-				CASE
-					WHEN user_reviews_extended IS NOT NULL AND jsonb_typeof(user_reviews_extended) = 'array'
-					THEN jsonb_array_length(user_reviews_extended)
-					ELSE 0
-				END
-			), 0) AS total_reviews,
-			COALESCE(SUM(
-				CASE
-					WHEN images IS NOT NULL AND jsonb_typeof(images) = 'array'
-					THEN jsonb_array_length(images)
-					ELSE 0
-				END
-			), 0) AS total_images,
-			COUNT(CASE WHEN emails IS NOT NULL AND emails != '' THEN 1 END) AS places_with_contacts
-		FROM results
-		WHERE job_id = $1
-	`
-
-	err := s.db.QueryRowContext(ctx, query, jobID).Scan(
+	err := q.QueryRowContext(ctx, billableItemsQuery, jobID).Scan(
 		&counts.TotalReviews,
 		&counts.TotalImages,
 		&counts.PlacesWithContacts,
@@ -612,8 +607,16 @@ func (s *Service) CountBillableItems(ctx context.Context, jobID string) (*Billin
 	if err != nil {
 		return nil, fmt.Errorf("failed to count billable items: %w", err)
 	}
-
 	return counts, nil
+}
+
+// CountBillableItems counts reviews, images, and contact details from job results.
+// This scans the results table and aggregates counts from JSONB fields.
+func (s *Service) CountBillableItems(ctx context.Context, jobID string) (*BillingCounts, error) {
+	if s.db == nil {
+		return nil, fmt.Errorf("db not configured")
+	}
+	return s.countBillableItemsWith(ctx, s.db, jobID)
 }
 
 // ChargeAllJobEvents charges all billing events for a completed job in a single transaction.
@@ -692,8 +695,8 @@ func (s *Service) ChargeAllJobEvents(ctx context.Context, userID, jobID string, 
 		return err // Transaction will be rolled back
 	}
 
-	// 2. Count and charge for reviews, images, and contacts
-	counts, err := s.CountBillableItems(ctx, jobID)
+	// 2. Count and charge for reviews, images, and contacts (within the tx to avoid read skew)
+	counts, err := s.countBillableItemsWith(ctx, tx, jobID)
 	if err != nil {
 		return fmt.Errorf("failed to count billable items: %w", err)
 	}
@@ -803,14 +806,23 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 	}
 
 	if creditsToDeduct > 0 {
-		// Get current balance with a row lock.
-		var currentBalance float64
+		// Get current balance with a row lock — scan as text and convert to
+		// integer micro-credits to avoid IEEE 754 float rounding errors in
+		// monetary comparisons.
+		var balanceStr string
 		err = tx.QueryRowContext(ctx,
-			"SELECT COALESCE(credit_balance, 0) FROM users WHERE id = $1 FOR UPDATE", userID).Scan(&currentBalance)
+			"SELECT COALESCE(credit_balance, 0)::text FROM users WHERE id = $1 FOR UPDATE", userID).Scan(&balanceStr)
 		if err != nil {
 			s.logger.Error("failed_to_get_user_balance_for_refund", slog.Any("error", err))
 			return 500, fmt.Errorf("failed to get user balance: %w", err)
 		}
+		balanceFloat, parseErr := strconv.ParseFloat(balanceStr, 64)
+		if parseErr != nil {
+			s.logger.Error("failed_to_parse_user_balance_for_refund", slog.Any("error", parseErr))
+			return 500, fmt.Errorf("failed to parse user balance: %w", parseErr)
+		}
+		balanceMicro := int64(math.Round(balanceFloat * models.MicroUnit))
+		deductMicro := int64(math.Round(creditsToDeduct * models.MicroUnit))
 
 		// Cap deduction at current balance to prevent negative balances.
 		//
@@ -824,7 +836,7 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 		// The difference is tracked via the refund_partial_cap payment status and the warning
 		// log below. Ops should monitor refund_cap_applied frequency to detect abuse patterns.
 		//
-		// Edge case: if the user has 0 credits (fully consumed), actualDeduction = 0.
+		// Edge case: if the user has 0 credits (fully consumed), actualDeductMicro = 0.
 		// This is acceptable — document it as expected and monitor via the warn log.
 		//
 		// Idempotency: the markEventProcessed gate (processed_webhook_events) at the top of
@@ -834,26 +846,30 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 		// Alerting: the refund_cap_applied_total Prometheus counter is incremented below.
 		// A Grafana alert fires when this counter exceeds the REFUND_CAP_ALERT_THRESHOLD
 		// (default 5 events in 24 h). See pkg/metrics/billing.go for the runbook.
-		actualDeduction := creditsToDeduct
+		actualDeductMicro := deductMicro
 		capApplied := false
-		if actualDeduction > currentBalance {
+		if actualDeductMicro > balanceMicro {
 			s.metrics.RefundCapAppliedTotal.Inc()
 			s.logger.Warn("refund_cap_applied",
 				slog.String("user_id", userID),
 				slog.String("charge_id", charge.ID),
 				slog.Float64("expected_deduction", creditsToDeduct),
-				slog.Float64("actual_deduction", currentBalance),
-				slog.Float64("balance", currentBalance),
+				slog.Float64("actual_deduction", float64(balanceMicro)/models.MicroUnit),
+				slog.Float64("balance", balanceFloat),
 			)
-			actualDeduction = currentBalance
+			actualDeductMicro = balanceMicro
 			capApplied = true
 		}
 
-		newBalance := currentBalance - actualDeduction
+		newBalanceMicro := balanceMicro - actualDeductMicro
+
+		// Convert back to float for DB storage and transaction logging.
+		actualDeductFloat := float64(actualDeductMicro) / models.MicroUnit
+		newBalanceFloat := float64(newBalanceMicro) / models.MicroUnit
 
 		// Deduct credits from user balance.
 		const updUser = `UPDATE users SET credit_balance = $1::numeric, updated_at = NOW() WHERE id = $2`
-		if _, err := tx.ExecContext(ctx, updUser, newBalance, userID); err != nil {
+		if _, err := tx.ExecContext(ctx, updUser, newBalanceFloat, userID); err != nil {
 			s.logger.Error("failed_to_deduct_credits_for_refund", slog.Any("error", err))
 			return 500, fmt.Errorf("failed to deduct credits: %w", err)
 		}
@@ -862,17 +878,18 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 		const insTxn = `INSERT INTO credit_transactions (user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
 		                VALUES ($1, 'refund', $2, $3, $4, $5, $6, 'payment')`
 		desc := fmt.Sprintf("Stripe refund for charge %s", charge.ID)
-		if _, err := tx.ExecContext(ctx, insTxn, userID, -actualDeduction, currentBalance, newBalance, desc, charge.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, insTxn, userID, -actualDeductFloat, balanceFloat, newBalanceFloat, desc, charge.ID); err != nil {
 			s.logger.Error("failed_to_insert_refund_transaction", slog.Any("error", err))
 			return 500, fmt.Errorf("failed to insert refund transaction: %w", err)
 		}
 
 		// Update stripe_payments record if we have a payment intent ID.
-		// If the cap was applied and the uncollectable credit gap is > 20, flag the payment
-		// for manual ops review via the refund_partial_cap status.
+		// If the cap was applied and the uncollectable credit gap is > 20 credits
+		// (20_000_000 micro-credits), flag the payment for manual ops review.
 		if paymentIntentID != "" {
 			paymentStatus := "refunded"
-			if capApplied && (creditsToDeduct-actualDeduction) > 20 {
+			const capThresholdMicro int64 = 20 * models.MicroUnit
+			if capApplied && (deductMicro-actualDeductMicro) > capThresholdMicro {
 				// Significant cap: user retained >20 credits they effectively got for free.
 				// Flag for manual ops review queue.
 				paymentStatus = "refund_partial_cap"

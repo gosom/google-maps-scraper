@@ -74,6 +74,8 @@ func (p *provider) Jobs(ctx context.Context) (<-chan scrapemate.IJob, <-chan err
 	p.mu.Unlock()
 
 	go func() {
+		defer close(outc)
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -192,6 +194,7 @@ func (p *provider) fetchJobs(ctx context.Context) {
 			)
 
 			if err := rows.Scan(&payloadType, &payload); err != nil {
+				rows.Close()
 				p.errc <- err
 
 				return
@@ -199,6 +202,7 @@ func (p *provider) fetchJobs(ctx context.Context) {
 
 			job, err := decodeJob(payloadType, payload)
 			if err != nil {
+				rows.Close()
 				p.errc <- err
 
 				return
@@ -208,16 +212,13 @@ func (p *provider) fetchJobs(ctx context.Context) {
 		}
 
 		if err := rows.Err(); err != nil {
+			rows.Close()
 			p.errc <- err
 
 			return
 		}
 
-		if err := rows.Close(); err != nil {
-			p.errc <- err
-
-			return
-		}
+		rows.Close()
 
 		if len(jobs) > 0 {
 			for _, job := range jobs {
@@ -228,8 +229,9 @@ func (p *provider) fetchJobs(ctx context.Context) {
 				}
 			}
 
+			currentDelay = baseDelay
 			jobs = jobs[:0]
-		} else if len(jobs) == 0 {
+		} else {
 			select {
 			case <-time.After(currentDelay):
 				currentDelay = time.Duration(float64(currentDelay) * float64(factor))
@@ -241,11 +243,6 @@ func (p *provider) fetchJobs(ctx context.Context) {
 			}
 		}
 	}
-}
-
-type encjob struct {
-	Type string
-	Data scrapemate.IJob
 }
 
 func decodeJob(payloadType string, payload []byte) (scrapemate.IJob, error) {

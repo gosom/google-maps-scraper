@@ -63,7 +63,8 @@ func (h *WebhookHandlers) ListWebhooks(w http.ResponseWriter, r *http.Request) {
 
 	configs, err := h.Deps.WebhookConfigRepo.ListByUserID(r.Context(), userID)
 	if err != nil {
-		internalError(w, h.Deps.Logger, err, "failed to list webhook configs")
+		internalError(w, h.Deps.Logger, err, "failed to list webhook configs",
+			slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
 		return
 	}
 
@@ -139,7 +140,8 @@ func (h *WebhookHandlers) CreateWebhook(w http.ResponseWriter, r *http.Request) 
 	// Enforce per-user limit.
 	active, err := h.Deps.WebhookConfigRepo.ListActiveByUserID(r.Context(), userID)
 	if err != nil {
-		internalError(w, h.Deps.Logger, err, "failed to check existing webhooks")
+		internalError(w, h.Deps.Logger, err, "failed to check existing webhooks",
+			slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
 		return
 	}
 	if len(active) >= maxWebhookConfigsPerUser {
@@ -159,7 +161,8 @@ func (h *WebhookHandlers) CreateWebhook(w http.ResponseWriter, r *http.Request) 
 	id := uuid.New().String()
 	secretBytes := make([]byte, 32)
 	if _, err := rand.Read(secretBytes); err != nil {
-		internalError(w, h.Deps.Logger, err, "failed to generate signing secret")
+		internalError(w, h.Deps.Logger, err, "failed to generate signing secret",
+			slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
 		return
 	}
 	plaintextSecret := hex.EncodeToString(secretBytes)
@@ -178,7 +181,8 @@ func (h *WebhookHandlers) CreateWebhook(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := h.Deps.WebhookConfigRepo.Create(r.Context(), cfg); err != nil {
-		internalError(w, h.Deps.Logger, err, "failed to store webhook config")
+		internalError(w, h.Deps.Logger, err, "failed to store webhook config",
+			slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
 		return
 	}
 
@@ -229,7 +233,8 @@ func (h *WebhookHandlers) UpdateWebhook(w http.ResponseWriter, r *http.Request) 
 			renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: "webhook config not found"})
 			return
 		}
-		internalError(w, h.Deps.Logger, err, "failed to fetch webhook config")
+		internalError(w, h.Deps.Logger, err, "failed to fetch webhook config",
+			slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
 		return
 	}
 	if existing.UserID != userID {
@@ -269,7 +274,8 @@ func (h *WebhookHandlers) UpdateWebhook(w http.ResponseWriter, r *http.Request) 
 			renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: "webhook config not found or already revoked"})
 			return
 		}
-		internalError(w, h.Deps.Logger, err, "failed to update webhook config")
+		internalError(w, h.Deps.Logger, err, "failed to update webhook config",
+			slog.String("user_id", userID), slog.String("webhook_id", webhookID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
 		return
 	}
 
@@ -304,7 +310,8 @@ func (h *WebhookHandlers) RevokeWebhook(w http.ResponseWriter, r *http.Request) 
 			renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: "webhook config not found or already revoked"})
 			return
 		}
-		internalError(w, h.Deps.Logger, err, "failed to revoke webhook config")
+		internalError(w, h.Deps.Logger, err, "failed to revoke webhook config",
+			slog.String("user_id", userID), slog.String("webhook_id", webhookID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
 		return
 	}
 

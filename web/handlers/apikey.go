@@ -50,7 +50,8 @@ func (h *APIKeyHandlers) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
 
 	keys, err := h.Deps.APIKeyRepo.ListByUserID(r.Context(), userID)
 	if err != nil {
-		internalError(w, h.Deps.Logger, err, "failed to list API keys")
+		internalError(w, h.Deps.Logger, err, "failed to list API keys",
+			slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
 		return
 	}
 
@@ -102,7 +103,8 @@ func (h *APIKeyHandlers) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	// Enforce per-user limit on active keys.
 	activeKeys, err := h.Deps.APIKeyRepo.ListActiveByUserID(r.Context(), userID)
 	if err != nil {
-		internalError(w, h.Deps.Logger, err, "failed to check existing API keys")
+		internalError(w, h.Deps.Logger, err, "failed to check existing API keys",
+			slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
 		return
 	}
 	if len(activeKeys) >= maxAPIKeysPerUser {
@@ -115,12 +117,14 @@ func (h *APIKeyHandlers) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 
 	apiKey, plaintext, err := auth.GenerateAPIKey(userID, req.Name, h.Deps.ServerSecret)
 	if err != nil {
-		internalError(w, h.Deps.Logger, err, "failed to generate API key")
+		internalError(w, h.Deps.Logger, err, "failed to generate API key",
+			slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
 		return
 	}
 
 	if err := h.Deps.APIKeyRepo.Create(r.Context(), apiKey); err != nil {
-		internalError(w, h.Deps.Logger, err, "failed to store API key")
+		internalError(w, h.Deps.Logger, err, "failed to store API key",
+			slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
 		return
 	}
 
@@ -157,7 +161,8 @@ func (h *APIKeyHandlers) RevokeAPIKey(w http.ResponseWriter, r *http.Request) {
 			renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: "api key not found or already revoked"})
 			return
 		}
-		internalError(w, h.Deps.Logger, err, "failed to revoke API key")
+		internalError(w, h.Deps.Logger, err, "failed to revoke API key",
+			slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
 		return
 	}
 

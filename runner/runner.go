@@ -339,7 +339,11 @@ func ParseConfig() (*Config, error) {
 	}
 
 	if cfg.AwsAccessKey != "" && cfg.AwsSecretKey != "" && cfg.AwsRegion != "" {
-		cfg.S3Uploader = s3uploader.New(cfg.AwsAccessKey, cfg.AwsSecretKey, cfg.AwsRegion)
+		uploader, err := s3uploader.New(cfg.AwsAccessKey, cfg.AwsSecretKey, cfg.AwsRegion)
+		if err != nil {
+			return nil, fmt.Errorf("creating S3 uploader: %w", err)
+		}
+		cfg.S3Uploader = uploader
 	}
 
 	switch {

@@ -1,11 +1,33 @@
 package handlers
 
 import (
+	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
+
+var blockedCIDRs []*net.IPNet
+
+func init() {
+	cidrs := []string{
+		"169.254.169.254/32",
+		"169.254.170.2/32",
+		"fd00:ec2::254/128",
+		"100.64.0.0/10",
+	}
+	for _, cidr := range cidrs {
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			panic(fmt.Sprintf("invalid CIDR in blocklist: %s", cidr))
+		}
+		blockedCIDRs = append(blockedCIDRs, network)
+	}
+}
 
 // ValidateWebhookURL parses and validates a webhook URL for safety.
 // It enforces HTTPS-only, resolves DNS, and checks ALL resolved IPs against
@@ -72,18 +94,43 @@ func checkIPBlocklist(ip net.IP) error {
 		return fmt.Errorf("unspecified addresses are not allowed")
 	}
 
-	// Block AWS/GCP/Azure metadata endpoints
-	metadataRanges := []string{
-		"169.254.169.254/32", // AWS, GCP, Azure metadata
-		"169.254.170.2/32",   // AWS ECS metadata
-		"fd00:ec2::254/128",  // AWS IMDSv2 IPv6
-	}
-	for _, cidr := range metadataRanges {
-		_, network, _ := net.ParseCIDR(cidr)
-		if network != nil && network.Contains(ip) {
-			return fmt.Errorf("cloud metadata addresses are not allowed")
+	for _, network := range blockedCIDRs {
+		if network.Contains(ip) {
+			return fmt.Errorf("blocked CIDR range %s: address not allowed", network.String())
 		}
 	}
 
 	return nil
+}
+
+// NewWebhookHTTPClient returns an *http.Client that forces all connections to
+// the given resolvedIP while preserving the original Host header for TLS/SNI.
+// This prevents DNS rebinding attacks by ensuring the HTTP client connects only
+// to the IP that was validated at registration time.
+// Redirects are blocked to prevent SSRF via 3xx to internal IPs.
+func NewWebhookHTTPClient(resolvedIP string, originalHost string) *http.Client {
+	dialer := &net.Dialer{
+		Timeout: 10 * time.Second,
+	}
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			_, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				port = "443"
+			}
+			pinnedAddr := net.JoinHostPort(resolvedIP, port)
+			return dialer.DialContext(ctx, network, pinnedAddr)
+		},
+		TLSHandshakeTimeout: 10 * time.Second,
+		TLSClientConfig: &tls.Config{
+			ServerName: originalHost,
+		},
+	}
+	return &http.Client{
+		Transport: transport,
+		Timeout:   30 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 }
