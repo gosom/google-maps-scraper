@@ -85,7 +85,7 @@ Always use `-exit-on-inactivity 3m` so the container stops automatically when do
 
 Determine the results filename based on output format, using a descriptive name with the query topic, e.g., `/tmp/gmaps_dentists_berlin.csv`.
 
-To avoid slow startup on every run, reuse a named container. Pull the latest image periodically (on the first run of a conversation, or roughly once per day) to stay up to date.
+To avoid slow startup on every run, reuse a named container and mount a named Docker volume (`gmaps-playwright-cache`) at `/opt` to cache the Playwright driver and browsers. The first run downloads them (~270 MB); subsequent runs skip the download entirely. Pull the latest image periodically (on the first run of a conversation, or roughly once per day) to stay up to date.
 
 ```bash
 touch /tmp/gmaps_<topic>_<city>.<ext>
@@ -99,6 +99,7 @@ docker rm gmaps-scraper 2>/dev/null
 
 docker run \
   --name gmaps-scraper \
+  -v gmaps-playwright-cache:/opt \
   -v /tmp/gmaps_queries.txt:/queries.txt \
   -v /tmp/gmaps_<topic>_<city>.<ext>:/results.<ext> \
   gosom/google-maps-scraper \
@@ -201,6 +202,7 @@ docker rm gmaps-scraper 2>/dev/null
 
 docker run \
   --name gmaps-scraper \
+  -v gmaps-playwright-cache:/opt \
   -v /tmp/gmaps_queries.txt:/queries.txt \
   -v /tmp/gmaps_dentists_berlin.csv:/results.csv \
   gosom/google-maps-scraper \
