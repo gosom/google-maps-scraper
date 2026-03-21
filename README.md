@@ -73,6 +73,14 @@ Push leads via API or AI agent, remove duplicates automatically, and export when
 
 ---
 
+### [Webshare](https://www.webshare.io/?referral_code=0q3l81eet8mp) - Premium proxies for scraping at scale
+
+[![Webshare](./img/webshare-banner.png)](https://www.webshare.io/?referral_code=0q3l81eet8mp)
+
+The most affordable premium proxies across 195 countries & 80+ million IPs, plus a FREE plan for new users. [Learn more](webshare.md)
+
+---
+
 <p align="center">
   <a href="#sponsors">View all sponsors</a> | <a href="https://github.com/sponsors/gosom">Become a sponsor</a>
 </p>
@@ -634,6 +642,16 @@ A huge thank you to the sponsors who make this project possible!
 **No-code Google Maps Scraper & Email Extraction.** Extract business leads, emails, addresses, phones, reviews and more.
 
 [**Get 1,000 free credits →**](https://hasdata.com/scrapers/google-maps?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom) · [Learn more](sponsors/hasdata.md)
+
+---
+
+#### [Webshare](https://www.webshare.io/?referral_code=0q3l81eet8mp)
+
+[![Webshare](./img/webshare-banner.png)](https://www.webshare.io/?referral_code=0q3l81eet8mp)
+
+**The most affordable premium proxies across 195 countries & 80+ million IPs, plus a FREE plan for new users.** [Learn more](webshare.md)
+
+[**Start free →**](https://www.webshare.io/?referral_code=0q3l81eet8mp)
 
 ---
 
