@@ -340,6 +340,8 @@ Location Settings:
   -geo string        Coordinates for search, e.g., '37.7749,-122.4194'
   -zoom int          Zoom level 0-21 (default: 15)
   -radius float      Search radius in meters (default: 10000)
+  -grid-bbox string  Bounding box for grid scraping, format: "minLat,minLon,maxLat,maxLon"
+  -grid-cell float   Grid cell size in km (default: 1.0, used with -grid-bbox)
 
 Web Server:
   -web               Run web server mode
@@ -362,6 +364,10 @@ Advanced:
   -fast-mode                      Quick mode with reduced data
   -debug                          Show browser window
   -writer string                  Custom writer plugin (format: 'dir:pluginName')
+
+Notes:
+  -grid-bbox requires a valid zoom level (1-21)
+  -fast-mode cannot be used together with -grid-bbox
 ```
 
 Run `./google-maps-scraper -h` for the complete list.
@@ -416,6 +422,33 @@ Fast mode returns up to 21 results per query, ordered by distance. Useful for qu
 ```
 
 > **Warning:** Fast mode is in Beta. You may experience blocking.
+
+### Grid Scraping (BBox)
+
+Grid mode splits a bounding box into cells and runs one search per cell. This is useful when a single search does not return enough places.
+
+`queries.txt` example:
+
+```text
+cafes in Peristeri, Greece
+```
+
+Command example:
+
+```bash
+./google-maps-scraper \
+  -input queries.txt \
+  -results peristeri-cafes.csv \
+  -grid-bbox "38.0077,23.6719,38.0257,23.6947" \
+  -grid-cell 0.5 \
+  -zoom 16 \
+  -depth 1 \
+  -c 4
+```
+
+Notes:
+- `-grid-bbox` guides where searches are launched from, but results are not strictly clipped to the box.
+- For strict distance filtering, use `-fast-mode` with `-geo` + `-radius` (or post-filter by latitude/longitude).
 
 ---
 
