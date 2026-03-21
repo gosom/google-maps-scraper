@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -37,23 +39,38 @@ const (
 	defaultPriceImage             = 0.0005
 
 	priceCacheTTL = 60 * time.Second
+
+	// microUnit is a package-level alias for models.MicroUnit for brevity.
+	microUnit = models.MicroUnit
 )
 
 // Package-level pricing cache shared across per-request EstimationService instances.
 var (
 	priceCacheMu   sync.RWMutex
-	priceCacheData map[string]float64
+	priceCacheData map[string]int64 // micro-credits
 	priceCacheTime time.Time
 )
 
-var defaultPrices = map[string]float64{
-	"actor_start":              defaultPriceActorStart,
-	"place_scraped":            defaultPricePlaceScraped,
-	"filters_applied":          defaultPriceFiltersApplied,
-	"additional_place_details": defaultPriceAdditionalDetails,
-	"contact_details":          defaultPriceContactDetails,
-	"review":                   defaultPriceReview,
-	"image":                    defaultPriceImage,
+// defaultPricesMicro stores default prices as micro-credits (int64).
+var defaultPricesMicro = map[string]int64{
+	"actor_start":              creditsToMicro(defaultPriceActorStart),
+	"place_scraped":            creditsToMicro(defaultPricePlaceScraped),
+	"filters_applied":          creditsToMicro(defaultPriceFiltersApplied),
+	"additional_place_details": creditsToMicro(defaultPriceAdditionalDetails),
+	"contact_details":          creditsToMicro(defaultPriceContactDetails),
+	"review":                   creditsToMicro(defaultPriceReview),
+	"image":                    creditsToMicro(defaultPriceImage),
+}
+
+// creditsToMicro converts a float64 credit value to integer micro-credits.
+// The rounding eliminates IEEE 754 representation errors.
+func creditsToMicro(credits float64) int64 {
+	return int64(math.Round(credits * microUnit))
+}
+
+// microToCredits converts micro-credits back to a float64 credit value.
+func microToCredits(micro int64) float64 {
+	return float64(micro) / microUnit
 }
 
 // CostEstimate represents the estimated cost breakdown for a job
@@ -69,6 +86,17 @@ type CostEstimate struct {
 	EstimatedImages     int     `json:"estimated_images"`
 	IncludesEmailScrape bool    `json:"includes_email_scrape"`
 	Note                string  `json:"note"`
+
+	// totalMicro is the authoritative total in micro-credits (int64).
+	// Used internally for precise comparisons; not serialised to JSON.
+	totalMicro int64
+}
+
+// TotalMicro returns the total estimated cost in micro-credits for precise
+// integer comparison (e.g. balance checks). This avoids IEEE 754 rounding
+// errors that occur when comparing float64 monetary values.
+func (c *CostEstimate) TotalMicro() int64 {
+	return c.totalMicro
 }
 
 func NewEstimationService(db *sql.DB, priceRepo models.PricingRuleRepository) *EstimationService {
@@ -79,21 +107,22 @@ func NewEstimationService(db *sql.DB, priceRepo models.PricingRuleRepository) *E
 	}
 }
 
-// getPrice returns the price for an event type, reading from a cached copy of the
-// pricing_rules table. Falls back to hardcoded defaults on DB error or missing rule.
-func (s *EstimationService) getPrice(ctx context.Context, eventType string) float64 {
+// getPriceMicro returns the price for an event type in micro-credits,
+// reading from a cached copy of the pricing_rules table. Falls back to
+// hardcoded defaults on DB error or missing rule.
+func (s *EstimationService) getPriceMicro(ctx context.Context, eventType string) int64 {
 	prices := s.loadPrices(ctx)
 	if p, ok := prices[eventType]; ok {
 		return p
 	}
-	if p, ok := defaultPrices[eventType]; ok {
+	if p, ok := defaultPricesMicro[eventType]; ok {
 		return p
 	}
 	return 0
 }
 
-// loadPrices returns the cached pricing map, refreshing from DB if stale.
-func (s *EstimationService) loadPrices(ctx context.Context) map[string]float64 {
+// loadPrices returns the cached pricing map (micro-credits), refreshing from DB if stale.
+func (s *EstimationService) loadPrices(ctx context.Context) map[string]int64 {
 	priceCacheMu.RLock()
 	if priceCacheData != nil && time.Since(priceCacheTime) < priceCacheTTL {
 		defer priceCacheMu.RUnlock()
@@ -110,17 +139,17 @@ func (s *EstimationService) loadPrices(ctx context.Context) map[string]float64 {
 	}
 
 	if s.priceRepo == nil {
-		return defaultPrices
+		return defaultPricesMicro
 	}
 
 	prices, err := s.priceRepo.GetActiveDefaultPrices(ctx)
 	if err != nil {
 		s.log.Warn("failed to load pricing rules from DB, using defaults", slog.String("error", err.Error()))
-		return defaultPrices
+		return defaultPricesMicro
 	}
 	if len(prices) == 0 {
 		s.log.Warn("no active pricing rules found in DB, using defaults")
-		return defaultPrices
+		return defaultPricesMicro
 	}
 
 	priceCacheData = prices
@@ -130,53 +159,63 @@ func (s *EstimationService) loadPrices(ctx context.Context) map[string]float64 {
 }
 
 // EstimateJobCost calculates the estimated cost for a job based on its parameters.
+// All arithmetic is performed in integer micro-credits to avoid IEEE 754 rounding
+// errors. The returned CostEstimate contains float64 fields for JSON compatibility.
 func (s *EstimationService) EstimateJobCost(ctx context.Context, jobData *models.JobData) (*CostEstimate, error) {
 	estimate := &CostEstimate{}
 
-	priceActorStart := s.getPrice(ctx, "actor_start")
-	pricePlaceScraped := s.getPrice(ctx, "place_scraped")
-	priceContactDetails := s.getPrice(ctx, "contact_details")
-	priceReview := s.getPrice(ctx, "review")
-	priceImage := s.getPrice(ctx, "image")
+	priceActorStart := s.getPriceMicro(ctx, "actor_start")
+	pricePlaceScraped := s.getPriceMicro(ctx, "place_scraped")
+	priceContactDetails := s.getPriceMicro(ctx, "contact_details")
+	priceReview := s.getPriceMicro(ctx, "review")
+	priceImage := s.getPriceMicro(ctx, "image")
+
+	// All intermediate values are int64 micro-credits.
+	var actorStartMicro, placesMicro, contactMicro, reviewsMicro, imagesMicro int64
 
 	// 1. Actor start cost (flat fee per job)
-	estimate.ActorStartCost = priceActorStart
+	actorStartMicro = priceActorStart
 
 	// 2. Determine estimated number of places
 	estimatedPlaces := s.estimatePlaceCount(jobData)
 	estimate.EstimatedPlaces = estimatedPlaces
 
 	// 3. Calculate places cost
-	estimate.PlacesCost = float64(estimatedPlaces) * pricePlaceScraped
+	placesMicro = int64(estimatedPlaces) * pricePlaceScraped
 
 	// 4. Calculate contact details cost (if email scraping is enabled)
 	if jobData.Email {
 		estimate.IncludesEmailScrape = true
-		estimate.ContactDetailsCost = float64(estimatedPlaces) * priceContactDetails
+		contactMicro = int64(estimatedPlaces) * priceContactDetails
 	}
 
 	// 5. Calculate reviews cost (ONLY if reviews are explicitly requested)
 	if jobData.ReviewsMax > 0 {
 		estimatedReviews := s.estimateReviewCount(jobData, estimatedPlaces)
 		estimate.EstimatedReviews = estimatedReviews
-		estimate.ReviewsCost = float64(estimatedReviews) * priceReview
+		reviewsMicro = int64(estimatedReviews) * priceReview
 	}
 
 	// 6. Calculate images cost (if images are requested)
 	if jobData.Images {
 		estimatedImages := s.estimateImageCount(jobData, estimatedPlaces)
 		estimate.EstimatedImages = estimatedImages
-		estimate.ImagesCost = float64(estimatedImages) * priceImage
+		imagesMicro = int64(estimatedImages) * priceImage
 	}
 
-	// 7. Calculate total
-	estimate.TotalEstimatedCost = estimate.ActorStartCost +
-		estimate.PlacesCost +
-		estimate.ContactDetailsCost +
-		estimate.ReviewsCost +
-		estimate.ImagesCost
+	// 7. Calculate total in micro-credits (exact integer arithmetic)
+	totalMicro := actorStartMicro + placesMicro + contactMicro + reviewsMicro + imagesMicro
 
-	// 8. Add note about estimation
+	// 8. Convert micro-credits to float64 for JSON-compatible struct fields
+	estimate.ActorStartCost = microToCredits(actorStartMicro)
+	estimate.PlacesCost = microToCredits(placesMicro)
+	estimate.ContactDetailsCost = microToCredits(contactMicro)
+	estimate.ReviewsCost = microToCredits(reviewsMicro)
+	estimate.ImagesCost = microToCredits(imagesMicro)
+	estimate.TotalEstimatedCost = microToCredits(totalMicro)
+	estimate.totalMicro = totalMicro
+
+	// 9. Add note about estimation
 	estimate.Note = s.generateEstimationNote(jobData)
 
 	s.log.Debug("job_cost_estimated",
@@ -242,15 +281,17 @@ func (s *EstimationService) generateEstimationNote(jobData *models.JobData) stri
 	return note
 }
 
-// CheckSufficientBalance verifies if a user has enough credits for a job
+// CheckSufficientBalance verifies if a user has enough credits for a job.
+// The credit_balance is scanned as a string from the database and parsed to
+// micro-credits for precise integer comparison, avoiding IEEE 754 errors.
 func (s *EstimationService) CheckSufficientBalance(ctx context.Context, userID string, estimate *CostEstimate) error {
 	if s.db == nil {
 		return fmt.Errorf("database not available")
 	}
 
-	var creditBalance float64
-	const query = `SELECT COALESCE(credit_balance, 0) FROM users WHERE id = $1`
-	err := s.db.QueryRowContext(ctx, query, userID).Scan(&creditBalance)
+	var balanceStr string
+	const query = `SELECT COALESCE(credit_balance, 0)::text FROM users WHERE id = $1`
+	err := s.db.QueryRowContext(ctx, query, userID).Scan(&balanceStr)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return fmt.Errorf("user not found")
@@ -258,7 +299,14 @@ func (s *EstimationService) CheckSufficientBalance(ctx context.Context, userID s
 		return fmt.Errorf("failed to retrieve credit balance: %w", err)
 	}
 
-	if creditBalance < estimate.TotalEstimatedCost {
+	balanceFloat, err := strconv.ParseFloat(balanceStr, 64)
+	if err != nil {
+		return fmt.Errorf("failed to parse credit balance: %w", err)
+	}
+	balanceMicro := creditsToMicro(balanceFloat)
+
+	if balanceMicro < estimate.TotalMicro() {
+		creditBalance := microToCredits(balanceMicro)
 		s.log.Warn("insufficient_credits",
 			slog.String("user_id", userID),
 			slog.Float64("balance", creditBalance),
