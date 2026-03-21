@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gosom/google-maps-scraper/billing"
@@ -46,6 +47,12 @@ type webrunner struct {
 	s3Bucket    string
 	jobFileRepo models.JobFileRepository
 	logger      *slog.Logger
+
+	// leakedMu protects leakedMates from concurrent access.
+	leakedMu sync.Mutex
+	// leakedMates tracks done channels of abandoned mate.Start goroutines
+	// so they can be joined (with a timeout) during Close().
+	leakedMates []<-chan struct{}
 }
 
 // buildServerConfig loads integration settings from environment, enforces required
@@ -206,11 +213,12 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 	s3BucketName = os.Getenv("S3_BUCKET_NAME")
 
 	if awsAccessKey != "" && awsSecretKey != "" && awsRegion != "" && s3BucketName != "" {
-		s3Upload = s3uploader.New(awsAccessKey, awsSecretKey, awsRegion)
-		if s3Upload != nil {
-			slog.Info("s3_uploader_initialized", slog.String("bucket", s3BucketName), slog.String("region", awsRegion))
+		var s3Err error
+		s3Upload, s3Err = s3uploader.New(awsAccessKey, awsSecretKey, awsRegion)
+		if s3Err != nil {
+			slog.Warn("s3_uploader_init_failed", slog.String("detail", "files will only be stored locally"), slog.Any("error", s3Err))
 		} else {
-			slog.Warn("s3_uploader_init_failed", slog.String("detail", "files will only be stored locally"))
+			slog.Info("s3_uploader_initialized", slog.String("bucket", s3BucketName), slog.String("region", awsRegion))
 		}
 	} else {
 		slog.Info("s3_not_configured", slog.String("detail", "files will only be stored locally"))
@@ -297,7 +305,37 @@ func (w *webrunner) Run(ctx context.Context) error {
 	return egroup.Wait()
 }
 
+// trackLeakedMate registers the done channel of an abandoned mate.Start
+// goroutine so it can be joined during Close().
+func (w *webrunner) trackLeakedMate(done <-chan struct{}, jobID string) {
+	w.leakedMu.Lock()
+	defer w.leakedMu.Unlock()
+	w.leakedMates = append(w.leakedMates, done)
+	w.logger.Warn("leaked_mate_tracked", slog.String("job_id", jobID), slog.Int("total_leaked", len(w.leakedMates)))
+}
+
 func (w *webrunner) Close(context.Context) error {
+	// Drain all leaked mate.Start goroutines with a timeout
+	w.leakedMu.Lock()
+	leaked := w.leakedMates
+	w.leakedMates = nil
+	w.leakedMu.Unlock()
+
+	if len(leaked) > 0 {
+		w.logger.Info("draining_leaked_mates", slog.Int("count", len(leaked)))
+		deadline := time.After(30 * time.Second)
+		for i, done := range leaked {
+			select {
+			case <-done:
+				w.logger.Debug("leaked_mate_joined", slog.Int("index", i))
+			case <-deadline:
+				w.logger.Warn("leaked_mate_drain_timeout", slog.Int("joined", i), slog.Int("remaining", len(leaked)-i))
+				goto drained
+			}
+		}
+	}
+drained:
+
 	if w.proxyPool != nil {
 		// Proxy pool cleanup would go here if needed
 		// For now, individual servers are cleaned up when jobs finish
@@ -329,15 +367,28 @@ func (w *webrunner) work(ctx context.Context) error {
 	// Use buffered channel as semaphore
 	jobSemaphore := make(chan struct{}, maxConcurrentJobs)
 
+	consecutiveErrors := 0
+
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+			// Skip DB query if all semaphore slots are occupied — no capacity to process results
+			if len(jobSemaphore) >= cap(jobSemaphore) {
+				continue
+			}
+
 			jobs, err := w.svc.SelectPending(ctx)
 			if err != nil {
-				return err
+				consecutiveErrors++
+				w.logger.Error("select_pending_failed", slog.Any("error", err), slog.Int("consecutive", consecutiveErrors))
+				if consecutiveErrors >= 10 {
+					return fmt.Errorf("too many consecutive SelectPending failures: %w", err)
+				}
+				continue
 			}
+			consecutiveErrors = 0
 
 			for i := range jobs {
 				select {
@@ -347,6 +398,13 @@ func (w *webrunner) work(ctx context.Context) error {
 					// Launch job in goroutine for concurrent execution
 					go func(job web.Job) {
 						defer func() { <-jobSemaphore }() // Release semaphore when done
+						defer func() {
+							if r := recover(); r != nil {
+								w.logger.Error("job_worker_panic_recovered",
+									slog.String("job_id", job.ID),
+									slog.Any("panic", r))
+							}
+						}()
 
 						t0 := time.Now().UTC()
 						if err := w.scrapeJob(ctx, &job); err != nil {
@@ -664,6 +722,8 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 					w.logger.Debug("mate_finished_after_force_close", slog.String("job_id", job.ID))
 				case <-finalWait.C:
 					w.logger.Warn("mate_unresponsive_proceeding", slog.String("job_id", job.ID))
+					// Track the leaked goroutine so Close() can join it
+					w.trackLeakedMate(done, job.ID)
 				}
 				finalWait.Stop()
 			}
@@ -692,6 +752,8 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 					w.logger.Debug("force_closing_mate", slog.String("job_id", job.ID))
 					mate.Close()
 				}()
+				// Track the leaked goroutine so Close() can join it
+				w.trackLeakedMate(done, job.ID)
 			}
 			finalWait.Stop()
 		}
@@ -976,7 +1038,7 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 	if !w.cfg.DisablePageReuse {
 		opts = append(opts,
 			scrapemateapp.WithPageReuseLimit(2),
-			scrapemateapp.WithPageReuseLimit(200),
+			scrapemateapp.WithBrowserReuseLimit(200),
 		)
 	}
 

@@ -2,6 +2,7 @@ package s3uploader
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -25,7 +26,7 @@ type UploadResult struct {
 	VersionID *string // S3 version ID if bucket versioning is enabled
 }
 
-func New(accessKey, secretKey, region string) *Uploader {
+func New(accessKey, secretKey, region string) (*Uploader, error) {
 	creds := credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")
 
 	cfg, err := config.LoadDefaultConfig(context.Background(),
@@ -35,7 +36,7 @@ func New(accessKey, secretKey, region string) *Uploader {
 		config.WithRetryMode(aws.RetryModeAdaptive), // Use adaptive retry mode
 	)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("loading AWS config: %w", err)
 	}
 
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
@@ -49,7 +50,7 @@ func New(accessKey, secretKey, region string) *Uploader {
 	return &Uploader{
 		client: client,
 		log:    pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "s3uploader"),
-	}
+	}, nil
 }
 
 // Upload uploads a file to S3 with proper Content-Type and retry logic
