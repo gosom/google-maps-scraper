@@ -202,3 +202,31 @@ func TestCentralWriter_DiscardDropsTrackedJobWithoutSave(t *testing.T) {
 	assert.Equal(t, 0, saveCount)
 	assert.Equal(t, 0, cw.TrackedJobs())
 }
+
+func TestCentralWriter_FlushSanitizesEntriesBeforeSave(t *testing.T) {
+	var saved []*gmaps.Entry
+
+	cw := NewCentralWriter(nil, func(_ context.Context, _ int64, _ string, entries []*gmaps.Entry) error {
+		saved = entries
+		return nil
+	})
+
+	ch := cw.RegisterJob("job1", 100, "restaurants")
+	cw.AddResult("job1", &gmaps.Entry{
+		Title:       "Tit\x00le",
+		Description: "literal \\u0000 plus\x00nul",
+	})
+	cw.ForceFlush("job1")
+
+	select {
+	case result := <-ch:
+		assert.NoError(t, result.Err)
+		assert.Equal(t, 1, result.ResultCount)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for flush")
+	}
+
+	require.Len(t, saved, 1)
+	assert.Equal(t, "Title", saved[0].Title)
+	assert.Equal(t, "literal \\u0000 plusnul", saved[0].Description)
+}

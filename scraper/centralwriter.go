@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gosom/google-maps-scraper/gmaps"
+	"github.com/gosom/google-maps-scraper/internal/jsonbsanitize"
 	"github.com/gosom/google-maps-scraper/log"
 	"github.com/gosom/scrapemate"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -135,6 +136,10 @@ func (cw *CentralWriter) Flush(jobID string) {
 
 	cw.current = nil
 	cw.mu.Unlock()
+
+	for _, entry := range j.entries {
+		jsonbsanitize.StripNULFromEntry(entry)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	err := cw.save(ctx, j.riverJobID, j.keyword, j.entries)
