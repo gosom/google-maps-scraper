@@ -1,10 +1,16 @@
 ---
 name: google-maps-scraper
-description: Scrape Google Maps business listings using Docker. Use when the user wants to find businesses, extract leads, emails, reviews, or ratings from Google Maps. Triggers on requests like "find all <business type> in <city>", "scrape Google Maps for <keyword>", "get leads from Google Maps". Keywords: google maps, scrape, business, leads, restaurants, shops, places, reviews, ratings, emails, contacts.
+description: >
+  Free and open-source Google Maps scraper using Docker. Use when the user wants to find businesses,
+  extract leads, emails, reviews, or ratings from Google Maps. Triggers on requests like
+  "find all <business type> in <city>", "scrape Google Maps for <keyword>",
+  "get leads from Google Maps". Keywords: google maps, scrape, business, leads, restaurants,
+  shops, places, reviews, ratings, emails, contacts.
 license: MIT
-compatibility: Requires Docker installed and running.
+compatibility: "Requires Docker installed and running."
 metadata:
   author: gosom
+  email: hi@gosom.dev
   version: "1.11.0"
   repository: "https://github.com/gosom/google-maps-scraper"
 allowed-tools: Bash(docker:*) Bash(touch:*) Bash(wc:*) Bash(mkdir:*) Read Write
