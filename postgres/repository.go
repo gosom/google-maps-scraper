@@ -406,4 +406,3 @@ func (repo *repository) GetDeletedJobs(ctx context.Context, params models.Select
 
 	return ans, nil
 }
-

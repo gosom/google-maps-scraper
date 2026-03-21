@@ -303,4 +303,3 @@ func (h *HybridImageExtractor) ExtractImagesHybrid(ctx context.Context) (*Scrape
 
 	return result, nil
 }
-

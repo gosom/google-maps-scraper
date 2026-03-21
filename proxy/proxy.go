@@ -9,9 +9,9 @@ import (
 	"net"
 	"net/url"
 	"strings"
-	"time"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // sanitizeProxyURL strips credentials from a proxy URL for safe logging.

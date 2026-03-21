@@ -51,5 +51,4 @@ type APIKeyRepository interface {
 
 	// Revoke soft-deletes an API key by setting revoked_at
 	Revoke(ctx context.Context, id string, ownerUserID string) error
-
 }
