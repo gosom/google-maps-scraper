@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"math"
 	"os"
-	"strconv" // ADDED: Required for strconv.Atoi on line 195
+	"strconv"
 	"time"
 
 	"github.com/gosom/google-maps-scraper/config"
@@ -24,7 +24,6 @@ import (
 type Service struct {
 	db                *sql.DB
 	cfg               *config.Service
-	stripeSecretKey   string
 	webhookSigningKey string
 	logger            *slog.Logger
 	metrics           *metrics.BillingMetrics
@@ -37,19 +36,22 @@ type CheckoutRequest struct {
 }
 
 type CheckoutResponse struct {
-	SessionID string
-	URL       string
+	SessionID string `json:"session_id"`
+	URL       string `json:"url"`
 }
 
 func New(db *sql.DB, cfg *config.Service, stripeSecretKey, webhookSigningKey string) *Service {
 	// Set the Stripe API key once at startup to avoid a data race from
 	// concurrent goroutines writing the package-level global on every request.
-	stripe.Key = stripeSecretKey
+	// Guard: only set when non-empty so a second billing.New("") used for
+	// non-Stripe event charging does not clobber a previously set key.
+	if stripeSecretKey != "" {
+		stripe.Key = stripeSecretKey
+	}
 
 	return &Service{
 		db:                db,
 		cfg:               cfg,
-		stripeSecretKey:   stripeSecretKey,
 		webhookSigningKey: webhookSigningKey,
 		logger:            pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "billing"),
 		metrics:           metrics.NewBillingMetrics(nil), // uses default Prometheus registry
