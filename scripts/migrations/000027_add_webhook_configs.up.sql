@@ -45,7 +45,7 @@ END $$;
 -- Junction table: which webhooks should fire for which jobs, plus delivery state.
 -- Composite PK enforces one-delivery-per-webhook-per-job (BCNF).
 CREATE TABLE IF NOT EXISTS job_webhook_deliveries (
-  job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  job_id UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
   webhook_config_id UUID NOT NULL REFERENCES webhook_configs(id) ON DELETE CASCADE,
 
   -- Delivery tracking

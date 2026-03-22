@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS job_files (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
     -- Relationships (proper foreign keys with cascading deletes)
-    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    job_id UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 
     -- File type/format
