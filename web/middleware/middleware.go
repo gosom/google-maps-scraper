@@ -20,6 +20,26 @@ import (
 // retryAfterSec is the value placed in the Retry-After header on 429 responses.
 const retryAfterSec = "1"
 
+// RequireRole returns middleware that rejects requests unless the authenticated
+// user has the specified role. The role is read from the request context
+// (set by the auth middleware after looking up the user).
+//
+// TODO: The auth middleware does not yet populate UserRoleKey in context.
+// Wire that up when the first admin routes are added.
+func RequireRole(requiredRole string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			role, _ := r.Context().Value(auth.UserRoleKey).(string)
+			if role != requiredRole {
+				w.Header().Set("Content-Type", "application/json")
+				http.Error(w, `{"code":403,"message":"forbidden"}`, http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // Chain applies middlewares in order to a handler.
 func Chain(h http.Handler, mws ...func(http.Handler) http.Handler) http.Handler {
 	for i := len(mws) - 1; i >= 0; i-- {

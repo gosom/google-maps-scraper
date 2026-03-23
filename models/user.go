@@ -5,12 +5,19 @@ import (
 	"time"
 )
 
+// Role constants for RBAC.
+const (
+	RoleUser  = "user"
+	RoleAdmin = "admin"
+)
+
 // User represents a registered user in the system
 type User struct {
-	ID        string
-	Email     string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID        string    `json:"id"`
+	Email     string    `json:"email"`
+	Role      string    `json:"role"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // UserRepository manages user operations

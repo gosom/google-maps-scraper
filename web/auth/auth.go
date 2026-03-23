@@ -43,6 +43,8 @@ const (
 	// APIKeyPlanTierKey is kept for rate-limiter compatibility; always empty with the
 	// full implementation (no plan tiers in api_keys schema).
 	APIKeyPlanTierKey ContextKey = "api_key_plan_tier"
+	// UserRoleKey is the context key for storing the user's RBAC role.
+	UserRoleKey ContextKey = "user_role"
 	// AuthHeaderName is the name of the authentication header.
 	AuthHeaderName = "Authorization"
 	// DevUserHeaderName allows local integration tests to bypass Clerk auth when explicitly enabled.
@@ -307,4 +309,14 @@ func GetUserID(ctx context.Context) (string, error) {
 		return "", errors.New("user not authenticated")
 	}
 	return userID, nil
+}
+
+// GetUserRole extracts the user's RBAC role from the request context.
+// Returns "user" (the default role) when no role has been set.
+func GetUserRole(ctx context.Context) string {
+	role, _ := ctx.Value(UserRoleKey).(string)
+	if role == "" {
+		return "user"
+	}
+	return role
 }
