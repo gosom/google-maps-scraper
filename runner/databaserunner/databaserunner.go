@@ -25,6 +25,7 @@ import (
 
 type dbrunner struct {
 	cfg         *runner.Config
+	logger      *slog.Logger
 	provider    scrapemate.JobProvider
 	produce     bool
 	app         *scrapemateapp.ScrapemateApp
@@ -33,7 +34,7 @@ type dbrunner struct {
 	jobRepo     models.JobRepository
 }
 
-func New(cfg *runner.Config) (runner.Runner, error) {
+func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 	if cfg.RunMode != runner.RunModeDatabase && cfg.RunMode != runner.RunModeDatabaseProduce {
 		return nil, fmt.Errorf("%w: %d", runner.ErrInvalidRunMode, cfg.RunMode)
 	}
@@ -48,7 +49,7 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 	if cfg.MaxResults > 0 {
 		exitMonitor = exiter.New()
 		exitMonitor.SetMaxResults(cfg.MaxResults)
-		slog.Debug("database_runner_max_results_configured",
+		logger.Debug("database_runner_max_results_configured",
 			slog.Int("max_results", cfg.MaxResults),
 		)
 	}
@@ -61,6 +62,7 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 
 	ans := dbrunner{
 		cfg:         cfg,
+		logger:      logger,
 		provider:    postgres.NewProvider(conn),
 		produce:     cfg.ProduceOnly,
 		conn:        conn,
@@ -77,13 +79,13 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 	if cfg.MaxResults > 0 && exitMonitor != nil {
 		// Use enhanced result writer with exit monitor for max results support
 		psqlWriter = postgres.NewEnhancedResultWriterWithExiter(conn, "cli-user", "cli-job", exitMonitor)
-		slog.Debug("database_runner_using_enhanced_result_writer",
+		logger.Debug("database_runner_using_enhanced_result_writer",
 			slog.Int("max_results", cfg.MaxResults),
 		)
 	} else {
 		// Use basic result writer for unlimited results
 		psqlWriter = postgres.NewResultWriter(conn)
-		slog.Debug("database_runner_using_basic_result_writer")
+		logger.Debug("database_runner_using_basic_result_writer")
 	}
 
 	writers := []scrapemate.ResultWriter{
@@ -159,7 +161,7 @@ func (d *dbrunner) Run(ctx context.Context) error {
 		// Start the exit monitor in a goroutine
 		go d.exitMonitor.Run(ctx)
 
-		slog.Debug("database_runner_exit_monitor_started",
+		d.logger.Debug("database_runner_exit_monitor_started",
 			slog.Int("max_results", d.cfg.MaxResults),
 		)
 	}

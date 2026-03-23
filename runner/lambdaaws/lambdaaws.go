@@ -25,15 +25,17 @@ import (
 var _ runner.Runner = (*lambdaAwsRunner)(nil)
 
 type lambdaAwsRunner struct {
+	logger   *slog.Logger
 	uploader runner.S3Uploader
 }
 
-func New(cfg *runner.Config) (runner.Runner, error) {
+func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 	if cfg.RunMode != runner.RunModeAwsLambda {
 		return nil, fmt.Errorf("%w: %d", runner.ErrInvalidRunMode, cfg.RunMode)
 	}
 
 	ans := lambdaAwsRunner{
+		logger:   logger,
 		uploader: cfg.S3Uploader,
 	}
 
@@ -70,7 +72,7 @@ func (l *lambdaAwsRunner) handler(ctx context.Context, input lInput) error {
 	defer func() {
 		if !outClosed {
 			if err := out.Close(); err != nil {
-				slog.Error("lambda_csv_close_defer_failed", slog.Any("error", err))
+				l.logger.Error("lambda_csv_close_defer_failed", slog.Any("error", err))
 			}
 		}
 	}()
@@ -129,11 +131,11 @@ func (l *lambdaAwsRunner) handler(ctx context.Context, input lInput) error {
 	// CRITICAL: Close the CSV file and check for errors before upload
 	// For writable files, Close() can return I/O errors indicating data loss
 	if err := out.Close(); err != nil {
-		slog.Error("lambda_csv_close_failed", slog.Any("error", err))
+		l.logger.Error("lambda_csv_close_failed", slog.Any("error", err))
 		return fmt.Errorf("failed to close CSV file: %w", err)
 	}
 	outClosed = true
-	slog.Info("lambda_csv_closed")
+	l.logger.Info("lambda_csv_closed")
 
 	if l.uploader != nil {
 		key := fmt.Sprintf("%s-%d.csv", input.JobID, input.Part)
@@ -149,9 +151,9 @@ func (l *lambdaAwsRunner) handler(ctx context.Context, input lInput) error {
 			return err
 		}
 
-		slog.Info("lambda_s3_upload_success", slog.String("job_id", input.JobID), slog.Int("part", input.Part), slog.String("etag", result.ETag))
+		l.logger.Info("lambda_s3_upload_success", slog.String("job_id", input.JobID), slog.Int("part", input.Part), slog.String("etag", result.ETag))
 	} else {
-		slog.Warn("no_uploader_set", slog.String("output_file", out.Name()))
+		l.logger.Warn("no_uploader_set", slog.String("output_file", out.Name()))
 	}
 
 	return nil

@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gosom/google-maps-scraper/billing"
@@ -21,7 +22,6 @@ import (
 	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/google-maps-scraper/gmaps"
 	"github.com/gosom/google-maps-scraper/models"
-	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/proxy"
 	"github.com/gosom/google-maps-scraper/runner"
@@ -35,6 +35,10 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib" // PostgreSQL driver
 	"golang.org/x/sync/errgroup"
 )
+
+// mateResult carries the error from a mate.Start goroutine.
+// The channel doubles as a completion signal, replacing a separate done channel.
+type mateResult struct{ err error }
 
 type webrunner struct {
 	srv         *web.Server
@@ -50,9 +54,17 @@ type webrunner struct {
 
 	// leakedMu protects leakedMates from concurrent access.
 	leakedMu sync.Mutex
-	// leakedMates tracks done channels of abandoned mate.Start goroutines
+	// leakedMates tracks result channels of abandoned mate.Start goroutines
 	// so they can be joined (with a timeout) during Close().
-	leakedMates []<-chan struct{}
+	leakedMates []<-chan mateResult
+
+	// leakedMateCount tracks the total number of leaked mate goroutines for observability.
+	// Incremented atomically each time a mate.Start goroutine cannot be joined.
+	leakedMateCount atomic.Int64
+
+	// bgWg tracks background goroutines (stuck job reaper, webhook cleanup) so
+	// they can be joined during graceful shutdown.
+	bgWg sync.WaitGroup
 }
 
 // buildServerConfig loads integration settings from environment, enforces required
@@ -100,6 +112,11 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.Se
 		return web.ServerConfig{}, fmt.Errorf("API_KEY_SERVER_SECRET must be at least 32 bytes when API key auth is enabled (got %d bytes)", len(apiKeyServerSecret))
 	}
 
+	internalAddr := os.Getenv("INTERNAL_ADDR")
+	if internalAddr == "" {
+		internalAddr = ":9090"
+	}
+
 	serverCfg := web.ServerConfig{
 		Service:             svc,
 		Addr:                cfg.Addr,
@@ -113,6 +130,7 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.Se
 		StripeAPIKey:        stripeAPIKey,
 		StripeWebhookSecret: stripeWebhookSecret,
 		Version:             cfg.Version,
+		InternalAddr:        internalAddr,
 	}
 
 	slog.Info("auth_enabled", slog.String("provider", "clerk"))
@@ -128,7 +146,7 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.Se
 	return serverCfg, nil
 }
 
-func New(cfg *runner.Config) (runner.Runner, error) {
+func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 	if cfg.DataFolder == "" {
 		return nil, fmt.Errorf("data folder is required")
 	}
@@ -302,7 +320,7 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		s3Uploader:  s3Upload,
 		s3Bucket:    s3BucketName,
 		jobFileRepo: jobFileRepo,
-		logger:      pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "webrunner"),
+		logger:      logger,
 	}
 
 	return &ans, nil
@@ -317,13 +335,21 @@ func (w *webrunner) Run(ctx context.Context) error {
 	stuckCheckMins := envInt("STUCK_JOB_CHECK_INTERVAL_MINUTES", 10)
 	stuckTimeoutHours := envInt("STUCK_JOB_TIMEOUT_HOURS", 4)
 	checkInterval := time.Duration(stuckCheckMins) * time.Minute
-	go postgres.RunStuckJobReaper(ctx, w.db, w.logger, checkInterval, stuckTimeoutHours)
+	w.bgWg.Add(1)
+	go func() {
+		defer w.bgWg.Done()
+		postgres.RunStuckJobReaper(ctx, w.db, w.logger, checkInterval, stuckTimeoutHours)
+	}()
 
 	// Webhook event cleanup goroutine: removes processed_webhook_events older than
 	// WEBHOOK_EVENT_RETENTION_DAYS (default 90) in daily batches.
 	if w.billingSvc != nil {
 		retentionDays := envInt("WEBHOOK_EVENT_RETENTION_DAYS", 90)
-		go w.billingSvc.StartWebhookEventCleanup(ctx, retentionDays)
+		w.bgWg.Add(1)
+		go func() {
+			defer w.bgWg.Done()
+			w.billingSvc.StartWebhookEventCleanup(ctx, retentionDays)
+		}()
 	}
 
 	egroup.Go(func() error {
@@ -337,13 +363,45 @@ func (w *webrunner) Run(ctx context.Context) error {
 	return egroup.Wait()
 }
 
-// trackLeakedMate registers the done channel of an abandoned mate.Start
+// trackLeakedMate registers the result channel of an abandoned mate.Start
 // goroutine so it can be joined during Close().
-func (w *webrunner) trackLeakedMate(done <-chan struct{}, jobID string) {
+func (w *webrunner) trackLeakedMate(resultCh <-chan mateResult, jobID string) {
 	w.leakedMu.Lock()
 	defer w.leakedMu.Unlock()
-	w.leakedMates = append(w.leakedMates, done)
-	w.logger.Warn("leaked_mate_tracked", slog.String("job_id", jobID), slog.Int("total_leaked", len(w.leakedMates)))
+	w.leakedMates = append(w.leakedMates, resultCh)
+	count := w.leakedMateCount.Add(1)
+	w.logger.Warn("leaked_mate_tracked", slog.String("job_id", jobID), slog.Int("total_leaked", len(w.leakedMates)), slog.Int64("lifetime_leaked", count))
+}
+
+// shutdownMate cancels the mate context, closes the mate with a timeout, and
+// waits for the mate.Start goroutine to finish. Returns the error from
+// mate.Start and whether the goroutine leaked.
+func (w *webrunner) shutdownMate(jobID string, cancel context.CancelFunc, closeMate func(), resultCh <-chan mateResult) (error, bool) {
+	cancel()
+
+	closeComplete := make(chan struct{})
+	go func() {
+		defer close(closeComplete)
+		closeMate()
+	}()
+
+	closeTimer := time.NewTimer(15 * time.Second)
+	select {
+	case <-closeComplete:
+	case <-closeTimer.C:
+		w.logger.Warn("mate_close_timeout", slog.String("job_id", jobID))
+	}
+	closeTimer.Stop()
+
+	finalWait := time.NewTimer(5 * time.Second)
+	select {
+	case res := <-resultCh:
+		finalWait.Stop()
+		return res.err, false // not leaked
+	case <-finalWait.C:
+		w.trackLeakedMate(resultCh, jobID)
+		return fmt.Errorf("mate goroutine leaked: timeout exceeded"), true
+	}
 }
 
 func (w *webrunner) Close(context.Context) error {
@@ -356,9 +414,9 @@ func (w *webrunner) Close(context.Context) error {
 	if len(leaked) > 0 {
 		w.logger.Info("draining_leaked_mates", slog.Int("count", len(leaked)))
 		deadline := time.After(30 * time.Second)
-		for i, done := range leaked {
+		for i, ch := range leaked {
 			select {
-			case <-done:
+			case <-ch:
 				w.logger.Debug("leaked_mate_joined", slog.Int("index", i))
 			case <-deadline:
 				w.logger.Warn("leaked_mate_drain_timeout", slog.Int("joined", i), slog.Int("remaining", len(leaked)-i))
@@ -369,8 +427,7 @@ func (w *webrunner) Close(context.Context) error {
 drained:
 
 	if w.proxyPool != nil {
-		// Proxy pool cleanup would go here if needed
-		// For now, individual servers are cleaned up when jobs finish
+		w.proxyPool.Close()
 	}
 	if w.db != nil {
 		w.db.Close()
@@ -381,6 +438,18 @@ drained:
 func (w *webrunner) work(ctx context.Context) error {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+
+	var wg sync.WaitGroup
+	defer func() {
+		drainDone := make(chan struct{})
+		go func() { wg.Wait(); close(drainDone) }()
+		select {
+		case <-drainDone:
+			w.logger.Info("in_flight_jobs_drained")
+		case <-time.After(10 * time.Second):
+			w.logger.Warn("in_flight_jobs_drain_timeout")
+		}
+	}()
 
 	// Create a semaphore to limit concurrent jobs
 	// Use CONCURRENCY env var or default to 1 for job concurrency
@@ -428,7 +497,9 @@ func (w *webrunner) work(ctx context.Context) error {
 					return nil
 				case jobSemaphore <- struct{}{}: // Acquire semaphore
 					// Launch job in goroutine for concurrent execution
+					wg.Add(1)
 					go func(job web.Job) {
+						defer wg.Done()
 						defer func() { <-jobSemaphore }() // Release semaphore when done
 						defer func() {
 							if r := recover(); r != nil {
@@ -510,6 +581,11 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 
 	// Start a goroutine to monitor for cancellation
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				w.logger.Error("scrape_job_panic", slog.Any("panic", r), slog.String("job_id", job.ID))
+			}
+		}()
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 
@@ -596,7 +672,9 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		return err
 	}
 
-	defer mate.Close()
+	var closeOnce sync.Once
+	closeMate := func() { closeOnce.Do(func() { mate.Close() }) }
+	defer closeMate()
 
 	var coords string
 	if job.Data.Lat != "" && job.Data.Lon != "" {
@@ -695,30 +773,39 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		go exitMonitor.Run(mateCtx)
 		w.logger.Debug("mate_start_invoking", slog.String("job_id", job.ID), slog.Int("seed_jobs", len(seedJobs)))
 
-		// Add a backup timeout mechanism to prevent jobs from hanging
-		// when max results are reached but mate.Start() doesn't return
-		var mateErr error
-		done := make(chan struct{})
+		// Channel carries both the completion signal and the error from mate.Start,
+		// eliminating the shared mateErr variable and the separate done channel.
+		resultCh := make(chan mateResult, 1)
 
 		go func() {
-			defer close(done)
-			mateErr = mate.Start(mateCtx, seedJobs...)
-			w.logger.Debug("mate_start_goroutine_completed", slog.String("job_id", job.ID), slog.Any("error", mateErr))
+			defer func() {
+				if r := recover(); r != nil {
+					w.logger.Error("scrape_job_panic", slog.Any("panic", r), slog.String("job_id", job.ID))
+					resultCh <- mateResult{err: fmt.Errorf("panic in mate.Start: %v", r)}
+				}
+			}()
+			resultCh <- mateResult{err: mate.Start(mateCtx, seedJobs...)}
+			w.logger.Debug("mate_start_goroutine_completed", slog.String("job_id", job.ID))
 		}()
 
 		// Wait for mate.Start to complete or for a backup timeout
 		backupTimeout := time.NewTimer(time.Duration(allowedSeconds+60) * time.Second) // Increased buffer
 		defer backupTimeout.Stop()
 
-		// Add a longer forced completion timeout specifically for exit monitor completion
-		forcedCompletionTimeout := time.NewTimer(24 * time.Hour) // Start disabled
-		defer forcedCompletionTimeout.Stop()
+		// nil channel blocks forever in select — only becomes live when exit monitor fires.
+		var forcedCompletionCh <-chan time.Time
 
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					w.logger.Error("scrape_job_panic", slog.Any("panic", r), slog.String("job_id", job.ID))
+				}
+			}()
 			select {
 			case <-exitMonitorCompleted:
 				w.logger.Debug("exit_monitor_completion_detected", slog.String("job_id", job.ID), slog.Int("forced_completion_timer_seconds", 30))
-				forcedCompletionTimeout.Reset(30 * time.Second)
+				t := time.NewTimer(30 * time.Second)
+				forcedCompletionCh = t.C
 			case <-mateCtx.Done():
 				// Context cancelled but not by exit monitor completion (probably timeout)
 				w.logger.Debug("context_cancelled_not_exit_monitor", slog.String("job_id", job.ID))
@@ -726,68 +813,19 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		}()
 
 		select {
-		case <-done:
+		case res := <-resultCh:
 			// mate.Start completed normally
-			err = mateErr
+			err = res.err
 			w.logger.Debug("mate_start_completed_normally", slog.String("job_id", job.ID), slog.Any("error", err))
 		case <-backupTimeout.C:
 			// Backup timeout - force completion
 			w.logger.Debug("backup_timeout_triggered", slog.String("job_id", job.ID))
-			cancel() // Cancel the mate context
-
-			// Wait for mate.Start with a timeout - workers may be stuck in long extraction cycles
-			backupWait := time.NewTimer(30 * time.Second)
-			select {
-			case <-done:
-				w.logger.Debug("mate_finished_after_backup_cancel", slog.String("job_id", job.ID))
-			case <-backupWait.C:
-				w.logger.Warn("mate_stuck_after_backup_timeout", slog.String("job_id", job.ID))
-				// Force close mate to kill stuck Playwright workers
-				go func() {
-					w.logger.Debug("force_closing_mate_backup", slog.String("job_id", job.ID))
-					mate.Close()
-				}()
-				// Give it one more chance
-				finalWait := time.NewTimer(15 * time.Second)
-				select {
-				case <-done:
-					w.logger.Debug("mate_finished_after_force_close", slog.String("job_id", job.ID))
-				case <-finalWait.C:
-					w.logger.Warn("mate_unresponsive_proceeding", slog.String("job_id", job.ID))
-					// Track the leaked goroutine so Close() can join it
-					w.trackLeakedMate(done, job.ID)
-				}
-				finalWait.Stop()
-			}
-			backupWait.Stop()
-
-			err = mateErr
+			err, _ = w.shutdownMate(job.ID, cancel, closeMate, resultCh)
 			w.logger.Debug("forced_completion", slog.String("job_id", job.ID), slog.Any("error", err))
-		case <-forcedCompletionTimeout.C:
+		case <-forcedCompletionCh:
 			// Exit monitor triggered cancellation, but mate.Start is taking too long to respond
 			w.logger.Debug("forced_completion_timeout", slog.String("job_id", job.ID))
-			cancel() // Ensure mate context is cancelled
-
-			// Wait up to 15 more seconds for mate.Start to finish gracefully
-			finalWait := time.NewTimer(15 * time.Second) // Increased from 5s
-			select {
-			case <-done:
-				err = mateErr
-				w.logger.Debug("mate_start_finished_after_forced", slog.String("job_id", job.ID), slog.Any("error", err))
-			case <-finalWait.C:
-				// mate.Start is completely stuck, proceed with job completion
-				w.logger.Debug("mate_start_unresponsive", slog.String("job_id", job.ID))
-				err = context.Canceled // Treat as successful cancellation
-
-				// Force close mate to ensure resources are cleaned up
-				go func() {
-					w.logger.Debug("force_closing_mate", slog.String("job_id", job.ID))
-					mate.Close()
-				}()
-				// Track the leaked goroutine so Close() can join it
-				w.trackLeakedMate(done, job.ID)
-			}
-			finalWait.Stop()
+			err, _ = w.shutdownMate(job.ID, cancel, closeMate, resultCh)
 		}
 
 		w.logger.Debug("context_after_mate_start", slog.String("job_id", job.ID), slog.Any("context_err", mateCtx.Err()))
@@ -940,7 +978,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		cancel()
 	}
 
-	mate.Close()
+	closeMate()
 
 	// CRITICAL: Close the CSV file handle before S3 upload or any file operations
 	// This ensures all buffered data is flushed to disk and the file is fully written
@@ -1050,6 +1088,7 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 			w.logger.Error("proxy_server_get_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 			// Continue without proxy
 		} else {
+			defer w.proxyPool.ReturnServer(job.ID)
 			localProxyURL := proxySrv.GetLocalURL()
 			currentProxy := proxySrv.GetCurrentProxy()
 			w.logger.Info("proxy_assigned", slog.String("job_id", job.ID), slog.String("address", currentProxy.Address), slog.String("port", currentProxy.Port), slog.String("local_url", localProxyURL))

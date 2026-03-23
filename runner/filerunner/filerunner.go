@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -22,19 +23,21 @@ import (
 
 type fileRunner struct {
 	cfg     *runner.Config
+	logger  *slog.Logger
 	input   io.Reader
 	writers []scrapemate.ResultWriter
 	app     *scrapemateapp.ScrapemateApp
 	outfile *os.File
 }
 
-func New(cfg *runner.Config) (runner.Runner, error) {
+func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 	if cfg.RunMode != runner.RunModeFile {
 		return nil, fmt.Errorf("%w: %d", runner.ErrInvalidRunMode, cfg.RunMode)
 	}
 
 	ans := &fileRunner{
-		cfg: cfg,
+		cfg:    cfg,
+		logger: logger,
 	}
 
 	if err := ans.setInput(); err != nil {

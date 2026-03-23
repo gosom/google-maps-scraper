@@ -20,11 +20,12 @@ import (
 var _ runner.Runner = (*invoker)(nil)
 
 type invoker struct {
+	logger   *slog.Logger
 	lclient  *lambda.Client
 	payloads []lInput
 }
 
-func NewInvoker(cfg *runner.Config) (runner.Runner, error) {
+func NewInvoker(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 	if cfg.RunMode != runner.RunModeAwsLambdaInvoker {
 		return nil, fmt.Errorf("%w: %d", runner.ErrInvalidRunMode, cfg.RunMode)
 	}
@@ -44,6 +45,7 @@ func NewInvoker(cfg *runner.Config) (runner.Runner, error) {
 	}
 
 	ans := invoker{
+		logger:  logger,
 		lclient: lambda.NewFromConfig(awscfg),
 	}
 
@@ -82,7 +84,7 @@ func (i *invoker) invoke(ctx context.Context, input lInput) error {
 		return err
 	}
 
-	slog.Info("lambda_function_invoked", slog.String("function_name", input.FunctionName), slog.String("job_id", input.JobID), slog.Int("part", input.Part), slog.Int("status_code", int(result.StatusCode)))
+	i.logger.Info("lambda_function_invoked", slog.String("function_name", input.FunctionName), slog.String("job_id", input.JobID), slog.Int("part", input.Part), slog.Int("status_code", int(result.StatusCode)))
 
 	return nil
 }
