@@ -4,6 +4,7 @@
     <td>{{.Date}}</td>
     <td>
         <span class="status-indicator status-{{.Status}}">{{.Status}}</span>
+        <span class="source-badge source-{{.Source}}">{{if eq .Source "api"}}API{{else}}Web{{end}}</span>
     </td>
     <td>
         {{ if eq .Status "ok" }}
