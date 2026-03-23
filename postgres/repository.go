@@ -293,7 +293,11 @@ func (repo *repository) PermanentDelete(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() {
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			repo.log.Error("rollback_failed", slog.Any("error", rbErr))
+		}
+	}()
 
 	// First, delete all results that reference this job
 	const deleteResultsQuery = `DELETE FROM results WHERE job_id = $1`

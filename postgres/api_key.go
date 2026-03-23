@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"time"
 
@@ -212,6 +213,11 @@ func apiKeyApplyNullable(k *models.APIKey, lastUsedAt sql.NullTime, lastUsedIP s
 		k.RevokedAt = &revokedAt.Time
 	}
 	if len(scopesJSON) > 0 {
-		_ = json.Unmarshal(scopesJSON, &k.Scopes)
+		if err := json.Unmarshal(scopesJSON, &k.Scopes); err != nil {
+			slog.Warn("api_key_scopes_unmarshal_failed",
+				slog.String("key_id", k.ID),
+				slog.Any("error", err),
+			)
+		}
 	}
 }

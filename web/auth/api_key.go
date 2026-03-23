@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 
 	"github.com/google/uuid"
@@ -112,7 +113,15 @@ func ValidateAPIKey(ctx context.Context, providedKey string, serverSecret []byte
 	// Constant-time comparison.
 	var storedHash []byte
 	if keyExists {
-		storedHash, _ = hex.DecodeString(apiKey.KeyHash)
+		var decErr error
+		storedHash, decErr = hex.DecodeString(apiKey.KeyHash)
+		if decErr != nil {
+			slog.Error("api_key_hash_decode_failed",
+				slog.String("key_id", apiKey.ID),
+				slog.Any("error", decErr),
+			)
+			return "", "", ErrInvalidAPIKey
+		}
 	} else {
 		storedHash = make([]byte, 32)
 	}

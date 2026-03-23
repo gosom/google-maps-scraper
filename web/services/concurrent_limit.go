@@ -78,7 +78,12 @@ func (s *ConcurrentLimitService) CreateJobWithLimit(ctx context.Context, job *mo
 	if err != nil {
 		return fmt.Errorf("concurrent_limit: begin tx: %w", err)
 	}
-	defer tx.Rollback() //nolint:errcheck
+	defer func() {
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			// Transaction rollback failed for a reason other than already-committed.
+			_ = rbErr // logged at caller if needed
+		}
+	}()
 
 	// Lock the user row to serialise concurrent submissions from the same user.
 	// Also fetch credit_balance as text to perform an atomic balance check

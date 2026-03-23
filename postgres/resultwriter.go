@@ -16,6 +16,16 @@ import (
 	"github.com/gosom/google-maps-scraper/gmaps"
 )
 
+// mustMarshalJSON marshals v to JSON, logging a warning and returning "null" on error.
+func mustMarshalJSON(v any) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		slog.Warn("json_marshal_failed", slog.String("type", fmt.Sprintf("%T", v)), slog.Any("error", err))
+		return []byte("null")
+	}
+	return b
+}
+
 // NewResultWriter creates a basic result writer that only saves to the data column
 func NewResultWriter(db *sql.DB) scrapemate.ResultWriter {
 	return &resultWriter{db: db}
@@ -285,11 +295,13 @@ func (r *resultWriter) batchSave(ctx context.Context, entries []*gmaps.Entry) er
 
 	tx, err := r.db.BeginTx(dbCtx, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("begin transaction: %w", err)
 	}
 
 	defer func() {
-		_ = tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			slog.Warn("tx_rollback_failed", slog.Any("error", rbErr))
+		}
 	}()
 
 	_, err = tx.ExecContext(dbCtx, q, args...)
@@ -297,9 +309,11 @@ func (r *resultWriter) batchSave(ctx context.Context, entries []*gmaps.Entry) er
 		return err
 	}
 
-	err = tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
 
-	return err
+	return nil
 }
 
 func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []*gmaps.Entry) error {
@@ -326,19 +340,19 @@ func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []
 
 	for i, entry := range entries {
 		// Serialize JSON fields
-		openHoursJSON, _ := json.Marshal(entry.OpenHours)
-		popularTimesJSON, _ := json.Marshal(entry.PopularTimes)
-		reviewsPerRatingJSON, _ := json.Marshal(entry.ReviewsPerRating)
-		imagesJSON, _ := json.Marshal(entry.Images)
-		reservationsJSON, _ := json.Marshal(entry.Reservations)
-		orderOnlineJSON, _ := json.Marshal(entry.OrderOnline)
-		menuJSON, _ := json.Marshal(entry.Menu)
-		ownerJSON, _ := json.Marshal(entry.Owner)
-		completeAddressJSON, _ := json.Marshal(entry.CompleteAddress)
-		aboutJSON, _ := json.Marshal(entry.About)
-		userReviewsJSON, _ := json.Marshal(entry.UserReviews)
-		userReviewsExtendedJSON, _ := json.Marshal(entry.UserReviewsExtended)
-		dataJSON, _ := json.Marshal(entry)
+		openHoursJSON := mustMarshalJSON(entry.OpenHours)
+		popularTimesJSON := mustMarshalJSON(entry.PopularTimes)
+		reviewsPerRatingJSON := mustMarshalJSON(entry.ReviewsPerRating)
+		imagesJSON := mustMarshalJSON(entry.Images)
+		reservationsJSON := mustMarshalJSON(entry.Reservations)
+		orderOnlineJSON := mustMarshalJSON(entry.OrderOnline)
+		menuJSON := mustMarshalJSON(entry.Menu)
+		ownerJSON := mustMarshalJSON(entry.Owner)
+		completeAddressJSON := mustMarshalJSON(entry.CompleteAddress)
+		aboutJSON := mustMarshalJSON(entry.About)
+		userReviewsJSON := mustMarshalJSON(entry.UserReviews)
+		userReviewsExtendedJSON := mustMarshalJSON(entry.UserReviewsExtended)
+		dataJSON := mustMarshalJSON(entry)
 
 		// Convert categories slice to comma-separated string
 		categoriesStr := strings.Join(entry.Categories, ", ")
@@ -410,7 +424,9 @@ func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []
 	}
 
 	defer func() {
-		_ = tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			slog.Warn("tx_rollback_failed", slog.Any("error", rbErr))
+		}
 	}()
 
 	_, err = tx.ExecContext(dbCtx, q, args...)
@@ -466,19 +482,19 @@ func (r *enhancedResultWriterWithExiter) batchSaveEnhancedWithCount(ctx context.
 
 	for i, entry := range entries {
 		// Serialize JSON fields
-		openHoursJSON, _ := json.Marshal(entry.OpenHours)
-		popularTimesJSON, _ := json.Marshal(entry.PopularTimes)
-		reviewsPerRatingJSON, _ := json.Marshal(entry.ReviewsPerRating)
-		imagesJSON, _ := json.Marshal(entry.Images)
-		reservationsJSON, _ := json.Marshal(entry.Reservations)
-		orderOnlineJSON, _ := json.Marshal(entry.OrderOnline)
-		menuJSON, _ := json.Marshal(entry.Menu)
-		ownerJSON, _ := json.Marshal(entry.Owner)
-		completeAddressJSON, _ := json.Marshal(entry.CompleteAddress)
-		aboutJSON, _ := json.Marshal(entry.About)
-		userReviewsJSON, _ := json.Marshal(entry.UserReviews)
-		userReviewsExtendedJSON, _ := json.Marshal(entry.UserReviewsExtended)
-		dataJSON, _ := json.Marshal(entry)
+		openHoursJSON := mustMarshalJSON(entry.OpenHours)
+		popularTimesJSON := mustMarshalJSON(entry.PopularTimes)
+		reviewsPerRatingJSON := mustMarshalJSON(entry.ReviewsPerRating)
+		imagesJSON := mustMarshalJSON(entry.Images)
+		reservationsJSON := mustMarshalJSON(entry.Reservations)
+		orderOnlineJSON := mustMarshalJSON(entry.OrderOnline)
+		menuJSON := mustMarshalJSON(entry.Menu)
+		ownerJSON := mustMarshalJSON(entry.Owner)
+		completeAddressJSON := mustMarshalJSON(entry.CompleteAddress)
+		aboutJSON := mustMarshalJSON(entry.About)
+		userReviewsJSON := mustMarshalJSON(entry.UserReviews)
+		userReviewsExtendedJSON := mustMarshalJSON(entry.UserReviewsExtended)
+		dataJSON := mustMarshalJSON(entry)
 
 		// Convert categories slice to comma-separated string
 		categoriesStr := strings.Join(entry.Categories, ", ")
@@ -550,7 +566,9 @@ func (r *enhancedResultWriterWithExiter) batchSaveEnhancedWithCount(ctx context.
 	}
 
 	defer func() {
-		_ = tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			slog.Warn("tx_rollback_failed", slog.Any("error", rbErr))
+		}
 	}()
 
 	result, err := tx.ExecContext(dbCtx, q, args...)

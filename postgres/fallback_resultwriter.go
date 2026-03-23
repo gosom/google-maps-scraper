@@ -3,12 +3,12 @@ package postgres
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
-	"github.com/gosom/scrapemate"
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/gosom/scrapemate"
 
 	"github.com/gosom/google-maps-scraper/gmaps"
 )
@@ -98,19 +98,19 @@ func (r *fallbackResultWriter) insertSingleEntry(ctx context.Context, entry *gma
 	defer cancel()
 
 	// Serialize JSON fields
-	openHoursJSON, _ := json.Marshal(entry.OpenHours)
-	popularTimesJSON, _ := json.Marshal(entry.PopularTimes)
-	reviewsPerRatingJSON, _ := json.Marshal(entry.ReviewsPerRating)
-	imagesJSON, _ := json.Marshal(entry.Images)
-	reservationsJSON, _ := json.Marshal(entry.Reservations)
-	orderOnlineJSON, _ := json.Marshal(entry.OrderOnline)
-	menuJSON, _ := json.Marshal(entry.Menu)
-	ownerJSON, _ := json.Marshal(entry.Owner)
-	completeAddressJSON, _ := json.Marshal(entry.CompleteAddress)
-	aboutJSON, _ := json.Marshal(entry.About)
-	userReviewsJSON, _ := json.Marshal(entry.UserReviews)
-	userReviewsExtendedJSON, _ := json.Marshal(entry.UserReviewsExtended)
-	dataJSON, _ := json.Marshal(entry)
+	openHoursJSON := mustMarshalJSON(entry.OpenHours)
+	popularTimesJSON := mustMarshalJSON(entry.PopularTimes)
+	reviewsPerRatingJSON := mustMarshalJSON(entry.ReviewsPerRating)
+	imagesJSON := mustMarshalJSON(entry.Images)
+	reservationsJSON := mustMarshalJSON(entry.Reservations)
+	orderOnlineJSON := mustMarshalJSON(entry.OrderOnline)
+	menuJSON := mustMarshalJSON(entry.Menu)
+	ownerJSON := mustMarshalJSON(entry.Owner)
+	completeAddressJSON := mustMarshalJSON(entry.CompleteAddress)
+	aboutJSON := mustMarshalJSON(entry.About)
+	userReviewsJSON := mustMarshalJSON(entry.UserReviews)
+	userReviewsExtendedJSON := mustMarshalJSON(entry.UserReviewsExtended)
+	dataJSON := mustMarshalJSON(entry)
 
 	// Convert slices to strings
 	categoriesStr := strings.Join(entry.Categories, ", ")
