@@ -388,3 +388,73 @@ All errors return a JSON body:
 - **Cost estimation.** Always call `POST /jobs/estimate` first to check if you have sufficient credits before creating a job.
 
 - **Health check.** `GET /health` is unauthenticated and returns `{"status": "ok", "db": "ok", "version": "dev"}`.
+
+---
+
+## Database Backups
+
+Brezel includes an automated PostgreSQL backup script that dumps the database to a compressed custom-format file and uploads it to S3 with retention-based cleanup.
+
+### Running a backup manually
+
+```bash
+# Set required environment variables
+export DATABASE_URL="postgres://user:pass@host:5432/brezel"
+export S3_BACKUP_BUCKET="my-brezel-backups"
+export AWS_ACCESS_KEY_ID="AKIA..."
+export AWS_SECRET_ACCESS_KEY="..."
+export AWS_REGION="eu-central-1"
+
+# Run the backup
+./scripts/backup-db.sh
+```
+
+To preview what the script would do without executing anything:
+
+```bash
+./scripts/backup-db.sh --dry-run
+```
+
+### Required environment variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `DATABASE_URL` | yes* | — | PostgreSQL connection string |
+| `POSTGRES_DSN` | yes* | — | Alternative to `DATABASE_URL` (either one must be set) |
+| `S3_BACKUP_BUCKET` | yes | — | S3 bucket name for storing backups |
+| `AWS_ACCESS_KEY_ID` | yes | — | AWS access key |
+| `AWS_SECRET_ACCESS_KEY` | yes | — | AWS secret key |
+| `AWS_REGION` | yes | — | AWS region (e.g. `eu-central-1`) |
+| `BACKUP_RETENTION_DAYS` | no | `30` | Number of days to keep old backups in S3 |
+
+### Setting up a cron job
+
+To run backups automatically every day at 03:00 UTC:
+
+```bash
+# Edit crontab
+crontab -e
+
+# Add this line:
+0 3 * * * DATABASE_URL="postgres://..." S3_BACKUP_BUCKET="..." AWS_ACCESS_KEY_ID="..." AWS_SECRET_ACCESS_KEY="..." AWS_REGION="eu-central-1" /path/to/scripts/backup-db.sh >> /var/log/brezel-backup.log 2>&1
+```
+
+Alternatively, source a `.env` file in the cron entry:
+
+```bash
+0 3 * * * . /path/to/.env && /path/to/scripts/backup-db.sh >> /var/log/brezel-backup.log 2>&1
+```
+
+### Restoring from a backup
+
+Download the backup from S3 and restore it with `pg_restore`:
+
+```bash
+# Download the backup file
+aws s3 cp s3://my-brezel-backups/db-backups/brezel-backup-2026-03-23-030000.dump ./backup.dump
+
+# Restore into the target database
+pg_restore -d "$DATABASE_URL" --clean --if-exists backup.dump
+```
+
+The `--clean --if-exists` flags drop existing objects before restoring, which is suitable for a full restore. To restore into a fresh empty database, omit those flags.
