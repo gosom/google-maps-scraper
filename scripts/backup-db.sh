@@ -85,6 +85,11 @@ log "Checking for backups older than ${RETENTION_DAYS} days..."
 
 CUTOFF_EPOCH="$(date -u -j -v-${RETENTION_DAYS}d '+%s' 2>/dev/null || date -u -d "${RETENTION_DAYS} days ago" '+%s')"
 
+if [[ -z "$CUTOFF_EPOCH" ]]; then
+  log "WARNING: Could not compute retention cutoff date — skipping cleanup"
+  CLEANED=0
+else
+
 if $DRY_RUN; then
   log "[DRY-RUN] Would list objects in s3://${S3_BACKUP_BUCKET}/${S3_PREFIX}/ and delete those older than ${RETENTION_DAYS} days"
 else
@@ -121,6 +126,7 @@ if objects:
 
   log "Retention cleanup: ${CLEANED_COUNT} old backup(s) deleted"
 fi
+fi  # end cutoff guard
 
 # ── Summary ──────────────────────────────────────────────────────────
 

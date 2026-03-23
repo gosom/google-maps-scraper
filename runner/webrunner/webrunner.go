@@ -260,8 +260,7 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 	}
 
 	if strings.TrimSpace(os.Getenv("APP_ENV")) == "production" && s3Upload == nil {
-		slog.Error("s3_required_in_production", slog.String("detail", "S3 credentials are required when APP_ENV=production"))
-		os.Exit(1)
+		return nil, fmt.Errorf("S3 credentials are required when APP_ENV=production")
 	}
 
 	slog.Info("startup_feature_summary",

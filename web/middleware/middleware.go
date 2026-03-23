@@ -32,7 +32,8 @@ func RequireRole(requiredRole string) func(http.Handler) http.Handler {
 			role, _ := r.Context().Value(auth.UserRoleKey).(string)
 			if role != requiredRole {
 				w.Header().Set("Content-Type", "application/json")
-				http.Error(w, `{"code":403,"message":"forbidden"}`, http.StatusForbidden)
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"code":403,"message":"forbidden"}`))
 				return
 			}
 			next.ServeHTTP(w, r)
