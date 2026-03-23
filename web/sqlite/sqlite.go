@@ -26,7 +26,7 @@ func New(path string) (web.JobRepository, error) {
 }
 
 func (repo *repo) Get(ctx context.Context, id string, userID string) (web.Job, error) {
-	const q = `SELECT * from jobs WHERE id = ? AND (user_id = ? OR ? = '')`
+	const q = `SELECT id, user_id, name, status, data, created_at, updated_at, COALESCE(source, 'web') from jobs WHERE id = ? AND (user_id = ? OR ? = '')`
 
 	row := repo.db.QueryRowContext(ctx, q, id, userID, userID)
 
@@ -58,7 +58,7 @@ func (repo *repo) Delete(ctx context.Context, id string, userID string) error {
 }
 
 func (repo *repo) Select(ctx context.Context, params web.SelectParams) ([]web.Job, error) {
-	q := `SELECT * from jobs`
+	q := `SELECT id, user_id, name, status, data, created_at, updated_at, COALESCE(source, 'web') from jobs`
 
 	var args []any
 	var conditions []string
