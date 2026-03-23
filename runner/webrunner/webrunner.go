@@ -68,6 +68,24 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.Se
 		return web.ServerConfig{}, fmt.Errorf("CLERK_SECRET_KEY environment variable is required")
 	}
 
+	isProduction := strings.TrimSpace(os.Getenv("APP_ENV")) == "production"
+
+	if isProduction {
+		var missing []string
+		if stripeAPIKey == "" {
+			missing = append(missing, "STRIPE_SECRET_KEY")
+		}
+		if stripeWebhookSecret == "" {
+			missing = append(missing, "STRIPE_WEBHOOK_SECRET")
+		}
+		if os.Getenv("ALLOWED_ORIGINS") == "" {
+			missing = append(missing, "ALLOWED_ORIGINS")
+		}
+		if len(missing) > 0 {
+			return web.ServerConfig{}, fmt.Errorf("production mode requires these environment variables: %s", strings.Join(missing, ", "))
+		}
+	}
+
 	userRepo := postgres.NewUserRepository(db)
 	apiKeyRepo := postgres.NewAPIKeyRepository(db)
 	webhookConfigRepo := postgres.NewWebhookConfigRepository(db)
@@ -101,6 +119,11 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.Se
 	if stripeAPIKey != "" {
 		slog.Info("payment_enabled", slog.String("provider", "stripe"))
 	}
+
+	slog.Info("startup_config_summary",
+		slog.Bool("stripe_enabled", stripeAPIKey != ""),
+		slog.Bool("production_mode", isProduction),
+	)
 
 	return serverCfg, nil
 }
@@ -235,6 +258,16 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 			slog.Info("s3_missing_env", slog.String("var", "S3_BUCKET_NAME"))
 		}
 	}
+
+	if strings.TrimSpace(os.Getenv("APP_ENV")) == "production" && s3Upload == nil {
+		slog.Error("s3_required_in_production", slog.String("detail", "S3 credentials are required when APP_ENV=production"))
+		os.Exit(1)
+	}
+
+	slog.Info("startup_feature_summary",
+		slog.Bool("s3_enabled", s3Upload != nil),
+		slog.String("app_env", os.Getenv("APP_ENV")),
+	)
 
 	// Initialize job file repository
 	jobFileRepo, err := postgres.NewJobFileRepository(db)
