@@ -260,7 +260,11 @@ func (m *AuthMiddleware) grantSignupBonus(ctx context.Context, userID string) er
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() {
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			m.logger.Error("rollback_failed", slog.Any("error", rbErr))
+		}
+	}()
 
 	var alreadyGranted bool
 	err = tx.QueryRowContext(ctx,

@@ -14,6 +14,7 @@ services:
       - DISABLE_TELEMETRY=${DISABLE_TELEMETRY:-0}
     ports:
       - "127.0.0.1:${API_PORT:-8080}:8080"
+      - "127.0.0.1:${INTERNAL_PORT:-9090}:9090"
     volumes:
       - gmapsdata:/gmapsdata
     restart: unless-stopped

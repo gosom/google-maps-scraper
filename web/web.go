@@ -17,6 +17,7 @@ import (
 	"github.com/gosom/google-maps-scraper/billing"
 	"github.com/gosom/google-maps-scraper/config"
 	"github.com/gosom/google-maps-scraper/models"
+	"github.com/gosom/google-maps-scraper/pkg/encryption"
 	"github.com/gosom/google-maps-scraper/pkg/googlesheets"
 	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	"github.com/gosom/google-maps-scraper/postgres"
@@ -34,6 +35,7 @@ var static embed.FS
 type Server struct {
 	tmpl           map[string]*template.Template
 	srv            *http.Server
+	internalSrv    *http.Server
 	svc            *Service
 	authMiddleware *auth.AuthMiddleware
 	userRepo       postgres.UserRepository
@@ -57,6 +59,11 @@ type ServerConfig struct {
 	// Version is the Git SHA injected at build time via ldflags.
 	// It is returned by the /health endpoint as the "version" field.
 	Version string
+	// InternalAddr is the listen address for the internal HTTP server that
+	// serves /metrics and /health. Keep this off the public interface to
+	// avoid exposing Prometheus metrics to unauthenticated clients (CWE-200).
+	// Example: ":9090". If empty, no internal listener is created.
+	InternalAddr string
 }
 
 func New(cfg ServerConfig) (*Server, error) {
@@ -99,6 +106,16 @@ func New(cfg ServerConfig) (*Server, error) {
 	fileServer := http.FileServer(http.FS(staticFS))
 	router := mux.NewRouter()
 
+	// Initialize encryption once at startup
+	enc, err := encryption.New(os.Getenv("ENCRYPTION_KEY"))
+	if err != nil {
+		slog.Error("failed to initialize encryption", slog.Any("error", err))
+		os.Exit(1)
+	}
+	if enc == nil {
+		slog.Warn("ENCRYPTION_KEY not set, integration credentials will be stored in plaintext")
+	}
+
 	// Initialize modular handler group (incremental migration)
 	deps := webhandlers.Dependencies{
 		Logger:              ans.logger,
@@ -113,7 +130,8 @@ func New(cfg ServerConfig) (*Server, error) {
 		ServerSecret:        cfg.ServerSecret,
 		PricingRuleRepo:     postgres.NewPricingRuleRepository(ans.db),
 		ResultsSvc:          webservices.NewResultsService(ans.db),
-		IntegrationRepo:     postgres.NewIntegrationRepository(ans.db),
+		Encryptor:           enc,
+		IntegrationRepo:     postgres.NewIntegrationRepository(ans.db, enc),
 		GoogleSheetsSvc:     googlesheets.NewService(),
 		Version:             cfg.Version,
 	}
@@ -125,9 +143,22 @@ func New(cfg ServerConfig) (*Server, error) {
 	// Health check endpoint (no authentication needed)
 	router.HandleFunc("/health", hg.Web.HealthCheck).Methods(http.MethodGet)
 
-	// Prometheus metrics endpoint — scrape from Grafana or any Prometheus-compatible tool.
-	// No auth: bind the API server to 127.0.0.1 to prevent external exposure.
-	router.Handle("/metrics", promhttp.Handler()).Methods(http.MethodGet)
+	// Prometheus metrics and a secondary health check are served on a separate
+	// internal listener (InternalAddr) so they are never exposed on the public
+	// port. See Start() for the goroutine that runs the internal server.
+	if cfg.InternalAddr != "" {
+		internalMux := http.NewServeMux()
+		internalMux.Handle("/metrics", promhttp.Handler())
+		internalMux.HandleFunc("/health", hg.Web.HealthCheck)
+		ans.internalSrv = &http.Server{
+			Addr:              cfg.InternalAddr,
+			Handler:           internalMux,
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       10 * time.Second,
+			WriteTimeout:      10 * time.Second,
+			IdleTimeout:       30 * time.Second,
+		}
+	}
 
 	// Version endpoint (no authentication needed, for monitoring and debugging)
 	router.HandleFunc("/api/version", hg.Version.GetVersion).Methods(http.MethodGet)
@@ -288,6 +319,16 @@ func (s *Server) Start(ctx context.Context) error {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer shutdownCancel()
 
+		// Shut down the internal server first so Prometheus stops scraping
+		// before the main server begins draining connections.
+		if s.internalSrv != nil {
+			if err := s.internalSrv.Shutdown(shutdownCtx); err != nil {
+				s.logger.Error("internal_server_shutdown_error", slog.Any("error", err))
+			} else {
+				s.logger.Info("internal_server_stopped")
+			}
+		}
+
 		err := s.srv.Shutdown(shutdownCtx)
 		if err != nil {
 			s.logger.Error("server_shutdown_error", slog.Any("error", err))
@@ -296,6 +337,17 @@ func (s *Server) Start(ctx context.Context) error {
 
 		s.logger.Info("server_stopped")
 	}()
+
+	// Launch internal server (metrics + health) in a background goroutine.
+	if s.internalSrv != nil {
+		go func() {
+			s.logger.Info("internal_server_started", slog.String("addr", s.internalSrv.Addr))
+
+			if err := s.internalSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				s.logger.Error("internal_server_error", slog.Any("error", err))
+			}
+		}()
+	}
 
 	s.logger.Info("server_started", slog.String("addr", s.srv.Addr))
 
