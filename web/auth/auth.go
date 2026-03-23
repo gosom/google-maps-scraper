@@ -180,6 +180,15 @@ func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
 			bearerToken = strings.TrimSpace(authHeader[len("Bearer "):])
 		}
 
+		// Also accept X-API-Key header as an alternative to Authorization: Bearer.
+		// This is a common pattern (AWS API Gateway, Anthropic) and helps users
+		// whose Authorization header is occupied by a proxy or integration tool.
+		if bearerToken == "" {
+			if xKey := strings.TrimSpace(r.Header.Get("X-API-Key")); xKey != "" {
+				bearerToken = xKey
+			}
+		}
+
 		if m.apiKeyRepo != nil && len(m.serverSecret) > 0 && strings.HasPrefix(bearerToken, APIKeyPrefix) {
 			userID, keyID, err := ValidateAPIKey(r.Context(), bearerToken, m.serverSecret, m.apiKeyRepo)
 			if err != nil {
