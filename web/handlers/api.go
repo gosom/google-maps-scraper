@@ -98,9 +98,9 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 
 	newJob := models.Job{ID: uuid.New().String(), UserID: userID, Name: req.Name, Date: time.Now().UTC(), Status: models.StatusPending, Data: req.JobData}
 	if auth.GetAPIKeyID(r.Context()) != "" {
-		newJob.Source = "api"
+		newJob.Source = models.SourceAPI
 	} else {
-		newJob.Source = "web"
+		newJob.Source = models.SourceWeb
 	}
 	newJob.Data.MaxTime *= time.Second
 	if err := webutils.ValidateJob(&newJob); err != nil {

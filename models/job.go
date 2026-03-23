@@ -63,3 +63,9 @@ const (
 	StatusCancelled = "cancelled"
 	StatusAborting  = "aborting"
 )
+
+// Job source constants
+const (
+	SourceWeb = "web"
+	SourceAPI = "api"
+)
