@@ -31,7 +31,7 @@ func TestRunReaperTick_NoStuckJobs(t *testing.T) {
 }
 
 // TestRunReaperTick_StuckJobsUpdated verifies that stuck jobs are detected and
-// updated to 'failed' with the correct failure_reason.
+// updated to 'failed' with the correct failure_reason via a single batch UPDATE.
 func TestRunReaperTick_StuckJobsUpdated(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -51,9 +51,10 @@ func TestRunReaperTick_StuckJobsUpdated(t *testing.T) {
 
 	expectedReason := "job timed out after 4 hours"
 
-	mock.ExpectExec(`UPDATE jobs`).
-		WithArgs(expectedReason, "job-abc").
-		WillReturnResult(sqlmock.NewResult(1, 1))
+	// Batch UPDATE with RETURNING — use AnyArg for the []string array param.
+	mock.ExpectQuery(`UPDATE jobs`).
+		WithArgs(expectedReason, sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("job-abc"))
 
 	log := slog.Default()
 	runReaperTick(context.Background(), db, log, timeoutHours)
@@ -64,8 +65,8 @@ func TestRunReaperTick_StuckJobsUpdated(t *testing.T) {
 }
 
 // TestRunReaperTick_UpdateRaceCondition verifies that if a job's status
-// changes between SELECT and UPDATE (rowsAffected == 0), the reaper does not
-// treat it as an error.
+// changes between SELECT and batch UPDATE (not returned by RETURNING),
+// the reaper does not treat it as an error.
 func TestRunReaperTick_UpdateRaceCondition(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -83,10 +84,48 @@ func TestRunReaperTick_UpdateRaceCondition(t *testing.T) {
 		WithArgs(timeoutHours).
 		WillReturnRows(selectRows)
 
-	// 0 rows affected — job was updated by something else between SELECT and UPDATE
-	mock.ExpectExec(`UPDATE jobs`).
-		WithArgs("job timed out after 4 hours", "job-race").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+	// Batch UPDATE returns no rows — the job was updated by something else.
+	mock.ExpectQuery(`UPDATE jobs`).
+		WithArgs("job timed out after 4 hours", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+
+	log := slog.Default()
+	runReaperTick(context.Background(), db, log, timeoutHours)
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+// TestRunReaperTick_MultipleStuckJobs verifies that multiple stuck jobs are
+// handled in a single batch UPDATE.
+func TestRunReaperTick_MultipleStuckJobs(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to open sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	stuckAt := time.Now().Add(-5 * time.Hour)
+	timeoutHours := 4
+
+	selectRows := sqlmock.NewRows([]string{"id", "user_id", "created_at"}).
+		AddRow("job-1", "user-1", stuckAt).
+		AddRow("job-2", "user-2", stuckAt).
+		AddRow("job-3", "user-3", stuckAt)
+
+	mock.ExpectQuery(`SELECT id, user_id, created_at`).
+		WithArgs(timeoutHours).
+		WillReturnRows(selectRows)
+
+	expectedReason := "job timed out after 4 hours"
+
+	// Only job-1 and job-3 are returned — job-2 was updated by something else.
+	mock.ExpectQuery(`UPDATE jobs`).
+		WithArgs(expectedReason, sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).
+			AddRow("job-1").
+			AddRow("job-3"))
 
 	log := slog.Default()
 	runReaperTick(context.Background(), db, log, timeoutHours)

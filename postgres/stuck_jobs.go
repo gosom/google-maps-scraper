@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/lib/pq"
 )
 
 // RunStuckJobReaper finds jobs stuck in 'working' status beyond timeoutHours
@@ -86,36 +88,53 @@ func runReaperTick(ctx context.Context, db *sql.DB, log *slog.Logger, timeoutHou
 		return
 	}
 
-	// Update each stuck job individually so we can log per-job results.
+	// Collect IDs for a single batch UPDATE — O(1) round trips instead of O(n).
+	ids := make([]string, len(stuck))
+	for i, j := range stuck {
+		ids[i] = j.id
+	}
+
+	// pq.Array wraps []string so database/sql drivers can bind PostgreSQL arrays.
 	const updateQ = `
 		UPDATE jobs
 		SET status = 'failed',
 		    failure_reason = $1,
 		    updated_at = NOW()
-		WHERE id = $2
+		WHERE id = ANY($2)
 		  AND status = 'working'
-		  AND deleted_at IS NULL`
+		  AND deleted_at IS NULL
+		RETURNING id`
 
+	updatedRows, err := db.QueryContext(ctx, updateQ, failureReason, pq.Array(ids))
+	if err != nil {
+		log.Error("stuck_job_reaper_update_failed", slog.Any("error", err))
+		return
+	}
+	defer updatedRows.Close()
+
+	updatedSet := make(map[string]struct{})
+	for updatedRows.Next() {
+		var updatedID string
+		if err := updatedRows.Scan(&updatedID); err != nil {
+			log.Error("stuck_job_reaper_scan_updated_failed", slog.Any("error", err))
+			continue
+		}
+		updatedSet[updatedID] = struct{}{}
+	}
+
+	if err := updatedRows.Err(); err != nil {
+		log.Error("stuck_job_reaper_rows_error", slog.Any("error", err))
+		return
+	}
+
+	// Log each updated job with its original metadata.
 	for _, j := range stuck {
-		result, err := db.ExecContext(ctx, updateQ, failureReason, j.id)
-		if err != nil {
-			log.Error("stuck_job_reaper_update_failed",
+		if _, ok := updatedSet[j.id]; ok {
+			log.Warn("stuck_job_auto_failed",
 				slog.String("job_id", j.id),
-				slog.Any("error", err),
+				slog.String("user_id", j.userID),
+				slog.Time("started_at", j.createdAt),
 			)
-			continue
 		}
-
-		rowsAffected, _ := result.RowsAffected()
-		if rowsAffected == 0 {
-			// Job status changed between SELECT and UPDATE — skip silently.
-			continue
-		}
-
-		log.Warn("stuck_job_auto_failed",
-			slog.String("job_id", j.id),
-			slog.String("user_id", j.userID),
-			slog.Time("started_at", j.createdAt),
-		)
 	}
 }
