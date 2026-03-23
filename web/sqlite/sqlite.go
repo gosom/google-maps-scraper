@@ -39,9 +39,9 @@ func (repo *repo) Create(ctx context.Context, job *web.Job) error {
 		return err
 	}
 
-	const q = `INSERT INTO jobs (id, user_id, name, status, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+	const q = `INSERT INTO jobs (id, user_id, name, status, data, created_at, updated_at, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 
-	_, err = repo.db.ExecContext(ctx, q, item.ID, item.UserID, item.Name, item.Status, item.Data, item.CreatedAt, item.UpdatedAt)
+	_, err = repo.db.ExecContext(ctx, q, item.ID, item.UserID, item.Name, item.Status, item.Data, item.CreatedAt, item.UpdatedAt, item.Source)
 	if err != nil {
 		return err
 	}
@@ -141,7 +141,7 @@ type scannable interface {
 func rowToJob(row scannable) (web.Job, error) {
 	var j job
 
-	err := row.Scan(&j.ID, &j.UserID, &j.Name, &j.Status, &j.Data, &j.CreatedAt, &j.UpdatedAt)
+	err := row.Scan(&j.ID, &j.UserID, &j.Name, &j.Status, &j.Data, &j.CreatedAt, &j.UpdatedAt, &j.Source)
 	if err != nil {
 		return web.Job{}, err
 	}
@@ -152,6 +152,7 @@ func rowToJob(row scannable) (web.Job, error) {
 		Name:   j.Name,
 		Status: j.Status,
 		Date:   time.Unix(j.CreatedAt, 0).UTC(),
+		Source: j.Source,
 	}
 
 	err = json.Unmarshal([]byte(j.Data), &ans.Data)
@@ -176,6 +177,7 @@ func jobToRow(item *web.Job) (job, error) {
 		Data:      string(data),
 		CreatedAt: item.Date.Unix(),
 		UpdatedAt: time.Now().UTC().Unix(),
+		Source:    item.Source,
 	}, nil
 }
 
@@ -187,6 +189,7 @@ type job struct {
 	Data      string
 	CreatedAt int64
 	UpdatedAt int64
+	Source    string
 }
 
 func initDatabase(path string) (*sql.DB, error) {
@@ -236,7 +239,8 @@ func createSchema(db *sql.DB) error {
 			status TEXT NOT NULL,
 			data TEXT NOT NULL,
 			created_at INT NOT NULL,
-			updated_at INT NOT NULL
+			updated_at INT NOT NULL,
+			source TEXT NOT NULL DEFAULT 'web'
 		)
 	`)
 

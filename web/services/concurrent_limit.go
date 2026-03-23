@@ -150,11 +150,11 @@ func (s *ConcurrentLimitService) CreateJobWithLimit(ctx context.Context, job *mo
 	}
 
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO jobs (id, name, status, data, created_at, updated_at, user_id, failure_reason)
-		 VALUES ($1, $2, $3, $4, to_timestamp($5), to_timestamp($6), $7, $8)`,
+		`INSERT INTO jobs (id, name, status, data, created_at, updated_at, user_id, failure_reason, source)
+		 VALUES ($1, $2, $3, $4, to_timestamp($5), to_timestamp($6), $7, $8, $9)`,
 		job.ID, job.Name, job.Status, string(data),
 		createdAt, float64(now),
-		job.UserID, job.FailureReason,
+		job.UserID, job.FailureReason, job.Source,
 	)
 	if err != nil {
 		return fmt.Errorf("concurrent_limit: insert job: %w", err)

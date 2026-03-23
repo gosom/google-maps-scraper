@@ -34,6 +34,7 @@ type Job struct {
 	CreatedAt     *time.Time `json:"created_at,omitempty"`
 	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
 	FailureReason string     `json:"failure_reason,omitempty"`
+	Source        string     `json:"source"`
 }
 
 // SelectParams defines parameters for filtering job selection

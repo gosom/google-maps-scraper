@@ -36,7 +36,7 @@ func NewRepository(db *sql.DB) (models.JobRepository, error) {
 // Get retrieves a job by ID (only non-deleted jobs).
 // Pass userID="" to bypass ownership check (admin access).
 func (repo *repository) Get(ctx context.Context, id string, userID string) (models.Job, error) {
-	const q = `SELECT id, name, status, data, extract(epoch from created_at), extract(epoch from updated_at), user_id, COALESCE(failure_reason, '')
+	const q = `SELECT id, name, status, data, extract(epoch from created_at), extract(epoch from updated_at), user_id, COALESCE(failure_reason, ''), COALESCE(source, 'web')
                FROM jobs WHERE id = $1 AND (user_id = $2 OR $2 = '') AND deleted_at IS NULL`
 
 	row := repo.db.QueryRowContext(ctx, q, id, userID)
@@ -51,10 +51,10 @@ func (repo *repository) Create(ctx context.Context, job *models.Job) error {
 		return err
 	}
 
-	const q = `INSERT INTO jobs (id, name, status, data, created_at, updated_at, user_id, failure_reason)
-               VALUES ($1, $2, $3, $4, to_timestamp($5), to_timestamp($6), $7, $8)`
+	const q = `INSERT INTO jobs (id, name, status, data, created_at, updated_at, user_id, failure_reason, source)
+               VALUES ($1, $2, $3, $4, to_timestamp($5), to_timestamp($6), $7, $8, $9)`
 
-	_, err = repo.db.ExecContext(ctx, q, item.ID, item.Name, item.Status, item.Data, item.CreatedAt, item.UpdatedAt, item.UserID, item.FailureReason)
+	_, err = repo.db.ExecContext(ctx, q, item.ID, item.Name, item.Status, item.Data, item.CreatedAt, item.UpdatedAt, item.UserID, item.FailureReason, item.Source)
 	if err != nil {
 		repo.log.Error("job_create_failed", slog.String("job_id", job.ID), slog.String("user_id", job.UserID), slog.Any("error", err))
 		return fmt.Errorf("failed to create job: %w", err)
@@ -93,7 +93,7 @@ func (repo *repository) Select(ctx context.Context, params models.SelectParams) 
 		params.Limit = 1000
 	}
 
-	q := `SELECT id, name, status, data, extract(epoch from created_at), extract(epoch from updated_at), user_id, COALESCE(failure_reason, '') FROM jobs`
+	q := `SELECT id, name, status, data, extract(epoch from created_at), extract(epoch from updated_at), user_id, COALESCE(failure_reason, ''), COALESCE(source, 'web') FROM jobs`
 
 	var args []interface{}
 	var conditions []string
@@ -221,7 +221,7 @@ type scannable interface {
 func rowToJob(row scannable) (models.Job, error) {
 	var j job
 
-	err := row.Scan(&j.ID, &j.Name, &j.Status, &j.Data, &j.CreatedAt, &j.UpdatedAt, &j.UserID, &j.FailureReason)
+	err := row.Scan(&j.ID, &j.Name, &j.Status, &j.Data, &j.CreatedAt, &j.UpdatedAt, &j.UserID, &j.FailureReason, &j.Source)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return models.Job{}, errors.New("job not found")
@@ -241,6 +241,7 @@ func rowToJob(row scannable) (models.Job, error) {
 		CreatedAt:     &createdAt,
 		UpdatedAt:     &updatedAt,
 		FailureReason: j.FailureReason,
+		Source:        j.Source,
 	}
 
 	err = json.Unmarshal([]byte(j.Data), &ans.Data)
@@ -266,6 +267,7 @@ func jobToRow(item *models.Job) (job, error) {
 		CreatedAt:     float64(item.Date.Unix()),
 		UpdatedAt:     float64(time.Now().UTC().Unix()),
 		FailureReason: item.FailureReason,
+		Source:        item.Source,
 	}, nil
 }
 
@@ -278,6 +280,7 @@ type job struct {
 	CreatedAt     float64
 	UpdatedAt     float64
 	FailureReason string
+	Source        string
 }
 
 // Additional methods for soft delete management
@@ -347,7 +350,7 @@ func (repo *repository) GetDeletedJobs(ctx context.Context, params models.Select
 		params.Limit = 1000
 	}
 
-	q := `SELECT id, name, status, data, extract(epoch from created_at), extract(epoch from updated_at), user_id, COALESCE(failure_reason, '') FROM jobs`
+	q := `SELECT id, name, status, data, extract(epoch from created_at), extract(epoch from updated_at), user_id, COALESCE(failure_reason, ''), COALESCE(source, 'web') FROM jobs`
 
 	var args []interface{}
 	var conditions []string

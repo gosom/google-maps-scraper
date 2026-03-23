@@ -5,7 +5,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     status TEXT NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    source TEXT NOT NULL DEFAULT 'web' CHECK (source IN ('web', 'api'))
 );
 
 -- Create index for status queries

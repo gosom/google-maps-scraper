@@ -97,6 +97,11 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 	}
 
 	newJob := models.Job{ID: uuid.New().String(), UserID: userID, Name: req.Name, Date: time.Now().UTC(), Status: models.StatusPending, Data: req.JobData}
+	if auth.GetAPIKeyID(r.Context()) != "" {
+		newJob.Source = "api"
+	} else {
+		newJob.Source = "web"
+	}
 	newJob.Data.MaxTime *= time.Second
 	if err := webutils.ValidateJob(&newJob); err != nil {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: err.Error()})
