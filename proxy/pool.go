@@ -6,20 +6,31 @@ import (
 	"net"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 // Pool manages multiple proxy servers with load balancing
 type Pool struct {
 	proxies        []*WebshareProxy
-	servers        []*Server
 	portStart      int
 	portEnd        int
 	currentPort    int
-	nextProxyIndex int // For round-robin selection
-	mu             sync.RWMutex
-	blocked        map[string]time.Time // Track blocked proxies
-	logger         *slog.Logger
+	nextProxyIndex atomic.Int64 // Lock-free round-robin advancement
+
+	// portMu protects currentPort during port allocation.
+	// Held only for the brief port-scan + bind; no other map or proxy state is guarded here.
+	portMu sync.Mutex
+
+	// blockMu protects the blocked map (proxy block/unblock decisions).
+	blockMu sync.Mutex
+	blocked map[string]time.Time
+
+	// activeMu protects activeServers (per-job server lifecycle tracking).
+	activeMu      sync.Mutex
+	activeServers map[string]*Server // keyed by jobID
+
+	logger *slog.Logger
 }
 
 // NewPool creates a new proxy pool
@@ -46,28 +57,90 @@ func NewPool(proxyURLs []string, portStart, portEnd int, logger *slog.Logger) (*
 
 	logger.Info("proxies_configured_in_pool", slog.Int("count", len(proxies)))
 	return &Pool{
-		proxies:     proxies,
-		portStart:   portStart,
-		portEnd:     portEnd,
-		currentPort: portStart,
-		blocked:     make(map[string]time.Time),
-		logger:      logger,
+		proxies:       proxies,
+		portStart:     portStart,
+		portEnd:       portEnd,
+		currentPort:   portStart,
+		blocked:       make(map[string]time.Time),
+		activeServers: make(map[string]*Server),
+		logger:        logger,
 	}, nil
 }
 
-// GetServerForJob returns a dedicated proxy server for a job
+// GetServerForJob returns a dedicated proxy server for a job.
+// The proxy selection (round-robin + block check) is done under blockMu,
+// while port binding I/O is done under portMu -- the two never nest,
+// so concurrent jobs only serialize on the short critical sections.
 func (p *Pool) GetServerForJob(jobID string) (*Server, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	p.logger.Debug("pool_proxy_request", slog.String("job_id", jobID), slog.Int("available_proxies", len(p.proxies)))
 
-	// Find an available proxy using round-robin (not blocked)
-	var availableProxy *WebshareProxy
-	startIndex := p.nextProxyIndex
+	// Step 1: Select a proxy (lock-free index + short blockMu for block check).
+	availableProxy, err := p.selectProxy(jobID)
+	if err != nil {
+		return nil, err
+	}
 
-	for attempt := 0; attempt < len(p.proxies); attempt++ {
-		index := (startIndex + attempt) % len(p.proxies)
+	// Step 2: Bind a port -- I/O happens here, only portMu is held.
+	server, port, err := p.tryStartOnAvailablePort(availableProxy)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 3: Register the server for lifecycle tracking.
+	p.activeMu.Lock()
+	p.activeServers[jobID] = server
+	p.activeMu.Unlock()
+
+	p.logger.Info("job_proxy_assigned", slog.String("job_id", jobID), slog.String("host", availableProxy.Address), slog.String("port", availableProxy.Port), slog.Int("local_port", port))
+
+	return server, nil
+}
+
+// ReturnServer stops and removes the proxy server associated with a job.
+// Safe to call multiple times or with an unknown jobID.
+func (p *Pool) ReturnServer(jobID string) {
+	p.activeMu.Lock()
+	server, ok := p.activeServers[jobID]
+	if ok {
+		delete(p.activeServers, jobID)
+	}
+	p.activeMu.Unlock()
+
+	if ok && server != nil {
+		server.Stop()
+		p.logger.Info("job_proxy_returned", slog.String("job_id", jobID))
+	}
+}
+
+// Close stops all active proxy servers. Call during graceful shutdown.
+func (p *Pool) Close() {
+	p.activeMu.Lock()
+	servers := make(map[string]*Server, len(p.activeServers))
+	for k, v := range p.activeServers {
+		servers[k] = v
+	}
+	p.activeServers = make(map[string]*Server)
+	p.activeMu.Unlock()
+
+	for jobID, server := range servers {
+		if server != nil {
+			server.Stop()
+			p.logger.Info("pool_close_stopped_server", slog.String("job_id", jobID))
+		}
+	}
+	p.logger.Info("pool_closed", slog.Int("servers_stopped", len(servers)))
+}
+
+// selectProxy picks the next non-blocked proxy using atomic round-robin.
+func (p *Pool) selectProxy(jobID string) (*WebshareProxy, error) {
+	numProxies := len(p.proxies)
+	startIndex := int(p.nextProxyIndex.Add(1) - 1) // Atomically claim an index
+
+	p.blockMu.Lock()
+	defer p.blockMu.Unlock()
+
+	for attempt := 0; attempt < numProxies; attempt++ {
+		index := (startIndex + attempt) % numProxies
 		proxy := p.proxies[index]
 		proxyKey := fmt.Sprintf("%s:%s", proxy.Address, proxy.Port)
 
@@ -82,32 +155,18 @@ func (p *Pool) GetServerForJob(jobID string) (*Server, error) {
 			}
 		}
 
-		availableProxy = proxy
-		p.nextProxyIndex = (index + 1) % len(p.proxies) // Move to next proxy for next job
 		p.logger.Debug("pool_proxy_selected", slog.Int("index", index+1), slog.String("proxy", proxyKey), slog.String("job_id", jobID))
-		break
+		return proxy, nil
 	}
 
-	if availableProxy == nil {
-		p.logger.Error("pool_no_available_proxies", slog.String("job_id", jobID), slog.Int("total_proxies", len(p.proxies)))
-		return nil, fmt.Errorf("no available proxies (all blocked)")
-	}
-
-	// Try ports directly, avoiding TOCTOU race by combining port check with server start
-	server, port, err := p.tryStartOnAvailablePort(availableProxy)
-	if err != nil {
-		return nil, err
-	}
-
-	p.logger.Info("job_proxy_assigned", slog.String("job_id", jobID), slog.String("host", availableProxy.Address), slog.String("port", availableProxy.Port), slog.Int("local_port", port))
-
-	return server, nil
+	p.logger.Error("pool_no_available_proxies", slog.String("job_id", jobID), slog.Int("total_proxies", numProxies))
+	return nil, fmt.Errorf("no available proxies (all blocked)")
 }
 
 // MarkProxyBlocked marks a proxy as blocked
 func (p *Pool) MarkProxyBlocked(proxy *WebshareProxy) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.blockMu.Lock()
+	defer p.blockMu.Unlock()
 
 	proxyKey := fmt.Sprintf("%s:%s", proxy.Address, proxy.Port)
 	p.blocked[proxyKey] = time.Now()
@@ -117,7 +176,11 @@ func (p *Pool) MarkProxyBlocked(proxy *WebshareProxy) {
 // tryStartOnAvailablePort attempts to create and start a proxy server on each
 // port in the range, returning the first one that succeeds. This avoids the
 // TOCTOU race of checking port availability separately from binding.
+// Only portMu is held here -- no other locks.
 func (p *Pool) tryStartOnAvailablePort(proxy *WebshareProxy) (*Server, int, error) {
+	p.portMu.Lock()
+	defer p.portMu.Unlock()
+
 	try := func(port int) (*Server, error) {
 		server, err := NewServerFromProxy(proxy, port, p.logger)
 		if err != nil {
@@ -154,13 +217,19 @@ func (p *Pool) tryStartOnAvailablePort(proxy *WebshareProxy) (*Server, int, erro
 
 // GetStats returns pool statistics
 func (p *Pool) GetStats() map[string]interface{} {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
+	p.blockMu.Lock()
+	blockedCount := len(p.blocked)
+	p.blockMu.Unlock()
+
+	p.activeMu.Lock()
+	activeCount := len(p.activeServers)
+	p.activeMu.Unlock()
 
 	return map[string]interface{}{
 		"total_proxies":     len(p.proxies),
-		"blocked_proxies":   len(p.blocked),
-		"available_proxies": len(p.proxies) - len(p.blocked),
+		"blocked_proxies":   blockedCount,
+		"available_proxies": len(p.proxies) - blockedCount,
+		"active_servers":    activeCount,
 		"port_range":        fmt.Sprintf("%d-%d", p.portStart, p.portEnd),
 	}
 }

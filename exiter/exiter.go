@@ -26,6 +26,7 @@ type Exiter interface {
 	IncrPlacesFound(int)
 	IncrPlacesCompleted(int)
 	IncrResultsWritten(int) // New method to count actual results written
+	IsCancellationTriggered() bool
 	Run(context.Context)
 }
 
@@ -164,7 +165,7 @@ func (e *exiter) IncrResultsWritten(val int) {
 		if e.cancelFunc != nil {
 			slog.Debug("triggering_cancel_func")
 			// Trigger cancellation - we've written enough results
-			go e.cancelFunc() // Keep it async to avoid potential deadlocks
+			e.cancelFunc() // Synchronous: wrapperCancel uses non-blocking send, context.CancelFunc never blocks
 		} else {
 			slog.Warn("cancel_func_nil_on_max_results",
 				slog.Int("results_written", e.resultsWritten),
@@ -178,6 +179,12 @@ func (e *exiter) IncrResultsWritten(val int) {
 			slog.Bool("cancellation_triggered", e.cancellationTriggered),
 		)
 	}
+}
+
+func (e *exiter) IsCancellationTriggered() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.cancellationTriggered
 }
 
 func (e *exiter) Run(ctx context.Context) {

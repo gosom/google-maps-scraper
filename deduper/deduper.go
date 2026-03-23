@@ -2,7 +2,6 @@ package deduper
 
 import (
 	"context"
-	"sync"
 )
 
 type Deduper interface {
@@ -12,6 +11,5 @@ type Deduper interface {
 func New() Deduper {
 	return &hashmap{
 		seen: make(map[uint64]struct{}),
-		mux:  &sync.RWMutex{},
 	}
 }

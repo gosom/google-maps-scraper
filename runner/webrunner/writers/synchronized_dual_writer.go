@@ -16,6 +16,16 @@ import (
 	"github.com/gosom/scrapemate"
 )
 
+// mustMarshalJSON marshals v to JSON, logging a warning and returning "null" on error.
+func mustMarshalJSON(v any) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		slog.Warn("json_marshal_failed", slog.String("type", fmt.Sprintf("%T", v)), slog.Any("error", err))
+		return []byte("null")
+	}
+	return b
+}
+
 // SynchronizedDualWriter writes to both PostgreSQL and CSV in a synchronized way
 // ensuring both destinations receive exactly the same results
 type SynchronizedDualWriter struct {
@@ -117,6 +127,11 @@ func (w *SynchronizedDualWriter) Run(ctx context.Context, in <-chan scrapemate.R
 				)
 			}
 
+			// Guard: skip write if cancellation already triggered (max results reached)
+			if w.exitMonitor != nil && w.exitMonitor.IsCancellationTriggered() {
+				return nil
+			}
+
 			// Write to BOTH destinations atomically
 			inserted, err := w.writeToPostgreSQL(ctx, entry)
 			if err != nil {
@@ -177,19 +192,19 @@ func (w *SynchronizedDualWriter) writeToPostgreSQL(ctx context.Context, entry *g
 	defer cancel()
 
 	// Serialize JSON fields
-	openHoursJSON, _ := json.Marshal(entry.OpenHours)
-	popularTimesJSON, _ := json.Marshal(entry.PopularTimes)
-	reviewsPerRatingJSON, _ := json.Marshal(entry.ReviewsPerRating)
-	imagesJSON, _ := json.Marshal(entry.Images)
-	reservationsJSON, _ := json.Marshal(entry.Reservations)
-	orderOnlineJSON, _ := json.Marshal(entry.OrderOnline)
-	menuJSON, _ := json.Marshal(entry.Menu)
-	ownerJSON, _ := json.Marshal(entry.Owner)
-	completeAddressJSON, _ := json.Marshal(entry.CompleteAddress)
-	aboutJSON, _ := json.Marshal(entry.About)
-	userReviewsJSON, _ := json.Marshal(entry.UserReviews)
-	userReviewsExtendedJSON, _ := json.Marshal(entry.UserReviewsExtended)
-	dataJSON, _ := json.Marshal(entry)
+	openHoursJSON := mustMarshalJSON(entry.OpenHours)
+	popularTimesJSON := mustMarshalJSON(entry.PopularTimes)
+	reviewsPerRatingJSON := mustMarshalJSON(entry.ReviewsPerRating)
+	imagesJSON := mustMarshalJSON(entry.Images)
+	reservationsJSON := mustMarshalJSON(entry.Reservations)
+	orderOnlineJSON := mustMarshalJSON(entry.OrderOnline)
+	menuJSON := mustMarshalJSON(entry.Menu)
+	ownerJSON := mustMarshalJSON(entry.Owner)
+	completeAddressJSON := mustMarshalJSON(entry.CompleteAddress)
+	aboutJSON := mustMarshalJSON(entry.About)
+	userReviewsJSON := mustMarshalJSON(entry.UserReviews)
+	userReviewsExtendedJSON := mustMarshalJSON(entry.UserReviewsExtended)
+	dataJSON := mustMarshalJSON(entry)
 
 	// Convert slices to strings
 	categoriesStr := strings.Join(entry.Categories, ", ")
