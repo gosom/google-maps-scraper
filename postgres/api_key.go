@@ -92,7 +92,8 @@ func (r *apiKeyRepository) ListByUserID(ctx context.Context, userID string) ([]*
 		       created_at, revoked_at, scopes
 		FROM api_keys
 		WHERE user_id = $1
-		ORDER BY created_at DESC`
+		ORDER BY created_at DESC
+		LIMIT 100`
 
 	rows, err := r.db.QueryContext(ctx, q, userID)
 	return r.scanMany(rows, err)
@@ -106,7 +107,8 @@ func (r *apiKeyRepository) ListActiveByUserID(ctx context.Context, userID string
 		       created_at, revoked_at, scopes
 		FROM api_keys
 		WHERE user_id = $1 AND revoked_at IS NULL
-		ORDER BY created_at DESC`
+		ORDER BY created_at DESC
+		LIMIT 100`
 
 	rows, err := r.db.QueryContext(ctx, q, userID)
 	return r.scanMany(rows, err)
