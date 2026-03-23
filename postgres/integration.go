@@ -5,20 +5,20 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
-	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/pkg/encryption"
 )
 
 type IntegrationRepository struct {
-	db *sql.DB
+	db  *sql.DB
+	enc *encryption.Encryptor // nil means no encryption
 }
 
-func NewIntegrationRepository(db *sql.DB) *IntegrationRepository {
-	return &IntegrationRepository{db: db}
+func NewIntegrationRepository(db *sql.DB, enc *encryption.Encryptor) *IntegrationRepository {
+	return &IntegrationRepository{db: db, enc: enc}
 }
 
 func (r *IntegrationRepository) Get(ctx context.Context, userID, provider string) (*models.UserIntegration, error) {
@@ -47,44 +47,53 @@ func (r *IntegrationRepository) Get(ctx context.Context, userID, provider string
 	}
 
 	if len(i.AccessToken) > 0 {
-		decrypted, err := encryption.Decrypt(string(i.AccessToken))
+		decrypted, err := r.decryptToken(i.AccessToken)
 		if err != nil {
-			if strings.Contains(err.Error(), "ENCRYPTION_KEY") {
-				slog.Debug("encryption not configured, using plaintext access_token", slog.String("user_id", i.UserID), slog.String("provider", i.Provider))
-			} else {
-				slog.Error("failed to decrypt access_token, data may be corrupted or wrong key", slog.String("user_id", i.UserID), slog.String("provider", i.Provider), slog.Any("error", err))
-			}
-		} else {
-			i.AccessToken = []byte(decrypted)
+			return nil, fmt.Errorf("failed to decrypt integration access token: %w", err)
 		}
+		i.AccessToken = []byte(decrypted)
 	}
 	if len(i.RefreshToken) > 0 {
-		decrypted, err := encryption.Decrypt(string(i.RefreshToken))
+		decrypted, err := r.decryptToken(i.RefreshToken)
 		if err != nil {
-			if strings.Contains(err.Error(), "ENCRYPTION_KEY") {
-				slog.Debug("encryption not configured, using plaintext refresh_token", slog.String("user_id", i.UserID), slog.String("provider", i.Provider))
-			} else {
-				slog.Error("failed to decrypt refresh_token, data may be corrupted or wrong key", slog.String("user_id", i.UserID), slog.String("provider", i.Provider), slog.Any("error", err))
-			}
-		} else {
-			i.RefreshToken = []byte(decrypted)
+			return nil, fmt.Errorf("failed to decrypt integration refresh token: %w", err)
 		}
+		i.RefreshToken = []byte(decrypted)
 	}
 
 	return &i, nil
 }
 
+// decryptToken attempts to decrypt the token. If no encryptor is configured,
+// or if the value appears to be valid UTF-8 plaintext (legacy fallback),
+// it returns the value as-is.
+func (r *IntegrationRepository) decryptToken(token []byte) (string, error) {
+	if r.enc == nil {
+		return string(token), nil
+	}
+	decrypted, err := r.enc.Decrypt(string(token))
+	if err != nil {
+		// Legacy plaintext fallback: if decryption fails and the stored value
+		// is valid UTF-8, assume it was stored before encryption was enabled.
+		if utf8.Valid(token) {
+			return string(token), nil
+		}
+		return "", err
+	}
+	return decrypted, nil
+}
+
 func (r *IntegrationRepository) Save(ctx context.Context, integration *models.UserIntegration) error {
 	var encAccessToken, encRefreshToken []byte
 	if len(integration.AccessToken) > 0 {
-		encrypted, err := encryption.Encrypt(string(integration.AccessToken))
+		encrypted, err := r.encryptToken(string(integration.AccessToken))
 		if err != nil {
 			return fmt.Errorf("encrypting access token: %w", err)
 		}
 		encAccessToken = []byte(encrypted)
 	}
 	if len(integration.RefreshToken) > 0 {
-		encrypted, err := encryption.Encrypt(string(integration.RefreshToken))
+		encrypted, err := r.encryptToken(string(integration.RefreshToken))
 		if err != nil {
 			return fmt.Errorf("encrypting refresh token: %w", err)
 		}
@@ -113,6 +122,15 @@ func (r *IntegrationRepository) Save(ctx context.Context, integration *models.Us
 	).Scan(&integration.ID)
 
 	return err
+}
+
+// encryptToken encrypts the token if an encryptor is available,
+// otherwise stores it as plaintext.
+func (r *IntegrationRepository) encryptToken(plaintext string) (string, error) {
+	if r.enc == nil {
+		return plaintext, nil
+	}
+	return r.enc.Encrypt(plaintext)
 }
 
 func (r *IntegrationRepository) Delete(ctx context.Context, userID, provider string) error {

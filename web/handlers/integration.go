@@ -24,14 +24,16 @@ import (
 
 type IntegrationHandler struct {
 	repo          models.IntegrationRepository
+	enc           *encryption.Encryptor // nil means encryption disabled
 	jobService    JobService
 	sheetsService *googlesheets.Service
 	log           *slog.Logger
 }
 
-func NewIntegrationHandler(repo models.IntegrationRepository, jobService JobService, sheetsService *googlesheets.Service) *IntegrationHandler {
+func NewIntegrationHandler(repo models.IntegrationRepository, enc *encryption.Encryptor, jobService JobService, sheetsService *googlesheets.Service) *IntegrationHandler {
 	return &IntegrationHandler{
 		repo:          repo,
+		enc:           enc,
 		jobService:    jobService,
 		sheetsService: sheetsService,
 		log:           pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "integration"),
@@ -127,28 +129,34 @@ func (h *IntegrationHandler) HandleGoogleCallback(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Encrypt tokens
-	encryptedAccessToken, err := encryption.Encrypt(token.AccessToken)
-	if err != nil {
-		h.log.Error("google_oauth_encrypt_access_token_failed",
-			slog.String("user_id", userIDStr), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
-		http.Error(w, "Failed to encrypt access token", http.StatusInternalServerError)
-		return
-	}
+	// Encrypt tokens if encryptor is available, otherwise store plaintext
+	accessToken := token.AccessToken
+	refreshToken := token.RefreshToken
+	if h.enc != nil {
+		encrypted, encErr := h.enc.Encrypt(token.AccessToken)
+		if encErr != nil {
+			h.log.Error("google_oauth_encrypt_access_token_failed",
+				slog.String("user_id", userIDStr), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", encErr))
+			http.Error(w, "Failed to encrypt access token", http.StatusInternalServerError)
+			return
+		}
+		accessToken = encrypted
 
-	encryptedRefreshToken, err := encryption.Encrypt(token.RefreshToken)
-	if err != nil {
-		h.log.Error("google_oauth_encrypt_refresh_token_failed",
-			slog.String("user_id", userIDStr), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
-		http.Error(w, "Failed to encrypt refresh token", http.StatusInternalServerError)
-		return
+		encrypted, encErr = h.enc.Encrypt(token.RefreshToken)
+		if encErr != nil {
+			h.log.Error("google_oauth_encrypt_refresh_token_failed",
+				slog.String("user_id", userIDStr), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", encErr))
+			http.Error(w, "Failed to encrypt refresh token", http.StatusInternalServerError)
+			return
+		}
+		refreshToken = encrypted
 	}
 
 	integration := &models.UserIntegration{
 		UserID:       userIDStr,
 		Provider:     "google",
-		AccessToken:  []byte(encryptedAccessToken),
-		RefreshToken: []byte(encryptedRefreshToken),
+		AccessToken:  []byte(accessToken),
+		RefreshToken: []byte(refreshToken),
 		Expiry:       token.Expiry,
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
@@ -301,22 +309,15 @@ func (h *IntegrationHandler) getHTTPClient(ctx context.Context, userID string) (
 		return nil, err
 	}
 
-	decryptedAccessToken, err := encryption.Decrypt(string(integration.AccessToken))
-	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt access token: %w", err)
-	}
-
+	// Tokens are already decrypted by the repository's Get method
 	token := &oauth2.Token{
-		AccessToken: decryptedAccessToken,
+		AccessToken: string(integration.AccessToken),
 		TokenType:   "Bearer",
 		Expiry:      integration.Expiry,
 	}
 
 	if len(integration.RefreshToken) > 0 {
-		decryptedRefreshToken, err := encryption.Decrypt(string(integration.RefreshToken))
-		if err == nil {
-			token.RefreshToken = decryptedRefreshToken
-		}
+		token.RefreshToken = string(integration.RefreshToken)
 	}
 
 	tokenSource := h.googleConfig().TokenSource(ctx, token)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/gosom/google-maps-scraper/billing"
 	"github.com/gosom/google-maps-scraper/models"
+	"github.com/gosom/google-maps-scraper/pkg/encryption"
 	"github.com/gosom/google-maps-scraper/pkg/googlesheets"
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/web/auth"
@@ -30,6 +31,7 @@ type Dependencies struct {
 	PricingRuleRepo     models.PricingRuleRepository        // nil-safe; estimation falls back to defaults
 	ServerSecret        []byte                              // HMAC secret for GenerateAPIKey
 	ResultsSvc          ResultsService
+	Encryptor           *encryption.Encryptor           // nil means encryption disabled
 	IntegrationRepo     models.IntegrationRepository
 	GoogleSheetsSvc     *googlesheets.Service
 	ConcurrentLimitSvc  *webservices.ConcurrentLimitService
@@ -56,7 +58,7 @@ func NewHandlerGroup(deps Dependencies) *HandlerGroup {
 		APIKey:      &APIKeyHandlers{Deps: deps},
 		Webhook:     &WebhookHandlers{Deps: deps},
 		Billing:     &BillingHandlers{Deps: deps},
-		Integration: NewIntegrationHandler(deps.IntegrationRepo, deps.App, deps.GoogleSheetsSvc),
+		Integration: NewIntegrationHandler(deps.IntegrationRepo, deps.Encryptor, deps.App, deps.GoogleSheetsSvc),
 		Version:     NewVersionHandler(),
 	}
 }
