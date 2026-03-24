@@ -15,12 +15,8 @@ type Pool struct {
 	proxies        []*WebshareProxy
 	portStart      int
 	portEnd        int
-	currentPort    int
-	nextProxyIndex atomic.Int64 // Lock-free round-robin advancement
-
-	// portMu protects currentPort during port allocation.
-	// Held only for the brief port-scan + bind; no other map or proxy state is guarded here.
-	portMu sync.Mutex
+	portPool       chan int      // buffered channel as O(1) port pool
+	nextProxyIndex atomic.Int64  // Lock-free round-robin advancement
 
 	// blockMu protects the blocked map (proxy block/unblock decisions).
 	blockMu sync.Mutex
@@ -56,11 +52,18 @@ func NewPool(proxyURLs []string, portStart, portEnd int, logger *slog.Logger) (*
 	}
 
 	logger.Info("proxies_configured_in_pool", slog.Int("count", len(proxies)))
+
+	portCount := portEnd - portStart + 1
+	portPool := make(chan int, portCount)
+	for port := portStart; port <= portEnd; port++ {
+		portPool <- port
+	}
+
 	return &Pool{
 		proxies:       proxies,
 		portStart:     portStart,
 		portEnd:       portEnd,
-		currentPort:   portStart,
+		portPool:      portPool,
 		blocked:       make(map[string]time.Time),
 		activeServers: make(map[string]*Server),
 		logger:        logger,
@@ -69,7 +72,7 @@ func NewPool(proxyURLs []string, portStart, portEnd int, logger *slog.Logger) (*
 
 // GetServerForJob returns a dedicated proxy server for a job.
 // The proxy selection (round-robin + block check) is done under blockMu,
-// while port binding I/O is done under portMu -- the two never nest,
+// while port binding uses a buffered channel pool -- the two never nest,
 // so concurrent jobs only serialize on the short critical sections.
 func (p *Pool) GetServerForJob(jobID string) (*Server, error) {
 	p.logger.Debug("pool_proxy_request", slog.String("job_id", jobID), slog.Int("available_proxies", len(p.proxies)))
@@ -107,7 +110,9 @@ func (p *Pool) ReturnServer(jobID string) {
 	p.activeMu.Unlock()
 
 	if ok && server != nil {
+		port := server.localPort
 		server.Stop()
+		p.portPool <- port
 		p.logger.Info("job_proxy_returned", slog.String("job_id", jobID))
 	}
 }
@@ -124,7 +129,9 @@ func (p *Pool) Close() {
 
 	for jobID, server := range servers {
 		if server != nil {
+			port := server.localPort
 			server.Stop()
+			p.portPool <- port
 			p.logger.Info("pool_close_stopped_server", slog.String("job_id", jobID))
 		}
 	}
@@ -173,45 +180,29 @@ func (p *Pool) MarkProxyBlocked(proxy *WebshareProxy) {
 	p.logger.Warn("proxy_marked_blocked", slog.String("proxy", proxyKey))
 }
 
-// tryStartOnAvailablePort attempts to create and start a proxy server on each
-// port in the range, returning the first one that succeeds. This avoids the
-// TOCTOU race of checking port availability separately from binding.
-// Only portMu is held here -- no other locks.
+// tryStartOnAvailablePort acquires a port from the channel pool and attempts
+// to start a proxy server on it. O(1) acquire/release via buffered channel.
 func (p *Pool) tryStartOnAvailablePort(proxy *WebshareProxy) (*Server, int, error) {
-	p.portMu.Lock()
-	defer p.portMu.Unlock()
+	poolSize := cap(p.portPool)
+	for i := 0; i < poolSize; i++ {
+		var port int
+		select {
+		case port = <-p.portPool:
+		default:
+			return nil, -1, fmt.Errorf("no available ports in range %d-%d (all in use)", p.portStart, p.portEnd)
+		}
 
-	try := func(port int) (*Server, error) {
 		server, err := NewServerFromProxy(proxy, port, p.logger)
 		if err != nil {
-			return nil, err
+			p.portPool <- port // return port on failure
+			continue
 		}
 		if err := server.Start(); err != nil {
-			return nil, err
-		}
-		return server, nil
-	}
-
-	// Try from currentPort to portEnd
-	for port := p.currentPort; port <= p.portEnd; port++ {
-		server, err := try(port)
-		if err != nil {
+			p.portPool <- port // return port on failure
 			continue
 		}
-		p.currentPort = port + 1
 		return server, port, nil
 	}
-
-	// Wrap around: try from portStart to currentPort
-	for port := p.portStart; port < p.currentPort; port++ {
-		server, err := try(port)
-		if err != nil {
-			continue
-		}
-		p.currentPort = port + 1
-		return server, port, nil
-	}
-
 	return nil, -1, fmt.Errorf("no available ports in range %d-%d", p.portStart, p.portEnd)
 }
 
@@ -230,6 +221,7 @@ func (p *Pool) GetStats() map[string]interface{} {
 		"blocked_proxies":   blockedCount,
 		"available_proxies": len(p.proxies) - blockedCount,
 		"active_servers":    activeCount,
+		"available_ports":   len(p.portPool),
 		"port_range":        fmt.Sprintf("%d-%d", p.portStart, p.portEnd),
 	}
 }
