@@ -307,7 +307,12 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 	}
 
 	// Wait for feed with smart tiered fallback
+	log.Debug("browser_actions_starting_feed_detection", slog.String("url", page.URL()))
 	feedFound, singlePlace, err := j.waitForFeedWithFallback(ctx, page, log)
+	log.Debug("browser_actions_feed_detection_result",
+		slog.Bool("feed_found", feedFound),
+		slog.Bool("single_place", singlePlace),
+		slog.Any("error", err))
 	if err != nil {
 		resp.Error = err
 		return resp
@@ -334,7 +339,9 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 		return resp
 	}
 
-	_, err = scroll(ctx, page, j.MaxDepth, `div[role='feed']`)
+	log.Debug("browser_actions_starting_scroll", slog.Int("max_depth", j.MaxDepth))
+	scrollCnt, err := scroll(ctx, page, j.MaxDepth, `div[role='feed']`)
+	log.Debug("browser_actions_scroll_result", slog.Int("scroll_count", scrollCnt), slog.Any("error", err))
 	if err != nil {
 		resp.Error = err
 		return resp
@@ -578,6 +585,7 @@ func scroll(ctx context.Context,
 ) (int, error) {
 	expr := `async () => {
 		const el = document.querySelector("` + scrollSelector + `");
+		if (!el) return -1;
 		el.scrollTop = el.scrollHeight;
 
 		return new Promise((resolve, reject) => {
@@ -588,17 +596,18 @@ func scroll(ctx context.Context,
 	}`
 
 	var currentScrollHeight int
-	// Scroll to the bottom of the page.
 	waitTime := 100.
 	cnt := 0
 
 	initialTimeout := 500
 	maxWait2 := 2000.0
 
+	slog.Debug("scroll_start", slog.String("selector", scrollSelector), slog.Int("max_depth", maxDepth))
+
 	for i := 0; i < maxDepth; i++ {
-		// Check for cancellation before each scroll
 		select {
 		case <-ctx.Done():
+			slog.Debug("scroll_cancelled_before", slog.Int("iteration", i))
 			return cnt, ctx.Err()
 		default:
 		}
@@ -610,27 +619,58 @@ func scroll(ctx context.Context,
 			waitTime2 = int(maxWait2)
 		}
 
-		// Scroll to the bottom of the page.
 		scrollHeight, err := page.Evaluate(fmt.Sprintf(expr, waitTime2))
 		if err != nil {
+			slog.Debug("scroll_evaluate_error", slog.Int("iteration", i), slog.Any("error", err))
 			return cnt, err
 		}
 
-		heightF, ok := scrollHeight.(float64)
-		if !ok {
-			return cnt, fmt.Errorf("scrollHeight is not a number")
+		slog.Debug("scroll_evaluate_result",
+			slog.Int("iteration", i),
+			slog.String("type", fmt.Sprintf("%T", scrollHeight)),
+			slog.Any("value", scrollHeight))
+
+		// Playwright maps JS numbers to float64 in Go.
+		// Handle both float64 and int (some Playwright versions differ).
+		var height int
+		switch v := scrollHeight.(type) {
+		case float64:
+			height = int(v)
+		case int:
+			height = v
+		case int64:
+			height = int(v)
+		case nil:
+			slog.Debug("scroll_evaluate_returned_nil", slog.Int("iteration", i))
+			return cnt, fmt.Errorf("scroll evaluate returned nil (element may have disappeared)")
+		default:
+			slog.Debug("scroll_evaluate_unexpected_type",
+				slog.Int("iteration", i),
+				slog.String("type", fmt.Sprintf("%T", scrollHeight)),
+				slog.Any("value", scrollHeight))
+			return cnt, fmt.Errorf("scrollHeight unexpected type %T value=%v", scrollHeight, scrollHeight)
 		}
-		height := int(heightF)
+
+		if height == -1 {
+			slog.Debug("scroll_element_not_found", slog.Int("iteration", i), slog.String("selector", scrollSelector))
+			return cnt, fmt.Errorf("scroll target element not found: %s", scrollSelector)
+		}
+
+		slog.Debug("scroll_height",
+			slog.Int("iteration", i),
+			slog.Int("height", height),
+			slog.Int("prev_height", currentScrollHeight))
 
 		if height == currentScrollHeight {
+			slog.Debug("scroll_height_unchanged_done", slog.Int("iteration", i), slog.Int("height", height))
 			break
 		}
 
 		currentScrollHeight = height
 
-		// Check for cancellation after scroll
 		select {
 		case <-ctx.Done():
+			slog.Debug("scroll_cancelled_after", slog.Int("iteration", i))
 			return cnt, ctx.Err()
 		default:
 		}
