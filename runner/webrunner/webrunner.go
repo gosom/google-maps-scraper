@@ -827,8 +827,9 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		backupTimeout := time.NewTimer(time.Duration(allowedSeconds+60) * time.Second) // Increased buffer
 		defer backupTimeout.Stop()
 
-		// nil channel blocks forever in select — only becomes live when exit monitor fires.
-		var forcedCompletionCh <-chan time.Time
+		// forcedCompletionCh fires 30s after the exit monitor signals completion.
+		// This gives mate.Start a grace period to finish in-flight work before we force-kill it.
+		forcedCompletionCh := make(chan struct{}, 1)
 
 		go func() {
 			defer func() {
@@ -839,10 +840,17 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			select {
 			case <-exitMonitorCompleted:
 				w.logger.Debug("exit_monitor_completion_detected", slog.String("job_id", job.ID), slog.Int("forced_completion_timer_seconds", 30))
-				t := time.NewTimer(30 * time.Second)
-				forcedCompletionCh = t.C
+				// Wait 30s unconditionally — do NOT select on mateCtx.Done() here because
+				// wrapperCancel already cancelled mateCtx, so it would exit immediately.
+				time.Sleep(30 * time.Second)
+				w.logger.Debug("forced_completion_timer_fired", slog.String("job_id", job.ID))
+				select {
+				case forcedCompletionCh <- struct{}{}:
+				default:
+				}
 			case <-mateCtx.Done():
-				// Context cancelled but not by exit monitor completion (probably timeout)
+				// Context cancelled but not by exit monitor (e.g. timeout or parent cancel).
+				// Still give mate a chance to finish, but shorter grace.
 				w.logger.Debug("context_cancelled_not_exit_monitor", slog.String("job_id", job.ID))
 			}
 		}()
@@ -858,7 +866,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			err, _ = w.shutdownMate(job.ID, cancel, closeMate, resultCh)
 			w.logger.Debug("forced_completion", slog.String("job_id", job.ID), slog.Any("error", err))
 		case <-forcedCompletionCh:
-			// Exit monitor triggered cancellation, but mate.Start is taking too long to respond
+			// Exit monitor triggered cancellation, 30s grace elapsed, mate.Start still not done
 			w.logger.Debug("forced_completion_timeout", slog.String("job_id", job.ID))
 			err, _ = w.shutdownMate(job.ID, cancel, closeMate, resultCh)
 		}
