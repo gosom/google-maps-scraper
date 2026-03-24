@@ -141,45 +141,61 @@ type S3Uploader interface {
 	Upload(ctx context.Context, bucketName, key string, body io.Reader, contentType string) (*s3uploader.UploadResult, error)
 }
 
+// AWSConfig holds all AWS-related configuration fields.
+type AWSConfig struct {
+	AccessKey      string
+	SecretKey      string
+	Region         string
+	S3Bucket       string
+	LambdaRunner   bool
+	LambdaInvoker  bool
+	FunctionName   string
+	LambdaChunkSize int
+}
+
+// ScrapingConfig holds scraping behaviour configuration fields.
+type ScrapingConfig struct {
+	FastMode         bool
+	MaxDepth         int
+	LangCode         string
+	Email            bool
+	Images           bool
+	ExtraReviews     bool
+	MaxResults       int
+	GeoCoordinates   string
+	Zoom             int
+	Radius           float64
+	DisablePageReuse bool
+}
+
+// ProxyConfig holds proxy-related configuration fields.
+type ProxyConfig struct {
+	Proxies        []string
+	WebshareAPIKey string
+}
+
 type Config struct {
+	AWS      AWSConfig
+	Scraping ScrapingConfig
+	Proxy    ProxyConfig
+
 	Concurrency              int
 	CacheDir                 string
-	MaxDepth                 int
 	InputFile                string
 	ResultsFile              string
 	JSON                     bool
-	LangCode                 string
 	Debug                    bool
 	Dsn                      string
 	ProduceOnly              bool
 	ExitOnInactivityDuration time.Duration
-	Email                    bool
-	Images                   bool
 	CustomWriter             string
-	GeoCoordinates           string
-	Zoom                     int
 	RunMode                  int
 	DisableTelemetry         bool
 	WebRunner                bool
-	AwsLamdbaRunner          bool
 	DataFolder               string
-	Proxies                  []string
-	AwsAccessKey             string
-	AwsSecretKey             string
-	AwsRegion                string
 	S3Uploader               S3Uploader
-	S3Bucket                 string
-	AwsLambdaInvoker         bool
-	FunctionName             string
-	AwsLambdaChunkSize       int
-	FastMode                 bool
 	CookiesFile              string
-	Radius                   float64
 	Addr                     string
-	DisablePageReuse         bool
-	ExtraReviews             bool
-	MaxResults               int
-	WebshareAPIKey           string
 	// Version holds the Git SHA injected at build time via ldflags (-X main.version=...).
 	// It is propagated from main.go so that the /health endpoint can report it.
 	Version string
@@ -204,49 +220,49 @@ func ParseConfig() (*Config, error) {
 	}
 	flag.IntVar(&cfg.Concurrency, "c", defaultConcurrency, "sets the concurrency [default: half of CPU cores]. Also accepts CONCURRENCY env var with: numbers, percentages (75%), fractions (3/4), or keywords (auto, max, conservative, aggressive)")
 	flag.StringVar(&cfg.CacheDir, "cache", "cache", "sets the cache directory [no effect at the moment]")
-	flag.IntVar(&cfg.MaxDepth, "depth", 10, "maximum scroll depth in search results [default: 10]")
+	flag.IntVar(&cfg.Scraping.MaxDepth, "depth", 10, "maximum scroll depth in search results [default: 10]")
 	flag.StringVar(&cfg.ResultsFile, "results", "stdout", "path to the results file [default: stdout]")
 	flag.StringVar(&cfg.InputFile, "input", "", "path to the input file with queries (one per line) [default: empty]")
-	flag.StringVar(&cfg.LangCode, "lang", "en", "language code for Google (e.g., 'de' for German) [default: en]")
+	flag.StringVar(&cfg.Scraping.LangCode, "lang", "en", "language code for Google (e.g., 'de' for German) [default: en]")
 	flag.BoolVar(&cfg.Debug, "debug", false, "enable headful crawl (opens browser window) [default: false]")
 	flag.StringVar(&cfg.Dsn, "dsn", "", "database connection string [only valid with database provider]")
 	flag.BoolVar(&cfg.ProduceOnly, "produce", false, "produce seed jobs only (requires dsn)")
 	flag.DurationVar(&cfg.ExitOnInactivityDuration, "exit-on-inactivity", 0, "exit after inactivity duration (e.g., '5m')")
 	flag.BoolVar(&cfg.JSON, "json", false, "produce JSON output instead of CSV")
-	flag.BoolVar(&cfg.Email, "email", false, "extract emails from websites")
+	flag.BoolVar(&cfg.Scraping.Email, "email", false, "extract emails from websites")
 	flag.StringVar(&cfg.CustomWriter, "writer", "", "use custom writer plugin (format: 'dir:pluginName')")
-	flag.StringVar(&cfg.GeoCoordinates, "geo", "", "set geo coordinates for search (e.g., '37.7749,-122.4194')")
-	flag.IntVar(&cfg.Zoom, "zoom", 15, "set zoom level (0-21) for search")
+	flag.StringVar(&cfg.Scraping.GeoCoordinates, "geo", "", "set geo coordinates for search (e.g., '37.7749,-122.4194')")
+	flag.IntVar(&cfg.Scraping.Zoom, "zoom", 15, "set zoom level (0-21) for search")
 	flag.BoolVar(&cfg.WebRunner, "web", false, "run web server instead of crawling")
 	flag.StringVar(&cfg.DataFolder, "data-folder", "webdata", "data folder for web runner")
 	flag.StringVar(&proxies, "proxies", "", "comma separated list of proxies to use in the format protocol://user:pass@host:port example: socks5://localhost:9050 or http://user:pass@localhost:9050")
-	flag.BoolVar(&cfg.AwsLamdbaRunner, "aws-lambda", false, "run as AWS Lambda function")
-	flag.BoolVar(&cfg.AwsLambdaInvoker, "aws-lambda-invoker", false, "run as AWS Lambda invoker")
-	flag.StringVar(&cfg.FunctionName, "function-name", "", "AWS Lambda function name")
-	flag.StringVar(&cfg.AwsAccessKey, "aws-access-key", "", "AWS access key")
-	flag.StringVar(&cfg.AwsSecretKey, "aws-secret-key", "", "AWS secret key")
-	flag.StringVar(&cfg.AwsRegion, "aws-region", "", "AWS region")
-	flag.StringVar(&cfg.S3Bucket, "s3-bucket", "", "S3 bucket name")
-	flag.IntVar(&cfg.AwsLambdaChunkSize, "aws-lambda-chunk-size", 100, "AWS Lambda chunk size")
-	flag.BoolVar(&cfg.FastMode, "fast-mode", false, "fast mode (reduced data collection)")
-	flag.Float64Var(&cfg.Radius, "radius", 10000, "search radius in meters. Default is 10000 meters")
+	flag.BoolVar(&cfg.AWS.LambdaRunner, "aws-lambda", false, "run as AWS Lambda function")
+	flag.BoolVar(&cfg.AWS.LambdaInvoker, "aws-lambda-invoker", false, "run as AWS Lambda invoker")
+	flag.StringVar(&cfg.AWS.FunctionName, "function-name", "", "AWS Lambda function name")
+	flag.StringVar(&cfg.AWS.AccessKey, "aws-access-key", "", "AWS access key")
+	flag.StringVar(&cfg.AWS.SecretKey, "aws-secret-key", "", "AWS secret key")
+	flag.StringVar(&cfg.AWS.Region, "aws-region", "", "AWS region")
+	flag.StringVar(&cfg.AWS.S3Bucket, "s3-bucket", "", "S3 bucket name")
+	flag.IntVar(&cfg.AWS.LambdaChunkSize, "aws-lambda-chunk-size", 100, "AWS Lambda chunk size")
+	flag.BoolVar(&cfg.Scraping.FastMode, "fast-mode", false, "fast mode (reduced data collection)")
+	flag.Float64Var(&cfg.Scraping.Radius, "radius", 10000, "search radius in meters. Default is 10000 meters")
 	flag.StringVar(&cfg.Addr, "addr", ":8080", "address to listen on for web server")
-	flag.BoolVar(&cfg.DisablePageReuse, "disable-page-reuse", false, "disable page reuse in playwright")
-	flag.BoolVar(&cfg.ExtraReviews, "extra-reviews", false, "enable extra reviews collection")
-	flag.IntVar(&cfg.MaxResults, "max-results", 0, "maximum number of results to collect (0 = unlimited)")
+	flag.BoolVar(&cfg.Scraping.DisablePageReuse, "disable-page-reuse", false, "disable page reuse in playwright")
+	flag.BoolVar(&cfg.Scraping.ExtraReviews, "extra-reviews", false, "enable extra reviews collection")
+	flag.IntVar(&cfg.Scraping.MaxResults, "max-results", 0, "maximum number of results to collect (0 = unlimited)")
 
 	flag.Parse()
 
-	if cfg.AwsAccessKey == "" {
-		cfg.AwsAccessKey = os.Getenv("MY_AWS_ACCESS_KEY")
+	if cfg.AWS.AccessKey == "" {
+		cfg.AWS.AccessKey = os.Getenv("MY_AWS_ACCESS_KEY")
 	}
 
-	if cfg.AwsSecretKey == "" {
-		cfg.AwsSecretKey = os.Getenv("MY_AWS_SECRET_KEY")
+	if cfg.AWS.SecretKey == "" {
+		cfg.AWS.SecretKey = os.Getenv("MY_AWS_SECRET_KEY")
 	}
 
-	if cfg.AwsRegion == "" {
-		cfg.AwsRegion = os.Getenv("MY_AWS_REGION")
+	if cfg.AWS.Region == "" {
+		cfg.AWS.Region = os.Getenv("MY_AWS_REGION")
 	}
 
 	if cfg.Dsn == "" {
@@ -268,15 +284,15 @@ func ParseConfig() (*Config, error) {
 
 	// Do not force concurrency in debug mode; keep user/provider choice intact
 
-	if cfg.AwsLambdaInvoker && cfg.FunctionName == "" {
+	if cfg.AWS.LambdaInvoker && cfg.AWS.FunctionName == "" {
 		return nil, fmt.Errorf("FunctionName must be provided when using AwsLambdaInvoker")
 	}
 
-	if cfg.AwsLambdaInvoker && cfg.S3Bucket == "" {
+	if cfg.AWS.LambdaInvoker && cfg.AWS.S3Bucket == "" {
 		return nil, fmt.Errorf("S3Bucket must be provided when using AwsLambdaInvoker")
 	}
 
-	if cfg.AwsLambdaInvoker && cfg.InputFile == "" {
+	if cfg.AWS.LambdaInvoker && cfg.InputFile == "" {
 		return nil, fmt.Errorf("InputFile must be provided when using AwsLambdaInvoker")
 	}
 
@@ -284,12 +300,12 @@ func ParseConfig() (*Config, error) {
 		return nil, fmt.Errorf("Concurrency must be greater than 0, got %d", cfg.Concurrency)
 	}
 
-	if cfg.MaxDepth < 1 {
-		return nil, fmt.Errorf("MaxDepth must be greater than 0, got %d", cfg.MaxDepth)
+	if cfg.Scraping.MaxDepth < 1 {
+		return nil, fmt.Errorf("MaxDepth must be greater than 0, got %d", cfg.Scraping.MaxDepth)
 	}
 
-	if cfg.Zoom < 0 || cfg.Zoom > 21 {
-		return nil, fmt.Errorf("Zoom must be between 0 and 21, got %d", cfg.Zoom)
+	if cfg.Scraping.Zoom < 0 || cfg.Scraping.Zoom > 21 {
+		return nil, fmt.Errorf("Zoom must be between 0 and 21, got %d", cfg.Scraping.Zoom)
 	}
 
 	if cfg.Dsn == "" && cfg.ProduceOnly {
@@ -300,22 +316,22 @@ func ParseConfig() (*Config, error) {
 
 	// Priority: CLI proxies > Webshare API > No proxies
 	if proxies != "" {
-		cfg.Proxies = strings.Split(proxies, ",")
-		slog.Debug("cli_proxies_configured", slog.Int("count", len(cfg.Proxies)))
+		cfg.Proxy.Proxies = strings.Split(proxies, ",")
+		slog.Debug("cli_proxies_configured", slog.Int("count", len(cfg.Proxy.Proxies)))
 	} else if os.Getenv("PROXIES") != "" {
 		// Informative log: PROXIES env is set but ignored unless -proxies flag is provided
 		slog.Debug("proxies_env_ignored", slog.String("hint", "pass with -proxies flag to enable"))
 	}
 
 	// Check for Webshare API key
-	if cfg.WebshareAPIKey == "" {
-		cfg.WebshareAPIKey = os.Getenv("WEBSHARE_API_KEY")
+	if cfg.Proxy.WebshareAPIKey == "" {
+		cfg.Proxy.WebshareAPIKey = os.Getenv("WEBSHARE_API_KEY")
 	}
 
 	// Fetch proxies from Webshare API if no manual proxies provided and API key exists
-	if len(cfg.Proxies) == 0 && cfg.WebshareAPIKey != "" {
+	if len(cfg.Proxy.Proxies) == 0 && cfg.Proxy.WebshareAPIKey != "" {
 		slog.Info("webshare_api_key_detected_fetching_proxies")
-		webshareClient := webshare.NewClient(cfg.WebshareAPIKey, slog.Default())
+		webshareClient := webshare.NewClient(cfg.Proxy.WebshareAPIKey, slog.Default())
 
 		// Ensure IP is authorized
 		if err := webshareClient.EnsureIPAuthorized(); err != nil {
@@ -332,14 +348,14 @@ func ParseConfig() (*Config, error) {
 					slog.String("action", "continuing_without_proxies"),
 				)
 			} else {
-				cfg.Proxies = proxyList
-				slog.Info("webshare_proxies_loaded", slog.Int("proxy_count", len(cfg.Proxies)))
+				cfg.Proxy.Proxies = proxyList
+				slog.Info("webshare_proxies_loaded", slog.Int("proxy_count", len(cfg.Proxy.Proxies)))
 			}
 		}
 	}
 
-	if cfg.AwsAccessKey != "" && cfg.AwsSecretKey != "" && cfg.AwsRegion != "" {
-		uploader, err := s3uploader.New(cfg.AwsAccessKey, cfg.AwsSecretKey, cfg.AwsRegion)
+	if cfg.AWS.AccessKey != "" && cfg.AWS.SecretKey != "" && cfg.AWS.Region != "" {
+		uploader, err := s3uploader.New(cfg.AWS.AccessKey, cfg.AWS.SecretKey, cfg.AWS.Region)
 		if err != nil {
 			return nil, fmt.Errorf("creating S3 uploader: %w", err)
 		}
@@ -347,9 +363,9 @@ func ParseConfig() (*Config, error) {
 	}
 
 	switch {
-	case cfg.AwsLambdaInvoker:
+	case cfg.AWS.LambdaInvoker:
 		cfg.RunMode = RunModeAwsLambdaInvoker
-	case cfg.AwsLamdbaRunner:
+	case cfg.AWS.LambdaRunner:
 		cfg.RunMode = RunModeAwsLambda
 	case cfg.WebRunner || (cfg.Dsn == "" && cfg.InputFile == ""):
 		cfg.RunMode = RunModeWeb

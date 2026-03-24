@@ -31,14 +31,14 @@ func NewInvoker(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) 
 	}
 
 	creds := credentials.NewStaticCredentialsProvider(
-		cfg.AwsAccessKey,
-		cfg.AwsSecretKey,
+		cfg.AWS.AccessKey,
+		cfg.AWS.SecretKey,
 		"",
 	)
 
 	awscfg, err := config.LoadDefaultConfig(context.TODO(),
 		config.WithCredentialsProvider(creds),
-		config.WithRegion(cfg.AwsRegion),
+		config.WithRegion(cfg.AWS.Region),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("unable to load SDK config: %v", err)
@@ -103,7 +103,7 @@ func (i *invoker) setPayloads(cfg *runner.Config) error {
 
 	scanner := bufio.NewScanner(f)
 
-	chunkSize := cfg.AwsLambdaChunkSize
+	chunkSize := cfg.AWS.LambdaChunkSize
 
 	var currentChunk []string
 
@@ -123,13 +123,13 @@ func (i *invoker) setPayloads(cfg *runner.Config) error {
 			payload := lInput{
 				JobID:        jobID,
 				Part:         chunkNumber,
-				BucketName:   cfg.S3Bucket,
+				BucketName:   cfg.AWS.S3Bucket,
 				Keywords:     currentChunk,
-				Depth:        cfg.MaxDepth,
+				Depth:        cfg.Scraping.MaxDepth,
 				Concurrency:  cfg.Concurrency,
-				Language:     cfg.LangCode,
-				FunctionName: cfg.FunctionName,
-				ExtraReviews: cfg.ExtraReviews,
+				Language:     cfg.Scraping.LangCode,
+				FunctionName: cfg.AWS.FunctionName,
+				ExtraReviews: cfg.Scraping.ExtraReviews,
 			}
 			i.payloads = append(i.payloads, payload)
 
@@ -142,13 +142,13 @@ func (i *invoker) setPayloads(cfg *runner.Config) error {
 		payload := lInput{
 			JobID:        jobID,
 			Part:         chunkNumber,
-			BucketName:   cfg.S3Bucket,
+			BucketName:   cfg.AWS.S3Bucket,
 			Keywords:     currentChunk,
-			Depth:        cfg.MaxDepth,
+			Depth:        cfg.Scraping.MaxDepth,
 			Concurrency:  cfg.Concurrency,
-			Language:     cfg.LangCode,
-			FunctionName: cfg.FunctionName,
-			ExtraReviews: cfg.ExtraReviews,
+			Language:     cfg.Scraping.LangCode,
+			FunctionName: cfg.AWS.FunctionName,
+			ExtraReviews: cfg.Scraping.ExtraReviews,
 		}
 		i.payloads = append(i.payloads, payload)
 	}

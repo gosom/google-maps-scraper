@@ -88,28 +88,28 @@ func (l *lambdaAwsRunner) handler(ctx context.Context, input lInput) error {
 
 	exitMonitor := exiter.New()
 
-	seedJobs, err = runner.CreateSeedJobs(
-		false, // TODO support fast mode
-		input.Language,
-		in,
-		input.Depth,
-		false, // email
-		false, // images
-		false, // debug
-		func() int {
+	seedJobs, err = runner.CreateSeedJobs(runner.SeedJobConfig{
+		FastMode: false, // TODO support fast mode
+		LangCode: input.Language,
+		Input:    in,
+		MaxDepth: input.Depth,
+		Email:    false,
+		Images:   false,
+		Debug:    false,
+		ReviewsMax: func() int {
 			if input.ExtraReviews {
 				return 1 // Default to 1 review if enabled
 			}
 			return 0 // No reviews
-		}(), // reviewsMax
-		"",    // geoCoordinates
-		15,    // zoom
-		10000, // radius
-		nil,   // deduper
-		exitMonitor,
-		input.ExtraReviews,
-		0, // No max results limit for lambda runner (unlimited)
-	)
+		}(),
+		GeoCoordinates: "",
+		Zoom:           15,
+		Radius:         10000,
+		Dedup:          nil,
+		ExitMonitor:    exitMonitor,
+		ExtraReviews:   input.ExtraReviews,
+		MaxResults:     0, // No max results limit for lambda runner (unlimited)
+	})
 	if err != nil {
 		return err
 	}

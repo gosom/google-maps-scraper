@@ -46,11 +46,11 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 
 	// Create exit monitor if max results are specified
 	var exitMonitor exiter.Exiter
-	if cfg.MaxResults > 0 {
+	if cfg.Scraping.MaxResults > 0 {
 		exitMonitor = exiter.New()
-		exitMonitor.SetMaxResults(cfg.MaxResults)
+		exitMonitor.SetMaxResults(cfg.Scraping.MaxResults)
 		logger.Debug("database_runner_max_results_configured",
-			slog.Int("max_results", cfg.MaxResults),
+			slog.Int("max_results", cfg.Scraping.MaxResults),
 		)
 	}
 
@@ -76,11 +76,11 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 
 	// Choose result writer based on whether max results are enabled
 	var psqlWriter scrapemate.ResultWriter
-	if cfg.MaxResults > 0 && exitMonitor != nil {
+	if cfg.Scraping.MaxResults > 0 && exitMonitor != nil {
 		// Use enhanced result writer with exit monitor for max results support
 		psqlWriter = postgres.NewEnhancedResultWriterWithExiter(conn, "cli-user", "cli-job", exitMonitor)
 		logger.Debug("database_runner_using_enhanced_result_writer",
-			slog.Int("max_results", cfg.MaxResults),
+			slog.Int("max_results", cfg.Scraping.MaxResults),
 		)
 	} else {
 		// Use basic result writer for unlimited results
@@ -99,13 +99,13 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 		scrapemateapp.WithExitOnInactivity(cfg.ExitOnInactivityDuration),
 	}
 
-	if len(cfg.Proxies) > 0 {
+	if len(cfg.Proxy.Proxies) > 0 {
 		opts = append(opts,
-			scrapemateapp.WithProxies(cfg.Proxies),
+			scrapemateapp.WithProxies(cfg.Proxy.Proxies),
 		)
 	}
 
-	if !cfg.FastMode {
+	if !cfg.Scraping.FastMode {
 		if cfg.Debug {
 			opts = append(opts, scrapemateapp.WithJS(
 				scrapemateapp.Headfull(),
@@ -118,7 +118,7 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 		opts = append(opts, scrapemateapp.WithStealth("firefox"))
 	}
 
-	if !cfg.DisablePageReuse {
+	if !cfg.Scraping.DisablePageReuse {
 		opts = append(opts,
 			scrapemateapp.WithPageReuseLimit(2),
 			scrapemateapp.WithBrowserReuseLimit(200),
@@ -162,7 +162,7 @@ func (d *dbrunner) Run(ctx context.Context) error {
 		go d.exitMonitor.Run(ctx)
 
 		d.logger.Debug("database_runner_exit_monitor_started",
-			slog.Int("max_results", d.cfg.MaxResults),
+			slog.Int("max_results", d.cfg.Scraping.MaxResults),
 		)
 	}
 
@@ -197,28 +197,28 @@ func (d *dbrunner) produceSeedJobs(ctx context.Context) error {
 		input = f
 	}
 
-	jobs, err := runner.CreateSeedJobs(
-		d.cfg.FastMode,
-		d.cfg.LangCode,
-		input,
-		d.cfg.MaxDepth,
-		d.cfg.Email,
-		d.cfg.Images,
-		d.cfg.Debug,
-		func() int {
-			if d.cfg.ExtraReviews {
+	jobs, err := runner.CreateSeedJobs(runner.SeedJobConfig{
+		FastMode: d.cfg.Scraping.FastMode,
+		LangCode: d.cfg.Scraping.LangCode,
+		Input:    input,
+		MaxDepth: d.cfg.Scraping.MaxDepth,
+		Email:    d.cfg.Scraping.Email,
+		Images:   d.cfg.Scraping.Images,
+		Debug:    d.cfg.Debug,
+		ReviewsMax: func() int {
+			if d.cfg.Scraping.ExtraReviews {
 				return 1 // Default to 1 review if extra reviews enabled
 			}
 			return 0 // No reviews if not enabled
 		}(),
-		d.cfg.GeoCoordinates,
-		d.cfg.Zoom,
-		d.cfg.Radius,
-		nil,
-		d.exitMonitor, // Pass exit monitor for max results support
-		d.cfg.ExtraReviews,
-		d.cfg.MaxResults, // Pass max results limit from config
-	)
+		GeoCoordinates: d.cfg.Scraping.GeoCoordinates,
+		Zoom:           d.cfg.Scraping.Zoom,
+		Radius:         d.cfg.Scraping.Radius,
+		Dedup:          nil,
+		ExitMonitor:    d.exitMonitor,
+		ExtraReviews:   d.cfg.Scraping.ExtraReviews,
+		MaxResults:     d.cfg.Scraping.MaxResults,
+	})
 	if err != nil {
 		return err
 	}
