@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"runtime/debug"
+	"slices"
 	"sync"
 	"time"
 
@@ -258,6 +259,8 @@ type rateLimiterEntry struct {
 // keyRateLimiter maintains a map of per-key token-bucket limiters. Idle
 // entries (not seen within ttl) are cleaned up periodically to prevent
 // unbounded map growth.
+const maxRateLimitEntries = 50_000
+
 type keyRateLimiter struct {
 	mu       sync.Mutex
 	limiters map[string]*rateLimiterEntry
@@ -282,11 +285,38 @@ func (krl *keyRateLimiter) get(key string) *rate.Limiter {
 	defer krl.mu.Unlock()
 	e, ok := krl.limiters[key]
 	if !ok {
+		if len(krl.limiters) >= maxRateLimitEntries {
+			krl.evictOldest()
+		}
 		e = &rateLimiterEntry{limiter: rate.NewLimiter(krl.r, krl.b)}
 		krl.limiters[key] = e
 	}
 	e.lastSeen = time.Now()
 	return e.limiter
+}
+
+// evictOldest removes the oldest 20% of entries by lastSeen time.
+// Must be called with krl.mu held.
+func (krl *keyRateLimiter) evictOldest() {
+	n := len(krl.limiters)
+	if n == 0 {
+		return
+	}
+	type keyed struct {
+		key      string
+		lastSeen time.Time
+	}
+	entries := make([]keyed, 0, n)
+	for k, e := range krl.limiters {
+		entries = append(entries, keyed{key: k, lastSeen: e.lastSeen})
+	}
+	slices.SortFunc(entries, func(a, b keyed) int {
+		return a.lastSeen.Compare(b.lastSeen)
+	})
+	evictCount := max(n/5, 1)
+	for i := 0; i < evictCount && i < len(entries); i++ {
+		delete(krl.limiters, entries[i].key)
+	}
 }
 
 func (krl *keyRateLimiter) cleanup() {
