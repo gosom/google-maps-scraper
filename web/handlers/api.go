@@ -151,28 +151,6 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Guard: reject unlimited jobs (max_results=0) from low-balance users.
-		// Without a results cap, an unlimited job can scrape 10,000+ places and
-		// cost far more than the conservative 50-place estimate used for billing
-		// pre-flight. Require max_results > 0 when balance is below threshold.
-		const unlimitedJobMinBalanceMicro int64 = 5_000_000 // $5.00 in micro-credits
-		if newJob.Data.MaxResults <= 0 {
-			var bStr string
-			if err := h.Deps.DB.QueryRowContext(r.Context(),
-				`SELECT COALESCE(credit_balance, 0)::text FROM users WHERE id = $1`, userID,
-			).Scan(&bStr); err == nil {
-				if bFloat, pErr := strconv.ParseFloat(bStr, 64); pErr == nil {
-					if int64(math.Round(bFloat*models.MicroUnit)) < unlimitedJobMinBalanceMicro {
-						renderJSON(w, http.StatusPaymentRequired, models.APIError{
-							Code:    http.StatusPaymentRequired,
-							Message: "Your balance is below $5.00. Set a max_results limit or add credit before running unlimited jobs.",
-						})
-						return
-					}
-				}
-			}
-		}
-
 		// Pass the estimate to createJob for the authoritative transactional check.
 		estimateOpts = &webservices.JobLimitOpts{
 			EstimatedCost:   estimate.TotalEstimatedCost,
