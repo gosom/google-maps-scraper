@@ -13,7 +13,8 @@ import (
 
 // Encryptor handles AES-256-GCM encryption/decryption.
 type Encryptor struct {
-	gcm cipher.AEAD
+	gcm       cipher.AEAD
+	nonceSize int
 }
 
 // New creates an Encryptor from a raw key string (must be exactly 32 bytes).
@@ -34,13 +35,13 @@ func New(key string) (*Encryptor, error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating GCM: %w", err)
 	}
-	return &Encryptor{gcm: gcm}, nil
+	return &Encryptor{gcm: gcm, nonceSize: gcm.NonceSize()}, nil
 }
 
 // Encrypt encrypts a plaintext string using AES-GCM.
 // It returns a base64 encoded string containing the nonce and ciphertext.
 func (e *Encryptor) Encrypt(plaintext string) (string, error) {
-	nonce := make([]byte, e.gcm.NonceSize())
+	nonce := make([]byte, e.nonceSize)
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return "", fmt.Errorf("generating nonce: %w", err)
 	}
@@ -54,11 +55,10 @@ func (e *Encryptor) Decrypt(cryptoText string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("decoding ciphertext: %w", err)
 	}
-	nonceSize := e.gcm.NonceSize()
-	if len(ciphertext) < nonceSize {
+	if len(ciphertext) < e.nonceSize {
 		return "", fmt.Errorf("ciphertext too short")
 	}
-	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
+	nonce, ciphertext := ciphertext[:e.nonceSize], ciphertext[e.nonceSize:]
 	plaintext, err := e.gcm.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
 		return "", fmt.Errorf("decryption failed: %w", err)
