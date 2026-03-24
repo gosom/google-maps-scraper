@@ -332,11 +332,11 @@ func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []
 		reviews_per_rating, latitude, longitude, status_info, description,
 		reviews_link, thumbnail, timezone, price_range, data_id, images,
 		reservations, order_online, menu, owner, complete_address, about,
-		user_reviews, user_reviews_extended, emails, data, created_at
+		user_reviews, user_reviews_extended, emails, created_at
 	) VALUES `
 
 	elements := make([]string, 0, len(entries))
-	args := make([]interface{}, 0, len(entries)*38) // 38 fields per entry
+	args := make([]interface{}, 0, len(entries)*37) // 37 fields per entry
 
 	for i, entry := range entries {
 		// Serialize JSON fields
@@ -352,16 +352,15 @@ func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []
 		aboutJSON := mustMarshalJSON(entry.About)
 		userReviewsJSON := mustMarshalJSON(entry.UserReviews)
 		userReviewsExtendedJSON := mustMarshalJSON(entry.UserReviewsExtended)
-		dataJSON := mustMarshalJSON(entry)
 
 		// Convert categories slice to comma-separated string
 		categoriesStr := strings.Join(entry.Categories, ", ")
 		emailsStr := strings.Join(entry.Emails, ", ")
 
 		// Create parameter placeholders for this entry
-		base := i * 38
-		placeholders := make([]string, 38)
-		for j := 0; j < 38; j++ {
+		base := i * 37
+		placeholders := make([]string, 37)
+		for j := 0; j < 37; j++ {
 			placeholders[j] = fmt.Sprintf("$%d", base+j+1)
 		}
 		elements = append(elements, "("+strings.Join(placeholders, ", ")+")")
@@ -404,7 +403,6 @@ func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []
 			userReviewsJSON,         // user_reviews
 			userReviewsExtendedJSON, // user_reviews_extended
 			emailsStr,               // emails
-			dataJSON,                // data (full entry as JSON)
 			time.Now(),              // created_at
 		)
 	}
@@ -474,11 +472,11 @@ func (r *enhancedResultWriterWithExiter) batchSaveEnhancedWithCount(ctx context.
 		reviews_per_rating, latitude, longitude, status_info, description,
 		reviews_link, thumbnail, timezone, price_range, data_id, images,
 		reservations, order_online, menu, owner, complete_address, about,
-		user_reviews, user_reviews_extended, emails, data, created_at
+		user_reviews, user_reviews_extended, emails, created_at
 	) VALUES `
 
 	elements := make([]string, 0, len(entries))
-	args := make([]interface{}, 0, len(entries)*38) // 38 fields per entry
+	args := make([]interface{}, 0, len(entries)*37) // 37 fields per entry
 
 	for i, entry := range entries {
 		// Serialize JSON fields
@@ -494,16 +492,15 @@ func (r *enhancedResultWriterWithExiter) batchSaveEnhancedWithCount(ctx context.
 		aboutJSON := mustMarshalJSON(entry.About)
 		userReviewsJSON := mustMarshalJSON(entry.UserReviews)
 		userReviewsExtendedJSON := mustMarshalJSON(entry.UserReviewsExtended)
-		dataJSON := mustMarshalJSON(entry)
 
 		// Convert categories slice to comma-separated string
 		categoriesStr := strings.Join(entry.Categories, ", ")
 		emailsStr := strings.Join(entry.Emails, ", ")
 
 		// Create parameter placeholders for this entry
-		base := i * 38
-		placeholders := make([]string, 38)
-		for j := 0; j < 38; j++ {
+		base := i * 37
+		placeholders := make([]string, 37)
+		for j := 0; j < 37; j++ {
 			placeholders[j] = fmt.Sprintf("$%d", base+j+1)
 		}
 		elements = append(elements, "("+strings.Join(placeholders, ", ")+")")
@@ -546,7 +543,6 @@ func (r *enhancedResultWriterWithExiter) batchSaveEnhancedWithCount(ctx context.
 			userReviewsJSON,         // user_reviews
 			userReviewsExtendedJSON, // user_reviews_extended
 			emailsStr,               // emails
-			dataJSON,                // data (full entry as JSON)
 			time.Now(),              // created_at
 		)
 	}

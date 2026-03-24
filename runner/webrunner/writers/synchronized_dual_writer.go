@@ -204,7 +204,6 @@ func (w *SynchronizedDualWriter) writeToPostgreSQL(ctx context.Context, entry *g
 	aboutJSON := mustMarshalJSON(entry.About)
 	userReviewsJSON := mustMarshalJSON(entry.UserReviews)
 	userReviewsExtendedJSON := mustMarshalJSON(entry.UserReviewsExtended)
-	dataJSON := mustMarshalJSON(entry)
 
 	// Convert slices to strings
 	categoriesStr := strings.Join(entry.Categories, ", ")
@@ -216,12 +215,12 @@ func (w *SynchronizedDualWriter) writeToPostgreSQL(ctx context.Context, entry *g
 		reviews_per_rating, latitude, longitude, status_info, description,
 		reviews_link, thumbnail, timezone, price_range, data_id, images,
 		reservations, order_online, menu, owner, complete_address, about,
-		user_reviews, user_reviews_extended, emails, data, created_at
+		user_reviews, user_reviews_extended, emails, created_at
 	) VALUES (
 		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
 		$11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
 		$21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
-		$31, $32, $33, $34, $35, $36, $37, $38
+		$31, $32, $33, $34, $35, $36, $37
 	) ON CONFLICT (cid, job_id) DO NOTHING`
 
 	res, err := w.db.ExecContext(dbCtx, q,
@@ -261,8 +260,7 @@ func (w *SynchronizedDualWriter) writeToPostgreSQL(ctx context.Context, entry *g
 		userReviewsJSON,         // 34
 		userReviewsExtendedJSON, // 35
 		emailsStr,               // 36
-		dataJSON,                // 37
-		time.Now(),              // 38
+		time.Now(),              // 37
 	)
 
 	if err != nil {
