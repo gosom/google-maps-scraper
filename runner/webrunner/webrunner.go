@@ -40,6 +40,75 @@ import (
 // The channel doubles as a completion signal, replacing a separate done channel.
 type mateResult struct{ err error }
 
+// maxLeakedMates is the upper bound on tracked leaked mate channels.
+// When this limit is reached, the oldest entry is dropped to prevent
+// unbounded slice growth.
+const maxLeakedMates = 100
+
+// leakTracker tracks leaked mate.Start goroutines so they can be joined
+// (with a timeout) during Close(). All fields are goroutine-safe.
+type leakTracker struct {
+	// mu protects mates from concurrent access.
+	mu sync.Mutex
+	// mates tracks result channels of abandoned mate.Start goroutines.
+	mates []<-chan mateResult
+	// count tracks the total number of leaked mate goroutines for observability.
+	// Incremented atomically each time a mate.Start goroutine cannot be joined.
+	count atomic.Int64
+}
+
+// track registers the result channel of an abandoned mate.Start goroutine.
+func (lt *leakTracker) track(resultCh <-chan mateResult, jobID string, logger *slog.Logger) {
+	lt.mu.Lock()
+	defer lt.mu.Unlock()
+
+	if len(lt.mates) >= maxLeakedMates {
+		logger.Warn("leaked_mates_cap_reached",
+			slog.String("job_id", jobID),
+			slog.Int("cap", maxLeakedMates),
+			slog.String("action", "dropping_oldest"),
+		)
+		copy(lt.mates, lt.mates[1:])
+		lt.mates[len(lt.mates)-1] = nil
+		lt.mates = lt.mates[:len(lt.mates)-1]
+	}
+
+	lt.mates = append(lt.mates, resultCh)
+	total := lt.count.Add(1)
+	logger.Warn("leaked_mate_tracked", slog.String("job_id", jobID), slog.Int("total_leaked", len(lt.mates)), slog.Int64("lifetime_leaked", total))
+}
+
+// drain joins all tracked leaked goroutines with a timeout.
+func (lt *leakTracker) drain(timeout time.Duration, logger *slog.Logger) {
+	lt.mu.Lock()
+	leaked := lt.mates
+	lt.mates = nil
+	lt.mu.Unlock()
+
+	if len(leaked) == 0 {
+		return
+	}
+
+	logger.Info("draining_leaked_mates", slog.Int("count", len(leaked)))
+	deadline := time.After(timeout)
+	for i, ch := range leaked {
+		select {
+		case <-ch:
+			logger.Debug("leaked_mate_joined", slog.Int("index", i))
+		case <-deadline:
+			logger.Warn("leaked_mate_drain_timeout", slog.Int("joined", i), slog.Int("remaining", len(leaked)-i))
+			return
+		}
+	}
+}
+
+// lifecycle manages background goroutine tracking for graceful shutdown.
+type lifecycle struct {
+	// bgWg tracks background goroutines (stuck job reaper, webhook cleanup) so
+	// they can be joined during graceful shutdown.
+	bgWg sync.WaitGroup
+}
+
 type webrunner struct {
 	srv         *web.Server
 	svc         *web.Service
@@ -52,19 +121,8 @@ type webrunner struct {
 	jobFileRepo models.JobFileRepository
 	logger      *slog.Logger
 
-	// leakedMu protects leakedMates from concurrent access.
-	leakedMu sync.Mutex
-	// leakedMates tracks result channels of abandoned mate.Start goroutines
-	// so they can be joined (with a timeout) during Close().
-	leakedMates []<-chan mateResult
-
-	// leakedMateCount tracks the total number of leaked mate goroutines for observability.
-	// Incremented atomically each time a mate.Start goroutine cannot be joined.
-	leakedMateCount atomic.Int64
-
-	// bgWg tracks background goroutines (stuck job reaper, webhook cleanup) so
-	// they can be joined during graceful shutdown.
-	bgWg sync.WaitGroup
+	leaks leakTracker
+	lc    lifecycle
 }
 
 // buildServerConfig loads integration settings from environment, enforces required
@@ -232,16 +290,16 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 
 	// Initialize proxy pool if proxies are configured
 	var proxyPool *proxy.Pool
-	if len(cfg.Proxies) > 0 {
-		slog.Debug("creating_proxy_pool", slog.Int("proxy_count", len(cfg.Proxies)))
-		slog.Debug("proxy_list", slog.Any("proxies", cfg.Proxies))
+	if len(cfg.Proxy.Proxies) > 0 {
+		slog.Debug("creating_proxy_pool", slog.Int("proxy_count", len(cfg.Proxy.Proxies)))
+		slog.Debug("proxy_list", slog.Any("proxies", cfg.Proxy.Proxies))
 
 		// Create proxy pool with port range 8888-9998 (1000 ports)
-		proxyPool, err = proxy.NewPool(cfg.Proxies, 8888, 9998, slog.Default())
+		proxyPool, err = proxy.NewPool(cfg.Proxy.Proxies, 8888, 9998, slog.Default())
 		if err != nil {
 			return nil, fmt.Errorf("failed to create proxy pool: %w", err)
 		}
-		slog.Info("proxy_pool_started", slog.Int("proxy_count", len(cfg.Proxies)))
+		slog.Info("proxy_pool_started", slog.Int("proxy_count", len(cfg.Proxy.Proxies)))
 	}
 
 	// Initialize S3 uploader if AWS credentials are configured
@@ -335,9 +393,9 @@ func (w *webrunner) Run(ctx context.Context) error {
 	stuckCheckMins := envInt("STUCK_JOB_CHECK_INTERVAL_MINUTES", 10)
 	stuckTimeoutHours := envInt("STUCK_JOB_TIMEOUT_HOURS", 4)
 	checkInterval := time.Duration(stuckCheckMins) * time.Minute
-	w.bgWg.Add(1)
+	w.lc.bgWg.Add(1)
 	go func() {
-		defer w.bgWg.Done()
+		defer w.lc.bgWg.Done()
 		postgres.RunStuckJobReaper(ctx, w.db, w.logger, checkInterval, stuckTimeoutHours)
 	}()
 
@@ -345,9 +403,9 @@ func (w *webrunner) Run(ctx context.Context) error {
 	// WEBHOOK_EVENT_RETENTION_DAYS (default 90) in daily batches.
 	if w.billingSvc != nil {
 		retentionDays := envInt("WEBHOOK_EVENT_RETENTION_DAYS", 90)
-		w.bgWg.Add(1)
+		w.lc.bgWg.Add(1)
 		go func() {
-			defer w.bgWg.Done()
+			defer w.lc.bgWg.Done()
 			w.billingSvc.StartWebhookEventCleanup(ctx, retentionDays)
 		}()
 	}
@@ -366,11 +424,7 @@ func (w *webrunner) Run(ctx context.Context) error {
 // trackLeakedMate registers the result channel of an abandoned mate.Start
 // goroutine so it can be joined during Close().
 func (w *webrunner) trackLeakedMate(resultCh <-chan mateResult, jobID string) {
-	w.leakedMu.Lock()
-	defer w.leakedMu.Unlock()
-	w.leakedMates = append(w.leakedMates, resultCh)
-	count := w.leakedMateCount.Add(1)
-	w.logger.Warn("leaked_mate_tracked", slog.String("job_id", jobID), slog.Int("total_leaked", len(w.leakedMates)), slog.Int64("lifetime_leaked", count))
+	w.leaks.track(resultCh, jobID, w.logger)
 }
 
 // shutdownMate cancels the mate context, closes the mate with a timeout, and
@@ -405,26 +459,8 @@ func (w *webrunner) shutdownMate(jobID string, cancel context.CancelFunc, closeM
 }
 
 func (w *webrunner) Close(context.Context) error {
-	// Drain all leaked mate.Start goroutines with a timeout
-	w.leakedMu.Lock()
-	leaked := w.leakedMates
-	w.leakedMates = nil
-	w.leakedMu.Unlock()
-
-	if len(leaked) > 0 {
-		w.logger.Info("draining_leaked_mates", slog.Int("count", len(leaked)))
-		deadline := time.After(30 * time.Second)
-		for i, ch := range leaked {
-			select {
-			case <-ch:
-				w.logger.Debug("leaked_mate_joined", slog.Int("index", i))
-			case <-deadline:
-				w.logger.Warn("leaked_mate_drain_timeout", slog.Int("joined", i), slog.Int("remaining", len(leaked)-i))
-				goto drained
-			}
-		}
-	}
-drained:
+	// Drain all leaked mate.Start goroutines with a timeout.
+	w.leaks.drain(30*time.Second, w.logger)
 
 	if w.proxyPool != nil {
 		w.proxyPool.Close()
@@ -681,29 +717,28 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		coords = job.Data.Lat + "," + job.Data.Lon
 	}
 
-	seedJobs, err := runner.CreateSeedJobs(
-		job.Data.FastMode,
-		job.Data.Lang,
-		strings.NewReader(strings.Join(job.Data.Keywords, "\n")),
-		job.Data.Depth,
-		job.Data.Email,
-		job.Data.Images,
-		w.cfg.Debug,
-		job.Data.ReviewsMax, // Pass the actual review count
-		coords,
-		job.Data.Zoom,
-		func() float64 {
+	seedJobs, err := runner.CreateSeedJobs(runner.SeedJobConfig{
+		FastMode:       job.Data.FastMode,
+		LangCode:       job.Data.Lang,
+		Input:          strings.NewReader(strings.Join(job.Data.Keywords, "\n")),
+		MaxDepth:       job.Data.Depth,
+		Email:          job.Data.Email,
+		Images:         job.Data.Images,
+		Debug:          w.cfg.Debug,
+		ReviewsMax:     job.Data.ReviewsMax,
+		GeoCoordinates: coords,
+		Zoom:           job.Data.Zoom,
+		Radius: func() float64 {
 			if job.Data.Radius <= 0 {
 				return 10000 // 10 km
 			}
-
 			return float64(job.Data.Radius)
 		}(),
-		dedup,
-		exitMonitor,
-		job.Data.ReviewsMax > 0, // Keep extraReviews for backward compatibility
-		job.Data.MaxResults,     // Pass max results limit
-	)
+		Dedup:        dedup,
+		ExitMonitor:  exitMonitor,
+		ExtraReviews: job.Data.ReviewsMax > 0,
+		MaxResults:   job.Data.MaxResults,
+	})
 	if err != nil {
 		job.Status = web.StatusFailed
 		job.FailureReason = fmt.Sprintf("CreateSeedJobs failed: %v", err)
@@ -896,7 +931,6 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 				// This is a real error
 				w.logger.Debug("real_error_occurred", slog.String("job_id", job.ID), slog.Any("error", err))
 				cancel()
-
 				job.Status = web.StatusFailed
 				job.FailureReason = fmt.Sprintf("runtime error: %v", err)
 
@@ -1106,7 +1140,7 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 		w.logger.Debug("no_proxies_configured", slog.String("job_id", job.ID))
 	}
 
-	if !w.cfg.DisablePageReuse {
+	if !w.cfg.Scraping.DisablePageReuse {
 		opts = append(opts,
 			scrapemateapp.WithPageReuseLimit(2),
 			scrapemateapp.WithBrowserReuseLimit(200),
