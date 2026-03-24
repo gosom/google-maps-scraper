@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gosom/google-maps-scraper/deduper"
 	"github.com/gosom/google-maps-scraper/exiter"
+	"github.com/gosom/kit/logging"
 	"github.com/gosom/scrapemate"
 	"github.com/playwright-community/playwright-go"
 )
@@ -231,8 +232,19 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 	return nil, next, nil
 }
 
+// Timeout constants for feed detection after consent/navigation.
+// Based on measured data: feed appears in 2.7-4.4s typical, up to 6.3s worst case.
+const (
+	feedWaitPrimaryTimeout   = 6000  // Primary WaitForSelector timeout (ms) — covers p99
+	feedWaitExtendedTimeout  = 4000  // Extended wait if page is still loading (ms)
+	consentCheckTimeout      = 500   // Timeout for checking consent overlay (ms)
+	singlePlaceWaitTimeout   = 5     // Timeout for single-place URL redirect (seconds)
+)
+
 func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scrapemate.Response {
 	var resp scrapemate.Response
+
+	log := scrapemate.GetLoggerFromContext(ctx)
 
 	// Inject Google cookies for authenticated access (reviews, full data)
 	if err := InjectCookiesIntoPage(page); err != nil {
@@ -249,11 +261,14 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 
 	pageResponse, err := page.Goto(j.GetFullURL(), playwright.PageGotoOptions{
 		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
-		Timeout:   playwright.Float(30000), // Increased timeout
+		Timeout:   playwright.Float(30000),
 	})
 
 	if err != nil {
 		resp.Error = err
+		if j.ExitMonitor != nil {
+			j.ExitMonitor.IncrSeedCompleted(1)
+		}
 		return resp
 	}
 
@@ -270,6 +285,9 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 
 	if err = clickRejectCookiesIfRequired(page); err != nil {
 		resp.Error = err
+		if j.ExitMonitor != nil {
+			j.ExitMonitor.IncrSeedCompleted(1)
+		}
 		return resp
 	}
 
@@ -278,20 +296,7 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 		slog.Debug("job_cookies_reinject_skipped", slog.Any("error", err))
 	}
 
-	// Wait for main content to be ready
-	const defaultTimeout = 10000
-
-	err = page.WaitForURL(page.URL(), playwright.PageWaitForURLOptions{
-		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
-		Timeout:   playwright.Float(defaultTimeout),
-	})
-
-	if err != nil {
-		resp.Error = err
-		return resp
-	}
-
-	// Check for cancellation after waiting
+	// Check for cancellation after consent handling
 	select {
 	case <-ctx.Done():
 		resp.Error = ctx.Err()
@@ -307,70 +312,49 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 		resp.Headers.Add(k, v)
 	}
 
-	// When Google Maps finds only 1 place, it slowly redirects to that place's URL
-	// check element scroll
-	sel := `div[role='feed']`
-
-	//nolint:staticcheck // TODO replace with the new playwright API
-	_, err = page.WaitForSelector(sel, playwright.PageWaitForSelectorOptions{
-		Timeout: playwright.Float(700),
-	})
-
-	var singlePlace bool
-
+	// Wait for feed with smart tiered fallback
+	feedFound, singlePlace, err := j.waitForFeedWithFallback(ctx, page, log)
 	if err != nil {
-		waitCtx, waitCancel := context.WithTimeout(ctx, time.Second*5)
-		defer waitCancel()
-
-		singlePlace = waitUntilURLContains(waitCtx, page, "/maps/place/")
-
-		waitCancel()
-	}
-
-	// Check for cancellation before processing single place
-	select {
-	case <-ctx.Done():
-		resp.Error = ctx.Err()
+		resp.Error = err
+		if j.ExitMonitor != nil {
+			j.ExitMonitor.IncrSeedCompleted(1)
+		}
 		return resp
-	default:
 	}
 
-	// Debug: log the current URL to see if we're being redirected
-	log := scrapemate.GetLoggerFromContext(ctx)
 	log.Debug("gmap_job_current_page_url", slog.String("url", page.URL()))
 
 	if singlePlace {
 		resp.URL = page.URL()
 		log.Debug("gmap_job_single_place_redirect_detected", slog.String("url", resp.URL))
 
-		var body string
-
-		body, err = page.Content()
+		body, err := page.Content()
 		if err != nil {
 			resp.Error = err
+			if j.ExitMonitor != nil {
+				j.ExitMonitor.IncrSeedCompleted(1)
+			}
 			return resp
 		}
 
 		resp.Body = []byte(body)
-		log.Debug("gmap_job_single_place_content_loaded", slog.Int("content_length", len(resp.Body)))
-
 		return resp
 	}
 
-	// Debug: Check if the feed selector exists
-	log.Debug("Looking for search results feed...")
-	_, feedErr := page.QuerySelector(`div[role='feed']`)
-	if feedErr != nil {
-		log.Debug("gmap_job_feed_selector_not_found", slog.Any("error", feedErr))
-	} else {
-		log.Debug("gmap_job_feed_selector_found")
+	if !feedFound {
+		resp.Error = fmt.Errorf("feed not found after all fallback attempts, url=%s", page.URL())
+		if j.ExitMonitor != nil {
+			j.ExitMonitor.IncrSeedCompleted(1)
+		}
+		return resp
 	}
 
-	scrollSelector := `div[role='feed']`
-
-	_, err = scroll(ctx, page, j.MaxDepth, scrollSelector)
+	_, err = scroll(ctx, page, j.MaxDepth, `div[role='feed']`)
 	if err != nil {
 		resp.Error = err
+		if j.ExitMonitor != nil {
+			j.ExitMonitor.IncrSeedCompleted(1)
+		}
 		return resp
 	}
 
@@ -385,12 +369,126 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 	body, err := page.Content()
 	if err != nil {
 		resp.Error = err
+		if j.ExitMonitor != nil {
+			j.ExitMonitor.IncrSeedCompleted(1)
+		}
 		return resp
 	}
 
 	resp.Body = []byte(body)
 
 	return resp
+}
+
+// waitForFeedWithFallback implements a tiered fallback strategy for detecting the search results feed.
+// Returns (feedFound, singlePlace, error).
+func (j *GmapJob) waitForFeedWithFallback(ctx context.Context, page playwright.Page, log logging.Logger) (bool, bool, error) {
+	sel := `div[role='feed']`
+
+	// Step 1: Primary wait — covers the typical 2.7-4.4s range and up to 6s outliers
+	log.Debug("feed_fallback_step1_primary_wait", slog.Int("timeout_ms", feedWaitPrimaryTimeout))
+
+	//nolint:staticcheck // TODO replace with the new playwright API
+	_, err := page.WaitForSelector(sel, playwright.PageWaitForSelectorOptions{
+		Timeout: playwright.Float(feedWaitPrimaryTimeout),
+	})
+	if err == nil {
+		log.Debug("feed_fallback_step1_success")
+		return true, false, nil
+	}
+
+	log.Debug("feed_fallback_step1_failed", slog.Any("error", err))
+
+	// Step 2: Check if it's a single-place redirect (no feed expected)
+	log.Debug("feed_fallback_step2_check_single_place")
+	if strings.Contains(page.URL(), "/maps/place/") {
+		log.Debug("feed_fallback_step2_single_place_detected")
+		return false, true, nil
+	}
+
+	// Also wait briefly for a redirect that may still be in progress
+	waitCtx, waitCancel := context.WithTimeout(ctx, time.Duration(singlePlaceWaitTimeout)*time.Second)
+	defer waitCancel()
+
+	if waitUntilURLContains(waitCtx, page, "/maps/place/") {
+		log.Debug("feed_fallback_step2_single_place_redirect_detected")
+		waitCancel()
+		return false, true, nil
+	}
+	waitCancel()
+
+	// Step 3: Check if consent overlay is still showing (click may have failed)
+	log.Debug("feed_fallback_step3_check_consent_overlay")
+	currentURL := page.URL()
+	if strings.Contains(currentURL, "consent.google.com") {
+		log.Debug("feed_fallback_step3_consent_still_showing_retrying")
+		// Try clicking consent again
+		if retryErr := clickRejectCookiesIfRequired(page); retryErr != nil {
+			log.Debug("feed_fallback_step3_retry_consent_failed", slog.Any("error", retryErr))
+		} else {
+			// Wait for feed after retry
+			//nolint:staticcheck
+			_, err2 := page.WaitForSelector(sel, playwright.PageWaitForSelectorOptions{
+				Timeout: playwright.Float(feedWaitPrimaryTimeout),
+			})
+			if err2 == nil {
+				log.Debug("feed_fallback_step3_feed_found_after_consent_retry")
+				return true, false, nil
+			}
+		}
+	}
+
+	// Step 4: Check if we got redirected somewhere unexpected (CAPTCHA, error page)
+	log.Debug("feed_fallback_step4_check_unexpected_redirect", slog.String("url", page.URL()))
+	if !strings.Contains(page.URL(), "google.com/maps") {
+		title, _ := page.Title()
+		return false, false, fmt.Errorf("unexpected redirect away from Maps: url=%s title=%s", page.URL(), title)
+	}
+
+	// Step 5: Check if page is still loading (spinner present), wait extended time
+	log.Debug("feed_fallback_step5_check_loading_state")
+	//nolint:staticcheck
+	spinner, _ := page.QuerySelector(`div[class*="loading"], div[class*="spinner"], img[src*="spinner"]`)
+	if spinner != nil {
+		log.Debug("feed_fallback_step5_spinner_detected_waiting_extended", slog.Int("timeout_ms", feedWaitExtendedTimeout))
+		//nolint:staticcheck
+		_, err2 := page.WaitForSelector(sel, playwright.PageWaitForSelectorOptions{
+			Timeout: playwright.Float(feedWaitExtendedTimeout),
+		})
+		if err2 == nil {
+			log.Debug("feed_fallback_step5_feed_found_after_extended_wait")
+			return true, false, nil
+		}
+	}
+
+	// Step 6: Check if feed exists but is empty — wait for children
+	log.Debug("feed_fallback_step6_check_empty_feed")
+	//nolint:staticcheck
+	feedEl, _ := page.QuerySelector(sel)
+	if feedEl != nil {
+		log.Debug("feed_fallback_step6_feed_exists_waiting_for_children")
+		//nolint:staticcheck
+		_, err2 := page.WaitForSelector(sel+` div[jsaction]>a`, playwright.PageWaitForSelectorOptions{
+			Timeout: playwright.Float(feedWaitExtendedTimeout),
+		})
+		if err2 == nil {
+			log.Debug("feed_fallback_step6_feed_children_found")
+			return true, false, nil
+		}
+		// Feed element exists even if empty — still valid for scroll
+		log.Debug("feed_fallback_step6_feed_exists_but_empty_proceeding")
+		return true, false, nil
+	}
+
+	// Step 7: Final fallback — gather diagnostics and error
+	log.Debug("feed_fallback_step7_all_attempts_exhausted")
+	title, _ := page.Title()
+	consentVisible := strings.Contains(page.URL(), "consent.google.com")
+
+	return false, false, fmt.Errorf(
+		"feed not found after tiered fallback: url=%s title=%q consent_visible=%v",
+		page.URL(), title, consentVisible,
+	)
 }
 
 func waitUntilURLContains(ctx context.Context, page playwright.Page, s string) bool {
@@ -451,8 +549,11 @@ func clickRejectCookiesIfRequired(page playwright.Page) error {
 				// Click the element (input or button)
 				//nolint:staticcheck // TODO replace with the new playwright API
 				if err := el.Click(); err == nil {
-					// Wait for navigation away from consent page
-					page.WaitForTimeout(2000)
+					// Wait for navigation away from consent page (measured: 2.7-6.3s for full load)
+					page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
+						State:   playwright.LoadStateDomcontentloaded,
+						Timeout: playwright.Float(feedWaitPrimaryTimeout),
+					})
 					return nil
 				}
 			}
@@ -477,7 +578,15 @@ func clickRejectCookiesIfRequired(page playwright.Page) error {
 		}
 
 		//nolint:staticcheck // TODO replace with the new playwright API
-		return el.Click()
+		if err := el.Click(); err != nil {
+			return err
+		}
+		// Wait for navigation away from consent page
+		page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
+			State:   playwright.LoadStateDomcontentloaded,
+			Timeout: playwright.Float(feedWaitPrimaryTimeout),
+		})
+		return nil
 	}
 
 	return nil
