@@ -118,9 +118,6 @@ func (j *SearchJob) BrowserActions(ctx context.Context, page playwright.Page) sc
 	pageResp, err := page.Goto(base.String(), playwright.PageGotoOptions{WaitUntil: playwright.WaitUntilStateDomcontentloaded})
 	if err != nil {
 		resp.Error = err
-		if j.ExitMonitor != nil {
-			j.ExitMonitor.IncrSeedCompleted(1)
-		}
 		return resp
 	}
 	resp.StatusCode = pageResp.Status()

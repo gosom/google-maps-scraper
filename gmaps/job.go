@@ -266,9 +266,6 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 
 	if err != nil {
 		resp.Error = err
-		if j.ExitMonitor != nil {
-			j.ExitMonitor.IncrSeedCompleted(1)
-		}
 		return resp
 	}
 
@@ -285,9 +282,6 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 
 	if err = clickRejectCookiesIfRequired(page); err != nil {
 		resp.Error = err
-		if j.ExitMonitor != nil {
-			j.ExitMonitor.IncrSeedCompleted(1)
-		}
 		return resp
 	}
 
@@ -316,9 +310,6 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 	feedFound, singlePlace, err := j.waitForFeedWithFallback(ctx, page, log)
 	if err != nil {
 		resp.Error = err
-		if j.ExitMonitor != nil {
-			j.ExitMonitor.IncrSeedCompleted(1)
-		}
 		return resp
 	}
 
@@ -331,9 +322,6 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 		body, err := page.Content()
 		if err != nil {
 			resp.Error = err
-			if j.ExitMonitor != nil {
-				j.ExitMonitor.IncrSeedCompleted(1)
-			}
 			return resp
 		}
 
@@ -343,18 +331,12 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 
 	if !feedFound {
 		resp.Error = fmt.Errorf("feed not found after all fallback attempts, url=%s", page.URL())
-		if j.ExitMonitor != nil {
-			j.ExitMonitor.IncrSeedCompleted(1)
-		}
 		return resp
 	}
 
 	_, err = scroll(ctx, page, j.MaxDepth, `div[role='feed']`)
 	if err != nil {
 		resp.Error = err
-		if j.ExitMonitor != nil {
-			j.ExitMonitor.IncrSeedCompleted(1)
-		}
 		return resp
 	}
 
@@ -369,9 +351,6 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 	body, err := page.Content()
 	if err != nil {
 		resp.Error = err
-		if j.ExitMonitor != nil {
-			j.ExitMonitor.IncrSeedCompleted(1)
-		}
 		return resp
 	}
 
