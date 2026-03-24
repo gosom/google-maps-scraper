@@ -39,6 +39,7 @@ type exiter struct {
 	maxResults            int       // Maximum number of places to find (0 = unlimited)
 	cancellationTriggered bool      // Track if cancellation has been triggered
 	lastProgressTime      time.Time // Track last time we made progress
+	startTime             time.Time // Track when the exiter was created for grace period
 
 	mu         *sync.Mutex
 	cancelFunc context.CancelFunc
@@ -48,6 +49,7 @@ func New() Exiter {
 	return &exiter{
 		mu:               &sync.Mutex{},
 		lastProgressTime: time.Now(),
+		startTime:        time.Now(),
 	}
 }
 
@@ -271,6 +273,15 @@ func (e *exiter) isDone() bool {
 	// 2b. Seeds are complete but no places were found. Without this, the exit
 	// monitor can wait forever on an empty job graph (no place jobs to finish).
 	if e.seedCount > 0 && e.seedCompleted >= e.seedCount && e.placesFound == 0 {
+		elapsed := time.Since(e.startTime)
+		if elapsed < 30*time.Second {
+			slog.Debug("exit_grace_period_active",
+				slog.Int("seed_completed", e.seedCompleted),
+				slog.Int("seed_count", e.seedCount),
+				slog.Duration("elapsed", elapsed),
+			)
+			return false
+		}
 		slog.Debug("exit_done_zero_places_found",
 			slog.Int("seed_completed", e.seedCompleted),
 			slog.Int("seed_count", e.seedCount),
