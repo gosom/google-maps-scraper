@@ -163,8 +163,8 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 			).Scan(&bStr); err == nil {
 				if bFloat, pErr := strconv.ParseFloat(bStr, 64); pErr == nil {
 					if int64(math.Round(bFloat*models.MicroUnit)) < unlimitedJobMinBalanceMicro {
-						renderJSON(w, http.StatusBadRequest, models.APIError{
-							Code:    http.StatusBadRequest,
+						renderJSON(w, http.StatusPaymentRequired, models.APIError{
+							Code:    http.StatusPaymentRequired,
 							Message: "Your balance is below $5.00. Set a max_results limit or add credit before running unlimited jobs.",
 						})
 						return
