@@ -26,8 +26,7 @@ type EstimationService struct {
 const (
 	AvgReviewsPerPlace          = 25
 	AvgImagesPerPlace           = 30
-	DefaultEstimateForUnlimited = 50
-	UnlimitedReviewsThreshold   = 1000
+	UnlimitedReviewsThreshold = 1000
 
 	// Default pricing fallbacks (used when DB has no active rules)
 	defaultPriceActorStart        = 0.007
@@ -229,12 +228,25 @@ func (s *EstimationService) EstimateJobCost(ctx context.Context, jobData *models
 	return estimate, nil
 }
 
-// estimatePlaceCount determines how many places will likely be scraped
+// estimatePlaceCount determines how many places will likely be scraped.
+// When no max_results cap is set, the estimate is derived from search depth
+// using a power-law curve calibrated to real scraper output:
+// depth 5 ≈ 40 places, depth 20 ≈ 120 places.
 func (s *EstimationService) estimatePlaceCount(jobData *models.JobData) int {
 	if jobData.MaxResults > 0 {
 		return jobData.MaxResults
 	}
-	return DefaultEstimateForUnlimited
+	return estimatePlacesFromDepth(jobData.Depth)
+}
+
+// estimatePlacesFromDepth returns the approximate number of places for a given
+// search depth using the formula: round(11.17 * depth^0.7925).
+// Calibrated: depth 5 ≈ 40, depth 20 ≈ 120.
+func estimatePlacesFromDepth(depth int) int {
+	if depth < 1 {
+		depth = 1
+	}
+	return int(math.Round(11.17 * math.Pow(float64(depth), 0.7925)))
 }
 
 // estimateReviewCount determines how many reviews will likely be scraped
@@ -257,12 +269,11 @@ func (s *EstimationService) generateEstimationNote(jobData *models.JobData) stri
 
 	if jobData.MaxResults == 0 {
 		notes = append(notes, fmt.Sprintf(
-			"WARNING: max_results is set to unlimited (0). This estimate is for a MINIMUM of %d places. "+
-				"Actual cost could be significantly higher.",
-			DefaultEstimateForUnlimited,
+			"Estimate based on search depth %d (~%d places). Set a max results cap to control costs precisely.",
+			jobData.Depth, estimatePlacesFromDepth(jobData.Depth),
 		))
 	} else {
-		notes = append(notes, "Estimate based on your specified max_results limit")
+		notes = append(notes, "Estimate based on your specified max_results limit.")
 	}
 
 	if jobData.ReviewsMax >= UnlimitedReviewsThreshold {
