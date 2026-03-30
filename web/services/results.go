@@ -174,7 +174,7 @@ func (s *ResultsService) GetEnhancedJobResultsPaginated(ctx context.Context, job
 	const q = `SELECT 
             id,
             COALESCE(user_id, '') as user_id,
-            COALESCE(job_id, '') as job_id,
+            job_id::text as job_id,
             COALESCE(input_id, '') as input_id,
             COALESCE(link, '') as link,
             COALESCE(cid, '') as cid,
