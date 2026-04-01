@@ -18,6 +18,7 @@ require (
 	github.com/google/open-location-code/go v0.0.0-20250415120251-fa6d7f9d4765
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
+	github.com/gosom/kit v0.0.0-20230309082109-543b32ac686a
 	github.com/gosom/scrapemate v0.9.4
 	github.com/jackc/pgx/v5 v5.7.4
 	github.com/joho/godotenv v1.5.1
@@ -145,7 +146,6 @@ require (
 	github.com/googleapis/enterprise-certificate-proxy v0.3.7 // indirect
 	github.com/googleapis/gax-go/v2 v2.15.0 // indirect
 	github.com/gordonklaus/ineffassign v0.1.0 // indirect
-	github.com/gosom/kit v0.0.0-20230309082109-543b32ac686a // indirect
 	github.com/gostaticanalysis/analysisutil v0.7.1 // indirect
 	github.com/gostaticanalysis/comment v1.5.0 // indirect
 	github.com/gostaticanalysis/forcetypeassert v0.2.0 // indirect
