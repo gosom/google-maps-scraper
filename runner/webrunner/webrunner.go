@@ -589,8 +589,9 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		w.logger.Debug("job_status_persisted", slog.String("job_id", job.ID), slog.String("status", string(job.Status)))
 	}()
 
-	// Charge actor_start at job start (requires sufficient balance)
-	if w.billingSvc != nil {
+	// Charge actor_start at job start (requires sufficient balance).
+	// Admin jobs bypass billing entirely — they are internal operations.
+	if w.billingSvc != nil && job.Source != models.SourceAdmin {
 		w.logger.Info("actor_start_charge_attempting", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
 		actorStartCtx, actorStartCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer actorStartCancel()
@@ -603,6 +604,12 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		w.logger.Info("actor_start_charge_succeeded", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
 	} else {
 		w.logger.Warn("billing_service_nil", slog.String("job_id", job.ID), slog.String("detail", "skipping actor_start charge"))
+	}
+	if job.Source == models.SourceAdmin {
+		w.logger.Info("actor_start_charge_skipped_admin_job",
+			slog.String("job_id", job.ID),
+			slog.String("user_id", job.UserID),
+		)
 	}
 
 	// Check if job has been cancelled before starting
@@ -987,7 +994,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 
 			w.logger.Debug("billing_check", slog.String("job_id", job.ID), slog.Bool("billing_svc_nil", w.billingSvc == nil), slog.Int("result_count", resultCount))
 
-			if w.billingSvc != nil && resultCount > 0 {
+			if w.billingSvc != nil && resultCount > 0 && job.Source != models.SourceAdmin {
 				// Charge ALL events in a single atomic transaction
 				// This includes: places, reviews, images, and contact details
 				// If any charge fails, ALL charges are rolled back (all-or-nothing)
@@ -1006,6 +1013,13 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 					w.logger.Info("billing_charge_succeeded", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
 				}
 			} else {
+				if job.Source == models.SourceAdmin {
+					w.logger.Info("billing_skipped_admin_job",
+						slog.String("job_id", job.ID),
+						slog.String("user_id", job.UserID),
+						slog.Int("result_count", resultCount),
+					)
+				}
 				if w.billingSvc == nil {
 					w.logger.Warn("billing_service_nil_skipping_charges", slog.String("job_id", job.ID))
 				}
