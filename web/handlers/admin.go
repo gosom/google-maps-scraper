@@ -8,36 +8,55 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+
 	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/web/auth"
 	webutils "github.com/gosom/google-maps-scraper/web/utils"
 )
 
+const (
+	errMsgAdminRequired    = "admin access required"
+	errMsgAPIKeyForbidden  = "admin routes require session authentication, not API keys"
+)
+
 // AdminHandlers contains routes for admin-only operations.
 // Admin handlers bypass credit checks and concurrent job limits.
 // They are protected by RequireRole("admin") middleware at the router level,
-// but also perform a defense-in-depth role check in each handler.
+// but also perform a defense-in-depth role check in each handler via
+// requireAdminSession.
 type AdminHandlers struct{ Deps Dependencies }
+
+// requireAdminSession validates that the request comes from an authenticated
+// admin user via Clerk JWT (not an API key). It returns the user ID on success.
+// On failure it writes the error response to w and returns ("", false).
+//
+// This is a defense-in-depth check: the RequireRole middleware at the router
+// level is the primary gate, but this guard ensures admin-only behaviour even
+// if the middleware is misconfigured.
+func requireAdminSession(w http.ResponseWriter, r *http.Request) (string, bool) {
+	if !auth.IsAdmin(r.Context()) {
+		renderJSON(w, http.StatusForbidden, models.APIError{Code: http.StatusForbidden, Message: errMsgAdminRequired})
+		return "", false
+	}
+	// Block API key access — admin operations require Clerk JWT sessions.
+	// This prevents privilege escalation from a compromised API key.
+	if auth.GetAPIKeyID(r.Context()) != "" {
+		renderJSON(w, http.StatusForbidden, models.APIError{Code: http.StatusForbidden, Message: errMsgAPIKeyForbidden})
+		return "", false
+	}
+	userID, err := auth.GetUserID(r.Context())
+	if err != nil || userID == "" {
+		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
+		return "", false
+	}
+	return userID, true
+}
 
 // CreateJob creates a scraping job without credit checks or concurrent limits.
 // The job is tagged with source="admin" so the billing system skips charging.
 func (h *AdminHandlers) CreateJob(w http.ResponseWriter, r *http.Request) {
-	// Defense-in-depth: verify admin role even though middleware already checks.
-	if !auth.IsAdmin(r.Context()) {
-		renderJSON(w, http.StatusForbidden, models.APIError{Code: http.StatusForbidden, Message: "admin access required"})
-		return
-	}
-
-	// Block API key access to admin routes — admin operations require Clerk JWT.
-	// This prevents privilege escalation from a compromised API key.
-	if auth.GetAPIKeyID(r.Context()) != "" {
-		renderJSON(w, http.StatusForbidden, models.APIError{Code: http.StatusForbidden, Message: "admin routes require session authentication, not API keys"})
-		return
-	}
-
-	userID, err := auth.GetUserID(r.Context())
-	if err != nil || userID == "" {
-		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
+	userID, ok := requireAdminSession(w, r)
+	if !ok {
 		return
 	}
 
@@ -67,6 +86,16 @@ func (h *AdminHandlers) CreateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Bypass ConcurrentLimitService — use App.Create directly.
+	// No credit check, no concurrent job limit enforcement.
+	if err := h.Deps.App.Create(r.Context(), &newJob); err != nil {
+		internalError(w, h.Deps.Logger, err, "admin job creation failed",
+			slog.String("user_id", userID), slog.String("job_id", newJob.ID))
+		return
+	}
+
+	// Admin actions are logged at Warn level (not Info) so they stand out in
+	// log aggregation dashboards and can be filtered for audit review.
 	if h.Deps.Logger != nil {
 		h.Deps.Logger.Warn("admin_job_created",
 			slog.String("admin_user_id", userID),
@@ -77,30 +106,13 @@ func (h *AdminHandlers) CreateJob(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
-	// Bypass ConcurrentLimitService — use App.Create directly.
-	// No credit check, no concurrent job limit enforcement.
-	if err := h.Deps.App.Create(r.Context(), &newJob); err != nil {
-		internalError(w, h.Deps.Logger, err, "admin job creation failed",
-			slog.String("user_id", userID), slog.String("job_id", newJob.ID))
-		return
-	}
-
 	renderJSON(w, http.StatusCreated, models.ApiScrapeResponse{ID: newJob.ID})
 }
 
-// GetJobs lists all jobs for the admin user.
+// GetJobs lists the admin user's own jobs.
 func (h *AdminHandlers) GetJobs(w http.ResponseWriter, r *http.Request) {
-	if !auth.IsAdmin(r.Context()) {
-		renderJSON(w, http.StatusForbidden, models.APIError{Code: http.StatusForbidden, Message: "admin access required"})
-		return
-	}
-	if auth.GetAPIKeyID(r.Context()) != "" {
-		renderJSON(w, http.StatusForbidden, models.APIError{Code: http.StatusForbidden, Message: "admin routes require session authentication, not API keys"})
-		return
-	}
-	userID, err := auth.GetUserID(r.Context())
-	if err != nil {
-		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
+	userID, ok := requireAdminSession(w, r)
+	if !ok {
 		return
 	}
 
@@ -121,35 +133,28 @@ func (h *AdminHandlers) GetJobs(w http.ResponseWriter, r *http.Request) {
 
 // CancelJob cancels an admin job.
 func (h *AdminHandlers) CancelJob(w http.ResponseWriter, r *http.Request) {
-	if !auth.IsAdmin(r.Context()) {
-		renderJSON(w, http.StatusForbidden, models.APIError{Code: http.StatusForbidden, Message: "admin access required"})
+	userID, ok := requireAdminSession(w, r)
+	if !ok {
 		return
 	}
-	if auth.GetAPIKeyID(r.Context()) != "" {
-		renderJSON(w, http.StatusForbidden, models.APIError{Code: http.StatusForbidden, Message: "admin routes require session authentication, not API keys"})
-		return
-	}
-	userID, err := auth.GetUserID(r.Context())
-	if err != nil {
-		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
-		return
-	}
+
 	jobID := mux.Vars(r)["id"]
 	if jobID == "" {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Missing job ID"})
 		return
 	}
 
+	if err := h.Deps.App.Cancel(r.Context(), jobID, userID); err != nil {
+		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: "Job not found"})
+		return
+	}
+
 	if h.Deps.Logger != nil {
-		h.Deps.Logger.Warn("admin_job_cancelled",
+		h.Deps.Logger.Warn("admin_job_cancel_completed",
 			slog.String("admin_user_id", userID),
 			slog.String("job_id", jobID),
 		)
 	}
 
-	if err := h.Deps.App.Cancel(r.Context(), jobID, userID); err != nil {
-		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: "Job not found"})
-		return
-	}
 	renderJSON(w, http.StatusOK, map[string]any{"message": "Admin job cancellation initiated", "job_id": jobID})
 }
