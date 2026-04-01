@@ -893,9 +893,33 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			err, _ = w.shutdownMate(job.ID, cancel, closeMate, resultCh)
 			w.logger.Debug("forced_completion", slog.String("job_id", job.ID), slog.Any("error", err))
 		case <-forcedCompletionCh:
-			// Exit monitor triggered cancellation, 30s grace elapsed, mate.Start still not done
-			w.logger.Debug("forced_completion_timeout", slog.String("job_id", job.ID))
-			err, _ = w.shutdownMate(job.ID, cancel, closeMate, resultCh)
+			w.logger.Warn("mate_exit_monitor_forced_shutdown",
+				slog.String("job_id", job.ID),
+				slog.String("detail", "exit monitor detected completion, 30s grace elapsed, forcing shutdown"),
+			)
+			mateErr, leaked := w.shutdownMate(job.ID, cancel, closeMate, resultCh)
+			if leaked {
+				var resultCount int
+				if w.db != nil {
+					countCtx, countCancel := context.WithTimeout(context.Background(), 10*time.Second)
+					if dbErr := w.db.QueryRowContext(countCtx, `SELECT COUNT(*) FROM results WHERE job_id=$1`, job.ID).Scan(&resultCount); dbErr != nil {
+						w.logger.Error("result_count_after_leak_failed", slog.String("job_id", job.ID), slog.Any("error", dbErr))
+					}
+					countCancel()
+				}
+				if resultCount > 0 {
+					w.logger.Info("goroutine_leaked_but_results_exist",
+						slog.String("job_id", job.ID),
+						slog.String("user_id", job.UserID),
+						slog.Int("result_count", resultCount),
+					)
+					err = nil
+				} else {
+					err = mateErr
+				}
+			} else {
+				err = mateErr
+			}
 		}
 
 		w.logger.Debug("context_after_mate_start", slog.String("job_id", job.ID), slog.Any("context_err", mateCtx.Err()))
@@ -967,7 +991,11 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 				w.logger.Debug("real_error_occurred", slog.String("job_id", job.ID), slog.Any("error", err))
 				cancel()
 				job.Status = web.StatusFailed
-				job.FailureReason = "job failed due to a runtime error"
+				if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "leaked") {
+					job.FailureReason = "job timed out"
+				} else {
+					job.FailureReason = "job failed due to a runtime error"
+				}
 				w.logger.Error("job_runtime_error",
 					slog.String("job_id", job.ID),
 					slog.String("user_id", job.UserID),
