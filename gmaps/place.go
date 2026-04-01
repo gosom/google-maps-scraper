@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -301,6 +302,7 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 					slog.String("parent_job_id", j.ParentID),
 					slog.String("entry_title", entry.Title),
 					slog.Any("panic", r),
+					slog.String("stack", string(debug.Stack())),
 				)
 			}
 		}()
@@ -482,6 +484,7 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 					slog.String("parent_job_id", j.ParentID),
 					slog.String("place_url", placeURL),
 					slog.Any("panic", r),
+					slog.String("stack", string(debug.Stack())),
 				)
 			}
 		}()
