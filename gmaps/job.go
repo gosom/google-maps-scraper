@@ -235,10 +235,10 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 // Timeout constants for feed detection after consent/navigation.
 // Based on measured data: feed appears in 2.7-4.4s typical, up to 6.3s worst case.
 const (
-	feedWaitPrimaryTimeout   = 6000  // Primary WaitForSelector timeout (ms) — covers p99
-	feedWaitExtendedTimeout  = 4000  // Extended wait if page is still loading (ms)
-	consentCheckTimeout      = 500   // Timeout for checking consent overlay (ms)
-	singlePlaceWaitTimeout   = 5     // Timeout for single-place URL redirect (seconds)
+	feedWaitPrimaryTimeout  = 6000 // Primary WaitForSelector timeout (ms) — covers p99
+	feedWaitExtendedTimeout = 4000 // Extended wait if page is still loading (ms)
+	consentCheckTimeout     = 500  // Timeout for checking consent overlay (ms)
+	singlePlaceWaitTimeout  = 5    // Timeout for single-place URL redirect (seconds)
 )
 
 func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scrapemate.Response {

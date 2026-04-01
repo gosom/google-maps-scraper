@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	errMsgAdminRequired    = "admin access required"
-	errMsgAPIKeyForbidden  = "admin routes require session authentication, not API keys"
+	errMsgAdminRequired   = "admin access required"
+	errMsgAPIKeyForbidden = "admin routes require session authentication, not API keys"
 )
 
 // AdminHandlers contains routes for admin-only operations.

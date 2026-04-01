@@ -31,7 +31,7 @@ type Dependencies struct {
 	PricingRuleRepo     models.PricingRuleRepository        // nil-safe; estimation falls back to defaults
 	ServerSecret        []byte                              // HMAC secret for GenerateAPIKey
 	ResultsSvc          ResultsService
-	Encryptor           *encryption.Encryptor           // nil means encryption disabled
+	Encryptor           *encryption.Encryptor // nil means encryption disabled
 	IntegrationRepo     models.IntegrationRepository
 	GoogleSheetsSvc     *googlesheets.Service
 	ConcurrentLimitSvc  *webservices.ConcurrentLimitService

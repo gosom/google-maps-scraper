@@ -15,8 +15,8 @@ type Pool struct {
 	proxies        []*WebshareProxy
 	portStart      int
 	portEnd        int
-	portPool       chan int      // buffered channel as O(1) port pool
-	nextProxyIndex atomic.Int64  // Lock-free round-robin advancement
+	portPool       chan int     // buffered channel as O(1) port pool
+	nextProxyIndex atomic.Int64 // Lock-free round-robin advancement
 
 	// blockMu protects the blocked map (proxy block/unblock decisions).
 	blockMu sync.Mutex
