@@ -129,3 +129,73 @@ func TestAdminCreateJob_RejectsAPIKeyAuth(t *testing.T) {
 		t.Fatalf("expected 403 for API key auth, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
+
+func TestAdminGetJobs_RejectsNonAdmin(t *testing.T) {
+	h := &handlers.AdminHandlers{
+		Deps: handlers.Dependencies{App: &mockAdminJobService{}},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/jobs", nil)
+	ctx := context.WithValue(req.Context(), auth.UserIDKey, "user_regular")
+	ctx = context.WithValue(ctx, auth.UserRoleKey, models.RoleUser)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	h.GetJobs(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for non-admin GetJobs, got %d", rr.Code)
+	}
+}
+
+func TestAdminGetJobs_RejectsAPIKeyAuth(t *testing.T) {
+	h := &handlers.AdminHandlers{
+		Deps: handlers.Dependencies{App: &mockAdminJobService{}},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/jobs", nil)
+	ctx := context.WithValue(req.Context(), auth.UserIDKey, "user_admin")
+	ctx = context.WithValue(ctx, auth.UserRoleKey, models.RoleAdmin)
+	ctx = context.WithValue(ctx, auth.APIKeyIDKey, "some-key")
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	h.GetJobs(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for API key GetJobs, got %d", rr.Code)
+	}
+}
+
+func TestAdminCancelJob_RejectsNonAdmin(t *testing.T) {
+	h := &handlers.AdminHandlers{
+		Deps: handlers.Dependencies{App: &mockAdminJobService{}},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/jobs/some-id/cancel", nil)
+	ctx := context.WithValue(req.Context(), auth.UserIDKey, "user_regular")
+	ctx = context.WithValue(ctx, auth.UserRoleKey, models.RoleUser)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	h.CancelJob(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for non-admin CancelJob, got %d", rr.Code)
+	}
+}
+
+func TestAdminCancelJob_RejectsAPIKeyAuth(t *testing.T) {
+	h := &handlers.AdminHandlers{
+		Deps: handlers.Dependencies{App: &mockAdminJobService{}},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/jobs/some-id/cancel", nil)
+	ctx := context.WithValue(req.Context(), auth.UserIDKey, "user_admin")
+	ctx = context.WithValue(ctx, auth.UserRoleKey, models.RoleAdmin)
+	ctx = context.WithValue(ctx, auth.APIKeyIDKey, "some-key")
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	h.CancelJob(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for API key CancelJob, got %d", rr.Code)
+	}
+}

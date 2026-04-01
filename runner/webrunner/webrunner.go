@@ -591,7 +591,12 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 
 	// Charge actor_start at job start (requires sufficient balance).
 	// Admin jobs bypass billing entirely — they are internal operations.
-	if w.billingSvc != nil && job.Source != models.SourceAdmin {
+	if job.Source == models.SourceAdmin {
+		w.logger.Info("actor_start_charge_skipped_admin_job",
+			slog.String("job_id", job.ID),
+			slog.String("user_id", job.UserID),
+		)
+	} else if w.billingSvc != nil {
 		w.logger.Info("actor_start_charge_attempting", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
 		actorStartCtx, actorStartCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer actorStartCancel()
@@ -604,12 +609,6 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		w.logger.Info("actor_start_charge_succeeded", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
 	} else {
 		w.logger.Warn("billing_service_nil", slog.String("job_id", job.ID), slog.String("detail", "skipping actor_start charge"))
-	}
-	if job.Source == models.SourceAdmin {
-		w.logger.Info("actor_start_charge_skipped_admin_job",
-			slog.String("job_id", job.ID),
-			slog.String("user_id", job.UserID),
-		)
 	}
 
 	// Check if job has been cancelled before starting

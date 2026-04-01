@@ -104,6 +104,12 @@ func (h *AdminHandlers) GetJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.Deps.Logger != nil {
+		h.Deps.Logger.Warn("admin_jobs_listed",
+			slog.String("admin_user_id", userID),
+		)
+	}
+
 	jobs, err := h.Deps.App.All(r.Context(), userID)
 	if err != nil {
 		internalError(w, h.Deps.Logger, err, "failed to list admin jobs",

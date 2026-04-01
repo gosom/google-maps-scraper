@@ -36,15 +36,15 @@ IDENTIFIER="$1"
 # Input validation — ALLOWLIST approach (not denylist).
 # Only permit characters that are valid in Clerk user IDs and email addresses.
 # This prevents SQL injection regardless of PostgreSQL quoting tricks.
-if ! echo "$IDENTIFIER" | grep -qE '^[a-zA-Z0-9@._+\-]+$'; then
+if ! printf '%s\n' "$IDENTIFIER" | grep -qE '^[a-zA-Z0-9@._+-]+$'; then
     echo "Error: Invalid characters in identifier."
     echo "Only alphanumeric characters, @, ., _, +, and - are allowed."
     exit 1
 fi
 
-# Determine if input is an email or user ID and use psql variables
-# for safe parameterization (no string interpolation into SQL).
-if echo "$IDENTIFIER" | grep -q '@'; then
+# Determine if input is an email or user ID.
+# LOOKUP_COLUMN is always a hardcoded literal ("email" or "id"), never user input.
+if printf '%s\n' "$IDENTIFIER" | grep -q '@'; then
     LOOKUP_COLUMN="email"
     DISPLAY="email=$IDENTIFIER"
 else
@@ -55,7 +55,11 @@ fi
 echo "Looking up user ($DISPLAY)..."
 
 # Show current user info before making changes.
-CURRENT=$(psql "$DSN" -t -A -c "SELECT id, email, role FROM users WHERE $LOOKUP_COLUMN = \$\$${IDENTIFIER}\$\$" 2>/dev/null)
+CURRENT=$(psql "$DSN" -t -A -c "SELECT id, email, role FROM users WHERE $LOOKUP_COLUMN = \$\$${IDENTIFIER}\$\$" 2>&1) || {
+    echo "Error: Database query failed:"
+    echo "$CURRENT"
+    exit 1
+}
 if [ -z "$CURRENT" ]; then
     echo "Error: No user found with $DISPLAY"
     exit 1
@@ -65,7 +69,7 @@ echo "Current record: $CURRENT"
 echo ""
 
 # Check if already admin
-CURRENT_ROLE=$(echo "$CURRENT" | cut -d'|' -f3)
+CURRENT_ROLE=$(printf '%s\n' "$CURRENT" | cut -d'|' -f3)
 if [ "$CURRENT_ROLE" = "admin" ]; then
     echo "User is already an admin. No changes made."
     exit 0
@@ -80,14 +84,20 @@ fi
 
 # Promote and set higher concurrent job limit.
 # Uses dollar-quoting for the identifier (safe after allowlist validation).
-psql "$DSN" -c "
+RESULT=$(psql "$DSN" -t -A -c "
     UPDATE users
     SET role = 'admin',
         max_concurrent_jobs = 50,
         updated_at = NOW()
     WHERE $LOOKUP_COLUMN = \$\$${IDENTIFIER}\$\$
     RETURNING id, email, role, max_concurrent_jobs;
-"
+")
 
+if [ -z "$RESULT" ]; then
+    echo "Error: UPDATE affected 0 rows. User may have been deleted."
+    exit 1
+fi
+
+echo "$RESULT"
 echo ""
 echo "Done. User promoted to admin with concurrent job limit of 50."
