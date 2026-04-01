@@ -13,6 +13,12 @@ type User struct {
 	UpdatedAt time.Time
 }
 
+// Role constants define the possible user roles.
+const (
+	RoleAdmin = "admin"
+	RoleUser  = "user"
+)
+
 // UserRepository manages user operations
 type UserRepository interface {
 	GetByID(ctx context.Context, id string) (User, error)

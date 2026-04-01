@@ -25,6 +25,8 @@ type ContextKey string
 const (
 	// UserIDKey is the context key for storing the user ID
 	UserIDKey ContextKey = "user_id"
+	// UserRoleKey is the context key for storing the user role
+	UserRoleKey ContextKey = "user_role"
 	// AuthHeaderName is the name of the authentication header
 	AuthHeaderName = "Authorization"
 )
@@ -151,4 +153,14 @@ func GetUserID(ctx context.Context) (string, error) {
 		return "", errors.New("user not authenticated")
 	}
 	return userID, nil
+}
+
+// GetUserRole extracts the user role from the request context.
+// It defaults to "user" if no role is set.
+func GetUserRole(ctx context.Context) string {
+	role, ok := ctx.Value(UserRoleKey).(string)
+	if !ok || role == "" {
+		return "user"
+	}
+	return role
 }

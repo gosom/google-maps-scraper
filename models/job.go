@@ -62,3 +62,10 @@ const (
 	StatusCancelled = "cancelled"
 	StatusAborting  = "aborting"
 )
+
+// Source constants identify who created a job.
+const (
+	SourceWeb   = "web"
+	SourceAPI   = "api"
+	SourceAdmin = "admin"
+)
