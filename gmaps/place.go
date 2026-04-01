@@ -13,9 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
-	"runtime/debug"
 	"strings"
 	"time"
 
@@ -32,7 +30,7 @@ type PlaceJobOptions func(*PlaceJob)
 type PlaceJob struct {
 	scrapemate.Job
 
-	UsageInResultststs  bool
+	UsageInResults      bool
 	ExtractEmail        bool
 	ExtractImages       bool
 	ExitMonitor         exiter.Exiter
@@ -58,19 +56,11 @@ func NewPlaceJob(parentID, langCode, u string, extractEmail, extractImages bool,
 		},
 	}
 
-	job.UsageInResultststs = true
+	job.UsageInResults = true
 	job.ExtractEmail = extractEmail
 	job.ExtractImages = extractImages
 	job.ExtractExtraReviews = reviewsMax > 0
 	job.ReviewsMax = reviewsMax
-
-	// DEBUG: Log the job creation with flags
-	log := scrapemate.GetLoggerFromContext(context.Background())
-	log.Debug("place_job_created",
-		slog.String("job_id", job.ID),
-		slog.Bool("extract_images", extractImages),
-		slog.Bool("extract_email", extractEmail),
-	)
 
 	for _, opt := range opts {
 		opt(&job)
@@ -89,29 +79,16 @@ func WithPlaceJobExitMonitor(exitMonitor exiter.Exiter) PlaceJobOptions {
 func (j *PlaceJob) processExtractedImages(entry *Entry, resp *scrapemate.Response) {
 	log := scrapemate.GetLoggerFromContext(context.Background())
 
-	// DEBUG: Log the current state before processing
 	originalImageCount := len(entry.Images)
-	log.Debug("place_job_processing_images",
-		slog.String("job_id", j.ID),
-		slog.String("title", entry.Title),
-		slog.Int("original_json_images", originalImageCount),
-	)
+	log.Info(fmt.Sprintf("Processing images for %s - original JSON images: %d", entry.Title, originalImageCount))
 
 	imageResult, imgOk := resp.Meta["images_data"].([]images.BusinessImage)
 	if !imgOk || len(imageResult) == 0 {
-		log.Debug("place_job_no_enhanced_images",
-			slog.String("job_id", j.ID),
-			slog.String("title", entry.Title),
-			slog.Int("original_json_images", originalImageCount),
-		)
+		log.Info(fmt.Sprintf("No enhanced images found for %s - keeping JSON images (%d)", entry.Title, originalImageCount))
 		return
 	}
 
-	log.Debug("place_job_enhanced_images_found",
-		slog.String("job_id", j.ID),
-		slog.String("title", entry.Title),
-		slog.Int("enhanced_image_count", len(imageResult)),
-	)
+	log.Info(fmt.Sprintf("Enhanced extraction found %d images for %s", len(imageResult), entry.Title))
 
 	// Convert images package types to gmaps package types
 	enhancedImages := make([]BusinessImage, len(imageResult))
@@ -139,20 +116,10 @@ func (j *PlaceJob) processExtractedImages(entry *Entry, resp *scrapemate.Respons
 			LoadTime:      imageMetadata.LoadTime,
 			ScrollActions: imageMetadata.ScrollActions,
 		}
-		log.Debug("place_job_enhanced_image_metadata",
-			slog.String("job_id", j.ID),
-			slog.Int("load_time_ms", imageMetadata.LoadTime),
-			slog.Int("scroll_actions", imageMetadata.ScrollActions),
-		)
+		log.Info(fmt.Sprintf("Enhanced metadata - load time: %dms, scroll actions: %d", imageMetadata.LoadTime, imageMetadata.ScrollActions))
 	}
 
-	// CRITICAL FIX: Merge enhanced images with JSON images instead of overwriting
-	log.Debug("place_job_image_merge_before",
-		slog.String("job_id", j.ID),
-		slog.Int("json_images", len(entry.Images)),
-		slog.Int("enhanced_images", len(enhancedImages)),
-	)
-
+	// Merge enhanced images with JSON images instead of overwriting
 	// Create a map to avoid duplicates
 	imageURLMap := make(map[string]Image)
 
@@ -176,12 +143,8 @@ func (j *PlaceJob) processExtractedImages(entry *Entry, resp *scrapemate.Respons
 		}
 	}
 
-	// DEBUG: Log duplicate filtering stats
 	if skippedCount > 0 {
-		log.Debug("place_job_image_merge_duplicates_skipped",
-			slog.String("job_id", j.ID),
-			slog.Int("duplicates_skipped", skippedCount),
-		)
+		log.Info(fmt.Sprintf("Skipped %d duplicate images during merge", skippedCount))
 	}
 
 	// Convert back to slice
@@ -191,20 +154,7 @@ func (j *PlaceJob) processExtractedImages(entry *Entry, resp *scrapemate.Respons
 	}
 	entry.Images = mergedImages
 
-	log.Debug("place_job_image_merge_after",
-		slog.String("job_id", j.ID),
-		slog.Int("total_images", len(entry.Images)),
-		slog.Int("enhanced_images_added", addedCount),
-	)
-
-	// DEBUG: Double-check image count for troubleshooting
-	if len(entry.Images) != len(imageURLMap) {
-		log.Warn("place_job_image_count_mismatch",
-			slog.String("job_id", j.ID),
-			slog.Int("entry_images", len(entry.Images)),
-			slog.Int("image_url_map", len(imageURLMap)),
-		)
-	}
+	log.Info(fmt.Sprintf("Image merge complete - total images: %d (added %d from enhanced extraction)", len(entry.Images), addedCount))
 
 	// Organize images by category for the ImageCategories field
 	categoryMap := make(map[string][]BusinessImage)
@@ -232,15 +182,11 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 	// CRITICAL FIX: Always create an entry with at least the URL, even if JSON extraction fails
 	// This ensures all visited places are written to PostgreSQL and CSV
 	var entry Entry
-	var entryCreated bool
 
 	raw, ok := resp.Meta["json"].([]byte)
 	if !ok {
 		// JSON extraction failed - create minimal fallback entry
-		log.Warn("place_job_json_extraction_failed_fallback",
-			slog.String("job_id", j.ID),
-			slog.String("url", j.GetURL()),
-		)
+		log.Warn(fmt.Sprintf("FALLBACK: PlaceJob %s - JSON extraction failed, creating minimal entry with URL only", j.ID))
 		entry = Entry{
 			ID:          j.ParentID,
 			Link:        j.GetURL(),
@@ -248,23 +194,17 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 			Status:      "extraction_failed",
 			Description: "JSON extraction failed - partial data only",
 		}
-		entryCreated = true
-
 		if j.ExitMonitor != nil {
 			j.ExitMonitor.IncrPlacesCompleted(1)
 		}
-		// IMPORTANT: Return the fallback entry instead of nil, so it gets written to database
-		return &entry, nil, fmt.Errorf("JSON extraction failed but fallback entry created")
+		// Return the fallback entry so it gets written to database
+		return &entry, nil, nil
 	}
 
 	parsedEntry, err := EntryFromJSON(raw)
 	if err != nil {
 		// JSON parsing failed - create minimal fallback entry
-		log.Warn("place_job_json_parsing_failed_fallback",
-			slog.String("job_id", j.ID),
-			slog.String("url", j.GetURL()),
-			slog.Any("error", err),
-		)
+		log.Warn(fmt.Sprintf("FALLBACK: PlaceJob %s - JSON parsing failed (%v), creating minimal entry with URL only", j.ID, err))
 		entry = Entry{
 			ID:          j.ParentID,
 			Link:        j.GetURL(),
@@ -272,18 +212,15 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 			Status:      "parsing_failed",
 			Description: fmt.Sprintf("JSON parsing error: %v", err),
 		}
-		entryCreated = true
-
 		if j.ExitMonitor != nil {
 			j.ExitMonitor.IncrPlacesCompleted(1)
 		}
-		// IMPORTANT: Return the fallback entry instead of nil, so it gets written to database
-		return &entry, nil, fmt.Errorf("JSON parsing failed but fallback entry created: %w", err)
+		// Return the fallback entry so it gets written to database
+		return &entry, nil, nil
 	}
 
 	// Successful JSON extraction and parsing
 	entry = parsedEntry
-	entryCreated = true
 
 	// Integrate enhanced image data if available
 	j.processExtractedImages(&entry, resp)
@@ -294,31 +231,15 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 		entry.Link = j.GetURL()
 	}
 
-	// Parse reviews in an isolated block — panics don't lose the place entry.
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("add_extra_reviews_panic",
-					slog.String("parent_job_id", j.ParentID),
-					slog.String("entry_title", entry.Title),
-					slog.Any("panic", r),
-					slog.String("stack", string(debug.Stack())),
-				)
-			}
-		}()
-		allReviewsRaw, ok := resp.Meta["reviews_raw"].(fetchReviewsResponse)
-		if ok && len(allReviewsRaw.pages) > 0 {
-			entry.AddExtraReviews(allReviewsRaw.pages)
-		}
-	}()
+	allReviewsRaw, ok := resp.Meta["reviews_raw"].(fetchReviewsResponse)
+	if ok && len(allReviewsRaw.pages) > 0 {
+		entry.AddExtraReviews(allReviewsRaw.pages)
+	}
 
 	// CRITICAL FIX: Always write the place entry to database FIRST, even if we're going to extract emails
 	// This ensures we don't lose place data if email extraction fails
 	if j.ExtractEmail && entry.IsWebsiteValidForEmail() {
-		log.Info("place_job_email_extraction_queued",
-			slog.String("job_id", j.ID),
-			slog.String("website", entry.WebSite),
-		)
+		log.Info(fmt.Sprintf("PlaceJob %s - Will extract emails from %s but writing place data first", j.ID, entry.WebSite))
 
 		// Count this place as completed since we have the data
 		if j.ExitMonitor != nil {
@@ -342,11 +263,6 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 		j.ExitMonitor.IncrPlacesCompleted(1)
 	}
 
-	if !entryCreated {
-		log.Error("place_job_no_entry_created", slog.String("job_id", j.ID))
-		return nil, nil, fmt.Errorf("no entry created")
-	}
-
 	return &entry, nil, nil
 }
 
@@ -354,18 +270,11 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 func (j *PlaceJob) extractImages(ctx context.Context, page playwright.Page, resp *scrapemate.Response) {
 	log := scrapemate.GetLoggerFromContext(ctx)
 
-	// DEBUG: Always log whether extraction is enabled or not
-	log.Debug("place_job_extract_images_flag",
-		slog.String("job_id", j.ID),
-		slog.Bool("extract_images", j.ExtractImages),
-	)
-
 	if !j.ExtractImages {
-		log.Debug("place_job_image_extraction_disabled", slog.String("job_id", j.ID))
 		return
 	}
 
-	log.Debug("place_job_image_extraction_enabled", slog.String("job_id", j.ID))
+	log.Info(fmt.Sprintf("Starting multi-image extraction for job %s", j.ID))
 
 	// Create a separate context for image extraction with optimized timeout
 	imageCtx, imageCancel := context.WithTimeout(ctx, 30*time.Second) // Fast extraction should complete quickly
@@ -375,37 +284,18 @@ func (j *PlaceJob) extractImages(ctx context.Context, page playwright.Page, resp
 	imageResult, err := imageExtractor.ExtractAllImages(imageCtx)
 	if err != nil {
 		// Log error but don't fail the entire operation
-		log.Warn("place_job_image_extraction_failed",
-			slog.String("job_id", j.ID),
-			slog.Any("error", err),
-		)
+		log.Warn(fmt.Sprintf("Image extraction failed for job %s: %v", j.ID, err))
 		return
 	}
 
 	// Store images data and metadata for processing in Process method
 	resp.Meta["images_data"] = imageResult
 	resp.Meta["images_metadata"] = imageExtractor.GetMetadata()
-	log.Debug("place_job_image_extraction_succeeded",
-		slog.String("job_id", j.ID),
-		slog.Int("image_count", len(imageResult)),
-	)
-
-	// DEBUG: Log some sample URLs to verify they're different from JSON
-	if len(imageResult) > 0 {
-		log.Debug("place_job_image_extraction_sample_url",
-			slog.String("job_id", j.ID),
-			slog.String("url", imageResult[0].URL),
-		)
-	}
+	log.Info(fmt.Sprintf("Image extraction completed for job %s - extracted %d images", j.ID, len(imageResult)))
 }
 
 func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scrapemate.Response {
 	var resp scrapemate.Response
-
-	// Inject Google cookies for authenticated access (reviews, full data)
-	if err := InjectCookiesIntoPage(page); err != nil {
-		slog.Debug("place_cookies_inject_skipped", slog.Any("error", err))
-	}
 
 	pageResponse, err := page.Goto(j.GetURL(), playwright.PageGotoOptions{
 		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
@@ -424,12 +314,6 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 			j.ExitMonitor.IncrPlacesCompleted(1)
 		}
 		return resp
-	}
-
-	// Re-inject cookies AFTER consent handling — the consent dialog may have
-	// cleared or overwritten our auth cookies when clicking reject/accept.
-	if err := InjectCookiesIntoPage(page); err != nil {
-		slog.Debug("place_cookies_reinject_skipped", slog.Any("error", err))
 	}
 
 	const defaultTimeout = 5000
@@ -469,58 +353,29 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 
 	resp.Meta["json"] = raw
 
-	// IMPORTANT: Save the place URL BEFORE image extraction navigates away from the page.
-	// Image extraction clicks the "Photos" button and navigates to a different view,
-	// which changes page.URL(). Reviews need the original place URL to build the RPC request.
-	placeURL := page.URL()
+	// Extract images using the enhanced approach (only if ExtractImages is enabled)
+	j.extractImages(ctx, page, &resp)
 
-	// Extract reviews in an isolated block — panics here don't crash the PlaceJob.
-	// Reviews are a "Lego piece": they can fail independently without losing the place.
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("review_extraction_panic",
-					slog.String("job_id", j.ID),
-					slog.String("parent_job_id", j.ParentID),
-					slog.String("place_url", placeURL),
-					slog.Any("panic", r),
-					slog.String("stack", string(debug.Stack())),
-				)
-			}
-		}()
-
-		if !j.ExtractExtraReviews {
-			return
-		}
-
+	if j.ExtractExtraReviews {
 		reviewCount := j.getReviewCount(raw)
-		if reviewCount > 8 {
+		if reviewCount > 8 { // we have more reviews
 			params := fetchReviewsParams{
 				page:        page,
-				mapURL:      placeURL,
+				mapURL:      page.URL(),
 				reviewCount: reviewCount,
-				maxReviews:  j.ReviewsMax,
-				langCode:    j.URLParams["hl"],
+				maxReviews:  j.ReviewsMax, // Pass the review limit
 			}
 
 			reviewFetcher := newReviewFetcher(params)
 
 			reviewData, err := reviewFetcher.fetch(ctx)
 			if err != nil {
-				slog.Warn("review_extraction_failed",
-					slog.String("job_id", j.ID),
-					slog.String("parent_job_id", j.ParentID),
-					slog.String("place_url", placeURL),
-					slog.Any("error", err),
-				)
-				return
+				return resp
 			}
+
 			resp.Meta["reviews_raw"] = reviewData
 		}
-	}()
-
-	// Extract images AFTER reviews (image extraction navigates to Photos tab)
-	j.extractImages(ctx, page, &resp)
+	}
 
 	return resp
 }
@@ -580,7 +435,7 @@ func (j *PlaceJob) getReviewCount(data []byte) int {
 }
 
 func (j *PlaceJob) UseInResults() bool {
-	return j.UsageInResultststs
+	return j.UsageInResults
 }
 
 func ctxWait(ctx context.Context, dur time.Duration) {
