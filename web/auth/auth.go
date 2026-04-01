@@ -231,8 +231,15 @@ func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
 			ctx = context.WithValue(ctx, APIKeyIDKey, keyID)
 			if apiUser, err := m.userRepo.GetByID(r.Context(), userID); err == nil {
 				ctx = context.WithValue(ctx, UserRoleKey, apiUser.Role)
+			} else {
+				// Role lookup failed (transient DB error, etc.). Default to "user"
+				// via GetUserRole() — safe fallback that denies admin access.
+				m.logger.Warn("api_key_role_lookup_failed",
+					slog.String("user_id", userID),
+					slog.String("key_id", keyID),
+					slog.Any("error", err),
+				)
 			}
-			// If role lookup fails, GetUserRole() defaults to "user" — safe fallback.
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}

@@ -61,9 +61,11 @@ func (repo *userRepository) GetByEmail(ctx context.Context, email string) (User,
 	return user, nil
 }
 
-// Create inserts a new user
+// Create inserts a new user. The role column is intentionally omitted so new
+// users always receive the DB default ('user'). Admin promotion requires direct
+// DB access via scripts/promote_admin.sh — there is no API for self-promotion.
 func (repo *userRepository) Create(ctx context.Context, user *User) error {
-	const q = `INSERT INTO users (id, email, created_at, updated_at) 
+	const q = `INSERT INTO users (id, email, created_at, updated_at)
 	           VALUES ($1, $2, $3, $4)`
 
 	now := time.Now().UTC()
