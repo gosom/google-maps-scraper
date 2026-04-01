@@ -599,8 +599,9 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	} else if w.billingSvc != nil {
 		w.logger.Info("actor_start_charge_attempting", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
 		actorStartCtx, actorStartCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer actorStartCancel()
-		if err := w.billingSvc.ChargeActorStart(actorStartCtx, job.UserID, job.ID); err != nil {
+		err := w.billingSvc.ChargeActorStart(actorStartCtx, job.UserID, job.ID)
+		actorStartCancel() // release resources immediately
+		if err != nil {
 			w.logger.Error("actor_start_charge_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 			job.Status = web.StatusFailed
 			job.FailureReason = "insufficient credit balance to start job"
@@ -999,13 +1000,14 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 				// If any charge fails, ALL charges are rolled back (all-or-nothing)
 				w.logger.Info("billing_charge_attempting", slog.String("job_id", job.ID), slog.Int("result_count", resultCount), slog.String("user_id", job.UserID))
 
-				chargeAllCtx, chargeAllCancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer chargeAllCancel()
-				if err := w.billingSvc.ChargeAllJobEvents(chargeAllCtx, job.UserID, job.ID, resultCount); err != nil {
+				chargeAllCtx, chargeAllCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				err := w.billingSvc.ChargeAllJobEvents(chargeAllCtx, job.UserID, job.ID, resultCount)
+				chargeAllCancel() // release resources immediately
+				if err != nil {
 					w.logger.Error("billing_atomic_charge_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 					jobSuccess = false
 					job.Status = web.StatusFailed
-					job.FailureReason = fmt.Sprintf("billing failed: %v", err)
+					job.FailureReason = "billing processing failed"
 					// Return the error so caller knows the job failed
 					return fmt.Errorf("billing failed: %w", err)
 				} else {
