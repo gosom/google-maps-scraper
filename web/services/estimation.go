@@ -24,8 +24,8 @@ type EstimationService struct {
 
 // Estimation constants - average values based on typical Google Maps data
 const (
-	AvgReviewsPerPlace          = 25
-	AvgImagesPerPlace           = 30
+	AvgReviewsPerPlace        = 25
+	AvgImagesPerPlace         = 30
 	UnlimitedReviewsThreshold = 1000
 
 	// Default pricing fallbacks (used when DB has no active rules)

@@ -66,6 +66,7 @@ const (
 
 // Job source constants
 const (
-	SourceWeb = "web"
-	SourceAPI = "api"
+	SourceWeb   = "web"
+	SourceAPI   = "api"
+	SourceAdmin = "admin"
 )

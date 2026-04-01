@@ -31,7 +31,7 @@ type Dependencies struct {
 	PricingRuleRepo     models.PricingRuleRepository        // nil-safe; estimation falls back to defaults
 	ServerSecret        []byte                              // HMAC secret for GenerateAPIKey
 	ResultsSvc          ResultsService
-	Encryptor           *encryption.Encryptor           // nil means encryption disabled
+	Encryptor           *encryption.Encryptor // nil means encryption disabled
 	IntegrationRepo     models.IntegrationRepository
 	GoogleSheetsSvc     *googlesheets.Service
 	ConcurrentLimitSvc  *webservices.ConcurrentLimitService
@@ -48,6 +48,7 @@ type HandlerGroup struct {
 	Billing     *BillingHandlers
 	Integration *IntegrationHandler
 	Version     *VersionHandler
+	Admin       *AdminHandlers
 }
 
 // NewHandlerGroup constructs a HandlerGroup with initialized handlers.
@@ -60,6 +61,7 @@ func NewHandlerGroup(deps Dependencies) *HandlerGroup {
 		Billing:     &BillingHandlers{Deps: deps},
 		Integration: NewIntegrationHandler(deps.IntegrationRepo, deps.Encryptor, deps.App, deps.GoogleSheetsSvc),
 		Version:     NewVersionHandler(),
+		Admin:       &AdminHandlers{Deps: deps},
 	}
 }
 

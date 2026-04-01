@@ -253,6 +253,17 @@ func New(cfg ServerConfig) (*Server, error) {
 		apiRouter.HandleFunc("/credits/reconcile", hg.Billing.Reconcile).Methods(http.MethodPost)
 	}
 
+	// ─── Admin routes ────────────────────────────────────────────────────
+	// Admin routes are isolated in their own namespace and protected by
+	// RequireRole middleware. API key auth is explicitly rejected in each
+	// handler as defense-in-depth.
+	adminRouter := apiRouter.PathPrefix("/admin").Subrouter()
+	adminRouter.Use(webmiddleware.RequireRole(models.RoleAdmin))
+
+	adminRouter.HandleFunc("/jobs", hg.Admin.CreateJob).Methods(http.MethodPost)
+	adminRouter.HandleFunc("/jobs", hg.Admin.GetJobs).Methods(http.MethodGet)
+	adminRouter.HandleFunc("/jobs/{id}/cancel", hg.Admin.CancelJob).Methods(http.MethodPost)
+
 	// Webhook endpoints (public access, no authentication)
 	// Apply a 64 KB body limit — Stripe payloads are small; this prevents OOM from
 	// oversized requests (CWE-400).

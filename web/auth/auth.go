@@ -99,19 +99,32 @@ func extractBearerToken(r *http.Request) string {
 // It dispatches to API key auth when the Bearer token has the APIKeyPrefix,
 // and falls back to Clerk JWT validation otherwise.
 func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
-	// Dev bypass: local integration tests only. Never enabled in production.
+	// Dev bypass: local integration tests only. Only allowed when APP_ENV is
+	// explicitly "development", "test", or empty (unset). Blocked in production,
+	// staging, and any other environment to prevent accidental admin access.
 	if strings.TrimSpace(os.Getenv("BRAZA_DEV_AUTH_BYPASS")) == "1" {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if devUserID := strings.TrimSpace(r.Header.Get(DevUserHeaderName)); devUserID != "" {
-				if m.logger != nil {
-					m.logger.Warn("dev_auth_bypass", slog.String("user_id", devUserID))
+		appEnv := strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
+		if appEnv == "" || appEnv == "development" || appEnv == "test" {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if devUserID := strings.TrimSpace(r.Header.Get(DevUserHeaderName)); devUserID != "" {
+					if m.logger != nil {
+						m.logger.Warn("dev_auth_bypass", slog.String("user_id", devUserID))
+					}
+					ctx := context.WithValue(r.Context(), UserIDKey, devUserID)
+					// Allow dev testing of role-based behavior
+					if devRole := strings.TrimSpace(r.Header.Get("X-Braza-Dev-Role")); devRole != "" {
+						ctx = context.WithValue(ctx, UserRoleKey, devRole)
+					}
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
 				}
-				ctx := context.WithValue(r.Context(), UserIDKey, devUserID)
-				next.ServeHTTP(w, r.WithContext(ctx))
-				return
-			}
-			m.authenticateRequest(next).ServeHTTP(w, r)
-		})
+				m.authenticateRequest(next).ServeHTTP(w, r)
+			})
+		}
+		// Bypass requested but APP_ENV is not development/test — reject it.
+		if m.logger != nil {
+			m.logger.Error("dev_auth_bypass_rejected_for_env", slog.String("app_env", appEnv))
+		}
 	}
 
 	return m.authenticateRequest(next)
@@ -131,7 +144,9 @@ func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
 		}
 		userID := claims.Subject
 
-		if _, err := m.userRepo.GetByID(r.Context(), userID); err != nil {
+		dbUser, err := m.userRepo.GetByID(r.Context(), userID)
+		if err != nil {
+			// User not found — auto-provision from Clerk
 			clerkUser, err := m.userAPI.Get(r.Context(), userID)
 			if err != nil {
 				m.logger.Error("failed_to_retrieve_user_from_clerk", slog.String("user_id", userID), slog.Any("error", err))
@@ -169,9 +184,17 @@ func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
 			} else {
 				m.logger.Info("signup_bonus_granted", slog.Float64("amount", SignupBonusAmount), slog.String("user_id", userID))
 			}
+
+			// Newly created users always have the default role ("user").
+			// Set explicitly so the in-memory struct matches the DB default,
+			// rather than relying on GetUserRole()'s empty-string fallback.
+			newUser.Role = models.RoleUser
+			dbUser = newUser
 		}
 
-		ctx := context.WithValue(r.Context(), UserIDKey, userID)
+		ctx := r.Context()
+		ctx = context.WithValue(ctx, UserIDKey, userID)
+		ctx = context.WithValue(ctx, UserRoleKey, dbUser.Role)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	}))
 
@@ -205,8 +228,10 @@ func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
 			}
 
 			// Record API key usage asynchronously to avoid adding latency.
+			// Extract IP before launching goroutine — accessing the request
+			// after ServeHTTP returns is unsafe because the server may recycle it.
+			ip := clientIP(r)
 			go func() {
-				ip := clientIP(r)
 				if err := m.apiKeyRepo.UpdateLastUsed(context.Background(), keyID, ip); err != nil {
 					m.logger.Warn("api_key_update_last_used_failed", slog.String("key_id", keyID), slog.Any("error", err))
 				}
@@ -215,6 +240,17 @@ func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
 			ctx := r.Context()
 			ctx = context.WithValue(ctx, UserIDKey, userID)
 			ctx = context.WithValue(ctx, APIKeyIDKey, keyID)
+			if apiUser, err := m.userRepo.GetByID(r.Context(), userID); err == nil {
+				ctx = context.WithValue(ctx, UserRoleKey, apiUser.Role)
+			} else {
+				// Role lookup failed (transient DB error, etc.). Default to "user"
+				// via GetUserRole() — safe fallback that denies admin access.
+				m.logger.Warn("api_key_role_lookup_failed",
+					slog.String("user_id", userID),
+					slog.String("key_id", keyID),
+					slog.Any("error", err),
+				)
+			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}

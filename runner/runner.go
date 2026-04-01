@@ -143,13 +143,13 @@ type S3Uploader interface {
 
 // AWSConfig holds all AWS-related configuration fields.
 type AWSConfig struct {
-	AccessKey      string
-	SecretKey      string
-	Region         string
-	S3Bucket       string
-	LambdaRunner   bool
-	LambdaInvoker  bool
-	FunctionName   string
+	AccessKey       string
+	SecretKey       string
+	Region          string
+	S3Bucket        string
+	LambdaRunner    bool
+	LambdaInvoker   bool
+	FunctionName    string
 	LambdaChunkSize int
 }
 
