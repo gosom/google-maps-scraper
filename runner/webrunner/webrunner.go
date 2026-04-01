@@ -322,8 +322,9 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		}
 	}()
 
-	// Charge actor_start at job start (requires sufficient balance)
-	if w.billingSvc != nil {
+	// Charge actor_start at job start (requires sufficient balance).
+	// Admin jobs bypass billing entirely — they are internal operations.
+	if w.billingSvc != nil && job.Source != models.SourceAdmin {
 		log.Printf("INFO: Job %s - Attempting actor_start charge for user %s", job.ID, job.UserID)
 		if err := w.billingSvc.ChargeActorStart(context.Background(), job.UserID, job.ID); err != nil {
 			log.Printf("ERROR: billing: actor_start charge failed for job %s: %v", job.ID, err)
@@ -334,6 +335,9 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		log.Printf("SUCCESS: billing: actor_start charged successfully for job %s (user: %s)", job.ID, job.UserID)
 	} else {
 		log.Printf("WARNING: Job %s - Billing service is nil, skipping actor_start charge", job.ID)
+	}
+	if job.Source == models.SourceAdmin {
+		log.Printf("INFO: Job %s - actor_start charge skipped for admin job (user: %s)", job.ID, job.UserID)
 	}
 
 	// Check if job has been cancelled before starting
@@ -694,7 +698,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 
 			log.Printf("DEBUG: Job %s - billingSvc nil? %v, resultCount=%d", job.ID, w.billingSvc == nil, resultCount)
 
-			if w.billingSvc != nil && resultCount > 0 {
+			if w.billingSvc != nil && resultCount > 0 && job.Source != models.SourceAdmin {
 				// Charge ALL events in a single atomic transaction
 				// This includes: places, reviews, images, and contact details
 				// If any charge fails, ALL charges are rolled back (all-or-nothing)
@@ -711,6 +715,9 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 					log.Printf("SUCCESS: billing: successfully charged all events for job %s (user: %s)", job.ID, job.UserID)
 				}
 			} else {
+				if job.Source == models.SourceAdmin {
+					log.Printf("INFO: Job %s - billing skipped for admin job (user: %s, result_count: %d)", job.ID, job.UserID, resultCount)
+				}
 				if w.billingSvc == nil {
 					log.Printf("WARNING: Job %s - Billing service is nil, skipping all charges", job.ID)
 				}

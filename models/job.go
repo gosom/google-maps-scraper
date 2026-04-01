@@ -29,6 +29,7 @@ type Job struct {
 	UserID        string
 	Name          string
 	Status        string
+	Source        string
 	Data          JobData
 	Date          time.Time
 	CreatedAt     *time.Time `json:"created_at,omitempty"`
@@ -61,4 +62,9 @@ const (
 	StatusFailed    = "failed"
 	StatusCancelled = "cancelled"
 	StatusAborting  = "aborting"
+)
+
+// Job source constants
+const (
+	SourceAdmin = "admin"
 )
