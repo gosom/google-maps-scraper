@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -145,7 +146,15 @@ func (h *AdminHandlers) CancelJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.Deps.App.Cancel(r.Context(), jobID, userID); err != nil {
-		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: "Job not found"})
+		// Distinguish "not found" from unexpected errors so DB failures
+		// return 500 instead of a misleading 404.
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "cannot be cancelled") {
+			renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: "Job not found or cannot be cancelled"})
+		} else {
+			internalError(w, h.Deps.Logger, err, "admin job cancellation failed",
+				slog.String("user_id", userID), slog.String("job_id", jobID))
+		}
 		return
 	}
 
