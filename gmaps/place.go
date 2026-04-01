@@ -13,7 +13,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -231,10 +233,23 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 		entry.Link = j.GetURL()
 	}
 
-	allReviewsRaw, ok := resp.Meta["reviews_raw"].(fetchReviewsResponse)
-	if ok && len(allReviewsRaw.pages) > 0 {
-		entry.AddExtraReviews(allReviewsRaw.pages)
-	}
+	// Parse reviews in an isolated block — panics don't lose the place entry.
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("add_extra_reviews_panic",
+					slog.String("parent_job_id", j.ParentID),
+					slog.String("entry_title", entry.Title),
+					slog.Any("panic", r),
+					slog.String("stack", string(debug.Stack())),
+				)
+			}
+		}()
+		allReviewsRaw, ok := resp.Meta["reviews_raw"].(fetchReviewsResponse)
+		if ok && len(allReviewsRaw.pages) > 0 {
+			entry.AddExtraReviews(allReviewsRaw.pages)
+		}
+	}()
 
 	// CRITICAL FIX: Always write the place entry to database FIRST, even if we're going to extract emails
 	// This ensures we don't lose place data if email extraction fails
@@ -356,26 +371,51 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 	// Extract images using the enhanced approach (only if ExtractImages is enabled)
 	j.extractImages(ctx, page, &resp)
 
-	if j.ExtractExtraReviews {
+	// Extract reviews in an isolated block — panics here don't crash the PlaceJob.
+	// Reviews are a "Lego piece": they can fail independently without losing the place.
+	placeURL := page.URL()
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("review_extraction_panic",
+					slog.String("job_id", j.ID),
+					slog.String("parent_job_id", j.ParentID),
+					slog.String("place_url", placeURL),
+					slog.Any("panic", r),
+					slog.String("stack", string(debug.Stack())),
+				)
+			}
+		}()
+
+		if !j.ExtractExtraReviews {
+			return
+		}
+
 		reviewCount := j.getReviewCount(raw)
-		if reviewCount > 8 { // we have more reviews
+		if reviewCount > 8 {
 			params := fetchReviewsParams{
 				page:        page,
-				mapURL:      page.URL(),
+				mapURL:      placeURL,
 				reviewCount: reviewCount,
-				maxReviews:  j.ReviewsMax, // Pass the review limit
+				maxReviews:  j.ReviewsMax,
+				langCode:    j.URLParams["hl"],
 			}
 
 			reviewFetcher := newReviewFetcher(params)
 
 			reviewData, err := reviewFetcher.fetch(ctx)
 			if err != nil {
-				return resp
+				slog.Warn("review_extraction_failed",
+					slog.String("job_id", j.ID),
+					slog.String("parent_job_id", j.ParentID),
+					slog.String("place_url", placeURL),
+					slog.Any("error", err),
+				)
+				return
 			}
-
 			resp.Meta["reviews_raw"] = reviewData
 		}
-	}
+	}()
 
 	return resp
 }
