@@ -711,7 +711,8 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	mate, err := w.setupMate(jobCtx, outfile, job, exitMonitor)
 	if err != nil {
 		job.Status = web.StatusFailed
-		job.FailureReason = fmt.Sprintf("setupMate failed: %v", err)
+		job.FailureReason = "job initialization failed"
+		w.logger.Error("setup_mate_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 		return err
 	}
 
@@ -748,7 +749,8 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	})
 	if err != nil {
 		job.Status = web.StatusFailed
-		job.FailureReason = fmt.Sprintf("CreateSeedJobs failed: %v", err)
+		job.FailureReason = "job configuration failed"
+		w.logger.Error("create_seed_jobs_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 		return err
 	}
 
@@ -947,7 +949,8 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 				w.logger.Debug("real_error_occurred", slog.String("job_id", job.ID), slog.Any("error", err))
 				cancel()
 				job.Status = web.StatusFailed
-				job.FailureReason = fmt.Sprintf("runtime error: %v", err)
+				job.FailureReason = "job failed due to a runtime error"
+				w.logger.Error("job_runtime_error", slog.String("job_id", job.ID), slog.Any("error", err))
 
 				return err
 			}
@@ -962,7 +965,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		if seedTotal > 0 && seedCompleted < seedTotal {
 			w.logger.Debug("seeds_incomplete", slog.String("job_id", job.ID), slog.Int("completed", seedCompleted), slog.Int("total", seedTotal))
 			if job.FailureReason == "" {
-				job.FailureReason = fmt.Sprintf("seeds incomplete %d/%d", seedCompleted, seedTotal)
+				job.FailureReason = fmt.Sprintf("job partially completed (%d/%d searches finished)", seedCompleted, seedTotal)
 			}
 			jobSuccess = false
 		}
@@ -1046,7 +1049,8 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		// File close errors can indicate I/O errors (EIO) meaning data was lost
 		// This should fail the job to ensure data integrity
 		job.Status = web.StatusFailed
-		job.FailureReason = fmt.Sprintf("failed to close CSV file: %v", err)
+		job.FailureReason = "failed to save results file"
+		w.logger.Error("csv_file_close_failed_reason", slog.String("job_id", job.ID), slog.Any("error", err))
 		return fmt.Errorf("failed to close CSV file: %w", err)
 	}
 	fileClosed = true
