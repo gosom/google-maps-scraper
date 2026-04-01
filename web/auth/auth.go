@@ -107,6 +107,10 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 					m.logger.Warn("dev_auth_bypass", slog.String("user_id", devUserID))
 				}
 				ctx := context.WithValue(r.Context(), UserIDKey, devUserID)
+				// Allow dev testing of role-based behavior
+				if devRole := strings.TrimSpace(r.Header.Get("X-Braza-Dev-Role")); devRole != "" {
+					ctx = context.WithValue(ctx, UserRoleKey, devRole)
+				}
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
@@ -131,7 +135,9 @@ func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
 		}
 		userID := claims.Subject
 
-		if _, err := m.userRepo.GetByID(r.Context(), userID); err != nil {
+		dbUser, err := m.userRepo.GetByID(r.Context(), userID)
+		if err != nil {
+			// User not found — auto-provision from Clerk
 			clerkUser, err := m.userAPI.Get(r.Context(), userID)
 			if err != nil {
 				m.logger.Error("failed_to_retrieve_user_from_clerk", slog.String("user_id", userID), slog.Any("error", err))
@@ -169,9 +175,17 @@ func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
 			} else {
 				m.logger.Info("signup_bonus_granted", slog.Float64("amount", SignupBonusAmount), slog.String("user_id", userID))
 			}
+
+			// Newly created users always have the default role ("user").
+			// Set explicitly so the in-memory struct matches the DB default,
+			// rather than relying on GetUserRole()'s empty-string fallback.
+			newUser.Role = models.RoleUser
+			dbUser = newUser
 		}
 
-		ctx := context.WithValue(r.Context(), UserIDKey, userID)
+		ctx := r.Context()
+		ctx = context.WithValue(ctx, UserIDKey, userID)
+		ctx = context.WithValue(ctx, UserRoleKey, dbUser.Role)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	}))
 
@@ -215,6 +229,10 @@ func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
 			ctx := r.Context()
 			ctx = context.WithValue(ctx, UserIDKey, userID)
 			ctx = context.WithValue(ctx, APIKeyIDKey, keyID)
+			if apiUser, err := m.userRepo.GetByID(r.Context(), userID); err == nil {
+				ctx = context.WithValue(ctx, UserRoleKey, apiUser.Role)
+			}
+			// If role lookup fails, GetUserRole() defaults to "user" — safe fallback.
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
