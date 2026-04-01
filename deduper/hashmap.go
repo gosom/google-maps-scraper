@@ -9,27 +9,21 @@ import (
 var _ Deduper = (*hashmap)(nil)
 
 type hashmap struct {
-	mux  *sync.RWMutex
+	mux  sync.Mutex
 	seen map[uint64]struct{}
 }
 
 func (d *hashmap) AddIfNotExists(_ context.Context, key string) bool {
-	d.mux.RLock()
-	if _, ok := d.seen[d.hash(key)]; ok {
-		d.mux.RUnlock()
-		return false
-	}
-
-	d.mux.RUnlock()
+	h := d.hash(key)
 
 	d.mux.Lock()
 	defer d.mux.Unlock()
 
-	if _, ok := d.seen[d.hash(key)]; ok {
+	if _, ok := d.seen[h]; ok {
 		return false
 	}
 
-	d.seen[d.hash(key)] = struct{}{}
+	d.seen[h] = struct{}{}
 
 	return true
 }

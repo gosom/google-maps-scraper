@@ -5,7 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
+	"hash/fnv"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
+	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 )
 
 /*
@@ -29,15 +31,15 @@ where version is a numeric identifier (e.g., 000001) that determines execution o
 type MigrationRunner struct {
 	dsn           string
 	migrationsDir string
-	logger        *log.Logger
+	logger        *slog.Logger
 	timeout       time.Duration
 }
 
 func NewMigrationRunner(dsn string) *MigrationRunner {
 	return &MigrationRunner{
 		dsn:     dsn,
-		logger:  log.New(os.Stdout, "[Migration] ", log.LstdFlags),
-		timeout: 30 * time.Second,
+		logger:  pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "migration"),
+		timeout: 120 * time.Second,
 	}
 }
 
@@ -63,6 +65,14 @@ func (m *MigrationRunner) SetTimeout(timeout time.Duration) {
 	m.timeout = timeout
 }
 
+// migrationAdvisoryLockID is a PostgreSQL advisory lock ID derived from an FNV-32a
+// hash of a domain-specific string, reducing collision risk with other lock users.
+var migrationAdvisoryLockID = func() int64 {
+	h := fnv.New32a()
+	h.Write([]byte("google-maps-scraper:migrations"))
+	return int64(h.Sum32())
+}()
+
 func (m *MigrationRunner) RunMigrations() error {
 	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
 	defer cancel()
@@ -72,23 +82,89 @@ func (m *MigrationRunner) RunMigrations() error {
 		return fmt.Errorf("failed to find migrations directory: %w", err)
 	}
 
-	m.logger.Printf("Using migrations from: %s", migrationsDir)
+	m.logger.Info("using_migrations", slog.String("dir", migrationsDir))
+
+	// Acquire an advisory lock to prevent concurrent migrations from multiple pods.
+	// We pin to a single *sql.Conn so the lock stays on one connection for
+	// the entire duration of the migration.
+	lockPool, err := sql.Open("pgx", m.formatDSN())
+	if err != nil {
+		return fmt.Errorf("failed to open lock connection pool: %w", err)
+	}
+	defer lockPool.Close()
+
+	lockConn, err := lockPool.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to obtain single lock connection: %w", err)
+	}
+	defer lockConn.Close()
+
+	if err := lockConn.PingContext(ctx); err != nil {
+		return fmt.Errorf("failed to ping lock connection: %w", err)
+	}
+
+	if err := m.acquireAdvisoryLock(ctx, lockConn); err != nil {
+		return fmt.Errorf("failed to acquire migration lock: %w", err)
+	}
+	defer m.releaseAdvisoryLock(lockConn)
 
 	migrator, err := m.createMigrator(ctx, migrationsDir)
 	if err != nil {
 		return err
 	}
+	defer func() {
+		sourceErr, dbErr := migrator.Close()
+		if sourceErr != nil {
+			m.logger.Warn("migrator_source_close_error", slog.Any("error", sourceErr))
+		}
+		if dbErr != nil {
+			m.logger.Warn("migrator_db_close_error", slog.Any("error", dbErr))
+		}
+	}()
 
 	if err := migrator.Up(); err != nil {
 		if errors.Is(err, migrate.ErrNoChange) {
-			m.logger.Println("No migrations to apply - database is up to date")
+			m.logger.Info("no_migrations_to_apply")
 			return nil
 		}
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 
-	m.logger.Println("Successfully applied migrations")
+	m.logger.Info("migrations_applied_successfully")
 	return nil
+}
+
+// acquireAdvisoryLock acquires a PostgreSQL advisory lock on a pinned
+// connection. pg_advisory_lock blocks until the lock is available; the
+// context timeout handles the deadline.
+func (m *MigrationRunner) acquireAdvisoryLock(ctx context.Context, conn *sql.Conn) error {
+	m.logger.Info("migration_acquiring_lock")
+	_, err := conn.ExecContext(ctx, "SELECT pg_advisory_lock($1)", migrationAdvisoryLockID)
+	if err != nil {
+		return fmt.Errorf("failed to acquire migration advisory lock: %w", err)
+	}
+	m.logger.Info("migration_lock_acquired")
+	return nil
+}
+
+// releaseAdvisoryLock releases the PostgreSQL advisory lock on the pinned connection.
+// Uses a background context since the original context may have been cancelled.
+func (m *MigrationRunner) releaseAdvisoryLock(conn *sql.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var released bool
+	err := conn.QueryRowContext(ctx, "SELECT pg_advisory_unlock($1)", migrationAdvisoryLockID).Scan(&released)
+	if err != nil {
+		m.logger.Warn("migration_lock_release_failed", slog.Any("error", err))
+		return
+	}
+
+	if released {
+		m.logger.Info("migration_lock_released")
+	} else {
+		m.logger.Warn("migration_lock_not_held", slog.String("detail", "pg_advisory_unlock returned false; lock was not held by this session"))
+	}
 }
 
 func (m *MigrationRunner) createMigrator(ctx context.Context, migrationsDir string) (*migrate.Migrate, error) {
@@ -150,7 +226,7 @@ func (m *MigrationRunner) findMigrationsDir() (string, error) {
 	}
 
 	migrationsPath := filepath.Join(workingDir, "scripts", "migrations")
-	m.logger.Printf("Looking for migrations in: %s", migrationsPath)
+	m.logger.Info("looking_for_migrations", slog.String("path", migrationsPath))
 
 	if _, err := os.Stat(migrationsPath); err != nil {
 		return "", fmt.Errorf("migrations directory not found at %s: %w", migrationsPath, err)

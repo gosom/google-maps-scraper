@@ -355,3 +355,23 @@ nav a:hover {
     transform: translateY(-1px);
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
+
+.source-badge {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 600;
+    margin-left: 6px;
+    vertical-align: middle;
+}
+
+.source-api {
+    background-color: #e3f2fd;
+    color: #1565c0;
+}
+
+.source-web {
+    background-color: #f3e5f5;
+    color: #7b1fa2;
+}

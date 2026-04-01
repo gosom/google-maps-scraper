@@ -16,33 +16,36 @@ import (
 	"github.com/gosom/scrapemate"
 )
 
-func CreateSeedJobs(
-	fastmode bool,
-	langCode string,
-	r io.Reader,
-	maxDepth int,
-	email bool,
-	images bool,
-	debug bool,
-	reviewsMax int,
-	geoCoordinates string,
-	zoom int,
-	radius float64,
-	dedup deduper.Deduper,
-	exitMonitor exiter.Exiter,
-	extraReviews bool,
-	maxResults int,
-) (jobs []scrapemate.IJob, err error) {
+// SeedJobConfig groups all parameters needed to create seed jobs.
+type SeedJobConfig struct {
+	FastMode       bool
+	LangCode       string
+	Input          io.Reader
+	MaxDepth       int
+	Email          bool
+	Images         bool
+	Debug          bool
+	ReviewsMax     int
+	GeoCoordinates string
+	Zoom           int
+	Radius         float64
+	Dedup          deduper.Deduper
+	ExitMonitor    exiter.Exiter
+	ExtraReviews   bool
+	MaxResults     int
+}
+
+func CreateSeedJobs(cfg SeedJobConfig) (jobs []scrapemate.IJob, err error) {
 	var lat, lon float64
 
-	if fastmode {
-		if geoCoordinates == "" {
+	if cfg.FastMode {
+		if cfg.GeoCoordinates == "" {
 			return nil, fmt.Errorf("geo coordinates are required in fast mode")
 		}
 
-		parts := strings.Split(geoCoordinates, ",")
+		parts := strings.Split(cfg.GeoCoordinates, ",")
 		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid geo coordinates: %s", geoCoordinates)
+			return nil, fmt.Errorf("invalid geo coordinates: %s", cfg.GeoCoordinates)
 		}
 
 		lat, err = strconv.ParseFloat(parts[0], 64)
@@ -63,21 +66,21 @@ func CreateSeedJobs(
 			return nil, fmt.Errorf("invalid longitude: %f", lon)
 		}
 
-		if zoom < 1 || zoom > 21 {
-			return nil, fmt.Errorf("invalid zoom level: %d", zoom)
+		if cfg.Zoom < 1 || cfg.Zoom > 21 {
+			return nil, fmt.Errorf("invalid zoom level: %d", cfg.Zoom)
 		}
 
-		if radius < 0 {
-			return nil, fmt.Errorf("invalid radius: %f", radius)
+		if cfg.Radius < 0 {
+			return nil, fmt.Errorf("invalid radius: %f", cfg.Radius)
 		}
 	}
 
 	// Set max results limit on the exit monitor if provided
-	if exitMonitor != nil && maxResults > 0 {
-		exitMonitor.SetMaxResults(maxResults)
+	if cfg.ExitMonitor != nil && cfg.MaxResults > 0 {
+		cfg.ExitMonitor.SetMaxResults(cfg.MaxResults)
 	}
 
-	scanner := bufio.NewScanner(r)
+	scanner := bufio.NewScanner(cfg.Input)
 
 	for scanner.Scan() {
 		query := strings.TrimSpace(scanner.Text())
@@ -94,44 +97,44 @@ func CreateSeedJobs(
 
 		var job scrapemate.IJob
 
-		if !fastmode {
+		if !cfg.FastMode {
 			opts := []gmaps.GmapJobOptions{}
 
-			if dedup != nil {
-				opts = append(opts, gmaps.WithDeduper(dedup))
+			if cfg.Dedup != nil {
+				opts = append(opts, gmaps.WithDeduper(cfg.Dedup))
 			}
 
-			if exitMonitor != nil {
-				opts = append(opts, gmaps.WithExitMonitor(exitMonitor))
+			if cfg.ExitMonitor != nil {
+				opts = append(opts, gmaps.WithExitMonitor(cfg.ExitMonitor))
 			}
 
-			if extraReviews {
+			if cfg.ExtraReviews {
 				opts = append(opts, gmaps.WithExtraReviews())
 			}
 
-			if debug {
+			if cfg.Debug {
 				opts = append(opts, gmaps.WithDebug())
 			}
 
-			job = gmaps.NewGmapJob(id, langCode, query, maxDepth, email, images, reviewsMax, geoCoordinates, zoom, opts...)
+			job = gmaps.NewGmapJob(id, cfg.LangCode, query, cfg.MaxDepth, cfg.Email, cfg.Images, cfg.ReviewsMax, cfg.GeoCoordinates, cfg.Zoom, opts...)
 		} else {
 			jparams := gmaps.MapSearchParams{
 				Location: gmaps.MapLocation{
 					Lat:     lat,
 					Lon:     lon,
-					ZoomLvl: float64(zoom),
-					Radius:  radius,
+					ZoomLvl: float64(cfg.Zoom),
+					Radius:  cfg.Radius,
 				},
 				Query:     query,
 				ViewportW: 1920,
 				ViewportH: 450,
-				Hl:        langCode,
+				Hl:        cfg.LangCode,
 			}
 
 			opts := []gmaps.SearchJobOptions{}
 
-			if exitMonitor != nil {
-				opts = append(opts, gmaps.WithSearchJobExitMonitor(exitMonitor))
+			if cfg.ExitMonitor != nil {
+				opts = append(opts, gmaps.WithSearchJobExitMonitor(cfg.ExitMonitor))
 			}
 
 			job = gmaps.NewSearchJob(&jparams, opts...)

@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,15 +25,17 @@ import (
 var _ runner.Runner = (*lambdaAwsRunner)(nil)
 
 type lambdaAwsRunner struct {
+	logger   *slog.Logger
 	uploader runner.S3Uploader
 }
 
-func New(cfg *runner.Config) (runner.Runner, error) {
+func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 	if cfg.RunMode != runner.RunModeAwsLambda {
 		return nil, fmt.Errorf("%w: %d", runner.ErrInvalidRunMode, cfg.RunMode)
 	}
 
 	ans := lambdaAwsRunner{
+		logger:   logger,
 		uploader: cfg.S3Uploader,
 	}
 
@@ -70,7 +72,7 @@ func (l *lambdaAwsRunner) handler(ctx context.Context, input lInput) error {
 	defer func() {
 		if !outClosed {
 			if err := out.Close(); err != nil {
-				log.Printf("ERROR: Lambda runner - Failed to close CSV file in defer: %v", err)
+				l.logger.Error("lambda_csv_close_defer_failed", slog.Any("error", err))
 			}
 		}
 	}()
@@ -86,28 +88,28 @@ func (l *lambdaAwsRunner) handler(ctx context.Context, input lInput) error {
 
 	exitMonitor := exiter.New()
 
-	seedJobs, err = runner.CreateSeedJobs(
-		false, // TODO support fast mode
-		input.Language,
-		in,
-		input.Depth,
-		false, // email
-		false, // images
-		false, // debug
-		func() int {
+	seedJobs, err = runner.CreateSeedJobs(runner.SeedJobConfig{
+		FastMode: false, // TODO support fast mode
+		LangCode: input.Language,
+		Input:    in,
+		MaxDepth: input.Depth,
+		Email:    false,
+		Images:   false,
+		Debug:    false,
+		ReviewsMax: func() int {
 			if input.ExtraReviews {
 				return 1 // Default to 1 review if enabled
 			}
 			return 0 // No reviews
-		}(), // reviewsMax
-		"",    // geoCoordinates
-		15,    // zoom
-		10000, // radius
-		nil,   // deduper
-		exitMonitor,
-		input.ExtraReviews,
-		0, // No max results limit for lambda runner (unlimited)
-	)
+		}(),
+		GeoCoordinates: "",
+		Zoom:           15,
+		Radius:         10000,
+		Dedup:          nil,
+		ExitMonitor:    exitMonitor,
+		ExtraReviews:   input.ExtraReviews,
+		MaxResults:     0, // No max results limit for lambda runner (unlimited)
+	})
 	if err != nil {
 		return err
 	}
@@ -129,11 +131,11 @@ func (l *lambdaAwsRunner) handler(ctx context.Context, input lInput) error {
 	// CRITICAL: Close the CSV file and check for errors before upload
 	// For writable files, Close() can return I/O errors indicating data loss
 	if err := out.Close(); err != nil {
-		log.Printf("ERROR: Lambda runner - Failed to close CSV file: %v", err)
+		l.logger.Error("lambda_csv_close_failed", slog.Any("error", err))
 		return fmt.Errorf("failed to close CSV file: %w", err)
 	}
 	outClosed = true
-	log.Printf("Lambda runner - CSV file closed successfully")
+	l.logger.Info("lambda_csv_closed")
 
 	if l.uploader != nil {
 		key := fmt.Sprintf("%s-%d.csv", input.JobID, input.Part)
@@ -149,9 +151,9 @@ func (l *lambdaAwsRunner) handler(ctx context.Context, input lInput) error {
 			return err
 		}
 
-		log.Printf("Lambda job %s part %d: S3 upload successful (ETag: %s)", input.JobID, input.Part, result.ETag)
+		l.logger.Info("lambda_s3_upload_success", slog.String("job_id", input.JobID), slog.Int("part", input.Part), slog.String("etag", result.ETag))
 	} else {
-		log.Println("no uploader set results are at ", out.Name())
+		l.logger.Warn("no_uploader_set", slog.String("output_file", out.Name()))
 	}
 
 	return nil

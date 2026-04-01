@@ -5,14 +5,25 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"os"
 	"strconv"
 
 	"github.com/gosom/google-maps-scraper/models"
+	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 )
 
-type ResultsService struct{ db *sql.DB }
+type ResultsService struct {
+	db  *sql.DB
+	log *slog.Logger
+}
 
-func NewResultsService(db *sql.DB) *ResultsService { return &ResultsService{db: db} }
+func NewResultsService(db *sql.DB) *ResultsService {
+	return &ResultsService{
+		db:  db,
+		log: pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "results"),
+	}
+}
 
 // NullableJSON helps scan JSONB/text fields that may be NULL
 type NullableJSON struct {
@@ -70,7 +81,7 @@ func (s *ResultsService) GetJobResults(ctx context.Context, jobID string) ([]mod
 	if s.db == nil {
 		return nil, fmt.Errorf("database not available")
 	}
-	const q = `SELECT 
+	const q = `SELECT
             id, user_id, job_id, input_id, link, cid, title,
             categories, category, address, website, phone, pluscode,
             review_count, rating, latitude, longitude, status_info,
@@ -81,6 +92,7 @@ func (s *ResultsService) GetJobResults(ctx context.Context, jobID string) ([]mod
         ORDER BY created_at DESC`
 	rows, err := s.db.QueryContext(ctx, q, jobID)
 	if err != nil {
+		s.log.Error("job_results_query_failed", slog.String("job_id", jobID), slog.Any("error", err))
 		return nil, fmt.Errorf("failed to query results: %w", err)
 	}
 	defer rows.Close()
@@ -94,6 +106,7 @@ func (s *ResultsService) GetJobResults(ctx context.Context, jobID string) ([]mod
 			&r.Description, &r.ReviewsLink, &r.Thumbnail, &r.Timezone, &r.PriceRange,
 			&r.DataID, &r.Emails, &r.CreatedAt,
 		); err != nil {
+			s.log.Error("job_results_scan_failed", slog.String("job_id", jobID), slog.Any("error", err))
 			return nil, fmt.Errorf("failed to scan result: %w", err)
 		}
 		results = append(results, r)
@@ -101,6 +114,7 @@ func (s *ResultsService) GetJobResults(ctx context.Context, jobID string) ([]mod
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("row iteration error: %w", err)
 	}
+	s.log.Debug("job_results_retrieved", slog.String("job_id", jobID), slog.Int("count", len(results)))
 	return results, nil
 }
 
@@ -108,7 +122,7 @@ func (s *ResultsService) GetUserResults(ctx context.Context, userID string, limi
 	if s.db == nil {
 		return nil, fmt.Errorf("database not available")
 	}
-	const q = `SELECT 
+	const q = `SELECT
             id, user_id, job_id, input_id, link, cid, title,
             categories, category, address, website, phone, pluscode,
             review_count, rating, latitude, longitude, status_info,
@@ -120,6 +134,7 @@ func (s *ResultsService) GetUserResults(ctx context.Context, userID string, limi
         LIMIT $2 OFFSET $3`
 	rows, err := s.db.QueryContext(ctx, q, userID, limit, offset)
 	if err != nil {
+		s.log.Error("user_results_query_failed", slog.String("user_id", userID), slog.Int("limit", limit), slog.Int("offset", offset), slog.Any("error", err))
 		return nil, fmt.Errorf("failed to query results: %w", err)
 	}
 	defer rows.Close()
@@ -133,6 +148,7 @@ func (s *ResultsService) GetUserResults(ctx context.Context, userID string, limi
 			&r.Description, &r.ReviewsLink, &r.Thumbnail, &r.Timezone, &r.PriceRange,
 			&r.DataID, &r.Emails, &r.CreatedAt,
 		); err != nil {
+			s.log.Error("user_results_scan_failed", slog.String("user_id", userID), slog.Any("error", err))
 			return nil, fmt.Errorf("failed to scan result: %w", err)
 		}
 		results = append(results, r)
@@ -140,6 +156,7 @@ func (s *ResultsService) GetUserResults(ctx context.Context, userID string, limi
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("row iteration error: %w", err)
 	}
+	s.log.Debug("user_results_retrieved", slog.String("user_id", userID), slog.Int("count", len(results)))
 	return results, nil
 }
 
@@ -150,13 +167,14 @@ func (s *ResultsService) GetEnhancedJobResultsPaginated(ctx context.Context, job
 	const countQ = `SELECT COUNT(1) FROM results WHERE job_id = $1`
 	var total int
 	if err := s.db.QueryRowContext(ctx, countQ, jobID).Scan(&total); err != nil {
+		s.log.Error("enhanced_results_count_failed", slog.String("job_id", jobID), slog.Any("error", err))
 		return nil, 0, fmt.Errorf("failed to count results: %w", err)
 	}
 
 	const q = `SELECT 
             id,
             COALESCE(user_id, '') as user_id,
-            COALESCE(job_id, '') as job_id,
+            job_id::text as job_id,
             COALESCE(input_id, '') as input_id,
             COALESCE(link, '') as link,
             COALESCE(cid, '') as cid,
@@ -199,6 +217,7 @@ func (s *ResultsService) GetEnhancedJobResultsPaginated(ctx context.Context, job
 
 	rows, err := s.db.QueryContext(ctx, q, jobID, limit, offset)
 	if err != nil {
+		s.log.Error("enhanced_results_query_failed", slog.String("job_id", jobID), slog.Int("limit", limit), slog.Int("offset", offset), slog.Any("error", err))
 		return nil, 0, fmt.Errorf("failed to query enhanced results: %w", err)
 	}
 	defer rows.Close()
@@ -366,5 +385,6 @@ func (s *ResultsService) GetEnhancedJobResultsPaginated(ctx context.Context, job
 	if err := rows.Err(); err != nil {
 		return nil, 0, fmt.Errorf("row iteration error: %w", err)
 	}
+	s.log.Debug("enhanced_results_retrieved", slog.String("job_id", jobID), slog.Int("count", len(results)), slog.Int("total", total), slog.Int("limit", limit), slog.Int("offset", offset))
 	return results, total, nil
 }

@@ -137,7 +137,7 @@ LOG_LEVEL=info
 
 # Optional configurations
 DISABLE_TELEMETRY=0
-CLERK_API_KEY=
+CLERK_SECRET_KEY=
 ```
 
 **Important Notes:**

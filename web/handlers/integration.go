@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -17,20 +18,25 @@ import (
 	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/pkg/encryption"
 	"github.com/gosom/google-maps-scraper/pkg/googlesheets"
+	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	"github.com/gosom/google-maps-scraper/web/auth"
 )
 
 type IntegrationHandler struct {
 	repo          models.IntegrationRepository
+	enc           *encryption.Encryptor // nil means encryption disabled
 	jobService    JobService
 	sheetsService *googlesheets.Service
+	log           *slog.Logger
 }
 
-func NewIntegrationHandler(repo models.IntegrationRepository, jobService JobService, sheetsService *googlesheets.Service) *IntegrationHandler {
+func NewIntegrationHandler(repo models.IntegrationRepository, enc *encryption.Encryptor, jobService JobService, sheetsService *googlesheets.Service) *IntegrationHandler {
 	return &IntegrationHandler{
 		repo:          repo,
+		enc:           enc,
 		jobService:    jobService,
 		sheetsService: sheetsService,
+		log:           pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "integration"),
 	}
 }
 
@@ -52,8 +58,10 @@ func (h *IntegrationHandler) HandleGoogleAuth(w http.ResponseWriter, r *http.Req
 	// Generate a state token to prevent CSRF
 	state := uuid.New().String()
 
-	// Store state in a secure cookie
-	isSecure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+	// Store state in a secure cookie.
+	// Use IS_PRODUCTION env var to unconditionally set Secure in production
+	// rather than trusting the client-supplied X-Forwarded-Proto header (CWE-614).
+	isSecure := r.TLS != nil || os.Getenv("IS_PRODUCTION") == "1"
 	http.SetCookie(w, &http.Cookie{
 		Name:     "oauth_state",
 		Value:    state,
@@ -66,6 +74,7 @@ func (h *IntegrationHandler) HandleGoogleAuth(w http.ResponseWriter, r *http.Req
 
 	// AccessTypeOffline is required to get a refresh token
 	url := h.googleConfig().AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce)
+	h.log.Info("google_oauth_initiated")
 	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
 }
 
@@ -79,8 +88,9 @@ func (h *IntegrationHandler) HandleGoogleCallback(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Clear the cookie
-	isSecure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+	// Clear the cookie.
+	// Use IS_PRODUCTION env var (not X-Forwarded-Proto) to set Secure flag (CWE-614).
+	isSecure := r.TLS != nil || os.Getenv("IS_PRODUCTION") == "1"
 	http.SetCookie(w, &http.Cookie{
 		Name:     "oauth_state",
 		Value:    "",
@@ -92,19 +102,23 @@ func (h *IntegrationHandler) HandleGoogleCallback(w http.ResponseWriter, r *http
 	})
 
 	if r.URL.Query().Get("state") != stateCookie.Value {
+		h.log.Warn("google_oauth_invalid_state")
 		http.Error(w, "Invalid state parameter", http.StatusBadRequest)
 		return
 	}
 
 	code := r.URL.Query().Get("code")
 	if code == "" {
+		h.log.Warn("google_oauth_missing_code")
 		http.Error(w, "Code not found", http.StatusBadRequest)
 		return
 	}
 
 	token, err := h.googleConfig().Exchange(ctx, code)
 	if err != nil {
-		http.Error(w, "Failed to exchange token: "+err.Error(), http.StatusInternalServerError)
+		h.log.Error("google_oauth_token_exchange_failed",
+			slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+		http.Error(w, "Failed to exchange token", http.StatusInternalServerError)
 		return
 	}
 
@@ -115,34 +129,47 @@ func (h *IntegrationHandler) HandleGoogleCallback(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Encrypt tokens
-	encryptedAccessToken, err := encryption.Encrypt(token.AccessToken)
-	if err != nil {
-		http.Error(w, "Failed to encrypt access token", http.StatusInternalServerError)
-		return
-	}
+	// Encrypt tokens if encryptor is available, otherwise store plaintext
+	accessToken := token.AccessToken
+	refreshToken := token.RefreshToken
+	if h.enc != nil {
+		encrypted, encErr := h.enc.Encrypt(token.AccessToken)
+		if encErr != nil {
+			h.log.Error("google_oauth_encrypt_access_token_failed",
+				slog.String("user_id", userIDStr), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", encErr))
+			http.Error(w, "Failed to encrypt access token", http.StatusInternalServerError)
+			return
+		}
+		accessToken = encrypted
 
-	encryptedRefreshToken, err := encryption.Encrypt(token.RefreshToken)
-	if err != nil {
-		http.Error(w, "Failed to encrypt refresh token", http.StatusInternalServerError)
-		return
+		encrypted, encErr = h.enc.Encrypt(token.RefreshToken)
+		if encErr != nil {
+			h.log.Error("google_oauth_encrypt_refresh_token_failed",
+				slog.String("user_id", userIDStr), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", encErr))
+			http.Error(w, "Failed to encrypt refresh token", http.StatusInternalServerError)
+			return
+		}
+		refreshToken = encrypted
 	}
 
 	integration := &models.UserIntegration{
 		UserID:       userIDStr,
 		Provider:     "google",
-		AccessToken:  []byte(encryptedAccessToken),
-		RefreshToken: []byte(encryptedRefreshToken),
+		AccessToken:  []byte(accessToken),
+		RefreshToken: []byte(refreshToken),
 		Expiry:       token.Expiry,
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}
 
 	if err := h.repo.Save(ctx, integration); err != nil {
-		http.Error(w, "Failed to save integration: "+err.Error(), http.StatusInternalServerError)
+		h.log.Error("google_oauth_save_integration_failed",
+			slog.String("user_id", userIDStr), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+		http.Error(w, "Failed to save integration", http.StatusInternalServerError)
 		return
 	}
 
+	h.log.Info("google_oauth_integration_saved", slog.String("user_id", userIDStr))
 	// Redirect back to frontend
 	http.Redirect(w, r, "/dashboard/integrations?success=true", http.StatusTemporaryRedirect)
 }
@@ -167,7 +194,8 @@ func (h *IntegrationHandler) HandleGetStatus(w http.ResponseWriter, r *http.Requ
 			_, _ = w.Write([]byte(`{"connected": false}`))
 			return
 		}
-		http.Error(w, "Failed to get integration client: "+err.Error(), http.StatusInternalServerError)
+		slog.Error("failed_to_get_integration_client", slog.String("user_id", userID), slog.Any("error", err))
+		http.Error(w, "Failed to get integration client", http.StatusInternalServerError)
 		return
 	}
 
@@ -182,7 +210,7 @@ func (h *IntegrationHandler) HandleGetStatus(w http.ResponseWriter, r *http.Requ
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"connected": true, "email": "%s"}`, email)
+	_ = json.NewEncoder(w).Encode(map[string]any{"connected": true, "email": email})
 }
 
 func (h *IntegrationHandler) HandleExportJob(w http.ResponseWriter, r *http.Request) {
@@ -200,8 +228,8 @@ func (h *IntegrationHandler) HandleExportJob(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Verify job ownership
-	if _, err = h.jobService.Get(ctx, jobID); err != nil {
+	// Verify job ownership (ownership enforced in DB query)
+	if _, err = h.jobService.Get(ctx, jobID, userID); err != nil {
 		http.Error(w, "Job not found", http.StatusNotFound)
 		return
 	}
@@ -209,14 +237,17 @@ func (h *IntegrationHandler) HandleExportJob(w http.ResponseWriter, r *http.Requ
 	// Get CSV content
 	csvReader, filename, err := h.jobService.GetCSVReader(ctx, jobID)
 	if err != nil {
-		http.Error(w, "Failed to get CSV: "+err.Error(), http.StatusInternalServerError)
+		h.log.Error("google_sheets_get_csv_failed",
+			slog.String("user_id", userID), slog.String("job_id", jobID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+		http.Error(w, "Failed to get CSV", http.StatusInternalServerError)
 		return
 	}
 	defer csvReader.Close()
 
 	client, err := h.getHTTPClient(ctx, userID)
 	if err != nil {
-		http.Error(w, "Google integration not found or invalid: "+err.Error(), http.StatusNotFound)
+		h.log.Warn("google_sheets_no_integration", slog.String("user_id", userID), slog.String("job_id", jobID))
+		http.Error(w, "Google integration not found or invalid", http.StatusNotFound)
 		return
 	}
 
@@ -256,14 +287,19 @@ func (h *IntegrationHandler) HandleExportJob(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
+	h.log.Info("google_sheets_upload_started", slog.String("user_id", userID), slog.String("job_id", jobID), slog.String("filename", filename))
 	sheetURL, err := h.sheetsService.UploadCSV(ctx, client, filename, csvReader)
 	if err != nil {
-		http.Error(w, "Failed to upload to Google Sheets: "+err.Error(), http.StatusInternalServerError)
+		h.log.Error("google_sheets_upload_failed",
+			slog.String("user_id", userID), slog.String("job_id", jobID), slog.String("filename", filename),
+			slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+		http.Error(w, "Failed to upload to Google Sheets", http.StatusInternalServerError)
 		return
 	}
 
+	h.log.Info("google_sheets_upload_complete", slog.String("user_id", userID), slog.String("job_id", jobID), slog.String("filename", filename))
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"url": "%s"}`, sheetURL)
+	_ = json.NewEncoder(w).Encode(map[string]string{"url": sheetURL})
 }
 
 // getHTTPClient retrieves the user's integration, decrypts tokens, and returns an authenticated HTTP client
@@ -273,22 +309,15 @@ func (h *IntegrationHandler) getHTTPClient(ctx context.Context, userID string) (
 		return nil, err
 	}
 
-	decryptedAccessToken, err := encryption.Decrypt(string(integration.AccessToken))
-	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt access token: %w", err)
-	}
-
+	// Tokens are already decrypted by the repository's Get method
 	token := &oauth2.Token{
-		AccessToken: decryptedAccessToken,
+		AccessToken: string(integration.AccessToken),
 		TokenType:   "Bearer",
 		Expiry:      integration.Expiry,
 	}
 
 	if len(integration.RefreshToken) > 0 {
-		decryptedRefreshToken, err := encryption.Decrypt(string(integration.RefreshToken))
-		if err == nil {
-			token.RefreshToken = decryptedRefreshToken
-		}
+		token.RefreshToken = string(integration.RefreshToken)
 	}
 
 	tokenSource := h.googleConfig().TokenSource(ctx, token)

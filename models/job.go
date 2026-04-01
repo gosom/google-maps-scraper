@@ -34,6 +34,7 @@ type Job struct {
 	CreatedAt     *time.Time `json:"created_at,omitempty"`
 	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
 	FailureReason string     `json:"failure_reason,omitempty"`
+	Source        string     `json:"source"`
 }
 
 // SelectParams defines parameters for filtering job selection
@@ -45,12 +46,12 @@ type SelectParams struct {
 
 // JobRepository defines the interface for job storage
 type JobRepository interface {
-	Get(ctx context.Context, id string) (Job, error)
+	Get(ctx context.Context, id string, userID string) (Job, error)
 	Create(ctx context.Context, job *Job) error
-	Delete(ctx context.Context, id string) error
+	Delete(ctx context.Context, id string, userID string) error
 	Select(ctx context.Context, params SelectParams) ([]Job, error)
 	Update(ctx context.Context, job *Job) error
-	Cancel(ctx context.Context, id string) error
+	Cancel(ctx context.Context, id string, userID string) error
 }
 
 // Common status constants
@@ -61,4 +62,10 @@ const (
 	StatusFailed    = "failed"
 	StatusCancelled = "cancelled"
 	StatusAborting  = "aborting"
+)
+
+// Job source constants
+const (
+	SourceWeb = "web"
+	SourceAPI = "api"
 )

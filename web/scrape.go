@@ -25,7 +25,7 @@ type Config struct {
 	DataFolder string
 
 	// Authentication
-	ClerkAPIKey string
+	ClerkSecretKey string
 
 	// AWS Lambda
 	AWSRegion             string
@@ -59,7 +59,7 @@ func LoadConfig() Config {
 		DataFolder: getEnv("DATA_FOLDER", "./webdata"),
 
 		// Authentication
-		ClerkAPIKey: getEnv("CLERK_API_KEY", ""),
+		ClerkSecretKey: getEnv("CLERK_SECRET_KEY", ""),
 
 		// AWS Lambda
 		AWSRegion:             getEnv("AWS_REGION", ""),

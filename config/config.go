@@ -145,10 +145,20 @@ func (s *Service) getFromCache(key string) (string, bool) {
 		return "", false
 	}
 	if time.Now().After(entry.expiresAt) {
+		// Upgrade to write lock and re-check to avoid race where another
+		// goroutine refreshed the cache between our RUnlock and Lock.
 		s.mu.Lock()
-		delete(s.cache, key)
+		entry, ok = s.cache[key]
+		expired := ok && time.Now().After(entry.expiresAt)
+		if expired {
+			delete(s.cache, key)
+		}
 		s.mu.Unlock()
-		return "", false
+
+		if expired || !ok {
+			return "", false
+		}
+		return entry.value, true
 	}
 	return entry.value, true
 }

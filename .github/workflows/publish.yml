@@ -10,7 +10,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: yasseen-salama/google-maps-scraper
+  IMAGE_NAME: brezel-ai/brezelscraper-backend
 
 jobs:
   push_to_registry:
@@ -42,3 +42,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_DATE=${{ github.event.release.published_at }}
+            GIT_COMMIT=${{ github.sha }}
+            VERSION=${{ github.event.release.tag_name }}

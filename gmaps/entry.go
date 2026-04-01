@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"iter"
+	"log/slog"
 	"math"
 	"net/url"
 	"runtime/debug"
@@ -231,9 +232,15 @@ func (e *Entry) CsvHeaders() []string {
 func (e *Entry) CsvRow() []string {
 	// DEBUG: Log final image count being written to CSV
 	if len(e.Images) > 0 {
-		fmt.Printf("DEBUG: Writing %d images to CSV for business: %s\n", len(e.Images), e.Title)
+		slog.Debug("entry_csv_row_images",
+			slog.Int("image_count", len(e.Images)),
+			slog.String("title", e.Title),
+		)
 		if len(e.EnhancedImages) > 0 {
-			fmt.Printf("DEBUG: Enhanced images available: %d, Image extraction metadata available: %v\n", len(e.EnhancedImages), e.ImageExtractionMetadata != nil)
+			slog.Debug("entry_csv_row_enhanced_images",
+				slog.Int("enhanced_image_count", len(e.EnhancedImages)),
+				slog.Bool("has_image_extraction_metadata", e.ImageExtractionMetadata != nil),
+			)
 		}
 	}
 
@@ -294,7 +301,7 @@ func extractReviews(data []byte) []Review {
 
 	var jd []any
 	if err := json.Unmarshal(data, &jd); err != nil {
-		fmt.Printf("Error unmarshalling JSON: %v\n", err)
+		slog.Error("entry_extract_reviews_unmarshal_failed", slog.Any("error", err))
 		return nil
 	}
 
@@ -800,6 +807,10 @@ func getNthElementAndCast[T any](arr []any, indexes ...int) T {
 	}
 
 	if len(indexes) == 0 || len(arr) == 0 {
+		return defaultVal
+	}
+
+	if indexes[0] >= len(arr) {
 		return defaultVal
 	}
 

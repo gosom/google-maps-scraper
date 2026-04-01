@@ -7,6 +7,8 @@ import (
 	"io"
 	"math/rand/v2"
 	"net/http"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -28,17 +30,22 @@ type Event struct {
 }
 
 func NewEvent(name string, props map[string]any) Event {
-	ev := Event{
-		AnonymousID: generateMachineID().id,
-		Name:        name,
-		Properties:  generateMachineID().meta,
-	}
+	mid := generateMachineID()
 
+	// Copy meta to avoid mutating the shared cached map.
+	merged := make(map[string]any, len(mid.meta)+len(props))
+	for k, v := range mid.meta {
+		merged[k] = v
+	}
 	for k, v := range props {
-		ev.Properties[k] = v
+		merged[k] = v
 	}
 
-	return ev
+	return Event{
+		AnonymousID: mid.id,
+		Name:        name,
+		Properties:  merged,
+	}
 }
 
 type Telemetry interface {
@@ -53,18 +60,10 @@ type machineIdentifier struct {
 
 func generateMachineID() machineIdentifier {
 	once.Do(func() {
-		ip := fetchExternalIP()
-		if ip == "" {
-			ip = uuid.New().String()
+		id := loadOrCreateMachineID()
+		if id == "" {
+			id = legacyMachineID()
 		}
-
-		hash := sha256.New()
-		hash.Write([]byte(ip))
-		hash.Write([]byte(runtime.GOARCH))
-		hash.Write([]byte(runtime.GOOS))
-		hash.Write([]byte(runtime.Version()))
-
-		id := fmt.Sprintf("%x", hash.Sum(nil))
 
 		meta := make(map[string]any)
 
@@ -81,6 +80,52 @@ func generateMachineID() machineIdentifier {
 	})
 
 	return identifier
+}
+
+// loadOrCreateMachineID returns a stable UUID persisted to disk.
+// Returns "" on any error so the caller can fall back.
+func loadOrCreateMachineID() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	dir := filepath.Join(home, ".config", "brezel")
+	path := filepath.Join(dir, ".machine-id")
+
+	data, err := os.ReadFile(path)
+	if err == nil {
+		if id := strings.TrimSpace(string(data)); id != "" {
+			if _, parseErr := uuid.Parse(id); parseErr == nil {
+				return id
+			}
+			// File corrupted; fall through to regenerate.
+		}
+	}
+
+	id := uuid.New().String()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return ""
+	}
+	if err := os.WriteFile(path, []byte(id), 0o600); err != nil {
+		return ""
+	}
+	return id
+}
+
+// legacyMachineID computes a machine ID from external IP + arch (unstable fallback).
+func legacyMachineID() string {
+	ip := fetchExternalIP()
+	if ip == "" {
+		ip = uuid.New().String()
+	}
+
+	hash := sha256.New()
+	hash.Write([]byte(ip))
+	hash.Write([]byte(runtime.GOARCH))
+	hash.Write([]byte(runtime.GOOS))
+	hash.Write([]byte(runtime.Version()))
+
+	return fmt.Sprintf("%x", hash.Sum(nil))
 }
 
 func fetchExternalIP() string {

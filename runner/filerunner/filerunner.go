@@ -3,8 +3,10 @@ package filerunner
 import (
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -21,19 +23,21 @@ import (
 
 type fileRunner struct {
 	cfg     *runner.Config
+	logger  *slog.Logger
 	input   io.Reader
 	writers []scrapemate.ResultWriter
 	app     *scrapemateapp.ScrapemateApp
 	outfile *os.File
 }
 
-func New(cfg *runner.Config) (runner.Runner, error) {
+func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 	if cfg.RunMode != runner.RunModeFile {
 		return nil, fmt.Errorf("%w: %d", runner.ErrInvalidRunMode, cfg.RunMode)
 	}
 
 	ans := &fileRunner{
-		cfg: cfg,
+		cfg:    cfg,
+		logger: logger,
 	}
 
 	if err := ans.setInput(); err != nil {
@@ -75,28 +79,28 @@ func (r *fileRunner) Run(ctx context.Context) (err error) {
 	dedup := deduper.New()
 	exitMonitor := exiter.New()
 
-	seedJobs, err = runner.CreateSeedJobs(
-		r.cfg.FastMode,
-		r.cfg.LangCode,
-		r.input,
-		r.cfg.MaxDepth,
-		r.cfg.Email,
-		r.cfg.Images,
-		r.cfg.Debug,
-		func() int {
-			if r.cfg.ExtraReviews {
+	seedJobs, err = runner.CreateSeedJobs(runner.SeedJobConfig{
+		FastMode: r.cfg.Scraping.FastMode,
+		LangCode: r.cfg.Scraping.LangCode,
+		Input:    r.input,
+		MaxDepth: r.cfg.Scraping.MaxDepth,
+		Email:    r.cfg.Scraping.Email,
+		Images:   r.cfg.Scraping.Images,
+		Debug:    r.cfg.Debug,
+		ReviewsMax: func() int {
+			if r.cfg.Scraping.ExtraReviews {
 				return 1 // Default to 1 review if extra reviews enabled
 			}
 			return 0 // No reviews if not enabled
 		}(),
-		r.cfg.GeoCoordinates,
-		r.cfg.Zoom,
-		r.cfg.Radius,
-		dedup,
-		exitMonitor,
-		r.cfg.ExtraReviews,
-		r.cfg.MaxResults, // Use MaxResults from config instead of hardcoded 0
-	)
+		GeoCoordinates: r.cfg.Scraping.GeoCoordinates,
+		Zoom:           r.cfg.Scraping.Zoom,
+		Radius:         r.cfg.Scraping.Radius,
+		Dedup:          dedup,
+		ExitMonitor:    exitMonitor,
+		ExtraReviews:   r.cfg.Scraping.ExtraReviews,
+		MaxResults:     r.cfg.Scraping.MaxResults,
+	})
 	if err != nil {
 		return err
 	}
@@ -116,21 +120,19 @@ func (r *fileRunner) Run(ctx context.Context) (err error) {
 }
 
 func (r *fileRunner) Close(context.Context) error {
+	var errs []error
 	if r.app != nil {
-		return r.app.Close()
+		errs = append(errs, r.app.Close())
 	}
-
 	if r.input != nil {
 		if closer, ok := r.input.(io.Closer); ok {
-			return closer.Close()
+			errs = append(errs, closer.Close())
 		}
 	}
-
 	if r.outfile != nil {
-		return r.outfile.Close()
+		errs = append(errs, r.outfile.Close())
 	}
-
-	return nil
+	return errors.Join(errs...)
 }
 
 func (r *fileRunner) setInput() error {
@@ -200,13 +202,13 @@ func (r *fileRunner) setApp() error {
 		scrapemateapp.WithExitOnInactivity(r.cfg.ExitOnInactivityDuration),
 	}
 
-	if len(r.cfg.Proxies) > 0 {
+	if len(r.cfg.Proxy.Proxies) > 0 {
 		opts = append(opts,
-			scrapemateapp.WithProxies(r.cfg.Proxies),
+			scrapemateapp.WithProxies(r.cfg.Proxy.Proxies),
 		)
 	}
 
-	if !r.cfg.FastMode {
+	if !r.cfg.Scraping.FastMode {
 		if r.cfg.Debug {
 			opts = append(opts, scrapemateapp.WithJS(
 				scrapemateapp.Headfull(),
@@ -220,10 +222,10 @@ func (r *fileRunner) setApp() error {
 		opts = append(opts, scrapemateapp.WithStealth("firefox"))
 	}
 
-	if !r.cfg.DisablePageReuse {
+	if !r.cfg.Scraping.DisablePageReuse {
 		opts = append(opts,
 			scrapemateapp.WithPageReuseLimit(2),
-			scrapemateapp.WithPageReuseLimit(200),
+			scrapemateapp.WithBrowserReuseLimit(200),
 		)
 	}
 

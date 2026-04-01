@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -14,6 +15,16 @@ import (
 	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/google-maps-scraper/gmaps"
 )
+
+// mustMarshalJSON marshals v to JSON, logging a warning and returning "null" on error.
+func mustMarshalJSON(v any) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		slog.Warn("json_marshal_failed", slog.String("type", fmt.Sprintf("%T", v)), slog.Any("error", err))
+		return []byte("null")
+	}
+	return b
+}
 
 // NewResultWriter creates a basic result writer that only saves to the data column
 func NewResultWriter(db *sql.DB) scrapemate.ResultWriter {
@@ -151,12 +162,26 @@ func (r *enhancedResultWriterWithExiter) Run(ctx context.Context, in <-chan scra
 
 	buff := make([]*gmaps.Entry, 0, 1)
 
+	// Query the initial count ONCE at startup instead of on every result
+	var totalWritten int
+	if r.exitMonitor != nil {
+		err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM results WHERE job_id = $1", r.jobID).Scan(&totalWritten)
+		if err != nil {
+			slog.Warn("postgres_result_writer_initial_count_failed", slog.Any("error", err))
+			totalWritten = 0
+		}
+		slog.Debug("postgres_result_writer_initial_count",
+			slog.Int("initial_count", totalWritten),
+			slog.String("job_id", r.jobID),
+		)
+	}
+
 	// Use the provided context for cancellation support
 	for result := range in {
 		// Check for cancellation first
 		select {
 		case <-ctx.Done():
-			fmt.Printf("DEBUG: Result writer stopped due to cancellation\n")
+			slog.Debug("postgres_result_writer_stopped_context_cancelled")
 			return ctx.Err()
 		default:
 		}
@@ -167,17 +192,16 @@ func (r *enhancedResultWriterWithExiter) Run(ctx context.Context, in <-chan scra
 			return errors.New("invalid data type")
 		}
 
-		// SIMPLE LIMIT CHECK: Stop if we already have enough results
+		// SIMPLE LIMIT CHECK: Stop if we already have enough results (using in-memory counter)
 		if r.exitMonitor != nil {
 			maxResults := r.exitMonitor.GetMaxResults()
-			if maxResults > 0 {
-				// Simple database count check
-				var currentCount int
-				err := r.db.QueryRow("SELECT COUNT(*) FROM results WHERE job_id = $1", r.jobID).Scan(&currentCount)
-				if err == nil && currentCount >= maxResults {
-					fmt.Printf("DEBUG: PostgreSQL Writer - already at limit (%d/%d), stopping\n", currentCount, maxResults)
-					return nil
-				}
+			if maxResults > 0 && totalWritten >= maxResults {
+				slog.Debug("postgres_result_writer_limit_reached",
+					slog.Int("current_count", totalWritten),
+					slog.Int("max_results", maxResults),
+					slog.String("job_id", r.jobID),
+				)
+				return nil
 			}
 		}
 
@@ -186,11 +210,15 @@ func (r *enhancedResultWriterWithExiter) Run(ctx context.Context, in <-chan scra
 
 		// DEBUG: Log detailed result validation
 		if !isValidResult {
-			fmt.Printf("DEBUG: Skipping invalid result - Title: '%s' (empty title)\n", entry.Title)
+			slog.Debug("postgres_result_writer_skipping_invalid_result",
+				slog.String("title", entry.Title),
+			)
 		} else {
-			fmt.Printf("DEBUG: Valid result received - %s (will count after DB save)\n", entry.Title)
-			// Additional debug info
-			fmt.Printf("DEBUG: Result details - Link: '%s', Cid: '%s'\n", entry.Link, entry.Cid)
+			slog.Debug("postgres_result_writer_valid_result_received",
+				slog.String("title", entry.Title),
+				slog.String("link", entry.Link),
+				slog.String("cid", entry.Cid),
+			)
 		}
 
 		buff = append(buff, entry)
@@ -202,9 +230,13 @@ func (r *enhancedResultWriterWithExiter) Run(ctx context.Context, in <-chan scra
 				return err
 			}
 
-			// NOW count only actually inserted results
+			// Track actually inserted rows in memory and notify exiter
 			if r.exitMonitor != nil && insertedCount > 0 {
-				fmt.Printf("DEBUG: Successfully inserted %d results, notifying exit monitor\n", insertedCount)
+				totalWritten += insertedCount
+				slog.Debug("postgres_result_writer_batch_inserted",
+					slog.Int("inserted_count", insertedCount),
+					slog.Int("total_written", totalWritten),
+				)
 				r.exitMonitor.IncrResultsWritten(insertedCount)
 			}
 
@@ -218,9 +250,13 @@ func (r *enhancedResultWriterWithExiter) Run(ctx context.Context, in <-chan scra
 			return err
 		}
 
-		// NOW count only actually inserted results
+		// Track actually inserted rows in memory and notify exiter
 		if r.exitMonitor != nil && insertedCount > 0 {
-			fmt.Printf("DEBUG: Final batch - Successfully inserted %d results, notifying exit monitor\n", insertedCount)
+			totalWritten += insertedCount
+			slog.Debug("postgres_result_writer_final_batch_inserted",
+				slog.Int("inserted_count", insertedCount),
+				slog.Int("total_written", totalWritten),
+			)
 			r.exitMonitor.IncrResultsWritten(insertedCount)
 		}
 	}
@@ -259,11 +295,13 @@ func (r *resultWriter) batchSave(ctx context.Context, entries []*gmaps.Entry) er
 
 	tx, err := r.db.BeginTx(dbCtx, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("begin transaction: %w", err)
 	}
 
 	defer func() {
-		_ = tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			slog.Warn("tx_rollback_failed", slog.Any("error", rbErr))
+		}
 	}()
 
 	_, err = tx.ExecContext(dbCtx, q, args...)
@@ -271,9 +309,11 @@ func (r *resultWriter) batchSave(ctx context.Context, entries []*gmaps.Entry) er
 		return err
 	}
 
-	err = tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
 
-	return err
+	return nil
 }
 
 func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []*gmaps.Entry) error {
@@ -292,36 +332,35 @@ func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []
 		reviews_per_rating, latitude, longitude, status_info, description,
 		reviews_link, thumbnail, timezone, price_range, data_id, images,
 		reservations, order_online, menu, owner, complete_address, about,
-		user_reviews, user_reviews_extended, emails, data, created_at
+		user_reviews, user_reviews_extended, emails, created_at
 	) VALUES `
 
 	elements := make([]string, 0, len(entries))
-	args := make([]interface{}, 0, len(entries)*38) // 38 fields per entry
+	args := make([]interface{}, 0, len(entries)*37) // 37 fields per entry
 
 	for i, entry := range entries {
 		// Serialize JSON fields
-		openHoursJSON, _ := json.Marshal(entry.OpenHours)
-		popularTimesJSON, _ := json.Marshal(entry.PopularTimes)
-		reviewsPerRatingJSON, _ := json.Marshal(entry.ReviewsPerRating)
-		imagesJSON, _ := json.Marshal(entry.Images)
-		reservationsJSON, _ := json.Marshal(entry.Reservations)
-		orderOnlineJSON, _ := json.Marshal(entry.OrderOnline)
-		menuJSON, _ := json.Marshal(entry.Menu)
-		ownerJSON, _ := json.Marshal(entry.Owner)
-		completeAddressJSON, _ := json.Marshal(entry.CompleteAddress)
-		aboutJSON, _ := json.Marshal(entry.About)
-		userReviewsJSON, _ := json.Marshal(entry.UserReviews)
-		userReviewsExtendedJSON, _ := json.Marshal(entry.UserReviewsExtended)
-		dataJSON, _ := json.Marshal(entry)
+		openHoursJSON := mustMarshalJSON(entry.OpenHours)
+		popularTimesJSON := mustMarshalJSON(entry.PopularTimes)
+		reviewsPerRatingJSON := mustMarshalJSON(entry.ReviewsPerRating)
+		imagesJSON := mustMarshalJSON(entry.Images)
+		reservationsJSON := mustMarshalJSON(entry.Reservations)
+		orderOnlineJSON := mustMarshalJSON(entry.OrderOnline)
+		menuJSON := mustMarshalJSON(entry.Menu)
+		ownerJSON := mustMarshalJSON(entry.Owner)
+		completeAddressJSON := mustMarshalJSON(entry.CompleteAddress)
+		aboutJSON := mustMarshalJSON(entry.About)
+		userReviewsJSON := mustMarshalJSON(entry.UserReviews)
+		userReviewsExtendedJSON := mustMarshalJSON(entry.UserReviewsExtended)
 
 		// Convert categories slice to comma-separated string
 		categoriesStr := strings.Join(entry.Categories, ", ")
 		emailsStr := strings.Join(entry.Emails, ", ")
 
 		// Create parameter placeholders for this entry
-		base := i * 38
-		placeholders := make([]string, 38)
-		for j := 0; j < 38; j++ {
+		base := i * 37
+		placeholders := make([]string, 37)
+		for j := 0; j < 37; j++ {
 			placeholders[j] = fmt.Sprintf("$%d", base+j+1)
 		}
 		elements = append(elements, "("+strings.Join(placeholders, ", ")+")")
@@ -364,17 +403,18 @@ func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []
 			userReviewsJSON,         // user_reviews
 			userReviewsExtendedJSON, // user_reviews_extended
 			emailsStr,               // emails
-			dataJSON,                // data (full entry as JSON)
 			time.Now(),              // created_at
 		)
 	}
 
 	q += strings.Join(elements, ", ")
-	// Remove ON CONFLICT clause temporarily to avoid constraint issues
-	// q += " ON CONFLICT (cid, job_id) DO NOTHING" // Prevent duplicates within the same job
+	q += " ON CONFLICT (cid, job_id) DO NOTHING"
 
-	// Log the operation for debugging
-	fmt.Printf("[PostgreSQL Writer] Attempting to insert %d entries for user %s, job %s\n", len(entries), r.userID, r.jobID)
+	slog.Debug("postgres_enhanced_writer_insert_attempt",
+		slog.Int("entry_count", len(entries)),
+		slog.String("user_id", r.userID),
+		slog.String("job_id", r.jobID),
+	)
 
 	tx, err := r.db.BeginTx(dbCtx, nil)
 	if err != nil {
@@ -382,23 +422,36 @@ func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []
 	}
 
 	defer func() {
-		_ = tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			slog.Warn("tx_rollback_failed", slog.Any("error", rbErr))
+		}
 	}()
 
 	_, err = tx.ExecContext(dbCtx, q, args...)
 	if err != nil {
-		fmt.Printf("[PostgreSQL Writer] ERROR: Failed to execute insert: %v\n", err)
-		fmt.Printf("[PostgreSQL Writer] Query: %s\n", q[:200]+"...") // Log first 200 chars of query
+		queryPreview := q
+		if len(queryPreview) > 200 {
+			queryPreview = queryPreview[:200] + "..."
+		}
+		slog.Error("postgres_enhanced_writer_insert_exec_failed",
+			slog.Any("error", err),
+			slog.String("query_preview", queryPreview),
+			slog.String("job_id", r.jobID),
+		)
 		return fmt.Errorf("failed to insert results: %w", err)
 	}
 
 	err = tx.Commit()
 	if err != nil {
-		fmt.Printf("[PostgreSQL Writer] ERROR: Failed to commit transaction: %v\n", err)
+		slog.Error("postgres_enhanced_writer_commit_failed", slog.Any("error", err), slog.String("job_id", r.jobID))
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	fmt.Printf("[PostgreSQL Writer] Successfully inserted %d entries for user %s, job %s\n", len(entries), r.userID, r.jobID)
+	slog.Debug("postgres_enhanced_writer_insert_success",
+		slog.Int("entry_count", len(entries)),
+		slog.String("user_id", r.userID),
+		slog.String("job_id", r.jobID),
+	)
 	return nil
 }
 
@@ -419,36 +472,35 @@ func (r *enhancedResultWriterWithExiter) batchSaveEnhancedWithCount(ctx context.
 		reviews_per_rating, latitude, longitude, status_info, description,
 		reviews_link, thumbnail, timezone, price_range, data_id, images,
 		reservations, order_online, menu, owner, complete_address, about,
-		user_reviews, user_reviews_extended, emails, data, created_at
+		user_reviews, user_reviews_extended, emails, created_at
 	) VALUES `
 
 	elements := make([]string, 0, len(entries))
-	args := make([]interface{}, 0, len(entries)*38) // 38 fields per entry
+	args := make([]interface{}, 0, len(entries)*37) // 37 fields per entry
 
 	for i, entry := range entries {
 		// Serialize JSON fields
-		openHoursJSON, _ := json.Marshal(entry.OpenHours)
-		popularTimesJSON, _ := json.Marshal(entry.PopularTimes)
-		reviewsPerRatingJSON, _ := json.Marshal(entry.ReviewsPerRating)
-		imagesJSON, _ := json.Marshal(entry.Images)
-		reservationsJSON, _ := json.Marshal(entry.Reservations)
-		orderOnlineJSON, _ := json.Marshal(entry.OrderOnline)
-		menuJSON, _ := json.Marshal(entry.Menu)
-		ownerJSON, _ := json.Marshal(entry.Owner)
-		completeAddressJSON, _ := json.Marshal(entry.CompleteAddress)
-		aboutJSON, _ := json.Marshal(entry.About)
-		userReviewsJSON, _ := json.Marshal(entry.UserReviews)
-		userReviewsExtendedJSON, _ := json.Marshal(entry.UserReviewsExtended)
-		dataJSON, _ := json.Marshal(entry)
+		openHoursJSON := mustMarshalJSON(entry.OpenHours)
+		popularTimesJSON := mustMarshalJSON(entry.PopularTimes)
+		reviewsPerRatingJSON := mustMarshalJSON(entry.ReviewsPerRating)
+		imagesJSON := mustMarshalJSON(entry.Images)
+		reservationsJSON := mustMarshalJSON(entry.Reservations)
+		orderOnlineJSON := mustMarshalJSON(entry.OrderOnline)
+		menuJSON := mustMarshalJSON(entry.Menu)
+		ownerJSON := mustMarshalJSON(entry.Owner)
+		completeAddressJSON := mustMarshalJSON(entry.CompleteAddress)
+		aboutJSON := mustMarshalJSON(entry.About)
+		userReviewsJSON := mustMarshalJSON(entry.UserReviews)
+		userReviewsExtendedJSON := mustMarshalJSON(entry.UserReviewsExtended)
 
 		// Convert categories slice to comma-separated string
 		categoriesStr := strings.Join(entry.Categories, ", ")
 		emailsStr := strings.Join(entry.Emails, ", ")
 
 		// Create parameter placeholders for this entry
-		base := i * 38
-		placeholders := make([]string, 38)
-		for j := 0; j < 38; j++ {
+		base := i * 37
+		placeholders := make([]string, 37)
+		for j := 0; j < 37; j++ {
 			placeholders[j] = fmt.Sprintf("$%d", base+j+1)
 		}
 		elements = append(elements, "("+strings.Join(placeholders, ", ")+")")
@@ -491,16 +543,18 @@ func (r *enhancedResultWriterWithExiter) batchSaveEnhancedWithCount(ctx context.
 			userReviewsJSON,         // user_reviews
 			userReviewsExtendedJSON, // user_reviews_extended
 			emailsStr,               // emails
-			dataJSON,                // data (full entry as JSON)
 			time.Now(),              // created_at
 		)
 	}
 
 	q += strings.Join(elements, ", ")
-	// Note: Removed ON CONFLICT clause - no unique constraint exists on cid column
+	q += " ON CONFLICT (cid, job_id) DO NOTHING"
 
-	// Log the operation for debugging
-	fmt.Printf("[PostgreSQL Writer WITH EXITER] Attempting to insert %d entries for user %s, job %s\n", len(entries), r.userID, r.jobID)
+	slog.Debug("postgres_exiter_writer_insert_attempt",
+		slog.Int("entry_count", len(entries)),
+		slog.String("user_id", r.userID),
+		slog.String("job_id", r.jobID),
+	)
 
 	tx, err := r.db.BeginTx(dbCtx, nil)
 	if err != nil {
@@ -508,31 +562,37 @@ func (r *enhancedResultWriterWithExiter) batchSaveEnhancedWithCount(ctx context.
 	}
 
 	defer func() {
-		_ = tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			slog.Warn("tx_rollback_failed", slog.Any("error", rbErr))
+		}
 	}()
 
 	result, err := tx.ExecContext(dbCtx, q, args...)
 	if err != nil {
-		fmt.Printf("[PostgreSQL Writer WITH EXITER] ERROR: Failed to execute insert: %v\n", err)
+		slog.Error("postgres_exiter_writer_insert_exec_failed", slog.Any("error", err), slog.String("job_id", r.jobID))
 		return 0, fmt.Errorf("failed to insert results: %w", err)
 	}
 
 	err = tx.Commit()
 	if err != nil {
-		fmt.Printf("[PostgreSQL Writer WITH EXITER] ERROR: Failed to commit transaction: %v\n", err)
+		slog.Error("postgres_exiter_writer_commit_failed", slog.Any("error", err), slog.String("job_id", r.jobID))
 		return 0, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	// Get the number of rows affected (inserted)
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		fmt.Printf("[PostgreSQL Writer WITH EXITER] Warning: Could not get rows affected: %v\n", err)
+		slog.Warn("postgres_exiter_writer_rows_affected_failed", slog.Any("error", err))
 		// Assume all entries were inserted if we can't get the count
 		rowsAffected = int64(len(entries))
 	}
 
 	insertedCount := int(rowsAffected)
-	fmt.Printf("[PostgreSQL Writer WITH EXITER] Successfully inserted %d entries for user %s, job %s\n", insertedCount, r.userID, r.jobID)
+	slog.Debug("postgres_exiter_writer_insert_success",
+		slog.Int("inserted_count", insertedCount),
+		slog.String("user_id", r.userID),
+		slog.String("job_id", r.jobID),
+	)
 
 	return insertedCount, nil
 }

@@ -2,6 +2,7 @@ cache/
 vendor
 bin
 webdata/
+logs/
 gmapsdata/*.csv
 gmapsdata/*.json
 
@@ -30,3 +31,7 @@ google-maps-scraper
 go.work.sum
 brezel-api
 .gitignore
+*.DS_Store
+.DS_Store
+.claude/
+google_cookies.json

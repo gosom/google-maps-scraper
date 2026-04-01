@@ -10,16 +10,54 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  BACKEND_IMAGE: yasseen-salama/google-maps-scraper
-  FRONTEND_IMAGE: yasseen-salama/scraper-webapp
+  BACKEND_IMAGE: brezel-ai/brezelscraper-backend
+  FRONTEND_IMAGE: brezel-ai/brezelscraper-frontend
   DOCKER_COMPOSE_FILE: docker-compose.staging.yaml
   BACKEND_CONTAINER: brezelscraper-backend
   FRONTEND_CONTAINER: brezelscraper-frontend
 
 jobs:
+  setup:
+    name: Setup Versioning
+    runs-on: ubuntu-latest
+    outputs:
+      semver_base: ${{ steps.version.outputs.base }}
+      backend_version: ${{ steps.version.outputs.backend }}
+      build_timestamp: ${{ steps.version.outputs.timestamp }}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Calculate Versions
+        id: version
+        run: |
+          # Read VERSION with fallback
+          VERSION=$(cat VERSION 2>/dev/null || echo "0.0.0")
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          
+          # Base version (e.g. 0.1.0)
+          echo "base=${VERSION}" >> $GITHUB_OUTPUT
+          
+          # Build timestamp (actual build time, not commit time)
+          echo "timestamp=${BUILD_TIME}" >> $GITHUB_OUTPUT
+          
+          # Backend full version (Docker-compatible: no + allowed)
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            BACKEND_VER="${{ github.ref_name }}"
+          else
+            BACKEND_VER="v${VERSION}-${{ github.ref_name }}-${SHORT_SHA}"
+          fi
+          echo "backend=${BACKEND_VER}" >> $GITHUB_OUTPUT
+          
+          echo "✅ Base Version: ${VERSION}"
+          echo "✅ Backend Version: ${BACKEND_VER}"
+          echo "✅ Build Timestamp: ${BUILD_TIME}"
+
   build-and-push-backend:
     name: Build and Push Backend
-    runs-on: ubuntu-24.04-arm
+    needs: setup
+    runs-on: ubuntu-latest
     if: |
       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') && 
       (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true))
@@ -45,6 +83,7 @@ jobs:
           tags: |
             type=raw,value=staging,enable=${{ github.ref == 'refs/heads/develop' }}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=${{ needs.setup.outputs.backend_version }}
             type=sha,prefix=${{ github.ref_name }}-
 
       - name: Build and push Backend
@@ -57,13 +96,15 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            BUILD_DATE=${{ needs.setup.outputs.build_timestamp }}
             GIT_COMMIT=${{ github.sha }}
-            VERSION=${{ github.ref_name }}
+            VERSION=${{ needs.setup.outputs.backend_version }}
 
   build-and-push-frontend:
     name: Build and Push Frontend
-    runs-on: ubuntu-24.04-arm
+    needs: setup
+    runs-on: ubuntu-latest
+    environment: staging
     if: |
       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') && 
       (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true))
@@ -73,21 +114,38 @@ jobs:
         continue-on-error: true
         uses: actions/checkout@v4
         with:
-          repository: brezel-ai/scraper-webapp
+          repository: brezel-ai/brezelscraper-frontend
+          ref: ${{ github.ref_name }}
           token: ${{ secrets.FRONTEND_REPO_TOKEN }}
           path: frontend
 
-      - name: Set frontend availability
+      - name: Set frontend availability and version
+        id: frontend-prep
         run: |
           if [ -d "frontend" ]; then
             echo "FRONTEND_EXISTS=true" >> $GITHUB_ENV
             cd frontend
-            echo "Frontend repository checked out successfully"
-            echo "Frontend branch: $(git branch --show-current)"
-            echo "Latest commit: $(git log --oneline -1)"
+            
+            # Get Frontend Short SHA (with error handling)
+            FRONTEND_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+            echo "Frontend SHA: $FRONTEND_SHA"
+            
+            # Construct Frontend Version (Docker-compatible: no + allowed)
+            BASE_VER="${{ needs.setup.outputs.semver_base }}"
+            if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+              FRONTEND_VER="${{ github.ref_name }}"
+            else
+              FRONTEND_VER="v${BASE_VER}-${{ github.ref_name }}-${FRONTEND_SHA}"
+            fi
+            
+            echo "frontend_version=${FRONTEND_VER}" >> $GITHUB_OUTPUT
+            echo "✅ Frontend Version: ${FRONTEND_VER}"
           else
             echo "FRONTEND_EXISTS=false" >> $GITHUB_ENV
-            echo "Frontend repository not accessible"
+            # Set fallback version for consistent tagging (Docker-compatible)
+            FALLBACK_VER="v${{ needs.setup.outputs.semver_base }}-${{ github.ref_name }}-unavailable"
+            echo "frontend_version=${FALLBACK_VER}" >> $GITHUB_OUTPUT
+            echo "⚠️ Frontend repository not accessible, using fallback version"
           fi
 
       - name: Set up Docker Buildx
@@ -102,6 +160,34 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set API URL for build
+        id: api-config
+        run: |
+          # Set the API URL as a step output (more reliable than env vars)
+          echo "api_url=https://staging.brezel.ai" >> $GITHUB_OUTPUT
+          echo "API URL set to: https://staging.brezel.ai"
+
+      - name: Clean environment files
+        if: env.FRONTEND_EXISTS == 'true'
+        run: |
+          echo "Removing any .env files that could conflict with build-args..."
+          rm -f frontend/.env frontend/.env.* 2>/dev/null || true
+          
+          echo "Creating .dockerignore to prevent any remaining env files..."
+          cat > frontend/.dockerignore << 'EOF'
+          .env
+          .env.*
+          .env.local
+          .env.staging
+          .env.production
+          node_modules
+          .next
+          .git
+          EOF
+          
+          echo "Contents of frontend directory:"
+          ls -la frontend/
+
       - name: Build and push Frontend
         if: env.FRONTEND_EXISTS == 'true'
         uses: docker/build-push-action@v6
@@ -110,15 +196,19 @@ jobs:
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}:staging
+            ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ steps.frontend-prep.outputs.frontend_version }}
             ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            CLERK_SECRET_KEY=${{ secrets.STAGING_CLERK_SECRET_KEY }}
-            NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ secrets.STAGING_CLERK_PUBLISHABLE_KEY }}
-            NEXT_PUBLIC_API_URL=${{ secrets.STAGING_API_URL || 'http://brezelscraper-backend:8080' }}
+            CLERK_SECRET_KEY=${{ secrets.CLERK_SECRET_KEY }}
+            NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+            NEXT_PUBLIC_API_URL=${{ steps.api-config.outputs.api_url }}
             NEXT_PUBLIC_ENVIRONMENT=staging
             NODE_ENV=production
+            API_BACKEND_URL=http://brezelscraper-backend:8080
+            BUILD_DATE=${{ needs.setup.outputs.build_timestamp }}
+            VERSION=${{ steps.frontend-prep.outputs.frontend_version }}
 
   deploy-staging:
     name: Deploy to Staging
@@ -139,21 +229,22 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DSN: ${{ secrets.DSN }}
-          CLERK_API_KEY: ${{ secrets.CLERK_API_KEY }}
-          CLERK_SECRET_KEY: ${{ secrets.STAGING_CLERK_SECRET_KEY }}
-          CLERK_PUBLISHABLE_KEY: ${{ secrets.STAGING_CLERK_PUBLISHABLE_KEY }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+          CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+          API_KEY_SERVER_SECRET: ${{ secrets.API_KEY_SERVER_SECRET }}
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.STAGING_HOST }}
           username: ${{ secrets.STAGING_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
-          port: ${{ secrets.STAGING_SSH_PORT || 22 }}
+          port: ${{ secrets.STAGING_SSH_PORT }}
           timeout: 15m
           command_timeout: 15m
-          envs: GITHUB_TOKEN,DSN,CLERK_API_KEY,CLERK_SECRET_KEY,CLERK_PUBLISHABLE_KEY,STRIPE_SECRET_KEY,STRIPE_WEBHOOK_SECRET,GOOGLE_CLIENT_SECRET
+          envs: GITHUB_TOKEN,DSN,CLERK_SECRET_KEY,CLERK_PUBLISHABLE_KEY,STRIPE_SECRET_KEY,STRIPE_WEBHOOK_SECRET,GOOGLE_CLIENT_SECRET,GRAFANA_ADMIN_PASSWORD,API_KEY_SERVER_SECRET
           script: |
             set -e
             
@@ -167,9 +258,23 @@ jobs:
               exit 1
             }
             
+            # Pull latest repo changes (compose files, configs, etc.)
+            echo "📥 Pulling latest changes from develop..."
+            git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/brezel-ai/brezelscraper-backend.git"
+            git fetch origin develop || {
+              echo "❌ Failed to fetch from origin"
+              exit 1
+            }
+            git checkout develop 2>/dev/null || true
+            git reset --hard origin/develop || {
+              echo "❌ Failed to sync with origin/develop"
+              exit 1
+            }
+            echo "✅ Repository synced to latest develop"
+            
             # Verify docker-compose file exists
             if [ ! -f "${{ env.DOCKER_COMPOSE_FILE }}" ]; then
-              echo "$${ env.DOCKER_COMPOSE_FILE }} not found"
+              echo "${{ env.DOCKER_COMPOSE_FILE }} not found"
               exit 1
             fi
             
@@ -191,52 +296,58 @@ jobs:
             # Inject secrets from GitHub Actions
             echo "🔐 Updating secrets..."
             
-            # Database - KEEP host.docker.internal (don't replace!)
+            # Helper function to safely update .env variables
+            update_env() {
+              local KEY="$1"
+              local VALUE="$2"
+              # Remove existing line if it exists
+              grep -v "^${KEY}=" .env > .env.tmp 2>/dev/null || touch .env.tmp
+              # Append new value
+              echo "${KEY}=${VALUE}" >> .env.tmp
+              mv .env.tmp .env
+            }
+            
+            # Database
             if [ ! -z "$DSN" ]; then
-              sed -i "s|^DSN=.*|DSN=$DSN|" .env
+              update_env "DSN" "$DSN"
             fi
             
             # Clerk
-            if [ ! -z "$CLERK_API_KEY" ]; then
-              sed -i "s/^CLERK_API_KEY=.*/CLERK_API_KEY=$CLERK_API_KEY/" .env
-            fi
             if [ ! -z "$CLERK_SECRET_KEY" ]; then
-              grep -q "^CLERK_SECRET_KEY=" .env && \
-                sed -i "s/^CLERK_SECRET_KEY=.*/CLERK_SECRET_KEY=$CLERK_SECRET_KEY/" .env || \
-                echo "CLERK_SECRET_KEY=$CLERK_SECRET_KEY" >> .env
+              update_env "CLERK_SECRET_KEY" "$CLERK_SECRET_KEY"
             fi
             if [ ! -z "$CLERK_PUBLISHABLE_KEY" ]; then
-              grep -q "^NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=" .env && \
-                sed -i "s/^NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=.*/NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$CLERK_PUBLISHABLE_KEY/" .env || \
-                echo "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$CLERK_PUBLISHABLE_KEY" >> .env
+              update_env "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" "$CLERK_PUBLISHABLE_KEY"
             fi
             
             # Stripe
             if [ ! -z "$STRIPE_SECRET_KEY" ]; then
-              grep -q "^STRIPE_SECRET_KEY=" .env && \
-                sed -i "s/^STRIPE_SECRET_KEY=.*/STRIPE_SECRET_KEY=$STRIPE_SECRET_KEY/" .env || \
-                echo "STRIPE_SECRET_KEY=$STRIPE_SECRET_KEY" >> .env
+              update_env "STRIPE_SECRET_KEY" "$STRIPE_SECRET_KEY"
             fi
             if [ ! -z "$STRIPE_WEBHOOK_SECRET" ]; then
-              grep -q "^STRIPE_WEBHOOK_SECRET=" .env && \
-                sed -i "s/^STRIPE_WEBHOOK_SECRET=.*/STRIPE_WEBHOOK_SECRET=$STRIPE_WEBHOOK_SECRET/" .env || \
-                echo "STRIPE_WEBHOOK_SECRET=$STRIPE_WEBHOOK_SECRET" >> .env
+              update_env "STRIPE_WEBHOOK_SECRET" "$STRIPE_WEBHOOK_SECRET"
             fi
             
             # Google
             if [ ! -z "$GOOGLE_CLIENT_SECRET" ]; then
-              grep -q "^GOOGLE_CLIENT_SECRET=" .env && \
-                sed -i "s/^GOOGLE_CLIENT_SECRET=.*/GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET/" .env || \
-                echo "GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET" >> .env
+              update_env "GOOGLE_CLIENT_SECRET" "$GOOGLE_CLIENT_SECRET"
             fi
             
-            # Optimize for CPU
+            # API Key Auth
+            if [ ! -z "$API_KEY_SERVER_SECRET" ]; then
+              update_env "API_KEY_SERVER_SECRET" "$API_KEY_SERVER_SECRET"
+            fi
+            
+            # Monitoring
+            if [ ! -z "$GRAFANA_ADMIN_PASSWORD" ]; then
+              update_env "GRAFANA_ADMIN_PASSWORD" "$GRAFANA_ADMIN_PASSWORD"
+            fi
+            
+            # Optimize for CPU (using update_env for consistency)
             CPU_CORES=$(nproc)
             if [ $CPU_CORES -eq 1 ]; then
               echo "Single-core server detected"
-              grep -q "^CONCURRENCY=" .env && \
-                sed -i "s/^CONCURRENCY=.*/CONCURRENCY=1/" .env || \
-                echo "CONCURRENCY=1" >> .env
+              update_env "CONCURRENCY" "1"
             fi
             
             # Login to registry
@@ -268,7 +379,7 @@ jobs:
             
             # Start containers
             echo "🚀 Starting services..."
-            docker compose -f ${{ env.DOCKER_COMPOSE_FILE }} --env-file .env up -d
+            docker compose -f ${{ env.DOCKER_COMPOSE_FILE }} --env-file .env up -d --pull always
             
             # Wait for health checks
             echo "⏳ Waiting for backend..."
@@ -298,6 +409,10 @@ jobs:
               fi
             fi
             
+            # Clean up old .env backups (keep last 3)
+            echo "🧹 Cleaning up old .env backups..."
+            ls -1t .env.backup.* 2>/dev/null | tail -n +4 | xargs rm -f 2>/dev/null || true
+            
             # Success
             echo ""
             echo "🎉 Deployment successful!"
@@ -306,21 +421,6 @@ jobs:
             echo ""
             echo "📊 Container status:"
             docker ps --filter "name=brezel" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-
-      - name: Smoke tests
-        if: success()
-        run: |
-          echo "🧪 Running smoke tests..."
-          
-          STAGING_URL="${{ secrets.STAGING_URL || 'https://staging.brezel.ai' }}"
-          
-          # Test backend health
-          curl -f "$STAGING_URL/health" || {
-            echo "❌ Backend health check failed"
-            exit 1
-          }
-          
-          echo "✅ Smoke tests passed"
 
       - name: Notify on failure
         if: failure()

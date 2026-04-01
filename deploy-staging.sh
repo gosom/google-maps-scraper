@@ -8,7 +8,7 @@ IFS=$'\n\t'        # Safer word splitting
 # Configuration
 REGISTRY="ghcr.io"
 BACKEND_IMAGE="yasseen-salama/google-maps-scraper"
-FRONTEND_IMAGE="yasseen-salama/scraper-webapp"
+FRONTEND_IMAGE="brezel-ai/scraper-webapp"
 GITHUB_USER="${GITHUB_USER:-yasseen-salama}"
 GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 COMPOSE_FILE="docker-compose.yaml"

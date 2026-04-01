@@ -6,10 +6,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
-	"strconv" // ADDED: Required for strconv.Atoi on line 195
+	"log/slog"
+	"math"
+	"os"
+	"strconv"
+	"time"
 
 	"github.com/gosom/google-maps-scraper/config"
+	"github.com/gosom/google-maps-scraper/models"
+	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
+	"github.com/gosom/google-maps-scraper/pkg/metrics"
 	"github.com/stripe/stripe-go/v82"
 	checkoutsession "github.com/stripe/stripe-go/v82/checkout/session"
 	"github.com/stripe/stripe-go/v82/webhook"
@@ -18,8 +24,9 @@ import (
 type Service struct {
 	db                *sql.DB
 	cfg               *config.Service
-	stripeSecretKey   string
 	webhookSigningKey string
+	logger            *slog.Logger
+	metrics           *metrics.BillingMetrics
 }
 
 type CheckoutRequest struct {
@@ -29,12 +36,26 @@ type CheckoutRequest struct {
 }
 
 type CheckoutResponse struct {
-	SessionID string
-	URL       string
+	SessionID string `json:"session_id"`
+	URL       string `json:"url"`
 }
 
 func New(db *sql.DB, cfg *config.Service, stripeSecretKey, webhookSigningKey string) *Service {
-	return &Service{db: db, cfg: cfg, stripeSecretKey: stripeSecretKey, webhookSigningKey: webhookSigningKey}
+	// Set the Stripe API key once at startup to avoid a data race from
+	// concurrent goroutines writing the package-level global on every request.
+	// Guard: only set when non-empty so a second billing.New("") used for
+	// non-Stripe event charging does not clobber a previously set key.
+	if stripeSecretKey != "" {
+		stripe.Key = stripeSecretKey
+	}
+
+	return &Service{
+		db:                db,
+		cfg:               cfg,
+		webhookSigningKey: webhookSigningKey,
+		logger:            pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "billing"),
+		metrics:           metrics.NewBillingMetrics(nil), // uses default Prometheus registry
+	}
 }
 
 // CreateCheckoutSession creates a Stripe Checkout Session for purchasing credits.
@@ -52,9 +73,6 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, req CheckoutRequest
 
 	// MVP: fixed $1 per credit
 	unitPriceCents := 100
-
-	// Prepare Stripe client
-	stripe.Key = s.stripeSecretKey
 
 	// Build success/cancel URLs from config (env overrides allowed)
 	successURL, _ := s.cfg.GetString(ctx, "stripe_success_url", "https://example.com/success")
@@ -98,88 +116,76 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, req CheckoutRequest
 	// Persist pending payment
 	const ins = `INSERT INTO stripe_payments (user_id, stripe_checkout_session_id, amount_cents, currency, credits_purchased, status)
                  VALUES ($1, $2, $3, $4, $5, 'pending') ON CONFLICT (stripe_checkout_session_id) DO NOTHING`
-	_, _ = s.db.ExecContext(ctx, ins, req.UserID, sess.ID, unitPriceCents*creditsInt, req.Currency, creditsInt)
+	if _, err := s.db.ExecContext(ctx, ins, req.UserID, sess.ID, unitPriceCents*creditsInt, req.Currency, creditsInt); err != nil {
+		s.logger.Error("failed_to_persist_pending_payment",
+			slog.String("user_id", req.UserID),
+			slog.String("session_id", sess.ID),
+			slog.Any("error", err),
+		)
+	}
 
 	return CheckoutResponse{SessionID: sess.ID, URL: sess.URL}, nil
 }
 
 func (s *Service) HandleWebhook(ctx context.Context, payload []byte, signatureHeader string) (int, error) {
 	if s.webhookSigningKey == "" {
-		log.Printf("ERROR: Webhook signing key not configured")
+		s.logger.Error("webhook_signing_key_not_configured")
 		return 400, errors.New("webhook signing key not configured")
 	}
 
 	event, err := webhook.ConstructEvent(payload, signatureHeader, s.webhookSigningKey)
 	if err != nil {
-		log.Printf("ERROR: Invalid webhook signature: %v", err)
+		s.logger.Error("invalid_webhook_signature", slog.Any("error", err))
 		return 400, fmt.Errorf("invalid signature: %w", err)
 	}
 
-	log.Printf("BILLING: Webhook signature verified successfully, event type: %s, event ID: %s", event.Type, event.ID)
-
-	// Idempotency check - prevent duplicate processing
-	if s.hasProcessedEvent(ctx, event.ID) {
-		log.Printf("BILLING: Event %s already processed, skipping", event.ID)
-		return 200, nil
-	}
+	s.logger.Info("webhook_signature_verified", slog.String("event_type", string(event.Type)), slog.String("event_id", event.ID))
 
 	switch event.Type {
 	case "checkout.session.completed":
 		return s.handleCheckoutSessionCompleted(ctx, event)
 	case "checkout.session.expired":
 		return s.handleCheckoutSessionExpired(ctx, event)
+	case "charge.refunded":
+		return s.handleChargeRefunded(ctx, event)
+	case "charge.failed":
+		return s.handleChargeFailed(ctx, event)
 	default:
-		log.Printf("BILLING: Unhandled event type: %s", event.Type)
+		s.logger.Info("unhandled_event_type", slog.String("event_type", string(event.Type)))
 		return 200, nil
 	}
 }
 
-// hasProcessedEvent checks if we've already processed this webhook event
-func (s *Service) hasProcessedEvent(ctx context.Context, eventID string) bool {
-	var exists bool
-	err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM processed_webhook_events WHERE event_id = $1)", eventID).Scan(&exists)
+// markEventProcessed inserts the event into processed_webhook_events at the start of a transaction.
+// It returns isDuplicate=true if the event was already recorded (ON CONFLICT), with no error.
+// Callers should rollback the transaction and return 200 on duplicate.
+func (s *Service) markEventProcessed(ctx context.Context, tx *sql.Tx, eventID, eventType string) (isDuplicate bool, err error) {
+	result, err := tx.ExecContext(ctx,
+		"INSERT INTO processed_webhook_events (event_id, event_type, processed_at) VALUES ($1, $2, NOW()) ON CONFLICT (event_id) DO NOTHING",
+		eventID, eventType)
 	if err != nil {
-		log.Printf("ERROR: Failed to check event processing status: %v", err)
-		return false // Fail open to allow processing
+		return false, err
 	}
-	return exists
-}
-
-// markEventProcessed records that we've processed this webhook event
-func (s *Service) markEventProcessed(ctx context.Context, tx *sql.Tx, eventID string) error {
-	_, err := tx.ExecContext(ctx, // FIXED: Use passed context instead of context.Background()
-		"INSERT INTO processed_webhook_events (event_id, processed_at) VALUES ($1, NOW()) ON CONFLICT (event_id) DO NOTHING",
-		eventID)
-	return err
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows == 0, nil
 }
 
 func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stripe.Event) (int, error) {
 	var session stripe.CheckoutSession
 	if err := json.Unmarshal(event.Data.Raw, &session); err != nil {
-		log.Printf("ERROR: Failed to parse checkout session: %v", err)
+		s.logger.Error("failed_to_parse_checkout_session", slog.Any("error", err))
 		return 400, fmt.Errorf("failed to parse session: %w", err)
 	}
 
-	log.Printf("BILLING: Processing checkout.session.completed for session: %s", session.ID)
+	s.logger.Info("processing_checkout_session_completed", slog.String("session_id", session.ID))
 
 	// Verify payment status before processing
 	if session.PaymentStatus != "paid" {
-		log.Printf("BILLING: Session %s completed but payment status is %s, skipping credit", session.ID, session.PaymentStatus)
+		s.logger.Info("session_completed_not_paid", slog.String("session_id", session.ID), slog.String("payment_status", string(session.PaymentStatus)))
 		return 200, nil
-	}
-
-	// Check if this session was already processed (additional idempotency check)
-	var exists bool
-	err := s.db.QueryRowContext(ctx,
-		"SELECT EXISTS(SELECT 1 FROM credit_transactions WHERE reference_id=$1 AND reference_type='payment')",
-		session.ID).Scan(&exists)
-	if err != nil {
-		log.Printf("ERROR: Failed to check transaction existence: %v", err)
-		return 500, fmt.Errorf("failed to check transaction existence: %w", err)
-	}
-	if exists {
-		log.Printf("BILLING: Session %s already processed (found in credit_transactions), skipping", session.ID)
-		return 200, nil // Already processed
 	}
 
 	userID := ""
@@ -188,10 +194,10 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 
 	// First try to get data from database
 	const sel = `SELECT user_id, (credits_purchased)::int, currency FROM stripe_payments WHERE stripe_checkout_session_id=$1 LIMIT 1`
-	err = s.db.QueryRowContext(ctx, sel, session.ID).Scan(&userID, &credits, &currency)
+	err := s.db.QueryRowContext(ctx, sel, session.ID).Scan(&userID, &credits, &currency)
 
 	if err != nil && err != sql.ErrNoRows {
-		log.Printf("ERROR: Database query failed: %v", err)
+		s.logger.Error("database_query_failed", slog.Any("error", err))
 		return 500, fmt.Errorf("database query failed: %w", err)
 	}
 
@@ -204,7 +210,7 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 			if parsedCredits, err := strconv.Atoi(creditsStr); err == nil {
 				credits = parsedCredits
 			} else {
-				log.Printf("WARNING: Invalid credits value in metadata: %s", creditsStr)
+				s.logger.Warn("invalid_credits_in_metadata", slog.String("credits_str", creditsStr))
 			}
 		}
 
@@ -213,15 +219,15 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 
 	// Validate required data
 	if userID == "" {
-		log.Printf("WARNING: No user_id found for session %s", session.ID)
+		s.logger.Warn("no_user_id_for_session", slog.String("session_id", session.ID))
 		return 200, nil
 	}
 	if credits <= 0 {
-		log.Printf("WARNING: Invalid credits amount %d for session %s", credits, session.ID)
+		s.logger.Warn("invalid_credits_amount", slog.Int("credits", credits), slog.String("session_id", session.ID))
 		return 200, nil
 	}
 	if currency != "USD" {
-		log.Printf("WARNING: Unsupported currency %s for session %s", currency, session.ID)
+		s.logger.Warn("unsupported_currency", slog.String("currency", currency), slog.String("session_id", session.ID))
 		return 200, nil
 	}
 
@@ -230,44 +236,60 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 		Isolation: sql.LevelSerializable,
 	})
 	if err != nil {
-		log.Printf("ERROR: Failed to begin transaction: %v", err)
+		s.logger.Error("failed_to_begin_transaction", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			s.logger.Warn("tx_rollback_failed", slog.Any("error", rbErr))
+		}
+	}()
+
+	// Dedup check: insert into processed_webhook_events at the START of the transaction.
+	// ON CONFLICT DO NOTHING returns 0 rows affected if already processed.
+	// This is the sole idempotency gate — no pre-check outside the transaction.
+	isDuplicate, err := s.markEventProcessed(ctx, tx, event.ID, string(event.Type))
+	if err != nil {
+		s.logger.Error("failed_to_mark_event_processed", slog.Any("error", err))
+		return 500, fmt.Errorf("failed to mark event as processed: %w", err)
+	}
+	if isDuplicate {
+		s.logger.Info("event_already_processed", slog.String("event_id", event.ID))
+		return 200, nil // tx deferred Rollback handles cleanup
+	}
 
 	// Get current balance before update for accurate transaction records
-	// IMPROVED: Handle potential NULL values with COALESCE
 	var currentBalance float64
 	err = tx.QueryRowContext(ctx, "SELECT COALESCE(credit_balance, 0) FROM users WHERE id = $1 FOR UPDATE", userID).Scan(&currentBalance)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			log.Printf("WARNING: User %s not found", userID)
+			s.logger.Warn("user_not_found", slog.String("user_id", userID))
 			return 400, fmt.Errorf("user not found: %s", userID)
 		}
-		log.Printf("ERROR: Failed to get current user balance: %v", err)
+		s.logger.Error("failed_to_get_user_balance", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to get user balance: %w", err)
 	}
 
 	// Update user credit balance
-	const updUser = `UPDATE users SET 
-		credit_balance = COALESCE(credit_balance, 0) + $1::numeric, 
-		total_credits_purchased = COALESCE(total_credits_purchased, 0) + $1::numeric, 
-		updated_at=NOW() 
+	const updUser = `UPDATE users SET
+		credit_balance = COALESCE(credit_balance, 0) + $1::numeric,
+		total_credits_purchased = COALESCE(total_credits_purchased, 0) + $1::numeric,
+		updated_at=NOW()
 		WHERE id=$2`
 	result, err := tx.ExecContext(ctx, updUser, credits, userID)
 	if err != nil {
-		log.Printf("ERROR: Failed to update user credits: %v", err)
+		s.logger.Error("failed_to_update_user_credits", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to update user credits: %w", err)
 	}
 
 	// Check if user exists
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		log.Printf("ERROR: Failed to get rows affected: %v", err)
+		s.logger.Error("failed_to_get_rows_affected", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to get rows affected: %w", err)
 	}
 	if rowsAffected == 0 {
-		log.Printf("WARNING: No user found with ID %s", userID)
+		s.logger.Warn("no_user_found", slog.String("user_id", userID))
 		return 400, fmt.Errorf("user not found: %s", userID)
 	}
 
@@ -276,7 +298,7 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 					VALUES ($1, 'purchase', $2, $3, $4, $5, $6, 'payment')`
 	_, err = tx.ExecContext(ctx, insTxn, userID, credits, currentBalance, currentBalance+float64(credits), "Stripe purchase", session.ID)
 	if err != nil {
-		log.Printf("ERROR: Failed to insert credit transaction: %v", err)
+		s.logger.Error("failed_to_insert_credit_transaction", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to insert credit transaction: %w", err)
 	}
 
@@ -284,89 +306,95 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 	const updPay = `UPDATE stripe_payments SET status='succeeded', completed_at=NOW() WHERE stripe_checkout_session_id=$1`
 	_, err = tx.ExecContext(ctx, updPay, session.ID)
 	if err != nil {
-		log.Printf("ERROR: Failed to update payment status: %v", err)
+		s.logger.Error("failed_to_update_payment_status", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to update payment status: %w", err)
-	}
-
-	// Mark event as processed for idempotency
-	if err := s.markEventProcessed(ctx, tx, event.ID); err != nil {
-		log.Printf("ERROR: Failed to mark event as processed: %v", err)
-		return 500, fmt.Errorf("failed to mark event as processed: %w", err)
 	}
 
 	// Commit transaction
 	if err := tx.Commit(); err != nil {
-		log.Printf("ERROR: Failed to commit transaction: %v", err)
+		s.logger.Error("failed_to_commit_transaction", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	log.Printf("BILLING: Successfully processed checkout.session.completed for user %s, credits: %d, session: %s", userID, credits, session.ID)
+	s.logger.Info("checkout_session_completed", slog.String("user_id", userID), slog.Int("credits", credits), slog.String("session_id", session.ID))
 	return 200, nil
 }
 
 func (s *Service) handleCheckoutSessionExpired(ctx context.Context, event stripe.Event) (int, error) {
 	var session stripe.CheckoutSession
 	if err := json.Unmarshal(event.Data.Raw, &session); err != nil {
-		log.Printf("ERROR: Failed to parse expired session: %v", err)
+		s.logger.Error("failed_to_parse_expired_session", slog.Any("error", err))
 		return 400, fmt.Errorf("failed to parse session: %w", err)
 	}
 
-	log.Printf("BILLING: Processing checkout.session.expired for session: %s", session.ID)
+	s.logger.Info("processing_checkout_session_expired", slog.String("session_id", session.ID))
 
 	// Begin transaction for consistency and idempotency
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
-		Isolation: sql.LevelReadCommitted, // Less strict isolation for expired sessions
+		Isolation: sql.LevelReadCommitted,
 	})
 	if err != nil {
-		log.Printf("ERROR: Failed to begin transaction for expired session: %v", err)
+		s.logger.Error("failed_to_begin_transaction_expired", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			s.logger.Warn("tx_rollback_failed", slog.Any("error", rbErr))
+		}
+	}()
+
+	// Dedup check at the START of the transaction.
+	isDuplicate, err := s.markEventProcessed(ctx, tx, event.ID, string(event.Type))
+	if err != nil {
+		s.logger.Error("failed_to_mark_expired_event_processed", slog.Any("error", err))
+		return 500, fmt.Errorf("failed to mark event as processed: %w", err)
+	}
+	if isDuplicate {
+		s.logger.Info("event_already_processed", slog.String("event_id", event.ID))
+		return 200, nil
+	}
 
 	// Update payment status to canceled
 	const upd = `UPDATE stripe_payments SET status='canceled', updated_at=NOW() WHERE stripe_checkout_session_id=$1`
 	_, err = tx.ExecContext(ctx, upd, session.ID)
 	if err != nil {
-		log.Printf("ERROR: Failed to update expired payment status: %v", err)
+		s.logger.Error("failed_to_update_expired_payment_status", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to update expired payment status: %w", err)
 	}
 
-	// Mark event as processed
-	if err := s.markEventProcessed(ctx, tx, event.ID); err != nil {
-		log.Printf("ERROR: Failed to mark expired event as processed: %v", err)
-		return 500, fmt.Errorf("failed to mark event as processed: %w", err)
-	}
-
 	if err := tx.Commit(); err != nil {
-		log.Printf("ERROR: Failed to commit expired session transaction: %v", err)
+		s.logger.Error("failed_to_commit_expired_session_transaction", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	log.Printf("BILLING: Successfully processed checkout.session.expired for session %s", session.ID)
+	s.logger.Info("checkout_session_expired", slog.String("session_id", session.ID))
 	return 200, nil
 }
 
 // ReconcileSession fetches a Checkout Session from Stripe and applies credits if paid.
 // This can be used as a fallback mechanism if webhooks fail.
-func (s *Service) ReconcileSession(ctx context.Context, sessionID string) error {
+// callerUserID must be the authenticated user — ownership is enforced against stripe_payments.
+func (s *Service) ReconcileSession(ctx context.Context, sessionID, callerUserID string) error {
 	if sessionID == "" {
 		return fmt.Errorf("missing session id")
 	}
-	stripe.Key = s.stripeSecretKey
+	if callerUserID == "" {
+		return fmt.Errorf("missing user id")
+	}
 	sess, err := checkoutsession.Get(sessionID, nil)
 	if err != nil {
 		return fmt.Errorf("failed to fetch session: %w", err)
 	}
 
-	// Fetch payment row
+	// Fetch payment row, enforcing ownership (CWE-639: IDOR prevention).
 	var (
 		userID   string
 		credits  int
 		currency string
 		status   string
 	)
-	const sel = `SELECT user_id, (credits_purchased)::int, currency, status FROM stripe_payments WHERE stripe_checkout_session_id=$1 LIMIT 1`
-	if err := s.db.QueryRowContext(ctx, sel, sessionID).Scan(&userID, &credits, &currency, &status); err != nil {
+	const sel = `SELECT user_id, (credits_purchased)::int, currency, status FROM stripe_payments WHERE stripe_checkout_session_id=$1 AND user_id=$2 LIMIT 1`
+	if err := s.db.QueryRowContext(ctx, sel, sessionID, callerUserID).Scan(&userID, &credits, &currency, &status); err != nil {
 		return fmt.Errorf("payment row not found: %w", err)
 	}
 
@@ -380,28 +408,31 @@ func (s *Service) ReconcileSession(ctx context.Context, sessionID string) error 
 		return fmt.Errorf("session not paid")
 	}
 
-	// Check if already processed in credit_transactions (idempotency)
-	var exists bool
-	err = s.db.QueryRowContext(ctx,
-		"SELECT EXISTS(SELECT 1 FROM credit_transactions WHERE reference_id=$1 AND reference_type='payment')",
-		sessionID).Scan(&exists)
-	if err != nil {
-		return fmt.Errorf("failed to check transaction existence: %w", err)
-	}
-	if exists {
-		// Update stripe_payments status even if credits already applied
-		_, _ = s.db.ExecContext(ctx, `UPDATE stripe_payments SET status='succeeded', completed_at=NOW() WHERE stripe_checkout_session_id=$1`, sessionID)
-		return nil
-	}
-
-	// Apply credits transactionally
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
 		Isolation: sql.LevelSerializable,
 	})
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			s.logger.Warn("tx_rollback_failed", slog.Any("error", rbErr))
+		}
+	}()
+
+	var exists bool
+	err = tx.QueryRowContext(ctx,
+		"SELECT EXISTS(SELECT 1 FROM credit_transactions WHERE reference_id=$1 AND reference_type='payment')",
+		sessionID).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("failed to check transaction existence: %w", err)
+	}
+	if exists {
+		if _, err := tx.ExecContext(ctx, `UPDATE stripe_payments SET status='succeeded', completed_at=NOW() WHERE stripe_checkout_session_id=$1`, sessionID); err != nil {
+			return fmt.Errorf("failed to update payment status (idempotent path): %w", err)
+		}
+		return tx.Commit()
+	}
 
 	// Get current balance with row lock
 	var currentBalance float64
@@ -452,7 +483,10 @@ func (s *Service) ChargeEvent(ctx context.Context, userID, jobID, eventType stri
 	if idempotencyKey != "" {
 		metadata["idempotency_key"] = idempotencyKey
 	}
-	metaJSON, _ := json.Marshal(metadata)
+	metaJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal billing metadata: %w", err)
+	}
 
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
 		Isolation: sql.LevelSerializable,
@@ -460,7 +494,11 @@ func (s *Service) ChargeEvent(ctx context.Context, userID, jobID, eventType stri
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			s.logger.Warn("tx_rollback_failed", slog.Any("error", rbErr))
+		}
+	}()
 
 	// Insert billing event; trigger resolves pricing and totals
 	var (
@@ -552,49 +590,43 @@ type BillingCounts struct {
 	PlacesWithContacts int
 }
 
-// CountBillableItems counts reviews, images, and contact details from job results.
-// This scans the results table and aggregates counts from JSONB fields.
-func (s *Service) CountBillableItems(ctx context.Context, jobID string) (*BillingCounts, error) {
-	if s.db == nil {
-		return nil, fmt.Errorf("db not configured")
-	}
+// queryRowContexter is satisfied by both *sql.DB and *sql.Tx.
+type queryRowContexter interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
 
+// billableItemsQuery is the shared SQL used by CountBillableItems and countBillableItemsWith.
+const billableItemsQuery = `
+	SELECT
+		COALESCE(SUM(
+			CASE
+				WHEN user_reviews IS NOT NULL AND jsonb_typeof(user_reviews) = 'array'
+				THEN jsonb_array_length(user_reviews)
+				ELSE 0
+			END +
+			CASE
+				WHEN user_reviews_extended IS NOT NULL AND jsonb_typeof(user_reviews_extended) = 'array'
+				THEN jsonb_array_length(user_reviews_extended)
+				ELSE 0
+			END
+		), 0) AS total_reviews,
+		COALESCE(SUM(
+			CASE
+				WHEN images IS NOT NULL AND jsonb_typeof(images) = 'array'
+				THEN jsonb_array_length(images)
+				ELSE 0
+			END
+		), 0) AS total_images,
+		COUNT(CASE WHEN emails IS NOT NULL AND emails != '' THEN 1 END) AS places_with_contacts
+	FROM results
+	WHERE job_id = $1
+`
+
+// countBillableItemsWith counts reviews, images, and contact details from job results
+// using the provided querier (either *sql.DB or *sql.Tx).
+func (s *Service) countBillableItemsWith(ctx context.Context, q queryRowContexter, jobID string) (*BillingCounts, error) {
 	counts := &BillingCounts{}
-
-	// Query to count billable items from results
-	// - user_reviews/user_reviews_extended: JSONB arrays of review objects
-	// - images: JSONB array of image objects
-	// - emails: TEXT field (non-empty means contact details extracted)
-	//
-	// IMPORTANT: We must check jsonb_typeof() before calling jsonb_array_length()
-	// because jsonb_array_length() will fail if the value is not an array (scalar, object, null, etc.)
-	const query = `
-		SELECT
-			COALESCE(SUM(
-				CASE
-					WHEN user_reviews IS NOT NULL AND jsonb_typeof(user_reviews) = 'array'
-					THEN jsonb_array_length(user_reviews)
-					ELSE 0
-				END +
-				CASE
-					WHEN user_reviews_extended IS NOT NULL AND jsonb_typeof(user_reviews_extended) = 'array'
-					THEN jsonb_array_length(user_reviews_extended)
-					ELSE 0
-				END
-			), 0) AS total_reviews,
-			COALESCE(SUM(
-				CASE
-					WHEN images IS NOT NULL AND jsonb_typeof(images) = 'array'
-					THEN jsonb_array_length(images)
-					ELSE 0
-				END
-			), 0) AS total_images,
-			COUNT(CASE WHEN emails IS NOT NULL AND emails != '' THEN 1 END) AS places_with_contacts
-		FROM results
-		WHERE job_id = $1
-	`
-
-	err := s.db.QueryRowContext(ctx, query, jobID).Scan(
+	err := q.QueryRowContext(ctx, billableItemsQuery, jobID).Scan(
 		&counts.TotalReviews,
 		&counts.TotalImages,
 		&counts.PlacesWithContacts,
@@ -602,8 +634,16 @@ func (s *Service) CountBillableItems(ctx context.Context, jobID string) (*Billin
 	if err != nil {
 		return nil, fmt.Errorf("failed to count billable items: %w", err)
 	}
-
 	return counts, nil
+}
+
+// CountBillableItems counts reviews, images, and contact details from job results.
+// This scans the results table and aggregates counts from JSONB fields.
+func (s *Service) CountBillableItems(ctx context.Context, jobID string) (*BillingCounts, error) {
+	if s.db == nil {
+		return nil, fmt.Errorf("db not configured")
+	}
+	return s.countBillableItemsWith(ctx, s.db, jobID)
 }
 
 // ChargeAllJobEvents charges all billing events for a completed job in a single transaction.
@@ -621,7 +661,11 @@ func (s *Service) ChargeAllJobEvents(ctx context.Context, userID, jobID string, 
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }() // Rollback if we don't commit
+	defer func() {
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			s.logger.Warn("tx_rollback_failed", slog.Any("error", rbErr))
+		}
+	}() // Rollback if we don't commit
 
 	// Helper function to charge an event within this transaction
 	chargeEventInTx := func(eventType string, quantity int, idempotencyKey string) error {
@@ -630,7 +674,10 @@ func (s *Service) ChargeAllJobEvents(ctx context.Context, userID, jobID string, 
 		}
 
 		metadata := map[string]any{"idempotency_key": idempotencyKey}
-		metaJSON, _ := json.Marshal(metadata)
+		metaJSON, err := json.Marshal(metadata)
+		if err != nil {
+			return fmt.Errorf("failed to marshal billing metadata: %w", err)
+		}
 
 		// Insert billing event
 		var eventID, unitPrice, totalPrice string
@@ -682,8 +729,8 @@ func (s *Service) ChargeAllJobEvents(ctx context.Context, userID, jobID string, 
 		return err // Transaction will be rolled back
 	}
 
-	// 2. Count and charge for reviews, images, and contacts
-	counts, err := s.CountBillableItems(ctx, jobID)
+	// 2. Count and charge for reviews, images, and contacts (within the tx to avoid read skew)
+	counts, err := s.countBillableItemsWith(ctx, tx, jobID)
 	if err != nil {
 		return fmt.Errorf("failed to count billable items: %w", err)
 	}
@@ -709,4 +756,303 @@ func (s *Service) ChargeAllJobEvents(ctx context.Context, userID, jobID string, 
 	}
 
 	return nil
+}
+
+// handleChargeRefunded processes charge.refunded Stripe webhook events.
+// It deducts credits proportional to the refunded amount and records the
+// transaction, using the same idempotency pattern as other webhook handlers.
+func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) (int, error) {
+	var charge stripe.Charge
+	if err := json.Unmarshal(event.Data.Raw, &charge); err != nil {
+		s.logger.Error("failed_to_parse_charge_refunded", slog.Any("error", err))
+		return 400, fmt.Errorf("failed to parse charge: %w", err)
+	}
+
+	s.logger.Info("processing_charge_refunded",
+		slog.String("charge_id", charge.ID),
+		slog.Int64("amount_refunded_cents", charge.AmountRefunded),
+		slog.Int64("original_amount_cents", charge.Amount),
+	)
+
+	if charge.Amount <= 0 || charge.AmountRefunded <= 0 {
+		s.logger.Warn("charge_refunded_no_refund_amount", slog.String("charge_id", charge.ID))
+		return 200, nil
+	}
+
+	// Look up the payment record using the payment intent ID to find the user and credits.
+	var (
+		userID         string
+		creditsGranted float64
+		amountCents    int64
+	)
+
+	paymentIntentID := ""
+	if charge.PaymentIntent != nil {
+		paymentIntentID = charge.PaymentIntent.ID
+	}
+
+	if paymentIntentID != "" {
+		const sel = `SELECT user_id, credits_purchased::float8, amount_cents FROM stripe_payments WHERE stripe_payment_intent_id = $1 LIMIT 1`
+		err := s.db.QueryRowContext(ctx, sel, paymentIntentID).Scan(&userID, &creditsGranted, &amountCents)
+		if err != nil && err != sql.ErrNoRows {
+			s.logger.Error("failed_to_lookup_payment_for_charge", slog.Any("error", err))
+			return 500, fmt.Errorf("failed to lookup payment: %w", err)
+		}
+	}
+
+	// Fallback: try to look up via customer ID on the users table.
+	if userID == "" && charge.Customer != nil && charge.Customer.ID != "" {
+		const sel = `SELECT id FROM users WHERE stripe_customer_id = $1 LIMIT 1`
+		if err := s.db.QueryRowContext(ctx, sel, charge.Customer.ID).Scan(&userID); err != nil && err != sql.ErrNoRows {
+			s.logger.Warn("fallback_user_lookup_failed",
+				slog.String("customer_id", charge.Customer.ID),
+				slog.Any("error", err),
+			)
+		}
+	}
+
+	if userID == "" {
+		s.logger.Warn("charge_refunded_no_user_found",
+			slog.String("charge_id", charge.ID),
+			slog.String("payment_intent_id", paymentIntentID),
+		)
+		return 200, nil
+	}
+
+	// Calculate credits to deduct proportionally.
+	// If we couldn't determine creditsGranted or amountCents, skip the deduction.
+	var creditsToDeduct float64
+	if creditsGranted > 0 && amountCents > 0 {
+		creditsToDeduct = (float64(charge.AmountRefunded) / float64(amountCents)) * creditsGranted
+	}
+
+	// Begin transaction for idempotency and credit deduction.
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		s.logger.Error("failed_to_begin_transaction_charge_refunded", slog.Any("error", err))
+		return 500, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			s.logger.Warn("tx_rollback_failed", slog.Any("error", rbErr))
+		}
+	}()
+
+	isDuplicate, err := s.markEventProcessed(ctx, tx, event.ID, string(event.Type))
+	if err != nil {
+		s.logger.Error("failed_to_mark_charge_refunded_processed", slog.Any("error", err))
+		return 500, fmt.Errorf("failed to mark event as processed: %w", err)
+	}
+	if isDuplicate {
+		s.logger.Info("event_already_processed", slog.String("event_id", event.ID))
+		return 200, nil
+	}
+
+	if creditsToDeduct > 0 {
+		// Get current balance with a row lock — scan as text and convert to
+		// integer micro-credits to avoid IEEE 754 float rounding errors in
+		// monetary comparisons.
+		var balanceStr string
+		err = tx.QueryRowContext(ctx,
+			"SELECT COALESCE(credit_balance, 0)::text FROM users WHERE id = $1 FOR UPDATE", userID).Scan(&balanceStr)
+		if err != nil {
+			s.logger.Error("failed_to_get_user_balance_for_refund", slog.Any("error", err))
+			return 500, fmt.Errorf("failed to get user balance: %w", err)
+		}
+		balanceFloat, parseErr := strconv.ParseFloat(balanceStr, 64)
+		if parseErr != nil {
+			s.logger.Error("failed_to_parse_user_balance_for_refund", slog.Any("error", parseErr))
+			return 500, fmt.Errorf("failed to parse user balance: %w", parseErr)
+		}
+		balanceMicro := int64(math.Round(balanceFloat * models.MicroUnit))
+		deductMicro := int64(math.Round(creditsToDeduct * models.MicroUnit))
+
+		// Cap deduction at current balance to prevent negative balances.
+		//
+		// Trade-off: credits may have been consumed between purchase and refund.
+		// For example, a user buys 100 credits, spends 95, then refunds $50 (= 50 credits).
+		// Their remaining balance is only 5 — so we deduct 5 instead of 50. The remaining
+		// 45 credits were already consumed and cannot be reclaimed here.
+		//
+		// This is financially safe (no negative balances) but creates an invisible discrepancy:
+		// Stripe refunds cash, but we can only recover credits proportional to what's left.
+		// The difference is tracked via the refund_partial_cap payment status and the warning
+		// log below. Ops should monitor refund_cap_applied frequency to detect abuse patterns.
+		//
+		// Edge case: if the user has 0 credits (fully consumed), actualDeductMicro = 0.
+		// This is acceptable — document it as expected and monitor via the warn log.
+		//
+		// Idempotency: the markEventProcessed gate (processed_webhook_events) at the top of
+		// this transaction prevents double-deductions on Stripe webhook retries. The counter
+		// below is therefore also idempotency-safe — it is only reached once per Stripe event.
+		//
+		// Alerting: the refund_cap_applied_total Prometheus counter is incremented below.
+		// A Grafana alert fires when this counter exceeds the REFUND_CAP_ALERT_THRESHOLD
+		// (default 5 events in 24 h). See pkg/metrics/billing.go for the runbook.
+		actualDeductMicro := deductMicro
+		capApplied := false
+		if actualDeductMicro > balanceMicro {
+			s.metrics.RefundCapAppliedTotal.Inc()
+			s.logger.Warn("refund_cap_applied",
+				slog.String("user_id", userID),
+				slog.String("charge_id", charge.ID),
+				slog.Float64("expected_deduction", creditsToDeduct),
+				slog.Float64("actual_deduction", float64(balanceMicro)/models.MicroUnit),
+				slog.Float64("balance", balanceFloat),
+			)
+			actualDeductMicro = balanceMicro
+			capApplied = true
+		}
+
+		newBalanceMicro := balanceMicro - actualDeductMicro
+
+		// Convert back to float for DB storage and transaction logging.
+		actualDeductFloat := float64(actualDeductMicro) / models.MicroUnit
+		newBalanceFloat := float64(newBalanceMicro) / models.MicroUnit
+
+		// Deduct credits from user balance.
+		const updUser = `UPDATE users SET credit_balance = $1::numeric, updated_at = NOW() WHERE id = $2`
+		if _, err := tx.ExecContext(ctx, updUser, newBalanceFloat, userID); err != nil {
+			s.logger.Error("failed_to_deduct_credits_for_refund", slog.Any("error", err))
+			return 500, fmt.Errorf("failed to deduct credits: %w", err)
+		}
+
+		// Record the refund transaction.
+		const insTxn = `INSERT INTO credit_transactions (user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
+		                VALUES ($1, 'refund', $2, $3, $4, $5, $6, 'payment')`
+		desc := fmt.Sprintf("Stripe refund for charge %s", charge.ID)
+		if _, err := tx.ExecContext(ctx, insTxn, userID, -actualDeductFloat, balanceFloat, newBalanceFloat, desc, charge.ID); err != nil {
+			s.logger.Error("failed_to_insert_refund_transaction", slog.Any("error", err))
+			return 500, fmt.Errorf("failed to insert refund transaction: %w", err)
+		}
+
+		// Update stripe_payments record if we have a payment intent ID.
+		// If the cap was applied and the uncollectable credit gap is > 20 credits
+		// (20_000_000 micro-credits), flag the payment for manual ops review.
+		if paymentIntentID != "" {
+			paymentStatus := "refunded"
+			const capThresholdMicro int64 = 20 * models.MicroUnit
+			if capApplied && (deductMicro-actualDeductMicro) > capThresholdMicro {
+				// Significant cap: user retained >20 credits they effectively got for free.
+				// Flag for manual ops review queue.
+				paymentStatus = "refund_partial_cap"
+			}
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE stripe_payments SET status = $1, refunded_amount_cents = $2, updated_at = NOW() WHERE stripe_payment_intent_id = $3`,
+				paymentStatus, charge.AmountRefunded, paymentIntentID); err != nil {
+				s.logger.Error("failed_to_update_stripe_payment_status",
+					slog.String("payment_intent_id", paymentIntentID),
+					slog.String("status", paymentStatus),
+					slog.Any("error", err),
+				)
+				return 500, fmt.Errorf("failed to update stripe payment status: %w", err)
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		s.logger.Error("failed_to_commit_charge_refunded", slog.Any("error", err))
+		return 500, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	s.logger.Info("charge_refunded_processed",
+		slog.String("user_id", userID),
+		slog.String("charge_id", charge.ID),
+		slog.Float64("credits_deducted", creditsToDeduct),
+	)
+	return 200, nil
+}
+
+// handleChargeFailed processes charge.failed Stripe webhook events.
+// No credit changes are made — credits are only granted on checkout.session.completed.
+func (s *Service) handleChargeFailed(ctx context.Context, event stripe.Event) (int, error) {
+	var charge stripe.Charge
+	if err := json.Unmarshal(event.Data.Raw, &charge); err != nil {
+		s.logger.Error("failed_to_parse_charge_failed", slog.Any("error", err))
+		return 400, fmt.Errorf("failed to parse charge: %w", err)
+	}
+
+	failureMsg := ""
+	if charge.FailureMessage != "" {
+		failureMsg = charge.FailureMessage
+	}
+
+	userID := ""
+	if charge.Customer != nil {
+		if err := s.db.QueryRowContext(ctx, "SELECT id FROM users WHERE stripe_customer_id = $1 LIMIT 1", charge.Customer.ID).Scan(&userID); err != nil && err != sql.ErrNoRows {
+			s.logger.Warn("charge_failed_user_lookup_failed",
+				slog.String("customer_id", charge.Customer.ID),
+				slog.Any("error", err),
+			)
+		}
+	}
+
+	s.logger.Warn("charge_failed",
+		slog.String("charge_id", charge.ID),
+		slog.String("user_id", userID),
+		slog.Int64("amount_cents", charge.Amount),
+		slog.String("failure_message", failureMsg),
+		slog.String("failure_code", string(charge.FailureCode)),
+	)
+
+	return 200, nil
+}
+
+// StartWebhookEventCleanup starts a background goroutine that deletes old
+// processed_webhook_events rows. It runs daily and on first call, deleting
+// rows older than retentionDays (from WEBHOOK_EVENT_RETENTION_DAYS, default 90).
+// Deletes in batches of 1000 to avoid long-running transactions.
+// Safe to call as a goroutine: recovers from panics and stops when ctx is done.
+func (s *Service) StartWebhookEventCleanup(ctx context.Context, retentionDays int) {
+	if retentionDays <= 0 {
+		retentionDays = 90
+	}
+
+	cleanup := func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s.logger.Error("webhook_event_cleanup_panic", slog.Any("panic", r))
+			}
+		}()
+
+		total := 0
+		for {
+			result, err := s.db.ExecContext(ctx,
+				`DELETE FROM processed_webhook_events WHERE event_id IN (
+					SELECT event_id FROM processed_webhook_events
+					WHERE processed_at < NOW() - INTERVAL '1 day' * $1
+					LIMIT 1000
+				)`, retentionDays)
+			if err != nil {
+				s.logger.Error("webhook_event_cleanup_error", slog.Any("error", err))
+				break
+			}
+			n, raErr := result.RowsAffected()
+			if raErr != nil {
+				s.logger.Warn("webhook_event_cleanup_rows_affected_error", slog.Any("error", raErr))
+				break
+			}
+			total += int(n)
+			if n < 1000 {
+				break // no more rows to delete in this batch
+			}
+		}
+		if total > 0 {
+			s.logger.Info("webhook_event_cleanup_done", slog.Int("deleted", total), slog.Int("retention_days", retentionDays))
+		}
+	}
+
+	// Run immediately on startup, then daily.
+	cleanup()
+
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cleanup()
+		}
+	}
 }

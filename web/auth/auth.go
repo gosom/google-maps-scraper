@@ -2,110 +2,144 @@ package auth
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
-	"fmt"
-	"log"
+	"log/slog"
+	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
-	"github.com/clerkinc/clerk-sdk-go/clerk"
+	"github.com/clerk/clerk-sdk-go/v2"
+	clerkhttp "github.com/clerk/clerk-sdk-go/v2/http"
+	"github.com/clerk/clerk-sdk-go/v2/user"
+	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/postgres"
 )
 
-// AuthMiddleware handles Clerk authentication and adds user info to the request context
+// SignupBonusAmount is the credit amount granted to new users on signup ($1.00).
+const SignupBonusAmount = 1.0
+
+// AuthMiddleware handles Clerk authentication and adds user info to the request context.
 type AuthMiddleware struct {
-	client   clerk.Client
-	userRepo postgres.UserRepository
+	db           *sql.DB
+	userAPI      *user.Client
+	userRepo     postgres.UserRepository
+	apiKeyRepo   models.APIKeyRepository // nil if API key auth is not configured
+	serverSecret []byte                  // HMAC secret for API key lookup hashes
+	logger       *slog.Logger
 }
 
-// ContextKey is used to store user information in the request context
+// ContextKey is used to store user information in the request context.
 type ContextKey string
 
 const (
-	// UserIDKey is the context key for storing the user ID
+	// UserIDKey is the context key for storing the user ID.
 	UserIDKey ContextKey = "user_id"
-	// AuthHeaderName is the name of the authentication header
+	// APIKeyIDKey is the context key for the API key UUID (set only for API key auth).
+	APIKeyIDKey ContextKey = "api_key_id"
+	// APIKeyPlanTierKey is kept for rate-limiter compatibility; always empty with the
+	// full implementation (no plan tiers in api_keys schema).
+	APIKeyPlanTierKey ContextKey = "api_key_plan_tier"
+	// UserRoleKey is the context key for storing the user's RBAC role.
+	UserRoleKey ContextKey = "user_role"
+	// AuthHeaderName is the name of the authentication header.
 	AuthHeaderName = "Authorization"
+	// DevUserHeaderName allows local integration tests to bypass Clerk auth when explicitly enabled.
+	// MUST remain opt-in via BRAZA_DEV_AUTH_BYPASS=1 to avoid production misuse.
+	DevUserHeaderName = "X-Braza-Dev-User"
 )
 
-// NewAuthMiddleware creates a new AuthMiddleware
-func NewAuthMiddleware(clerkAPIKey string, userRepo postgres.UserRepository) (*AuthMiddleware, error) {
-	client, err := clerk.NewClient(clerkAPIKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Clerk client: %w", err)
-	}
+// NewAuthMiddleware creates a new AuthMiddleware.
+// apiKeyRepo and serverSecret may be nil/empty; when either is nil/empty, API key
+// authentication is disabled and all Bearer tokens are validated as Clerk JWTs.
+func NewAuthMiddleware(clerkAPIKey string, db *sql.DB, userRepo postgres.UserRepository, apiKeyRepo models.APIKeyRepository, serverSecret []byte, logger *slog.Logger) (*AuthMiddleware, error) {
+	clerk.SetKey(clerkAPIKey)
 
 	return &AuthMiddleware{
-		client:   client,
-		userRepo: userRepo,
+		db: db,
+		userAPI: user.NewClient(&clerk.ClientConfig{
+			BackendConfig: clerk.BackendConfig{
+				Key: clerk.String(clerkAPIKey),
+			},
+		}),
+		userRepo:     userRepo,
+		apiKeyRepo:   apiKeyRepo,
+		serverSecret: serverSecret,
+		logger:       logger,
 	}, nil
 }
 
-// Authenticate is the middleware function for authentication
+// writeUnauthorized writes a 401 JSON response.
+func writeUnauthorized(w http.ResponseWriter, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnauthorized)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"code":    http.StatusUnauthorized,
+		"message": msg,
+	})
+}
+
+// extractBearerToken returns the raw token from the Authorization header,
+// or the __session cookie value as a fallback (Clerk browser sessions).
+func extractBearerToken(r *http.Request) string {
+	authHeader := strings.TrimSpace(r.Header.Get(AuthHeaderName))
+	if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+		return strings.TrimSpace(authHeader[len("Bearer "):])
+	}
+	if sessionCookie, err := r.Cookie("__session"); err == nil && sessionCookie.Value != "" {
+		return sessionCookie.Value
+	}
+	return ""
+}
+
+// Authenticate is the middleware function for authentication.
+// It dispatches to API key auth when the Bearer token has the APIKeyPrefix,
+// and falls back to Clerk JWT validation otherwise.
 func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var token string
-
-		// Try to get token from Authorization header first
-		authHeader := r.Header.Get(AuthHeaderName)
-		if authHeader != "" {
-			// Extract token from Bearer format
-			parts := strings.Split(authHeader, " ")
-			if len(parts) != 2 || parts[0] != "Bearer" {
-				http.Error(w, "Unauthorized: invalid authorization format", http.StatusUnauthorized)
-				return
-			}
-			token = parts[1]
-		} else {
-			// Fallback to __session cookie (for OAuth callbacks and same-origin requests)
-			sessionCookie, err := r.Cookie("__session")
-			if err != nil || sessionCookie.Value == "" {
-				http.Error(w, "Unauthorized: missing authorization header", http.StatusUnauthorized)
-				return
-			}
-			token = sessionCookie.Value
-		}
-
-		// Verify token with Clerk - retry once if clock skew error
-		claims, err := m.client.VerifyToken(token)
-		if err != nil {
-			// Check if it's a clock skew error and retry after a brief moment
-			if strings.Contains(err.Error(), "token issued in the future") {
-				// Wait 2 seconds and try again
-				time.Sleep(2 * time.Second)
-				claims, err = m.client.VerifyToken(token)
-				if err != nil {
-					http.Error(w, "Unauthorized: invalid token", http.StatusUnauthorized)
-					return
+	// Dev bypass: local integration tests only. Never enabled in production.
+	if strings.TrimSpace(os.Getenv("BRAZA_DEV_AUTH_BYPASS")) == "1" {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if devUserID := strings.TrimSpace(r.Header.Get(DevUserHeaderName)); devUserID != "" {
+				if m.logger != nil {
+					m.logger.Warn("dev_auth_bypass", slog.String("user_id", devUserID))
 				}
-			} else {
-				http.Error(w, "Unauthorized: invalid token", http.StatusUnauthorized)
+				ctx := context.WithValue(r.Context(), UserIDKey, devUserID)
+				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
-		}
+			m.authenticateRequest(next).ServeHTTP(w, r)
+		})
+	}
 
-		// Get user ID from verified claims
-		userID := claims.Subject
-		if userID == "" {
-			http.Error(w, "Unauthorized: invalid user claims", http.StatusUnauthorized)
+	return m.authenticateRequest(next)
+}
+
+// authenticateRequest builds the actual auth handler (API key or Clerk JWT).
+func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
+	clerkAuth := clerkhttp.RequireHeaderAuthorization(
+		clerkhttp.AuthorizationJWTExtractor(extractBearerToken),
+	)
+
+	clerkHandler := clerkAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := clerk.SessionClaimsFromContext(r.Context())
+		if !ok || claims == nil || claims.Subject == "" {
+			http.Error(w, "Unauthorized: invalid token", http.StatusUnauthorized)
 			return
 		}
+		userID := claims.Subject
 
-		// Check if user exists in our database
-		user, err := m.userRepo.GetByID(r.Context(), userID)
-		if err != nil {
-			// If user doesn't exist, get their email and create them
-			clerkUser, err := m.client.Users().Read(userID)
+		if _, err := m.userRepo.GetByID(r.Context(), userID); err != nil {
+			clerkUser, err := m.userAPI.Get(r.Context(), userID)
 			if err != nil {
-				log.Printf("ERROR: Failed to retrieve user %s from Clerk: %v", userID, err)
+				m.logger.Error("failed_to_retrieve_user_from_clerk", slog.String("user_id", userID), slog.Any("error", err))
 				http.Error(w, "Failed to retrieve user information", http.StatusInternalServerError)
 				return
 			}
 
-			// Get the primary email
 			var email string
-			// Handle potential nil PrimaryEmailAddressID
 			if clerkUser.PrimaryEmailAddressID != nil {
 				primaryID := *clerkUser.PrimaryEmailAddressID
 				for _, emailAddr := range clerkUser.EmailAddresses {
@@ -115,40 +149,178 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 					}
 				}
 			} else if len(clerkUser.EmailAddresses) > 0 {
-				// Fallback to first email if no primary is set
 				email = clerkUser.EmailAddresses[0].EmailAddress
 			}
-
 			if email == "" {
-				log.Printf("ERROR: User %s has no email address in Clerk", userID)
+				m.logger.Error("user_has_no_email", slog.String("user_id", userID))
 				http.Error(w, "User has no email address", http.StatusBadRequest)
 				return
 			}
 
-			// Create a new user in our database
-			user = postgres.User{
-				ID:    userID,
-				Email: email,
-			}
-			err = m.userRepo.Create(r.Context(), &user)
-			if err != nil {
-				log.Printf("ERROR: Failed to create user %s in local database: %v", userID, err)
-				http.Error(w, "Failed to create user record: "+err.Error(), http.StatusInternalServerError)
+			newUser := postgres.User{ID: userID, Email: email}
+			if err := m.userRepo.Create(r.Context(), &newUser); err != nil {
+				slog.Error("failed to create user record",
+					slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+				http.Error(w, "Failed to create user record", http.StatusInternalServerError)
 				return
+			}
+			if err := m.grantSignupBonus(r.Context(), userID); err != nil {
+				m.logger.Error("failed_to_grant_signup_bonus", slog.String("user_id", userID), slog.Any("error", err))
+			} else {
+				m.logger.Info("signup_bonus_granted", slog.Float64("amount", SignupBonusAmount), slog.String("user_id", userID))
 			}
 		}
 
-		// Add user ID to request context
 		ctx := context.WithValue(r.Context(), UserIDKey, userID)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	}))
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := strings.TrimSpace(r.Header.Get(AuthHeaderName))
+		var bearerToken string
+		if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+			bearerToken = strings.TrimSpace(authHeader[len("Bearer "):])
+		}
+
+		// Also accept X-API-Key header as an alternative to Authorization: Bearer.
+		// This is a common pattern (AWS API Gateway, Anthropic) and helps users
+		// whose Authorization header is occupied by a proxy or integration tool.
+		if bearerToken == "" {
+			if xKey := strings.TrimSpace(r.Header.Get("X-API-Key")); xKey != "" {
+				bearerToken = xKey
+			}
+		}
+
+		if m.apiKeyRepo != nil && len(m.serverSecret) > 0 && strings.HasPrefix(bearerToken, APIKeyPrefix) {
+			userID, keyID, err := ValidateAPIKey(r.Context(), bearerToken, m.serverSecret, m.apiKeyRepo)
+			if err != nil {
+				// Small delay on failed attempts to slow brute-force attacks.
+				time.Sleep(100 * time.Millisecond)
+				m.logger.Warn("api_key_auth_rejected",
+					slog.String("reason", err.Error()),
+					slog.String("path", r.URL.Path),
+				)
+				writeUnauthorized(w, "invalid or revoked API key")
+				return
+			}
+
+			// Record API key usage asynchronously to avoid adding latency.
+			go func() {
+				ip := clientIP(r)
+				if err := m.apiKeyRepo.UpdateLastUsed(context.Background(), keyID, ip); err != nil {
+					m.logger.Warn("api_key_update_last_used_failed", slog.String("key_id", keyID), slog.Any("error", err))
+				}
+			}()
+
+			ctx := r.Context()
+			ctx = context.WithValue(ctx, UserIDKey, userID)
+			ctx = context.WithValue(ctx, APIKeyIDKey, keyID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+
+		clerkHandler.ServeHTTP(w, r)
 	})
 }
 
-// GetUserID extracts the user ID from the request context
+// clientIP extracts the client IP from the request, preferring X-Forwarded-For
+// when present (common behind reverse proxies). Only the first entry is trusted.
+func clientIP(r *http.Request) net.IP {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		first := strings.SplitN(xff, ",", 2)[0]
+		if ip := net.ParseIP(strings.TrimSpace(first)); ip != nil {
+			return ip
+		}
+	}
+	host, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if ip := net.ParseIP(host); ip != nil {
+		return ip
+	}
+	return nil
+}
+
+// GetAPIKeyID extracts the API key UUID from the request context.
+// Returns an empty string when the request was not authenticated via an API key.
+func GetAPIKeyID(ctx context.Context) string {
+	id, _ := ctx.Value(APIKeyIDKey).(string)
+	return id
+}
+
+// GetAPIKeyPlanTier returns the plan tier for rate-limiter compatibility.
+// Always returns an empty string with the full API key implementation (no plan tiers).
+func GetAPIKeyPlanTier(ctx context.Context) string {
+	tier, _ := ctx.Value(APIKeyPlanTierKey).(string)
+	return tier
+}
+
+// grantSignupBonus awards the signup bonus credit to a newly created user.
+// It is idempotent: if a bonus transaction already exists for this user, it no-ops.
+func (m *AuthMiddleware) grantSignupBonus(ctx context.Context, userID string) error {
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			m.logger.Error("rollback_failed", slog.Any("error", rbErr))
+		}
+	}()
+
+	var alreadyGranted bool
+	err = tx.QueryRowContext(ctx,
+		"SELECT EXISTS(SELECT 1 FROM credit_transactions WHERE user_id = $1 AND reference_id = 'signup_bonus' AND reference_type = 'system' FOR UPDATE)",
+		userID).Scan(&alreadyGranted)
+	if err != nil {
+		return err
+	}
+	if alreadyGranted {
+		m.logger.Info("signup_bonus_already_granted", slog.String("user_id", userID))
+		return nil
+	}
+
+	var currentBalance float64
+	err = tx.QueryRowContext(ctx, "SELECT COALESCE(credit_balance, 0) FROM users WHERE id = $1 FOR UPDATE", userID).Scan(&currentBalance)
+	if err != nil {
+		return err
+	}
+
+	newBalance := currentBalance + SignupBonusAmount
+
+	_, err = tx.ExecContext(ctx, `
+		UPDATE users
+		SET credit_balance = COALESCE(credit_balance, 0) + $1::numeric,
+		    updated_at = NOW()
+		WHERE id = $2`, SignupBonusAmount, userID)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO credit_transactions (user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
+		VALUES ($1, 'bonus', $2, $3, $4, 'Signup bonus', 'signup_bonus', 'system')`,
+		userID, SignupBonusAmount, currentBalance, newBalance)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// GetUserID extracts the user ID from the request context.
 func GetUserID(ctx context.Context) (string, error) {
 	userID, ok := ctx.Value(UserIDKey).(string)
-	if !ok {
+	if !ok || userID == "" {
 		return "", errors.New("user not authenticated")
 	}
 	return userID, nil
+}
+
+// GetUserRole extracts the user's RBAC role from the request context.
+// Returns "user" (the default role) when no role has been set.
+func GetUserRole(ctx context.Context) string {
+	role, _ := ctx.Value(UserRoleKey).(string)
+	if role == "" {
+		return "user"
+	}
+	return role
 }

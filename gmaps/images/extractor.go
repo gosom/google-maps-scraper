@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/playwright-community/playwright-go"
@@ -52,7 +51,7 @@ type ImageExtractor struct {
 // Dialog 1: "How your posts appear" - click OK button
 // Dialog 2: "Sign in to your Google Account" - click X button to close
 func dismissGoogleDialogs(page playwright.Page) error {
-	fmt.Printf("DEBUG: Checking for Google dialogs to dismiss...\n")
+	logf("DEBUG: Checking for Google dialogs to dismiss...\n")
 
 	// Dialog 1: "How your posts appear" dialog with OK button
 	// Wait up to 3 seconds for this dialog to appear
@@ -67,9 +66,9 @@ func dismissGoogleDialogs(page playwright.Page) error {
 		okButton := page.Locator(selector).First()
 		visible, err := okButton.IsVisible()
 		if err == nil && visible {
-			fmt.Printf("DEBUG: Found 'OK' button dialog, clicking...\n")
+			logf("DEBUG: Found 'OK' button dialog, clicking...\n")
 			if err := okButton.Click(); err == nil {
-				fmt.Printf("DEBUG: Successfully clicked OK button\n")
+				logf("DEBUG: Successfully clicked OK button\n")
 				time.Sleep(500 * time.Millisecond) // Wait for next dialog
 				break
 			}
@@ -91,16 +90,16 @@ func dismissGoogleDialogs(page playwright.Page) error {
 		closeButton := page.Locator(selector).First()
 		visible, err := closeButton.IsVisible()
 		if err == nil && visible {
-			fmt.Printf("DEBUG: Found close button for sign-in dialog, clicking...\n")
+			logf("DEBUG: Found close button for sign-in dialog, clicking...\n")
 			if err := closeButton.Click(); err == nil {
-				fmt.Printf("DEBUG: Successfully dismissed sign-in dialog\n")
+				logf("DEBUG: Successfully dismissed sign-in dialog\n")
 				time.Sleep(300 * time.Millisecond) // Small delay after closing
 				return nil
 			}
 		}
 	}
 
-	fmt.Printf("DEBUG: No dialogs found or already dismissed\n")
+	logf("DEBUG: No dialogs found or already dismissed\n")
 	return nil
 }
 
@@ -128,7 +127,7 @@ func (e *ImageExtractor) ExtractAllImages(ctx context.Context) ([]BusinessImage,
 
 	if err != nil || len(images) < 5 {
 		// If optimized extraction fails or returns too few images, try legacy
-		fmt.Printf("Warning: Optimized extraction insufficient (%d images), trying legacy: %v\n", len(images), err)
+		logf("Warning: Optimized extraction insufficient (%d images), trying legacy: %v\n", len(images), err)
 		return e.extractAllImagesLegacy(ctx)
 	}
 
@@ -136,17 +135,17 @@ func (e *ImageExtractor) ExtractAllImages(ctx context.Context) ([]BusinessImage,
 	e.metadata = metadata
 
 	// DEBUG: Log extraction results
-	fmt.Printf("DEBUG: Optimized extraction found %d images\n", len(images))
+	logf("DEBUG: Optimized extraction found %d images\n", len(images))
 	if len(images) > 0 {
-		fmt.Printf("DEBUG: First image URL: %s\n", images[0].URL)
-		fmt.Printf("DEBUG: First image category: %s\n", images[0].Category)
+		logf("DEBUG: First image URL: %s\n", images[0].URL)
+		logf("DEBUG: First image category: %s\n", images[0].Category)
 
 		// Show category breakdown
 		categoryCount := make(map[string]int)
 		for _, img := range images {
 			categoryCount[img.Category]++
 		}
-		fmt.Printf("DEBUG: Images per category: %+v\n", categoryCount)
+		logf("DEBUG: Images per category: %+v\n", categoryCount)
 	}
 
 	return images, nil
@@ -157,11 +156,11 @@ func (e *ImageExtractor) extractAllImagesLegacy(ctx context.Context) ([]Business
 	startTime := time.Now()
 
 	// DEBUG: Log extraction start
-	fmt.Printf("DEBUG: Legacy tab-based image extraction starting...\n")
+	logf("DEBUG: Legacy tab-based image extraction starting...\n")
 
 	// Step 1: Navigate to images section first
 	if err := e.navigateToImagesSection(); err != nil {
-		fmt.Printf("Warning: Could not navigate to images section: %v\n", err)
+		logf("Warning: Could not navigate to images section: %v\n", err)
 	}
 
 	// Step 2: Extract images by navigating through each category tab
@@ -171,20 +170,20 @@ func (e *ImageExtractor) extractAllImagesLegacy(ctx context.Context) ([]Business
 	}
 
 	e.metadata.ScrollActions = scrollActions
-	fmt.Printf("DEBUG: Completed %d scroll actions across all categories\n", scrollActions)
+	logf("DEBUG: Completed %d scroll actions across all categories\n", scrollActions)
 
 	// DEBUG: Log extraction results
-	fmt.Printf("DEBUG: Legacy tab-based extraction found %d images\n", len(images))
+	logf("DEBUG: Legacy tab-based extraction found %d images\n", len(images))
 	if len(images) > 0 {
-		fmt.Printf("DEBUG: First image URL: %s\n", images[0].URL)
-		fmt.Printf("DEBUG: First image category: %s\n", images[0].Category)
+		logf("DEBUG: First image URL: %s\n", images[0].URL)
+		logf("DEBUG: First image category: %s\n", images[0].Category)
 
 		// Show category breakdown
 		categoryCount := make(map[string]int)
 		for _, img := range images {
 			categoryCount[img.Category]++
 		}
-		fmt.Printf("DEBUG: Images per category: %+v\n", categoryCount)
+		logf("DEBUG: Images per category: %+v\n", categoryCount)
 	}
 
 	// Step 3: Update metadata
@@ -204,7 +203,7 @@ func (e *ImageExtractor) loadAllImages(ctx context.Context) (int, error) {
 	// First, try to find and click on the images section
 	if err := e.navigateToImagesSection(); err != nil {
 		// Log the error but continue with scroll-based loading
-		fmt.Printf("Warning: Could not navigate to images section: %v\n", err)
+		logf("Warning: Could not navigate to images section: %v\n", err)
 	}
 
 	for retryCount < maxRetries {
@@ -273,16 +272,16 @@ func (e *ImageExtractor) extractImagesByCategory(ctx context.Context) ([]Busines
 	// Step 1: Find all available tabs
 	tabs, err := e.findImageTabs()
 	if err != nil {
-		fmt.Printf("DEBUG: Failed to find image tabs, falling back to general extraction: %v\n", err)
+		logf("DEBUG: Failed to find image tabs, falling back to general extraction: %v\n", err)
 		return e.fallbackImageExtraction(ctx)
 	}
 
-	fmt.Printf("DEBUG: Found %d image tabs to process\n", len(tabs))
+	logf("DEBUG: Found %d image tabs to process\n", len(tabs))
 
 	// Step 2: Process each tab (limit to first 3 tabs and allow partial success)
 	maxTabs := 3 // Further reduced to 3 for better success rate
 	if len(tabs) > maxTabs {
-		fmt.Printf("DEBUG: Limiting processing to first %d tabs (out of %d) for better success rate\n", maxTabs, len(tabs))
+		logf("DEBUG: Limiting processing to first %d tabs (out of %d) for better success rate\n", maxTabs, len(tabs))
 		tabs = tabs[:maxTabs]
 	}
 
@@ -294,16 +293,16 @@ func (e *ImageExtractor) extractImagesByCategory(ctx context.Context) ([]Busines
 	for i, tab := range tabs {
 		select {
 		case <-tabCtx.Done():
-			fmt.Printf("DEBUG: Context cancelled, but returning %d images collected so far\n", len(allImages))
+			logf("DEBUG: Context cancelled, but returning %d images collected so far\n", len(allImages))
 			return allImages, totalScrollActions, nil // Return partial success
 		default:
 		}
 
-		fmt.Printf("DEBUG: Processing tab %d: %s\n", i, tab.Name)
+		logf("DEBUG: Processing tab %d: %s\n", i, tab.Name)
 
 		// Click the tab to activate it (with error tolerance)
 		if err := e.clickTab(tab); err != nil {
-			fmt.Printf("Warning: Failed to click tab %s: %v (continuing with next tab)\n", tab.Name, err)
+			logf("Warning: Failed to click tab %s: %v (continuing with next tab)\n", tab.Name, err)
 			continue
 		}
 
@@ -313,11 +312,11 @@ func (e *ImageExtractor) extractImagesByCategory(ctx context.Context) ([]Busines
 		// Extract images from this tab with individual timeout
 		tabImages, scrollActions, err := e.extractImagesFromCurrentTabWithTimeout(tabCtx, tab.Name, 20*time.Second)
 		if err != nil {
-			fmt.Printf("Warning: Failed to extract images from tab %s: %v (continuing with next tab)\n", tab.Name, err)
+			logf("Warning: Failed to extract images from tab %s: %v (continuing with next tab)\n", tab.Name, err)
 			continue // Don't fail the entire job, just skip this tab
 		}
 
-		fmt.Printf("DEBUG: Extracted %d images from tab %s\n", len(tabImages), tab.Name)
+		logf("DEBUG: Extracted %d images from tab %s\n", len(tabImages), tab.Name)
 		allImages = append(allImages, tabImages...)
 		totalScrollActions += scrollActions
 
@@ -326,12 +325,12 @@ func (e *ImageExtractor) extractImagesByCategory(ctx context.Context) ([]Busines
 
 		// If we have some images, consider it a success
 		if len(allImages) >= 10 {
-			fmt.Printf("DEBUG: Collected %d images, stopping early for success\n", len(allImages))
+			logf("DEBUG: Collected %d images, stopping early for success\n", len(allImages))
 			break
 		}
 	}
 
-	fmt.Printf("DEBUG: Total images collected from tab processing: %d\n", len(allImages))
+	logf("DEBUG: Total images collected from tab processing: %d\n", len(allImages))
 	return allImages, totalScrollActions, nil
 }
 
@@ -369,7 +368,7 @@ func (e *ImageExtractor) findImageTabs() ([]ImageTab, error) {
 		}
 
 		if len(tabElements) > 0 {
-			fmt.Printf("DEBUG: Found %d tabs using selector %s\n", len(tabElements), selector)
+			logf("DEBUG: Found %d tabs using selector %s\n", len(tabElements), selector)
 
 			for i, element := range tabElements {
 				// Extract tab name
@@ -432,7 +431,7 @@ func (e *ImageExtractor) extractTabName(element playwright.Locator) (string, err
 // clickTab clicks on a specific tab to activate it
 func (e *ImageExtractor) clickTab(tab ImageTab) error {
 	if tab.Selected {
-		fmt.Printf("DEBUG: Tab %s already selected, skipping click\n", tab.Name)
+		logf("DEBUG: Tab %s already selected, skipping click\n", tab.Name)
 		return nil
 	}
 
@@ -447,11 +446,11 @@ func (e *ImageExtractor) clickTab(tab ImageTab) error {
 		return fmt.Errorf("failed to click tab %s: %w", tab.Name, err)
 	}
 
-	fmt.Printf("DEBUG: Successfully clicked tab %s\n", tab.Name)
+	logf("DEBUG: Successfully clicked tab %s\n", tab.Name)
 
 	// NEW: Dismiss Google dialogs that may appear after clicking tab
 	if err := dismissGoogleDialogs(e.page); err != nil {
-		fmt.Printf("Warning: Failed to dismiss dialogs after clicking tab %s: %v\n", tab.Name, err)
+		logf("Warning: Failed to dismiss dialogs after clicking tab %s: %v\n", tab.Name, err)
 		// Don't return error - continue anyway
 	}
 
@@ -596,7 +595,7 @@ func (e *ImageExtractor) extractPhotosFromGallery(ctx context.Context, categoryN
 	for _, selector := range photoSelectors {
 		if elements, err := e.page.Locator(selector).All(); err == nil && len(elements) > 0 {
 			photoElements = elements
-			fmt.Printf("DEBUG: Found %d photo elements using selector %s in %s tab\n", len(elements), selector, categoryName)
+			logf("DEBUG: Found %d photo elements using selector %s in %s tab\n", len(elements), selector, categoryName)
 			break
 		}
 	}
@@ -609,59 +608,45 @@ func (e *ImageExtractor) extractPhotosFromGallery(ctx context.Context, categoryN
 	maxPhotos := 50
 	if len(photoElements) > maxPhotos {
 		photoElements = photoElements[:maxPhotos]
-		fmt.Printf("DEBUG: Limiting to first %d photos for performance\n", maxPhotos)
+		logf("DEBUG: Limiting to first %d photos for performance\n", maxPhotos)
 	}
 
 	var images []BusinessImage
-	var mu sync.Mutex
-	var wg sync.WaitGroup
 	successCount := 0
 	failureCount := 0
 
-	// Process photos concurrently but with limits
-	semaphore := make(chan struct{}, 3) // Reduced concurrency for stability
-
+	// Process photos sequentially — Playwright Page objects are not goroutine-safe;
+	// calls are serialized over a single WebSocket anyway, so concurrency adds
+	// overhead without any parallelism benefit.
 	for i, photoElement := range photoElements {
-		wg.Add(1)
+		select {
+		case <-ctx.Done():
+			break
+		default:
+		}
 
-		go func(index int, element playwright.Locator) {
-			defer wg.Done()
+		// Add individual timeout for photo extraction
+		photoCtx, photoCancel := context.WithTimeout(ctx, 5*time.Second)
 
-			select {
-			case <-ctx.Done():
-				return
-			case semaphore <- struct{}{}:
-				defer func() { <-semaphore }()
+		img, err := e.extractPhotoFromElementWithTimeout(photoCtx, photoElement, i, categoryName)
+		photoCancel()
+
+		if err != nil {
+			failureCount++
+			// Only log first few failures to avoid spam
+			if failureCount <= 5 {
+				logf("Warning: Failed to extract photo %d from %s: %v\n", i, categoryName, err)
 			}
+			continue
+		}
 
-			// Add individual timeout for photo extraction
-			photoCtx, photoCancel := context.WithTimeout(ctx, 5*time.Second)
-			defer photoCancel()
-
-			img, err := e.extractPhotoFromElementWithTimeout(photoCtx, element, index, categoryName)
-			if err != nil {
-				mu.Lock()
-				failureCount++
-				// Only log first few failures to avoid spam
-				if failureCount <= 5 {
-					fmt.Printf("Warning: Failed to extract photo %d from %s: %v\n", index, categoryName, err)
-				}
-				mu.Unlock()
-				return
-			}
-
-			if img != nil {
-				mu.Lock()
-				images = append(images, *img)
-				successCount++
-				mu.Unlock()
-			}
-		}(i, photoElement)
+		if img != nil {
+			images = append(images, *img)
+			successCount++
+		}
 	}
 
-	wg.Wait()
-
-	fmt.Printf("DEBUG: Extracted %d images from tab %s (successes: %d, failures: %d)\n", len(images), categoryName, successCount, failureCount)
+	logf("DEBUG: Extracted %d images from tab %s (successes: %d, failures: %d)\n", len(images), categoryName, successCount, failureCount)
 
 	// Return success even if some photos failed, as long as we got some images
 	if len(images) == 0 && failureCount > 0 {
@@ -720,7 +705,7 @@ func (e *ImageExtractor) extractPhotoFromElementWithTimeout(ctx context.Context,
 
 	// Log successful extraction for debugging (first success only)
 	if index == 0 {
-		fmt.Printf("DEBUG: Successfully extracted URL using %s: %s\n", method, imageURL[:min(80, len(imageURL))])
+		logf("DEBUG: Successfully extracted URL using %s: %s\n", method, imageURL[:min(80, len(imageURL))])
 	}
 
 	// Generate full-resolution URL
@@ -1033,7 +1018,7 @@ func (e *ImageExtractor) generateFullResolutionURL(originalURL string) string {
 
 // fallbackImageExtraction provides fallback when tab-based extraction fails
 func (e *ImageExtractor) fallbackImageExtraction(ctx context.Context) ([]BusinessImage, int, error) {
-	fmt.Printf("DEBUG: Using fallback image extraction method\n")
+	logf("DEBUG: Using fallback image extraction method\n")
 
 	// Use the original extraction method as fallback
 	scrollActions, err := e.loadAllImages(ctx)
@@ -1086,7 +1071,7 @@ func (e *ImageExtractor) waitForImages(ctx context.Context) error {
 			})
 			if err != nil {
 				// Don't fail on network idle timeout, just continue
-				fmt.Printf("Warning: Network idle timeout: %v\n", err)
+				logf("Warning: Network idle timeout: %v\n", err)
 			}
 			return nil
 		}
@@ -1106,41 +1091,27 @@ func (e *ImageExtractor) extractImagesFromDOM(ctx context.Context) ([]BusinessIm
 	}
 
 	var images []BusinessImage
-	var mu sync.Mutex
-	var wg sync.WaitGroup
 
-	// Process images concurrently for better performance
-	semaphore := make(chan struct{}, 10) // Limit concurrent operations
+	// Process images sequentially — Playwright Page objects are not goroutine-safe;
+	// calls are serialized over a single WebSocket anyway.
+	for i, loc := range imageLocators {
+		select {
+		case <-ctx.Done():
+			break
+		default:
+		}
 
-	for i, locator := range imageLocators {
-		wg.Add(1)
+		img, err := e.extractSingleImage(loc, i)
+		if err != nil {
+			// Log error but continue processing other images
+			logf("Warning: Failed to extract image %d: %v\n", i, err)
+			continue
+		}
 
-		go func(index int, loc playwright.Locator) {
-			defer wg.Done()
-
-			select {
-			case <-ctx.Done():
-				return
-			case semaphore <- struct{}{}:
-				defer func() { <-semaphore }()
-			}
-
-			img, err := e.extractSingleImage(loc, index)
-			if err != nil {
-				// Log error but continue processing other images
-				fmt.Printf("Warning: Failed to extract image %d: %v\n", index, err)
-				return
-			}
-
-			if img != nil {
-				mu.Lock()
-				images = append(images, *img)
-				mu.Unlock()
-			}
-		}(i, locator)
+		if img != nil {
+			images = append(images, *img)
+		}
 	}
-
-	wg.Wait()
 
 	return images, nil
 }
@@ -1310,7 +1281,7 @@ func (e *ImageExtractor) GetMetadata() *ScrapingMetadata {
 func (e *ImageExtractor) extractAllImagesViaScrolling(ctx context.Context) ([]BusinessImage, error) {
 	// Step 1: Try to navigate to photos section (but don't fail if it doesn't work)
 	if err := e.navigateToImagesSection(); err != nil {
-		fmt.Printf("DEBUG: Could not navigate to photos section: %v - will try to extract from current page\n", err)
+		logf("DEBUG: Could not navigate to photos section: %v - will try to extract from current page\n", err)
 		// Don't return error - maybe images are already visible on the page
 	}
 
@@ -1319,10 +1290,10 @@ func (e *ImageExtractor) extractAllImagesViaScrolling(ctx context.Context) ([]Bu
 
 	// Step 2: Check if we're in a photo gallery (if not, skip tab selection)
 	if e.isInPhotoGallery() {
-		fmt.Printf("DEBUG: In photo gallery, ensuring 'All' tab selected\n")
+		logf("DEBUG: In photo gallery, ensuring 'All' tab selected\n")
 		e.ensureAllTabSelected()
 	} else {
-		fmt.Printf("DEBUG: Not in photo gallery view, extracting images from business page\n")
+		logf("DEBUG: Not in photo gallery view, extracting images from business page\n")
 	}
 
 	// Step 3: Scroll and collect all images
@@ -1332,7 +1303,7 @@ func (e *ImageExtractor) extractAllImagesViaScrolling(ctx context.Context) ([]Bu
 	}
 
 	e.metadata.ScrollActions = scrollActions
-	fmt.Printf("DEBUG: Collected %d images after %d scroll actions\n", len(images), scrollActions)
+	logf("DEBUG: Collected %d images after %d scroll actions\n", len(images), scrollActions)
 
 	return images, nil
 }
@@ -1367,20 +1338,20 @@ func (e *ImageExtractor) ensureAllTabSelected() {
 		if visible, _ := tab.IsVisible(); visible {
 			// Check if already selected
 			if selected, _ := tab.GetAttribute("aria-selected"); selected == "true" {
-				fmt.Printf("DEBUG: 'All' tab already selected\n")
+				logf("DEBUG: 'All' tab already selected\n")
 				return
 			}
 
 			// Click it
 			if err := tab.Click(); err == nil {
-				fmt.Printf("DEBUG: Clicked 'All' tab\n")
+				logf("DEBUG: Clicked 'All' tab\n")
 				time.Sleep(500 * time.Millisecond)
 				return
 			}
 		}
 	}
 
-	fmt.Printf("DEBUG: No 'All' tab found or already in all photos view\n")
+	logf("DEBUG: No 'All' tab found or already in all photos view\n")
 }
 
 // scrollAndCollectImages scrolls the photo gallery and collects all visible image URLs
@@ -1392,7 +1363,7 @@ func (e *ImageExtractor) scrollAndCollectImages(ctx context.Context) ([]Business
 	maxStableChecks := 3 // Stop after 3 scrolls with no new images
 	maxScrolls := 20     // Maximum scroll attempts
 
-	fmt.Printf("DEBUG: Starting to scroll and collect images...\n")
+	logf("DEBUG: Starting to scroll and collect images...\n")
 
 	for scrollActions < maxScrolls {
 		select {
@@ -1407,7 +1378,7 @@ func (e *ImageExtractor) scrollAndCollectImages(ctx context.Context) ([]Business
 		// Perform scroll action
 		scrolled, err := e.scrollPhotoGallery()
 		if err != nil {
-			fmt.Printf("Warning: Scroll action failed: %v\n", err)
+			logf("Warning: Scroll action failed: %v\n", err)
 		}
 
 		if scrolled {
@@ -1429,13 +1400,13 @@ func (e *ImageExtractor) scrollAndCollectImages(ctx context.Context) ([]Business
 
 			currentCount := len(urlSet)
 			newFound := currentCount - previousCount
-			fmt.Printf("DEBUG: Scroll %d: Found %d new images (total: %d)\n", scrollActions, newFound, currentCount)
+			logf("DEBUG: Scroll %d: Found %d new images (total: %d)\n", scrollActions, newFound, currentCount)
 
 			// Check if we found new images
 			if newFound == 0 {
 				stableCount++
 				if stableCount >= maxStableChecks {
-					fmt.Printf("DEBUG: No new images after %d scrolls, stopping\n", maxStableChecks)
+					logf("DEBUG: No new images after %d scrolls, stopping\n", maxStableChecks)
 					break
 				}
 			} else {
@@ -1443,7 +1414,7 @@ func (e *ImageExtractor) scrollAndCollectImages(ctx context.Context) ([]Business
 			}
 		} else {
 			// Can't scroll anymore (reached bottom)
-			fmt.Printf("DEBUG: Reached end of gallery after %d scrolls\n", scrollActions)
+			logf("DEBUG: Reached end of gallery after %d scrolls\n", scrollActions)
 			break
 		}
 	}

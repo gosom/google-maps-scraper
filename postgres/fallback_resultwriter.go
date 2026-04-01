@@ -3,12 +3,12 @@ package postgres
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
-	"github.com/gosom/scrapemate"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/gosom/scrapemate"
 
 	"github.com/gosom/google-maps-scraper/gmaps"
 )
@@ -50,7 +50,7 @@ func (r *fallbackResultWriter) Run(ctx context.Context, in <-chan scrapemate.Res
 		if len(buff) >= maxBatchSize || time.Now().UTC().Sub(lastSave) >= time.Minute {
 			err := r.batchSaveFallback(dbCtx, buff)
 			if err != nil {
-				log.Printf("Error saving batch: %v", err)
+				slog.Error("batch_save_error", slog.Any("error", err))
 				// Continue processing instead of failing completely
 			}
 
@@ -62,7 +62,7 @@ func (r *fallbackResultWriter) Run(ctx context.Context, in <-chan scrapemate.Res
 	if len(buff) > 0 {
 		err := r.batchSaveFallback(dbCtx, buff)
 		if err != nil {
-			log.Printf("Error saving final batch: %v", err)
+			slog.Error("final_batch_save_error", slog.Any("error", err))
 		}
 	}
 
@@ -74,21 +74,21 @@ func (r *fallbackResultWriter) batchSaveFallback(ctx context.Context, entries []
 		return nil
 	}
 
-	log.Printf("[Fallback Writer] Attempting to insert %d entries for user %s, job %s", len(entries), r.userID, r.jobID)
+	slog.Info("fallback_writer_inserting", slog.Int("count", len(entries)), slog.String("user_id", r.userID), slog.String("job_id", r.jobID))
 
 	// Insert entries one by one to handle duplicates gracefully
 	successCount := 0
 	for _, entry := range entries {
 		err := r.insertSingleEntry(ctx, entry)
 		if err != nil {
-			log.Printf("[Fallback Writer] Failed to insert entry %s: %v", entry.Title, err)
+			slog.Error("fallback_writer_insert_failed", slog.String("title", entry.Title), slog.Any("error", err))
 			// Continue with next entry
 		} else {
 			successCount++
 		}
 	}
 
-	log.Printf("[Fallback Writer] Successfully inserted %d/%d entries for user %s, job %s", successCount, len(entries), r.userID, r.jobID)
+	slog.Info("fallback_writer_insert_complete", slog.Int("success_count", successCount), slog.Int("total_count", len(entries)), slog.String("user_id", r.userID), slog.String("job_id", r.jobID))
 	return nil
 }
 
@@ -97,30 +97,19 @@ func (r *fallbackResultWriter) insertSingleEntry(ctx context.Context, entry *gma
 	dbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Check if entry with this cid already exists
-	if entry.Cid != "" {
-		var count int
-		err := r.db.QueryRowContext(dbCtx, "SELECT COUNT(*) FROM results WHERE cid = $1", entry.Cid).Scan(&count)
-		if err == nil && count > 0 {
-			// Entry already exists, skip
-			return nil
-		}
-	}
-
 	// Serialize JSON fields
-	openHoursJSON, _ := json.Marshal(entry.OpenHours)
-	popularTimesJSON, _ := json.Marshal(entry.PopularTimes)
-	reviewsPerRatingJSON, _ := json.Marshal(entry.ReviewsPerRating)
-	imagesJSON, _ := json.Marshal(entry.Images)
-	reservationsJSON, _ := json.Marshal(entry.Reservations)
-	orderOnlineJSON, _ := json.Marshal(entry.OrderOnline)
-	menuJSON, _ := json.Marshal(entry.Menu)
-	ownerJSON, _ := json.Marshal(entry.Owner)
-	completeAddressJSON, _ := json.Marshal(entry.CompleteAddress)
-	aboutJSON, _ := json.Marshal(entry.About)
-	userReviewsJSON, _ := json.Marshal(entry.UserReviews)
-	userReviewsExtendedJSON, _ := json.Marshal(entry.UserReviewsExtended)
-	dataJSON, _ := json.Marshal(entry)
+	openHoursJSON := mustMarshalJSON(entry.OpenHours)
+	popularTimesJSON := mustMarshalJSON(entry.PopularTimes)
+	reviewsPerRatingJSON := mustMarshalJSON(entry.ReviewsPerRating)
+	imagesJSON := mustMarshalJSON(entry.Images)
+	reservationsJSON := mustMarshalJSON(entry.Reservations)
+	orderOnlineJSON := mustMarshalJSON(entry.OrderOnline)
+	menuJSON := mustMarshalJSON(entry.Menu)
+	ownerJSON := mustMarshalJSON(entry.Owner)
+	completeAddressJSON := mustMarshalJSON(entry.CompleteAddress)
+	aboutJSON := mustMarshalJSON(entry.About)
+	userReviewsJSON := mustMarshalJSON(entry.UserReviews)
+	userReviewsExtendedJSON := mustMarshalJSON(entry.UserReviewsExtended)
 
 	// Convert slices to strings
 	categoriesStr := strings.Join(entry.Categories, ", ")
@@ -132,12 +121,12 @@ func (r *fallbackResultWriter) insertSingleEntry(ctx context.Context, entry *gma
 		reviews_per_rating, latitude, longitude, status_info, description,
 		reviews_link, thumbnail, timezone, price_range, data_id, images,
 		reservations, order_online, menu, owner, complete_address, about,
-		user_reviews, user_reviews_extended, emails, data, created_at
+		user_reviews, user_reviews_extended, emails, created_at
 	) VALUES (
 		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
 		$17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
-		$31, $32, $33, $34, $35, $36, $37, $38
-	)`
+		$31, $32, $33, $34, $35, $36, $37
+	) ON CONFLICT (cid, job_id) DO NOTHING`
 
 	_, err := r.db.ExecContext(dbCtx, query,
 		r.userID,                // $1 user_id
@@ -176,8 +165,7 @@ func (r *fallbackResultWriter) insertSingleEntry(ctx context.Context, entry *gma
 		userReviewsJSON,         // $34 user_reviews
 		userReviewsExtendedJSON, // $35 user_reviews_extended
 		emailsStr,               // $36 emails
-		dataJSON,                // $37 data
-		time.Now(),              // $38 created_at
+		time.Now(),              // $37 created_at
 	)
 
 	return err

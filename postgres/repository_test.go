@@ -46,7 +46,7 @@ func TestPostgresRepository(t *testing.T) {
 
 	// Test Get
 	t.Run("Get", func(t *testing.T) {
-		fetchedJob, err := repo.Get(ctx, job.ID)
+		fetchedJob, err := repo.Get(ctx, job.ID, "")
 		if err != nil {
 			t.Fatalf("Failed to get job: %v", err)
 		}
@@ -111,7 +111,7 @@ func TestPostgresRepository(t *testing.T) {
 		}
 
 		// Verify update
-		updatedJob, err := repo.Get(ctx, job.ID)
+		updatedJob, err := repo.Get(ctx, job.ID, "")
 		if err != nil {
 			t.Fatalf("Failed to get updated job: %v", err)
 		}
@@ -127,13 +127,13 @@ func TestPostgresRepository(t *testing.T) {
 
 	// Test Delete
 	t.Run("Delete", func(t *testing.T) {
-		err := repo.Delete(ctx, job.ID)
+		err := repo.Delete(ctx, job.ID, "")
 		if err != nil {
 			t.Fatalf("Failed to delete job: %v", err)
 		}
 
 		// Verify deletion
-		_, err = repo.Get(ctx, job.ID)
+		_, err = repo.Get(ctx, job.ID, "")
 		if err == nil {
 			t.Errorf("Expected error when getting deleted job")
 		}

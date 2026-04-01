@@ -11,6 +11,11 @@ ENV GOSUMDB=sum.golang.org
 
 WORKDIR /app
 
+# Build metadata (required from CI/CD)
+ARG GIT_COMMIT
+ARG BUILD_DATE
+ARG VERSION
+
 # Install CA certificates, wget, and git (needed for go mod download)
 RUN apk add --no-cache ca-certificates wget git
 
@@ -19,7 +24,7 @@ COPY go.mod go.sum ./
 
 # Configure go env and download dependencies
 RUN go env -w GOPROXY=https://proxy.golang.org,direct \
-    && go mod download
+  && go mod download
 
 # Copy source code
 COPY . .
@@ -30,37 +35,45 @@ RUN CGO_ENABLED=0 go build -ldflags="-w -s" -o /usr/bin/brezel-api .
 # Final stage - optimized for API + scraping
 FROM debian:bullseye-slim
 
+# Runtime environment variables for version tracking (required from CI/CD)
+ARG GIT_COMMIT
+ARG BUILD_DATE
+ARG VERSION
+ENV GIT_COMMIT=${GIT_COMMIT}
+ENV BUILD_DATE=${BUILD_DATE}
+ENV VERSION=${VERSION}
+
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/browsers
 ENV PLAYWRIGHT_DRIVER_PATH=/opt
 
 # Install runtime dependencies and Node.js for Playwright
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    wget \
-    libnss3 \
-    libnspr4 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libdrm2 \
-    libdbus-1-3 \
-    libxkbcommon0 \
-    libatspi2.0-0 \
-    libx11-6 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxext6 \
-    libxfixes3 \
-    libxrandr2 \
-    libgbm1 \
-    libpango-1.0-0 \
-    libcairo2 \
-    libasound2 \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+  ca-certificates \
+  curl \
+  wget \
+  libnss3 \
+  libnspr4 \
+  libatk1.0-0 \
+  libatk-bridge2.0-0 \
+  libcups2 \
+  libdrm2 \
+  libdbus-1-3 \
+  libxkbcommon0 \
+  libatspi2.0-0 \
+  libx11-6 \
+  libxcomposite1 \
+  libxdamage1 \
+  libxext6 \
+  libxfixes3 \
+  libxrandr2 \
+  libgbm1 \
+  libpango-1.0-0 \
+  libcairo2 \
+  libasound2 \
+  && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+  && apt-get install -y --no-install-recommends nodejs \
+  && apt-get clean \
+  && rm -rf /var/lib/apt/lists/*
 
 # Install Playwright and browsers
 # We do this in the final stage or a separate stage to keep the image size optimized, 

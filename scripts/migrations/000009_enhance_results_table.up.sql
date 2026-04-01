@@ -2,7 +2,7 @@ BEGIN;
 
 -- Add user_id and job_id to results table for proper data association
 ALTER TABLE results ADD COLUMN IF NOT EXISTS user_id TEXT REFERENCES users(id);
-ALTER TABLE results ADD COLUMN IF NOT EXISTS job_id TEXT REFERENCES jobs(id);
+ALTER TABLE results ADD COLUMN IF NOT EXISTS job_id UUID REFERENCES jobs(id);
 
 -- Add created_at timestamp for tracking when results were saved
 ALTER TABLE results ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();

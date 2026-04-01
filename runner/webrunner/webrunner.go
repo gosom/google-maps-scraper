@@ -7,16 +7,20 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gosom/google-maps-scraper/billing"
 	"github.com/gosom/google-maps-scraper/config"
 	"github.com/gosom/google-maps-scraper/deduper"
 	"github.com/gosom/google-maps-scraper/exiter"
+	"github.com/gosom/google-maps-scraper/gmaps"
 	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/proxy"
@@ -32,6 +36,79 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// mateResult carries the error from a mate.Start goroutine.
+// The channel doubles as a completion signal, replacing a separate done channel.
+type mateResult struct{ err error }
+
+// maxLeakedMates is the upper bound on tracked leaked mate channels.
+// When this limit is reached, the oldest entry is dropped to prevent
+// unbounded slice growth.
+const maxLeakedMates = 100
+
+// leakTracker tracks leaked mate.Start goroutines so they can be joined
+// (with a timeout) during Close(). All fields are goroutine-safe.
+type leakTracker struct {
+	// mu protects mates from concurrent access.
+	mu sync.Mutex
+	// mates tracks result channels of abandoned mate.Start goroutines.
+	mates []<-chan mateResult
+	// count tracks the total number of leaked mate goroutines for observability.
+	// Incremented atomically each time a mate.Start goroutine cannot be joined.
+	count atomic.Int64
+}
+
+// track registers the result channel of an abandoned mate.Start goroutine.
+func (lt *leakTracker) track(resultCh <-chan mateResult, jobID string, logger *slog.Logger) {
+	lt.mu.Lock()
+	defer lt.mu.Unlock()
+
+	if len(lt.mates) >= maxLeakedMates {
+		logger.Warn("leaked_mates_cap_reached",
+			slog.String("job_id", jobID),
+			slog.Int("cap", maxLeakedMates),
+			slog.String("action", "dropping_oldest"),
+		)
+		copy(lt.mates, lt.mates[1:])
+		lt.mates[len(lt.mates)-1] = nil
+		lt.mates = lt.mates[:len(lt.mates)-1]
+	}
+
+	lt.mates = append(lt.mates, resultCh)
+	total := lt.count.Add(1)
+	logger.Warn("leaked_mate_tracked", slog.String("job_id", jobID), slog.Int("total_leaked", len(lt.mates)), slog.Int64("lifetime_leaked", total))
+}
+
+// drain joins all tracked leaked goroutines with a timeout.
+func (lt *leakTracker) drain(timeout time.Duration, logger *slog.Logger) {
+	lt.mu.Lock()
+	leaked := lt.mates
+	lt.mates = nil
+	lt.mu.Unlock()
+
+	if len(leaked) == 0 {
+		return
+	}
+
+	logger.Info("draining_leaked_mates", slog.Int("count", len(leaked)))
+	deadline := time.After(timeout)
+	for i, ch := range leaked {
+		select {
+		case <-ch:
+			logger.Debug("leaked_mate_joined", slog.Int("index", i))
+		case <-deadline:
+			logger.Warn("leaked_mate_drain_timeout", slog.Int("joined", i), slog.Int("remaining", len(leaked)-i))
+			return
+		}
+	}
+}
+
+// lifecycle manages background goroutine tracking for graceful shutdown.
+type lifecycle struct {
+	// bgWg tracks background goroutines (stuck job reaper, webhook cleanup) so
+	// they can be joined during graceful shutdown.
+	bgWg sync.WaitGroup
+}
+
 type webrunner struct {
 	srv         *web.Server
 	svc         *web.Service
@@ -42,42 +119,92 @@ type webrunner struct {
 	s3Uploader  *s3uploader.Uploader
 	s3Bucket    string
 	jobFileRepo models.JobFileRepository
+	logger      *slog.Logger
+
+	leaks leakTracker
+	lc    lifecycle
 }
 
 // buildServerConfig loads integration settings from environment, enforces required
 // dependencies (Clerk), and constructs the web.ServerConfig in a single place.
 // Stripe settings are optional; if present, they are applied.
 func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.ServerConfig, error) {
-	clerkAPIKey := os.Getenv("CLERK_API_KEY")
+	clerkSecretKey := os.Getenv("CLERK_SECRET_KEY")
 	stripeAPIKey := os.Getenv("STRIPE_SECRET_KEY")
 	stripeWebhookSecret := os.Getenv("STRIPE_WEBHOOK_SECRET")
 
-	if clerkAPIKey == "" {
-		log.Println("[WebRunner] FATAL: CLERK_API_KEY is required but missing. Set the CLERK_API_KEY environment variable.")
-		return web.ServerConfig{}, fmt.Errorf("CLERK_API_KEY environment variable is required")
+	if clerkSecretKey == "" {
+		slog.Error("clerk_secret_key_missing", slog.String("detail", "CLERK_SECRET_KEY is required but missing"))
+		return web.ServerConfig{}, fmt.Errorf("CLERK_SECRET_KEY environment variable is required")
+	}
+
+	isProduction := strings.TrimSpace(os.Getenv("APP_ENV")) == "production"
+
+	if isProduction {
+		var missing []string
+		if stripeAPIKey == "" {
+			missing = append(missing, "STRIPE_SECRET_KEY")
+		}
+		if stripeWebhookSecret == "" {
+			missing = append(missing, "STRIPE_WEBHOOK_SECRET")
+		}
+		if os.Getenv("ALLOWED_ORIGINS") == "" {
+			missing = append(missing, "ALLOWED_ORIGINS")
+		}
+		if len(missing) > 0 {
+			return web.ServerConfig{}, fmt.Errorf("production mode requires these environment variables: %s", strings.Join(missing, ", "))
+		}
 	}
 
 	userRepo := postgres.NewUserRepository(db)
+	apiKeyRepo := postgres.NewAPIKeyRepository(db)
+	webhookConfigRepo := postgres.NewWebhookConfigRepository(db)
+	webhookDeliveryRepo := postgres.NewJobWebhookDeliveryRepository(db)
+	apiKeyServerSecret := []byte(os.Getenv("API_KEY_SERVER_SECRET"))
+
+	// Validate API_KEY_SERVER_SECRET: when API key auth is enabled (apiKeyRepo != nil),
+	// an empty or short secret silently disables API key authentication in the auth
+	// middleware (which checks len(serverSecret) > 0). Require ≥ 32 bytes to prevent
+	// this silent misconfiguration trap (TOCTOU between "repo exists" and "secret exists").
+	if apiKeyRepo != nil && len(apiKeyServerSecret) < 32 {
+		return web.ServerConfig{}, fmt.Errorf("API_KEY_SERVER_SECRET must be at least 32 bytes when API key auth is enabled (got %d bytes)", len(apiKeyServerSecret))
+	}
+
+	internalAddr := os.Getenv("INTERNAL_ADDR")
+	if internalAddr == "" {
+		internalAddr = ":9090"
+	}
 
 	serverCfg := web.ServerConfig{
 		Service:             svc,
 		Addr:                cfg.Addr,
 		PgDB:                db,
 		UserRepo:            userRepo,
-		ClerkAPIKey:         clerkAPIKey,
+		APIKeyRepo:          apiKeyRepo,
+		WebhookConfigRepo:   webhookConfigRepo,
+		WebhookDeliveryRepo: webhookDeliveryRepo,
+		ServerSecret:        apiKeyServerSecret,
+		ClerkSecretKey:      clerkSecretKey,
 		StripeAPIKey:        stripeAPIKey,
 		StripeWebhookSecret: stripeWebhookSecret,
+		Version:             cfg.Version,
+		InternalAddr:        internalAddr,
 	}
 
-	log.Println("[WebRunner] Authentication enabled with Clerk")
+	slog.Info("auth_enabled", slog.String("provider", "clerk"))
 	if stripeAPIKey != "" {
-		log.Println("[WebRunner] Payment enabled with Stripe")
+		slog.Info("payment_enabled", slog.String("provider", "stripe"))
 	}
+
+	slog.Info("startup_config_summary",
+		slog.Bool("stripe_enabled", stripeAPIKey != ""),
+		slog.Bool("production_mode", isProduction),
+	)
 
 	return serverCfg, nil
 }
 
-func New(cfg *runner.Config) (runner.Runner, error) {
+func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 	if cfg.DataFolder == "" {
 		return nil, fmt.Errorf("data folder is required")
 	}
@@ -96,13 +223,32 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		return nil, fmt.Errorf("failed to connect to PostgreSQL: %w", err)
 	}
 
-	// connection pool settings
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(5 * time.Minute)
+	// connection pool settings — configurable via env vars
+	maxOpen := envInt("DB_MAX_OPEN_CONNS", 25)
+	if maxOpen == 0 {
+		slog.Error("db_pool_misconfigured", "msg", "DB_MAX_OPEN_CONNS=0 creates unbounded pool — refusing to start")
+		os.Exit(1)
+	}
+	maxIdle := envInt("DB_MAX_IDLE_CONNS", 10)
+	connMaxLifetime := envDuration("DB_CONN_MAX_LIFETIME", 5*time.Minute)
+	db.SetMaxOpenConns(maxOpen)
+	db.SetMaxIdleConns(maxIdle)
+	db.SetConnMaxLifetime(connMaxLifetime)
+	db.SetConnMaxIdleTime(2 * time.Minute)
 
-	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("failed to ping PostgreSQL: %w", err)
+	// Startup validation: verify DB connectivity with a 10-second timeout before
+	// the HTTP server starts accepting traffic. This ensures the container/process
+	// fails fast and exits with code 1 rather than serving unhealthy requests.
+	{
+		pingCtx, pingCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer pingCancel()
+		if err := db.PingContext(pingCtx); err != nil {
+			slog.Error("startup_db_ping_failed",
+				slog.Any("error", err),
+				slog.String("detail", "cannot reach PostgreSQL within 10s; aborting startup"),
+			)
+			os.Exit(1)
+		}
 	}
 
 	// Run database migrations automatically on startup with meaningful logs
@@ -137,23 +283,23 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 	cfgSvc := config.New(db)
 	billSvc := billing.New(db, cfgSvc, "", "")
 	if billSvc != nil {
-		log.Println("[WebRunner] Billing service initialized successfully for event charging")
+		slog.Info("billing_service_initialized")
 	} else {
-		log.Println("[WebRunner] WARNING: Billing service is nil - charges will not be applied!")
+		slog.Warn("billing_service_nil", slog.String("detail", "charges will not be applied"))
 	}
 
 	// Initialize proxy pool if proxies are configured
 	var proxyPool *proxy.Pool
-	if len(cfg.Proxies) > 0 {
-		log.Printf("DEBUG: WebRunner - Creating proxy pool with %d proxies", len(cfg.Proxies))
-		log.Printf("DEBUG: WebRunner - All cfg.Proxies: %v", cfg.Proxies)
+	if len(cfg.Proxy.Proxies) > 0 {
+		slog.Debug("creating_proxy_pool", slog.Int("proxy_count", len(cfg.Proxy.Proxies)))
+		slog.Debug("proxy_list", slog.Any("proxies", cfg.Proxy.Proxies))
 
 		// Create proxy pool with port range 8888-9998 (1000 ports)
-		proxyPool, err = proxy.NewPool(cfg.Proxies, 8888, 9998)
+		proxyPool, err = proxy.NewPool(cfg.Proxy.Proxies, 8888, 9998, slog.Default())
 		if err != nil {
 			return nil, fmt.Errorf("failed to create proxy pool: %w", err)
 		}
-		log.Printf("🔧 Started proxy pool with %d proxies", len(cfg.Proxies))
+		slog.Info("proxy_pool_started", slog.Int("proxy_count", len(cfg.Proxy.Proxies)))
 	}
 
 	// Initialize S3 uploader if AWS credentials are configured
@@ -166,27 +312,37 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 	s3BucketName = os.Getenv("S3_BUCKET_NAME")
 
 	if awsAccessKey != "" && awsSecretKey != "" && awsRegion != "" && s3BucketName != "" {
-		s3Upload = s3uploader.New(awsAccessKey, awsSecretKey, awsRegion)
-		if s3Upload != nil {
-			log.Printf("[WebRunner] S3 uploader initialized successfully (bucket: %s, region: %s)", s3BucketName, awsRegion)
+		var s3Err error
+		s3Upload, s3Err = s3uploader.New(awsAccessKey, awsSecretKey, awsRegion)
+		if s3Err != nil {
+			slog.Warn("s3_uploader_init_failed", slog.String("detail", "files will only be stored locally"), slog.Any("error", s3Err))
 		} else {
-			log.Println("[WebRunner] WARNING: Failed to initialize S3 uploader - files will only be stored locally")
+			slog.Info("s3_uploader_initialized", slog.String("bucket", s3BucketName), slog.String("region", awsRegion))
 		}
 	} else {
-		log.Println("[WebRunner] INFO: S3 not configured - files will only be stored locally")
+		slog.Info("s3_not_configured", slog.String("detail", "files will only be stored locally"))
 		if awsAccessKey == "" {
-			log.Println("[WebRunner] Missing: AWS_ACCESS_KEY_ID")
+			slog.Info("s3_missing_env", slog.String("var", "AWS_ACCESS_KEY_ID"))
 		}
 		if awsSecretKey == "" {
-			log.Println("[WebRunner] Missing: AWS_SECRET_ACCESS_KEY")
+			slog.Info("s3_missing_env", slog.String("var", "AWS_SECRET_ACCESS_KEY"))
 		}
 		if awsRegion == "" {
-			log.Println("[WebRunner] Missing: AWS_REGION")
+			slog.Info("s3_missing_env", slog.String("var", "AWS_REGION"))
 		}
 		if s3BucketName == "" {
-			log.Println("[WebRunner] Missing: S3_BUCKET_NAME")
+			slog.Info("s3_missing_env", slog.String("var", "S3_BUCKET_NAME"))
 		}
 	}
+
+	if strings.TrimSpace(os.Getenv("APP_ENV")) == "production" && s3Upload == nil {
+		return nil, fmt.Errorf("S3 credentials are required when APP_ENV=production")
+	}
+
+	slog.Info("startup_feature_summary",
+		slog.Bool("s3_enabled", s3Upload != nil),
+		slog.String("app_env", os.Getenv("APP_ENV")),
+	)
 
 	// Initialize job file repository
 	jobFileRepo, err := postgres.NewJobFileRepository(db)
@@ -197,7 +353,19 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 	// Configure S3 on the service if S3 is available
 	if s3Upload != nil && s3BucketName != "" && jobFileRepo != nil {
 		svc.SetS3Config(jobFileRepo, s3Upload, s3BucketName)
-		log.Printf("[WebRunner] S3 download configured for web service (bucket: %s)", s3BucketName)
+		slog.Info("s3_download_configured", slog.String("bucket", s3BucketName))
+	}
+
+	// Initialize Google cookies for authenticated scraping (reviews access)
+	cookiesFile := cfg.CookiesFile
+	if cookiesFile == "" {
+		cookiesFile = os.Getenv("GOOGLE_COOKIES_FILE")
+	}
+	if cookiesFile != "" {
+		gmaps.SetCookiesFile(cookiesFile)
+		slog.Info("google_cookies_configured", slog.String("file", cookiesFile))
+	} else {
+		slog.Info("google_cookies_not_configured", slog.String("detail", "reviews may be restricted without authentication"))
 	}
 
 	ans := webrunner{
@@ -210,6 +378,7 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		s3Uploader:  s3Upload,
 		s3Bucket:    s3BucketName,
 		jobFileRepo: jobFileRepo,
+		logger:      logger,
 	}
 
 	return &ans, nil
@@ -217,6 +386,29 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 
 func (w *webrunner) Run(ctx context.Context) error {
 	egroup, ctx := errgroup.WithContext(ctx)
+
+	// Start stuck-job reaper in its own goroutine. Reads interval and timeout
+	// from env vars STUCK_JOB_CHECK_INTERVAL_MINUTES (default 10) and
+	// STUCK_JOB_TIMEOUT_HOURS (default 4).
+	stuckCheckMins := envInt("STUCK_JOB_CHECK_INTERVAL_MINUTES", 10)
+	stuckTimeoutHours := envInt("STUCK_JOB_TIMEOUT_HOURS", 4)
+	checkInterval := time.Duration(stuckCheckMins) * time.Minute
+	w.lc.bgWg.Add(1)
+	go func() {
+		defer w.lc.bgWg.Done()
+		postgres.RunStuckJobReaper(ctx, w.db, w.logger, checkInterval, stuckTimeoutHours)
+	}()
+
+	// Webhook event cleanup goroutine: removes processed_webhook_events older than
+	// WEBHOOK_EVENT_RETENTION_DAYS (default 90) in daily batches.
+	if w.billingSvc != nil {
+		retentionDays := envInt("WEBHOOK_EVENT_RETENTION_DAYS", 90)
+		w.lc.bgWg.Add(1)
+		go func() {
+			defer w.lc.bgWg.Done()
+			w.billingSvc.StartWebhookEventCleanup(ctx, retentionDays)
+		}()
+	}
 
 	egroup.Go(func() error {
 		return w.work(ctx)
@@ -229,10 +421,49 @@ func (w *webrunner) Run(ctx context.Context) error {
 	return egroup.Wait()
 }
 
+// trackLeakedMate registers the result channel of an abandoned mate.Start
+// goroutine so it can be joined during Close().
+func (w *webrunner) trackLeakedMate(resultCh <-chan mateResult, jobID string) {
+	w.leaks.track(resultCh, jobID, w.logger)
+}
+
+// shutdownMate cancels the mate context, closes the mate with a timeout, and
+// waits for the mate.Start goroutine to finish. Returns the error from
+// mate.Start and whether the goroutine leaked.
+func (w *webrunner) shutdownMate(jobID string, cancel context.CancelFunc, closeMate func(), resultCh <-chan mateResult) (error, bool) {
+	cancel()
+
+	closeComplete := make(chan struct{})
+	go func() {
+		defer close(closeComplete)
+		closeMate()
+	}()
+
+	closeTimer := time.NewTimer(15 * time.Second)
+	select {
+	case <-closeComplete:
+	case <-closeTimer.C:
+		w.logger.Warn("mate_close_timeout", slog.String("job_id", jobID))
+	}
+	closeTimer.Stop()
+
+	finalWait := time.NewTimer(5 * time.Second)
+	select {
+	case res := <-resultCh:
+		finalWait.Stop()
+		return res.err, false // not leaked
+	case <-finalWait.C:
+		w.trackLeakedMate(resultCh, jobID)
+		return fmt.Errorf("mate goroutine leaked: timeout exceeded"), true
+	}
+}
+
 func (w *webrunner) Close(context.Context) error {
+	// Drain all leaked mate.Start goroutines with a timeout.
+	w.leaks.drain(30*time.Second, w.logger)
+
 	if w.proxyPool != nil {
-		// Proxy pool cleanup would go here if needed
-		// For now, individual servers are cleaned up when jobs finish
+		w.proxyPool.Close()
 	}
 	if w.db != nil {
 		w.db.Close()
@@ -243,6 +474,18 @@ func (w *webrunner) Close(context.Context) error {
 func (w *webrunner) work(ctx context.Context) error {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+
+	var wg sync.WaitGroup
+	defer func() {
+		drainDone := make(chan struct{})
+		go func() { wg.Wait(); close(drainDone) }()
+		select {
+		case <-drainDone:
+			w.logger.Info("in_flight_jobs_drained")
+		case <-time.After(10 * time.Second):
+			w.logger.Warn("in_flight_jobs_drain_timeout")
+		}
+	}()
 
 	// Create a semaphore to limit concurrent jobs
 	// Use CONCURRENCY env var or default to 1 for job concurrency
@@ -256,20 +499,33 @@ func (w *webrunner) work(ctx context.Context) error {
 		}
 	}
 
-	log.Printf("Starting job worker with max concurrent jobs: %d (total concurrency: %d)", maxConcurrentJobs, w.cfg.Concurrency)
+	w.logger.Info("job_worker_starting", slog.Int("max_concurrent_jobs", maxConcurrentJobs), slog.Int("total_concurrency", w.cfg.Concurrency))
 
 	// Use buffered channel as semaphore
 	jobSemaphore := make(chan struct{}, maxConcurrentJobs)
+
+	consecutiveErrors := 0
 
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+			// Skip DB query if all semaphore slots are occupied — no capacity to process results
+			if len(jobSemaphore) >= cap(jobSemaphore) {
+				continue
+			}
+
 			jobs, err := w.svc.SelectPending(ctx)
 			if err != nil {
-				return err
+				consecutiveErrors++
+				w.logger.Error("select_pending_failed", slog.Any("error", err), slog.Int("consecutive", consecutiveErrors))
+				if consecutiveErrors >= 10 {
+					return fmt.Errorf("too many consecutive SelectPending failures: %w", err)
+				}
+				continue
 			}
+			consecutiveErrors = 0
 
 			for i := range jobs {
 				select {
@@ -277,8 +533,17 @@ func (w *webrunner) work(ctx context.Context) error {
 					return nil
 				case jobSemaphore <- struct{}{}: // Acquire semaphore
 					// Launch job in goroutine for concurrent execution
+					wg.Add(1)
 					go func(job web.Job) {
+						defer wg.Done()
 						defer func() { <-jobSemaphore }() // Release semaphore when done
+						defer func() {
+							if r := recover(); r != nil {
+								w.logger.Error("job_worker_panic_recovered",
+									slog.String("job_id", job.ID),
+									slog.Any("panic", r))
+							}
+						}()
 
 						t0 := time.Now().UTC()
 						if err := w.scrapeJob(ctx, &job); err != nil {
@@ -291,7 +556,7 @@ func (w *webrunner) work(ctx context.Context) error {
 							evt := tlmt.NewEvent("web_runner", params)
 							_ = runner.Telemetry().Send(ctx, evt)
 
-							log.Printf("error scraping job %s: %v", job.ID, err)
+							w.logger.Error("job_scrape_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 						} else {
 							params := map[string]any{
 								"job_count": len(job.Data.Keywords),
@@ -300,12 +565,12 @@ func (w *webrunner) work(ctx context.Context) error {
 
 							_ = runner.Telemetry().Send(ctx, tlmt.NewEvent("web_runner", params))
 
-							log.Printf("job %s scraped successfully", job.ID)
+							w.logger.Info("job_scrape_succeeded", slog.String("job_id", job.ID))
 						}
 					}(jobs[i]) // Pass by value to avoid race condition
 				default:
 					// Semaphore full, skip this job for now (will be picked up in next tick)
-					log.Printf("Job %s skipped - max concurrent jobs (%d) reached", jobs[i].ID, maxConcurrentJobs)
+					w.logger.Info("job_skipped_max_concurrent", slog.String("job_id", jobs[i].ID), slog.Int("max_concurrent_jobs", maxConcurrentJobs))
 				}
 			}
 		}
@@ -315,30 +580,34 @@ func (w *webrunner) work(ctx context.Context) error {
 func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	// Always persist the final job status on exit
 	defer func() {
-		if err := w.svc.Update(context.Background(), job); err != nil {
-			log.Printf("failed to persist final job status for %s: %v", job.ID, err)
-		} else {
-			log.Printf("DEBUG: Job %s - Final status persisted: %s", job.ID, job.Status)
+		deferCtx, deferCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer deferCancel()
+		if err := w.svc.Update(deferCtx, job); err != nil {
+			w.logger.Error("job_status_persist_failed", slog.String("job_id", job.ID), slog.String("operation", "Update"), slog.Any("error", err))
+			return
 		}
+		w.logger.Debug("job_status_persisted", slog.String("job_id", job.ID), slog.String("status", string(job.Status)))
 	}()
 
 	// Charge actor_start at job start (requires sufficient balance)
 	if w.billingSvc != nil {
-		log.Printf("INFO: Job %s - Attempting actor_start charge for user %s", job.ID, job.UserID)
-		if err := w.billingSvc.ChargeActorStart(context.Background(), job.UserID, job.ID); err != nil {
-			log.Printf("ERROR: billing: actor_start charge failed for job %s: %v", job.ID, err)
+		w.logger.Info("actor_start_charge_attempting", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
+		actorStartCtx, actorStartCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer actorStartCancel()
+		if err := w.billingSvc.ChargeActorStart(actorStartCtx, job.UserID, job.ID); err != nil {
+			w.logger.Error("actor_start_charge_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 			job.Status = web.StatusFailed
 			job.FailureReason = "insufficient credit balance to start job"
 			return err
 		}
-		log.Printf("SUCCESS: billing: actor_start charged successfully for job %s (user: %s)", job.ID, job.UserID)
+		w.logger.Info("actor_start_charge_succeeded", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
 	} else {
-		log.Printf("WARNING: Job %s - Billing service is nil, skipping actor_start charge", job.ID)
+		w.logger.Warn("billing_service_nil", slog.String("job_id", job.ID), slog.String("detail", "skipping actor_start charge"))
 	}
 
 	// Check if job has been cancelled before starting
 	if job.Status == web.StatusCancelled || job.Status == web.StatusAborting {
-		log.Printf("DEBUG: Job %s already cancelled/aborting, skipping execution", job.ID)
+		w.logger.Debug("job_already_cancelled", slog.String("job_id", job.ID))
 		return nil
 	}
 
@@ -348,37 +617,42 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 
 	// Start a goroutine to monitor for cancellation
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				w.logger.Error("scrape_job_panic", slog.Any("panic", r), slog.String("job_id", job.ID))
+			}
+		}()
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 
 		for {
 			select {
 			case <-jobCtx.Done():
-				log.Printf("DEBUG: Job %s monitoring stopped - context done", job.ID)
+				w.logger.Debug("job_monitoring_stopped", slog.String("job_id", job.ID), slog.String("reason", "context_done"))
 				return
 			case <-ticker.C:
-				// Check current job status in database
-				currentJob, err := w.svc.Get(jobCtx, job.ID)
+				// Check current job status in database (admin bypass - internal monitoring)
+				currentJob, err := w.svc.Get(jobCtx, job.ID, "")
 				if err != nil {
-					log.Printf("DEBUG: Job %s - failed to get status: %v", job.ID, err)
+					w.logger.Debug("job_status_check_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 					continue
 				}
 
-				log.Printf("DEBUG: Job %s status check - current status: %s", job.ID, currentJob.Status)
+				w.logger.Debug("job_status_check", slog.String("job_id", job.ID), slog.String("status", string(currentJob.Status)))
 
 				// Stop monitoring if job has completed (any final status)
 				if currentJob.Status == web.StatusAborting || currentJob.Status == web.StatusCancelled ||
 					currentJob.Status == web.StatusOK || currentJob.Status == web.StatusFailed {
-					log.Printf("DEBUG: Job %s final status detected (%s), stopping monitoring", job.ID, currentJob.Status)
+					w.logger.Debug("job_final_status_detected", slog.String("job_id", job.ID), slog.String("status", string(currentJob.Status)))
 
 					// Only cancel execution for user-initiated cancellation
 					if currentJob.Status == web.StatusAborting || currentJob.Status == web.StatusCancelled {
-						log.Printf("DEBUG: Job %s user cancellation detected, stopping execution", job.ID)
-						log.Printf("DEBUG: Job %s calling jobCancel() to stop mate.Start()", job.ID)
+						w.logger.Debug("job_user_cancellation_detected", slog.String("job_id", job.ID))
+						w.logger.Debug("job_cancel_invoked", slog.String("job_id", job.ID))
 						jobCancel()
 					}
 
-					log.Printf("DEBUG: Job %s monitoring goroutine exiting after final status", job.ID)
+					w.logger.Debug("job_monitoring_exiting", slog.String("job_id", job.ID))
 					return
 				}
 			}
@@ -411,14 +685,14 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		outfile.Close()
 		return fmt.Errorf("failed to write UTF-8 BOM: %w", err)
 	}
-	log.Printf("DEBUG: Job %s - UTF-8 BOM written to CSV file", job.ID)
+	w.logger.Debug("utf8_bom_written", slog.String("job_id", job.ID))
 
 	// Track whether file was closed to avoid double-close in defer
 	fileClosed := false
 	defer func() {
 		if !fileClosed {
 			if err := outfile.Close(); err != nil {
-				log.Printf("ERROR: Job %s - Failed to close CSV file in defer: %v", job.ID, err)
+				w.logger.Error("csv_file_close_failed_defer", slog.String("job_id", job.ID), slog.Any("error", err))
 			}
 		}
 	}()
@@ -434,36 +708,37 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		return err
 	}
 
-	defer mate.Close()
+	var closeOnce sync.Once
+	closeMate := func() { closeOnce.Do(func() { mate.Close() }) }
+	defer closeMate()
 
 	var coords string
 	if job.Data.Lat != "" && job.Data.Lon != "" {
 		coords = job.Data.Lat + "," + job.Data.Lon
 	}
 
-	seedJobs, err := runner.CreateSeedJobs(
-		job.Data.FastMode,
-		job.Data.Lang,
-		strings.NewReader(strings.Join(job.Data.Keywords, "\n")),
-		job.Data.Depth,
-		job.Data.Email,
-		job.Data.Images,
-		w.cfg.Debug,
-		job.Data.ReviewsMax, // Pass the actual review count
-		coords,
-		job.Data.Zoom,
-		func() float64 {
+	seedJobs, err := runner.CreateSeedJobs(runner.SeedJobConfig{
+		FastMode:       job.Data.FastMode,
+		LangCode:       job.Data.Lang,
+		Input:          strings.NewReader(strings.Join(job.Data.Keywords, "\n")),
+		MaxDepth:       job.Data.Depth,
+		Email:          job.Data.Email,
+		Images:         job.Data.Images,
+		Debug:          w.cfg.Debug,
+		ReviewsMax:     job.Data.ReviewsMax,
+		GeoCoordinates: coords,
+		Zoom:           job.Data.Zoom,
+		Radius: func() float64 {
 			if job.Data.Radius <= 0 {
 				return 10000 // 10 km
 			}
-
 			return float64(job.Data.Radius)
 		}(),
-		dedup,
-		exitMonitor,
-		job.Data.ReviewsMax > 0, // Keep extraReviews for backward compatibility
-		job.Data.MaxResults,     // Pass max results limit
-	)
+		Dedup:        dedup,
+		ExitMonitor:  exitMonitor,
+		ExtraReviews: job.Data.ReviewsMax > 0,
+		MaxResults:   job.Data.MaxResults,
+	})
 	if err != nil {
 		job.Status = web.StatusFailed
 		job.FailureReason = fmt.Sprintf("CreateSeedJobs failed: %v", err)
@@ -475,17 +750,32 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	if len(seedJobs) > 0 {
 		exitMonitor.SetSeedCount(len(seedJobs))
 
-		allowedSeconds := max(60, len(seedJobs)*10*job.Data.Depth/50+120)
-
-		if job.Data.MaxTime > 0 {
-			if job.Data.MaxTime.Seconds() < 180 {
-				allowedSeconds = 180
-			} else {
-				allowedSeconds = int(job.Data.MaxTime.Seconds())
-			}
+		// Base timeout: generous default since we can't predict how many places Google returns
+		// Old formula was too aggressive: 1 seed * 10 * depth / 50 + 120 = ~300s
+		// Reality: a single search can return 100+ places, each taking 10-25s with images
+		// New default: 1 hour for any job with depth > 0 (place detail scraping)
+		allowedSeconds := max(300, len(seedJobs)*10*job.Data.Depth/50+120)
+		if job.Data.Depth > 0 {
+			allowedSeconds = max(allowedSeconds, 3600) // 1 hour minimum for place scraping
 		}
 
-		log.Printf("running job %s with %d seed jobs, %d allowed seconds, max results: %d", job.ID, len(seedJobs), allowedSeconds, job.Data.MaxResults)
+		if job.Data.MaxTime > 0 {
+			userMaxTime := int(job.Data.MaxTime.Seconds())
+			if userMaxTime < 180 {
+				userMaxTime = 180
+			}
+			// Ensure user-specified max_time doesn't override the 1-hour minimum for deep scrapes
+			if job.Data.Depth > 0 && userMaxTime < 3600 {
+				slog.Info("max_time_overridden_for_deep_scrape",
+					slog.Int("user_max_time", userMaxTime),
+					slog.Int("enforced_min", 3600),
+				)
+				userMaxTime = 3600
+			}
+			allowedSeconds = userMaxTime
+		}
+
+		w.logger.Info("job_running", slog.String("job_id", job.ID), slog.Int("seed_jobs", len(seedJobs)), slog.Int("allowed_seconds", allowedSeconds), slog.Int("max_results", job.Data.MaxResults))
 
 		mateCtx, cancel := context.WithTimeout(jobCtx, time.Duration(allowedSeconds)*time.Second)
 		defer cancel()
@@ -493,9 +783,9 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		// Set up exit monitor with max results tracking
 		if job.Data.MaxResults > 0 {
 			exitMonitor.SetMaxResults(job.Data.MaxResults)
-			log.Printf("DEBUG: Job %s - Set max results limit to %d", job.ID, job.Data.MaxResults)
+			w.logger.Debug("max_results_set", slog.String("job_id", job.ID), slog.Int("max_results", job.Data.MaxResults))
 		} else {
-			log.Printf("DEBUG: Job %s - No max results limit (unlimited)", job.ID)
+			w.logger.Debug("max_results_unlimited", slog.String("job_id", job.ID))
 		}
 
 		// Channel to monitor exit monitor completion - only trigger forced completion
@@ -504,7 +794,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 
 		// Create a wrapper cancel function that signals exit monitor completion
 		wrapperCancel := func() {
-			log.Printf("DEBUG: Job %s - Exit monitor detected completion, signaling forced completion monitor", job.ID)
+			w.logger.Debug("exit_monitor_completion_signaled", slog.String("job_id", job.ID))
 			select {
 			case exitMonitorCompleted <- struct{}{}:
 			default:
@@ -513,113 +803,113 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			cancel() // Call the original cancel function
 		}
 		exitMonitor.SetCancelFunc(wrapperCancel)
-		log.Printf("DEBUG: Job %s - Starting exit monitor", job.ID)
+		w.logger.Debug("exit_monitor_starting", slog.String("job_id", job.ID))
 
 		go exitMonitor.Run(mateCtx)
-		log.Printf("DEBUG: Job %s - About to call mate.Start() with %d seed jobs", job.ID, len(seedJobs))
+		w.logger.Debug("mate_start_invoking", slog.String("job_id", job.ID), slog.Int("seed_jobs", len(seedJobs)))
 
-		// Add a backup timeout mechanism to prevent jobs from hanging
-		// when max results are reached but mate.Start() doesn't return
-		var mateErr error
-		done := make(chan struct{})
+		// Channel carries both the completion signal and the error from mate.Start,
+		// eliminating the shared mateErr variable and the separate done channel.
+		resultCh := make(chan mateResult, 1)
 
 		go func() {
-			defer close(done)
-			mateErr = mate.Start(mateCtx, seedJobs...)
-			log.Printf("DEBUG: Job %s - mate.Start goroutine completed with error: %v", job.ID, mateErr)
+			defer func() {
+				if r := recover(); r != nil {
+					w.logger.Error("scrape_job_panic", slog.Any("panic", r), slog.String("job_id", job.ID))
+					resultCh <- mateResult{err: fmt.Errorf("panic in mate.Start: %v", r)}
+				}
+			}()
+			resultCh <- mateResult{err: mate.Start(mateCtx, seedJobs...)}
+			w.logger.Debug("mate_start_goroutine_completed", slog.String("job_id", job.ID))
 		}()
 
 		// Wait for mate.Start to complete or for a backup timeout
 		backupTimeout := time.NewTimer(time.Duration(allowedSeconds+60) * time.Second) // Increased buffer
 		defer backupTimeout.Stop()
 
-		// Add a longer forced completion timeout specifically for exit monitor completion
-		forcedCompletionTimeout := time.NewTimer(24 * time.Hour) // Start disabled
-		defer forcedCompletionTimeout.Stop()
+		// forcedCompletionCh fires 30s after the exit monitor signals completion.
+		// This gives mate.Start a grace period to finish in-flight work before we force-kill it.
+		forcedCompletionCh := make(chan struct{}, 1)
 
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					w.logger.Error("scrape_job_panic", slog.Any("panic", r), slog.String("job_id", job.ID))
+				}
+			}()
 			select {
 			case <-exitMonitorCompleted:
-				log.Printf("DEBUG: Job %s - Exit monitor completion detected, starting forced completion timer (30s)", job.ID)
-				forcedCompletionTimeout.Reset(30 * time.Second)
+				w.logger.Debug("exit_monitor_completion_detected", slog.String("job_id", job.ID), slog.Int("forced_completion_timer_seconds", 30))
+				// Wait 30s unconditionally — do NOT select on mateCtx.Done() here because
+				// wrapperCancel already cancelled mateCtx, so it would exit immediately.
+				time.Sleep(30 * time.Second)
+				w.logger.Debug("forced_completion_timer_fired", slog.String("job_id", job.ID))
+				select {
+				case forcedCompletionCh <- struct{}{}:
+				default:
+				}
 			case <-mateCtx.Done():
-				// Context cancelled but not by exit monitor completion (probably timeout)
-				log.Printf("DEBUG: Job %s - Context cancelled but not by exit monitor completion", job.ID)
+				// Context cancelled but not by exit monitor (e.g. timeout or parent cancel).
+				// Still give mate a chance to finish, but shorter grace.
+				w.logger.Debug("context_cancelled_not_exit_monitor", slog.String("job_id", job.ID))
 			}
 		}()
 
 		select {
-		case <-done:
+		case res := <-resultCh:
 			// mate.Start completed normally
-			err = mateErr
-			log.Printf("DEBUG: Job %s - mate.Start completed normally with error: %v", job.ID, err)
+			err = res.err
+			w.logger.Debug("mate_start_completed_normally", slog.String("job_id", job.ID), slog.Any("error", err))
 		case <-backupTimeout.C:
 			// Backup timeout - force completion
-			log.Printf("DEBUG: Job %s - Backup timeout triggered, forcing completion", job.ID)
-			cancel() // Cancel the mate context
-			<-done   // Wait for mate.Start to actually finish
-			err = mateErr
-			log.Printf("DEBUG: Job %s - Forced completion with error: %v", job.ID, err)
-		case <-forcedCompletionTimeout.C:
-			// Exit monitor triggered cancellation, but mate.Start is taking too long to respond
-			log.Printf("DEBUG: Job %s - Forced completion timeout after exit monitor cancellation", job.ID)
-			cancel() // Ensure mate context is cancelled
-
-			// Wait up to 15 more seconds for mate.Start to finish gracefully
-			finalWait := time.NewTimer(15 * time.Second) // Increased from 5s
-			select {
-			case <-done:
-				err = mateErr
-				log.Printf("DEBUG: Job %s - mate.Start finished after forced completion with error: %v", job.ID, err)
-			case <-finalWait.C:
-				// mate.Start is completely stuck, proceed with job completion
-				log.Printf("DEBUG: Job %s - mate.Start completely unresponsive, proceeding with job completion", job.ID)
-				err = context.Canceled // Treat as successful cancellation
-
-				// Force close mate to ensure resources are cleaned up
-				go func() {
-					log.Printf("DEBUG: Job %s - Force closing mate due to unresponsive mate.Start()", job.ID)
-					mate.Close()
-				}()
-			}
-			finalWait.Stop()
+			w.logger.Debug("backup_timeout_triggered", slog.String("job_id", job.ID))
+			err, _ = w.shutdownMate(job.ID, cancel, closeMate, resultCh)
+			w.logger.Debug("forced_completion", slog.String("job_id", job.ID), slog.Any("error", err))
+		case <-forcedCompletionCh:
+			// Exit monitor triggered cancellation, 30s grace elapsed, mate.Start still not done
+			w.logger.Debug("forced_completion_timeout", slog.String("job_id", job.ID))
+			err, _ = w.shutdownMate(job.ID, cancel, closeMate, resultCh)
 		}
 
-		log.Printf("DEBUG: Job %s - Context after mate.Start - Done: %v", job.ID, mateCtx.Err())
+		w.logger.Debug("context_after_mate_start", slog.String("job_id", job.ID), slog.Any("context_err", mateCtx.Err()))
 
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
-				log.Printf("DEBUG: Job %s - Context canceled (checking reason)", job.ID)
+				w.logger.Debug("context_canceled_checking_reason", slog.String("job_id", job.ID))
 
-				// Check if it was user cancellation
-				currentJob, getErr := w.svc.Get(context.Background(), job.ID)
+				// Check if it was user cancellation (admin bypass - internal runner)
+				cancelCheckCtx, cancelCheckCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancelCheckCancel()
+				currentJob, getErr := w.svc.Get(cancelCheckCtx, job.ID, "")
 				if getErr != nil {
-					log.Printf("DEBUG: Job %s - Failed to get current status after cancellation: %v", job.ID, getErr)
+					w.logger.Debug("status_check_after_cancel_failed", slog.String("job_id", job.ID), slog.Any("error", getErr))
 					// Assume it was cancelled if we can't get status
 					job.Status = web.StatusCancelled
 					jobSuccess = false
 				} else {
-					log.Printf("DEBUG: Job %s - Current status after context cancellation: %s", job.ID, currentJob.Status)
+					w.logger.Debug("status_after_context_cancellation", slog.String("job_id", job.ID), slog.String("status", string(currentJob.Status)))
 
 					if currentJob.Status == web.StatusAborting || currentJob.Status == web.StatusCancelled {
 						job.Status = web.StatusCancelled
-						log.Printf("DEBUG: Job %s - Marked as cancelled (user initiated)", job.ID)
+						w.logger.Debug("job_marked_cancelled_user_initiated", slog.String("job_id", job.ID))
 						jobSuccess = false // Explicitly mark as not successful for user cancellation
 					} else {
 						// Check if we actually produced results before marking as successful
 						var resultCount int
 						if w.db != nil {
-							if err := w.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM results WHERE job_id=$1`, job.ID).Scan(&resultCount); err != nil {
-								log.Printf("DEBUG: Job %s - Failed to count results after cancellation: %v", job.ID, err)
+							cancelCountCtx, cancelCountCancel := context.WithTimeout(context.Background(), 10*time.Second)
+							defer cancelCountCancel()
+							if err := w.db.QueryRowContext(cancelCountCtx, `SELECT COUNT(*) FROM results WHERE job_id=$1`, job.ID).Scan(&resultCount); err != nil {
+								w.logger.Debug("result_count_after_cancel_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 								resultCount = 0
 							}
 						}
 
 						if resultCount > 0 {
-							log.Printf("DEBUG: Job %s - Context cancelled but produced %d results, treating as successful completion", job.ID, resultCount)
+							w.logger.Debug("cancelled_with_results_treating_success", slog.String("job_id", job.ID), slog.Int("result_count", resultCount))
 							jobSuccess = true
 						} else {
-							log.Printf("DEBUG: Job %s - Context cancelled with 0 results, treating as failed completion", job.ID)
+							w.logger.Debug("cancelled_with_zero_results_treating_failed", slog.String("job_id", job.ID))
 							job.FailureReason = "scrapemate inactivity timeout / context canceled with 0 results"
 							jobSuccess = false
 						}
@@ -629,32 +919,33 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 				// Check if we actually produced results before marking as successful
 				var resultCount int
 				if w.db != nil {
-					if err := w.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM results WHERE job_id=$1`, job.ID).Scan(&resultCount); err != nil {
-						log.Printf("DEBUG: Job %s - Failed to count results after timeout: %v", job.ID, err)
+					deadlineCountCtx, deadlineCountCancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer deadlineCountCancel()
+					if err := w.db.QueryRowContext(deadlineCountCtx, `SELECT COUNT(*) FROM results WHERE job_id=$1`, job.ID).Scan(&resultCount); err != nil {
+						w.logger.Debug("result_count_after_timeout_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 						resultCount = 0
 					}
 				}
 
 				if resultCount > 0 {
-					log.Printf("DEBUG: Job %s - Context deadline exceeded but produced %d results, treating as successful", job.ID, resultCount)
+					w.logger.Debug("deadline_exceeded_with_results", slog.String("job_id", job.ID), slog.Int("result_count", resultCount))
 					jobSuccess = true
 				} else {
-					log.Printf("DEBUG: Job %s - Context deadline exceeded with 0 results, treating as failed", job.ID)
+					w.logger.Debug("deadline_exceeded_zero_results", slog.String("job_id", job.ID))
 					job.FailureReason = "job timed out with 0 results"
 					jobSuccess = false
 				}
 			} else {
 				// This is a real error
-				log.Printf("DEBUG: Job %s - Real error occurred: %v", job.ID, err)
+				w.logger.Debug("real_error_occurred", slog.String("job_id", job.ID), slog.Any("error", err))
 				cancel()
-
 				job.Status = web.StatusFailed
 				job.FailureReason = fmt.Sprintf("runtime error: %v", err)
 
 				return err
 			}
 		} else {
-			log.Printf("DEBUG: Job %s - No error, normal completion", job.ID)
+			w.logger.Debug("job_normal_completion", slog.String("job_id", job.ID))
 			jobSuccess = true
 		}
 
@@ -662,77 +953,81 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		seedCompleted, seedTotal := exitMonitor.GetSeedProgress()
 		resultsWritten := exitMonitor.GetResultsWritten()
 		if seedTotal > 0 && seedCompleted < seedTotal {
-			log.Printf("DEBUG: Job %s - Seeds incomplete (%d/%d), treating as failed", job.ID, seedCompleted, seedTotal)
+			w.logger.Debug("seeds_incomplete", slog.String("job_id", job.ID), slog.Int("completed", seedCompleted), slog.Int("total", seedTotal))
 			if job.FailureReason == "" {
 				job.FailureReason = fmt.Sprintf("seeds incomplete %d/%d", seedCompleted, seedTotal)
 			}
 			jobSuccess = false
 		}
 		if resultsWritten == 0 {
-			log.Printf("DEBUG: Job %s - 0 results written, treating as failed", job.ID)
+			w.logger.Debug("zero_results_written", slog.String("job_id", job.ID))
 			if job.FailureReason == "" {
 				job.FailureReason = "0 results written"
 			}
 			jobSuccess = false
 		}
 
-		log.Printf("DEBUG: Job %s - BILLING SECTION: jobSuccess=%v, status=%s, cancelled=%v", job.ID, jobSuccess, job.Status, job.Status == web.StatusCancelled)
+		w.logger.Debug("billing_section_entry", slog.String("job_id", job.ID), slog.Bool("job_success", jobSuccess), slog.String("status", string(job.Status)), slog.Bool("cancelled", job.Status == web.StatusCancelled))
 
 		if jobSuccess && job.Status != web.StatusCancelled {
-			log.Printf("DEBUG: Job %s - Billing condition passed, checking result count", job.ID)
+			w.logger.Debug("billing_condition_passed", slog.String("job_id", job.ID))
 			var resultCount int
 			if w.db != nil {
-				if err := w.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM results WHERE job_id=$1`, job.ID).Scan(&resultCount); err != nil {
-					log.Printf("ERROR: Job %s - Failed to count results before charging: %v", job.ID, err)
+				billingCountCtx, billingCountCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer billingCountCancel()
+				if err := w.db.QueryRowContext(billingCountCtx, `SELECT COUNT(*) FROM results WHERE job_id=$1`, job.ID).Scan(&resultCount); err != nil {
+					w.logger.Error("result_count_query_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 					resultCount = 0
 				} else {
-					log.Printf("DEBUG: Job %s - Database query successful, resultCount=%d", job.ID, resultCount)
+					w.logger.Debug("result_count_query_succeeded", slog.String("job_id", job.ID), slog.Int("result_count", resultCount))
 				}
 			} else {
-				log.Printf("ERROR: Job %s - Database connection is nil, cannot count results", job.ID)
+				w.logger.Error("database_connection_nil", slog.String("job_id", job.ID))
 			}
 
-			log.Printf("DEBUG: Job %s - billingSvc nil? %v, resultCount=%d", job.ID, w.billingSvc == nil, resultCount)
+			w.logger.Debug("billing_check", slog.String("job_id", job.ID), slog.Bool("billing_svc_nil", w.billingSvc == nil), slog.Int("result_count", resultCount))
 
 			if w.billingSvc != nil && resultCount > 0 {
 				// Charge ALL events in a single atomic transaction
 				// This includes: places, reviews, images, and contact details
 				// If any charge fails, ALL charges are rolled back (all-or-nothing)
-				log.Printf("INFO: Job %s - Attempting to charge all billing events atomically for %d places (user: %s)", job.ID, resultCount, job.UserID)
+				w.logger.Info("billing_charge_attempting", slog.String("job_id", job.ID), slog.Int("result_count", resultCount), slog.String("user_id", job.UserID))
 
-				if err := w.billingSvc.ChargeAllJobEvents(context.Background(), job.UserID, job.ID, resultCount); err != nil {
-					log.Printf("ERROR: billing: atomic charge failed for job %s: %v", job.ID, err)
+				chargeAllCtx, chargeAllCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer chargeAllCancel()
+				if err := w.billingSvc.ChargeAllJobEvents(chargeAllCtx, job.UserID, job.ID, resultCount); err != nil {
+					w.logger.Error("billing_atomic_charge_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 					jobSuccess = false
 					job.Status = web.StatusFailed
 					job.FailureReason = fmt.Sprintf("billing failed: %v", err)
 					// Return the error so caller knows the job failed
 					return fmt.Errorf("billing failed: %w", err)
 				} else {
-					log.Printf("SUCCESS: billing: successfully charged all events for job %s (user: %s)", job.ID, job.UserID)
+					w.logger.Info("billing_charge_succeeded", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
 				}
 			} else {
 				if w.billingSvc == nil {
-					log.Printf("WARNING: Job %s - Billing service is nil, skipping all charges", job.ID)
+					w.logger.Warn("billing_service_nil_skipping_charges", slog.String("job_id", job.ID))
 				}
 				if resultCount == 0 {
-					log.Printf("WARNING: Job %s - Result count is 0, skipping all charges", job.ID)
+					w.logger.Warn("result_count_zero_skipping_charges", slog.String("job_id", job.ID))
 				}
 			}
 		} else {
-			log.Printf("DEBUG: Job %s - Skipping billing: jobSuccess=%v, status=%s", job.ID, jobSuccess, job.Status)
+			w.logger.Debug("billing_skipped", slog.String("job_id", job.ID), slog.Bool("job_success", jobSuccess), slog.String("status", string(job.Status)))
 		}
 
 		cancel()
 	}
 
-	mate.Close()
+	closeMate()
 
 	// CRITICAL: Close the CSV file handle before S3 upload or any file operations
 	// This ensures all buffered data is flushed to disk and the file is fully written
 	// For writable files, we must explicitly check Close() errors as they can indicate data loss
-	log.Printf("DEBUG: Job %s - Closing CSV file before determining final status", job.ID)
+	w.logger.Debug("csv_file_closing", slog.String("job_id", job.ID))
 	if err := outfile.Close(); err != nil {
-		log.Printf("ERROR: Job %s - Failed to close CSV file: %v", job.ID, err)
+		w.logger.Error("csv_file_close_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 		// File close errors can indicate I/O errors (EIO) meaning data was lost
 		// This should fail the job to ensure data integrity
 		job.Status = web.StatusFailed
@@ -740,28 +1035,28 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		return fmt.Errorf("failed to close CSV file: %w", err)
 	}
 	fileClosed = true
-	log.Printf("DEBUG: Job %s - CSV file closed successfully", job.ID)
+	w.logger.Debug("csv_file_closed", slog.String("job_id", job.ID))
 
 	// Determine final job status
-	log.Printf("DEBUG: Job %s - Determining final status: jobSuccess=%v, current status=%s", job.ID, jobSuccess, job.Status)
+	w.logger.Debug("determining_final_status", slog.String("job_id", job.ID), slog.Bool("job_success", jobSuccess), slog.String("current_status", string(job.Status)))
 
 	if job.Status == web.StatusCancelled {
-		log.Printf("DEBUG: Job %s - Keeping cancelled status", job.ID)
+		w.logger.Debug("keeping_cancelled_status", slog.String("job_id", job.ID))
 		// Keep the cancelled status
 	} else if jobSuccess {
 		job.Status = web.StatusOK
-		log.Printf("DEBUG: Job %s - Setting status to OK (successful completion)", job.ID)
+		w.logger.Debug("status_set_ok", slog.String("job_id", job.ID))
 
 		// Upload CSV to S3 and save metadata if S3 is configured
 		// File is now fully closed and flushed to disk, safe to upload
 		if err := w.uploadToS3AndSaveMetadata(ctx, job, outpath); err != nil {
-			log.Printf("ERROR: Job %s - S3 upload failed: %v (job still marked as successful)", job.ID, err)
+			w.logger.Error("s3_upload_failed", slog.String("job_id", job.ID), slog.Any("error", err), slog.String("detail", "job still marked as successful"))
 			// Don't fail the job due to S3 upload failure - the scraping was successful
 			// The CSV file will remain on local storage
 		}
 	} else {
 		job.Status = web.StatusFailed
-		log.Printf("DEBUG: Job %s - Setting status to FAILED", job.ID)
+		w.logger.Debug("status_set_failed", slog.String("job_id", job.ID))
 	}
 
 	// Charging of places is attempted before marking success above; no charge here
@@ -790,8 +1085,7 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 		}
 	}
 
-	log.Printf("job %s configured with per-job concurrency: %d (total system concurrency: %d, max concurrent jobs: %d)",
-		job.ID, perJobConcurrency, w.cfg.Concurrency, maxConcurrentJobs)
+	w.logger.Info("job_concurrency_configured", slog.String("job_id", job.ID), slog.Int("per_job_concurrency", perJobConcurrency), slog.Int("total_concurrency", w.cfg.Concurrency), slog.Int("max_concurrent_jobs", maxConcurrentJobs))
 
 	opts := []func(*scrapemateapp.Config) error{
 		scrapemateapp.WithConcurrency(perJobConcurrency), // Use calculated per-job concurrency
@@ -829,36 +1123,37 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 
 	// Handle proxy configuration
 	if w.proxyPool != nil {
-		log.Printf("DEBUG: Job %s - requesting proxy from pool", job.ID)
+		w.logger.Debug("proxy_requesting_from_pool", slog.String("job_id", job.ID))
 		// Get a dedicated proxy server for this job
 		proxySrv, err := w.proxyPool.GetServerForJob(job.ID)
 		if err != nil {
-			log.Printf("Job %s - failed to get proxy server: %v", job.ID, err)
+			w.logger.Error("proxy_server_get_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 			// Continue without proxy
 		} else {
+			defer w.proxyPool.ReturnServer(job.ID)
 			localProxyURL := proxySrv.GetLocalURL()
 			currentProxy := proxySrv.GetCurrentProxy()
-			log.Printf("Job %s - assigned proxy %s:%s on %s", job.ID, currentProxy.Address, currentProxy.Port, localProxyURL)
+			w.logger.Info("proxy_assigned", slog.String("job_id", job.ID), slog.String("address", currentProxy.Address), slog.String("port", currentProxy.Port), slog.String("local_url", localProxyURL))
 			opts = append(opts, scrapemateapp.WithProxies([]string{localProxyURL}))
-			log.Printf("DEBUG: Job %s - dedicated proxy server attached to scrapemate config", job.ID)
+			w.logger.Debug("proxy_server_attached", slog.String("job_id", job.ID))
 		}
 	} else if len(job.Data.Proxies) > 0 {
-		// For job-level proxies, we need to start a separate proxy server
-		// This is more complex, so for now we'll log a warning
-		log.Printf("DEBUG: Job %s - job-level proxies detected (%d) but proxy pool not available", job.ID, len(job.Data.Proxies))
-		log.Printf("WARNING: Job-level proxies are not yet supported with the new proxy system")
+		// User-supplied proxies (job.Data.Proxies) are intentionally NOT forwarded to the scraper.
+		// The production proxy system uses admin-configured proxyPool only. Passing user-supplied
+		// proxy URLs to the scraper without validation would be a CWE-918 (SSRF) risk — do not
+		// implement this without strict scheme enforcement (HTTPS only) and RFC1918 blocking.
+		w.logger.Debug("job_level_proxies_detected", slog.String("job_id", job.ID), slog.Int("proxy_count", len(job.Data.Proxies)))
+		w.logger.Warn("job_level_proxies_unsupported", slog.String("detail", "not yet supported with the new proxy system"))
 	} else {
-		log.Printf("DEBUG: Job %s - no proxies configured", job.ID)
+		w.logger.Debug("no_proxies_configured", slog.String("job_id", job.ID))
 	}
 
-	if !w.cfg.DisablePageReuse {
+	if !w.cfg.Scraping.DisablePageReuse {
 		opts = append(opts,
 			scrapemateapp.WithPageReuseLimit(2),
-			scrapemateapp.WithPageReuseLimit(200),
+			scrapemateapp.WithBrowserReuseLimit(200),
 		)
 	}
-
-	// log.Printf("job %s configured with stealth mode and proxy: %v", job.ID, hasProxy)
 
 	// Create list of writers
 	// CRITICAL: Use a SINGLE synchronized writer that writes to both PostgreSQL and CSV atomically
@@ -874,12 +1169,12 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 		syncWriter := writers.NewSynchronizedDualWriter(w.db, csvWriterInstance, job.UserID, job.ID, exitMonitor)
 
 		writersList = []scrapemate.ResultWriter{syncWriter}
-		log.Printf("Added synchronized dual writer (PostgreSQL + CSV) for job %s (user: %s)", job.ID, job.UserID)
+		w.logger.Info("sync_dual_writer_added", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
 	} else {
 		// No database, use plain CSV writer
 		csvWriter := csvwriter.NewCsvWriter(csv.NewWriter(writer))
 		writersList = []scrapemate.ResultWriter{csvWriter}
-		log.Printf("Warning: No database connection available for job %s - results will only be saved to CSV", job.ID)
+		w.logger.Warn("no_database_connection", slog.String("job_id", job.ID), slog.String("detail", "results will only be saved to CSV"))
 	}
 	matecfg, err := scrapemateapp.NewConfig(
 		writersList,
@@ -897,11 +1192,11 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 func (w *webrunner) uploadToS3AndSaveMetadata(ctx context.Context, job *web.Job, csvFilePath string) error {
 	// Skip if S3 is not configured
 	if w.s3Uploader == nil || w.s3Bucket == "" {
-		log.Printf("[WebRunner] Job %s: S3 not configured, skipping upload (file remains at: %s)", job.ID, csvFilePath)
+		w.logger.Info("s3_not_configured_skipping_upload", slog.String("job_id", job.ID), slog.String("file_path", csvFilePath))
 		return nil
 	}
 
-	log.Printf("[WebRunner] Job %s: Starting S3 upload for user %s", job.ID, job.UserID)
+	w.logger.Info("s3_upload_starting", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
 
 	// Open the CSV file
 	file, err := os.Open(csvFilePath)
@@ -924,13 +1219,12 @@ func (w *webrunner) uploadToS3AndSaveMetadata(ctx context.Context, job *web.Job,
 	// CRITICAL: Upload FIRST, then create database record only if upload succeeds
 	result, err := w.s3Uploader.Upload(ctx, w.s3Bucket, objectKey, file, "text/csv; charset=utf-8")
 	if err != nil {
-		log.Printf("[WebRunner] Job %s: S3 upload failed: %v", job.ID, err)
+		w.logger.Error("s3_upload_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 		return fmt.Errorf("S3 upload failed: %w", err)
 	}
 
-	// Capture  ETag from S3 response
-	log.Printf("[WebRunner] Job %s: S3 upload successful (bucket: %s, key: %s, size: %d bytes, ETag: %s)",
-		job.ID, w.s3Bucket, objectKey, fileSize, result.ETag)
+	// Capture ETag from S3 response
+	w.logger.Info("s3_upload_successful", slog.String("job_id", job.ID), slog.String("bucket", w.s3Bucket), slog.String("key", objectKey), slog.Int64("size_bytes", fileSize), slog.String("etag", result.ETag))
 
 	// Only NOW create database record after confirmed S3 upload success
 	// This prevents orphaned "uploading" records if upload fails
@@ -952,20 +1246,41 @@ func (w *webrunner) uploadToS3AndSaveMetadata(ctx context.Context, job *web.Job,
 
 	// Save record to database with "available" status
 	if err := w.jobFileRepo.Create(ctx, jobFile); err != nil {
-		log.Printf("[WebRunner] Job %s: CRITICAL - S3 upload succeeded but database record creation failed: %v", job.ID, err)
-		log.Printf("[WebRunner] Job %s: File exists in S3 at: s3://%s/%s (ETag: %s)", job.ID, w.s3Bucket, objectKey, result.ETag)
+		w.logger.Error("s3_db_record_creation_failed", slog.String("job_id", job.ID), slog.Any("error", err), slog.String("detail", "S3 upload succeeded but database record creation failed"))
+		w.logger.Error("s3_orphaned_file", slog.String("job_id", job.ID), slog.String("s3_path", fmt.Sprintf("s3://%s/%s", w.s3Bucket, objectKey)), slog.String("etag", result.ETag))
 		return fmt.Errorf("failed to create job file record after successful S3 upload: %w", err)
 	}
 
-	log.Printf("[WebRunner] Job %s: Job file record created with available status (ETag: %s)", job.ID, result.ETag)
+	w.logger.Info("job_file_record_created", slog.String("job_id", job.ID), slog.String("etag", result.ETag))
 
 	// Delete local CSV file after successful upload and database save
 	if err := os.Remove(csvFilePath); err != nil {
-		log.Printf("[WebRunner] Job %s: WARNING - Failed to delete local CSV file after S3 upload: %v", job.ID, err)
+		w.logger.Warn("local_csv_delete_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 		// Don't return error - upload and database save were successful, cleanup is not critical
 	} else {
-		log.Printf("[WebRunner] Job %s: Local CSV file deleted successfully after S3 upload", job.ID)
+		w.logger.Info("local_csv_deleted", slog.String("job_id", job.ID))
 	}
 
 	return nil
+}
+
+// envInt reads an integer env var, returning defaultVal if unset or invalid.
+func envInt(key string, defaultVal int) int {
+	if s := os.Getenv(key); s != "" {
+		if v, err := strconv.Atoi(s); err == nil {
+			return v
+		}
+	}
+	return defaultVal
+}
+
+// envDuration reads a time.Duration env var (e.g. "5m", "30s"), returning
+// defaultVal if unset or invalid.
+func envDuration(key string, defaultVal time.Duration) time.Duration {
+	if s := os.Getenv(key); s != "" {
+		if d, err := time.ParseDuration(s); err == nil {
+			return d
+		}
+	}
+	return defaultVal
 }

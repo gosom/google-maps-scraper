@@ -3,9 +3,13 @@ package databaserunner
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
+	"strconv"
+	"time"
 
 	// postgres driver
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -21,6 +25,7 @@ import (
 
 type dbrunner struct {
 	cfg         *runner.Config
+	logger      *slog.Logger
 	provider    scrapemate.JobProvider
 	produce     bool
 	app         *scrapemateapp.ScrapemateApp
@@ -29,7 +34,7 @@ type dbrunner struct {
 	jobRepo     models.JobRepository
 }
 
-func New(cfg *runner.Config) (runner.Runner, error) {
+func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 	if cfg.RunMode != runner.RunModeDatabase && cfg.RunMode != runner.RunModeDatabaseProduce {
 		return nil, fmt.Errorf("%w: %d", runner.ErrInvalidRunMode, cfg.RunMode)
 	}
@@ -41,10 +46,12 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 
 	// Create exit monitor if max results are specified
 	var exitMonitor exiter.Exiter
-	if cfg.MaxResults > 0 {
+	if cfg.Scraping.MaxResults > 0 {
 		exitMonitor = exiter.New()
-		exitMonitor.SetMaxResults(cfg.MaxResults)
-		fmt.Printf("DEBUG: Database runner - Max results limit set to %d\n", cfg.MaxResults)
+		exitMonitor.SetMaxResults(cfg.Scraping.MaxResults)
+		logger.Debug("database_runner_max_results_configured",
+			slog.Int("max_results", cfg.Scraping.MaxResults),
+		)
 	}
 
 	// Initialize job repository for tracking job status
@@ -55,6 +62,7 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 
 	ans := dbrunner{
 		cfg:         cfg,
+		logger:      logger,
 		provider:    postgres.NewProvider(conn),
 		produce:     cfg.ProduceOnly,
 		conn:        conn,
@@ -68,14 +76,16 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 
 	// Choose result writer based on whether max results are enabled
 	var psqlWriter scrapemate.ResultWriter
-	if cfg.MaxResults > 0 && exitMonitor != nil {
+	if cfg.Scraping.MaxResults > 0 && exitMonitor != nil {
 		// Use enhanced result writer with exit monitor for max results support
 		psqlWriter = postgres.NewEnhancedResultWriterWithExiter(conn, "cli-user", "cli-job", exitMonitor)
-		fmt.Printf("DEBUG: Using enhanced result writer with max results: %d\n", cfg.MaxResults)
+		logger.Debug("database_runner_using_enhanced_result_writer",
+			slog.Int("max_results", cfg.Scraping.MaxResults),
+		)
 	} else {
 		// Use basic result writer for unlimited results
 		psqlWriter = postgres.NewResultWriter(conn)
-		fmt.Printf("DEBUG: Using basic result writer (unlimited results)\n")
+		logger.Debug("database_runner_using_basic_result_writer")
 	}
 
 	writers := []scrapemate.ResultWriter{
@@ -89,13 +99,13 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		scrapemateapp.WithExitOnInactivity(cfg.ExitOnInactivityDuration),
 	}
 
-	if len(cfg.Proxies) > 0 {
+	if len(cfg.Proxy.Proxies) > 0 {
 		opts = append(opts,
-			scrapemateapp.WithProxies(cfg.Proxies),
+			scrapemateapp.WithProxies(cfg.Proxy.Proxies),
 		)
 	}
 
-	if !cfg.FastMode {
+	if !cfg.Scraping.FastMode {
 		if cfg.Debug {
 			opts = append(opts, scrapemateapp.WithJS(
 				scrapemateapp.Headfull(),
@@ -108,10 +118,10 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		opts = append(opts, scrapemateapp.WithStealth("firefox"))
 	}
 
-	if !cfg.DisablePageReuse {
+	if !cfg.Scraping.DisablePageReuse {
 		opts = append(opts,
 			scrapemateapp.WithPageReuseLimit(2),
-			scrapemateapp.WithPageReuseLimit(200),
+			scrapemateapp.WithBrowserReuseLimit(200),
 		)
 	}
 
@@ -151,22 +161,23 @@ func (d *dbrunner) Run(ctx context.Context) error {
 		// Start the exit monitor in a goroutine
 		go d.exitMonitor.Run(ctx)
 
-		fmt.Printf("DEBUG: Exit monitor started for max results: %d\n", d.cfg.MaxResults)
+		d.logger.Debug("database_runner_exit_monitor_started",
+			slog.Int("max_results", d.cfg.Scraping.MaxResults),
+		)
 	}
 
 	return d.app.Start(ctx)
 }
 
 func (d *dbrunner) Close(context.Context) error {
+	var errs []error
 	if d.app != nil {
-		return d.app.Close()
+		errs = append(errs, d.app.Close())
 	}
-
 	if d.conn != nil {
-		return d.conn.Close()
+		errs = append(errs, d.conn.Close())
 	}
-
-	return nil
+	return errors.Join(errs...)
 }
 
 func (d *dbrunner) produceSeedJobs(ctx context.Context) error {
@@ -186,28 +197,28 @@ func (d *dbrunner) produceSeedJobs(ctx context.Context) error {
 		input = f
 	}
 
-	jobs, err := runner.CreateSeedJobs(
-		d.cfg.FastMode,
-		d.cfg.LangCode,
-		input,
-		d.cfg.MaxDepth,
-		d.cfg.Email,
-		d.cfg.Images,
-		d.cfg.Debug,
-		func() int {
-			if d.cfg.ExtraReviews {
+	jobs, err := runner.CreateSeedJobs(runner.SeedJobConfig{
+		FastMode: d.cfg.Scraping.FastMode,
+		LangCode: d.cfg.Scraping.LangCode,
+		Input:    input,
+		MaxDepth: d.cfg.Scraping.MaxDepth,
+		Email:    d.cfg.Scraping.Email,
+		Images:   d.cfg.Scraping.Images,
+		Debug:    d.cfg.Debug,
+		ReviewsMax: func() int {
+			if d.cfg.Scraping.ExtraReviews {
 				return 1 // Default to 1 review if extra reviews enabled
 			}
 			return 0 // No reviews if not enabled
 		}(),
-		d.cfg.GeoCoordinates,
-		d.cfg.Zoom,
-		d.cfg.Radius,
-		nil,
-		d.exitMonitor, // Pass exit monitor for max results support
-		d.cfg.ExtraReviews,
-		d.cfg.MaxResults, // Pass max results limit from config
-	)
+		GeoCoordinates: d.cfg.Scraping.GeoCoordinates,
+		Zoom:           d.cfg.Scraping.Zoom,
+		Radius:         d.cfg.Scraping.Radius,
+		Dedup:          nil,
+		ExitMonitor:    d.exitMonitor,
+		ExtraReviews:   d.cfg.Scraping.ExtraReviews,
+		MaxResults:     d.cfg.Scraping.MaxResults,
+	})
 	if err != nil {
 		return err
 	}
@@ -236,7 +247,33 @@ func openPsqlConn(dsn string) (conn *sql.DB, err error) {
 		return
 	}
 
-	conn.SetMaxOpenConns(10)
+	// connection pool settings — configurable via env vars
+	maxOpen := dbEnvInt("DB_MAX_OPEN_CONNS", 25)
+	if maxOpen == 0 {
+		slog.Warn("db_pool_unbounded", slog.String("detail", "DB_MAX_OPEN_CONNS=0 means unlimited connections"))
+	}
+	conn.SetMaxOpenConns(maxOpen)
+	conn.SetMaxIdleConns(dbEnvInt("DB_MAX_IDLE_CONNS", 10))
+	conn.SetConnMaxLifetime(dbEnvDuration("DB_CONN_MAX_LIFETIME", 5*time.Minute))
+	conn.SetConnMaxIdleTime(2 * time.Minute)
 
 	return
+}
+
+func dbEnvInt(key string, defaultVal int) int {
+	if s := os.Getenv(key); s != "" {
+		if v, err := strconv.Atoi(s); err == nil {
+			return v
+		}
+	}
+	return defaultVal
+}
+
+func dbEnvDuration(key string, defaultVal time.Duration) time.Duration {
+	if s := os.Getenv(key); s != "" {
+		if d, err := time.ParseDuration(s); err == nil {
+			return d
+		}
+	}
+	return defaultVal
 }

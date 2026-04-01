@@ -114,7 +114,7 @@ WHERE NOT EXISTS (
 CREATE TABLE IF NOT EXISTS billing_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    job_id UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
     event_type_code TEXT NOT NULL REFERENCES billing_event_types(code) ON DELETE RESTRICT,
     occurred_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     quantity INTEGER NOT NULL CHECK (quantity > 0),
@@ -187,7 +187,7 @@ CREATE TRIGGER trg_billing_events_before_insert
     FOR EACH ROW EXECUTE FUNCTION fn_billing_events_before_insert();
 
 CREATE TABLE IF NOT EXISTS job_cost_breakdown (
-    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    job_id UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
     event_type_code TEXT NOT NULL REFERENCES billing_event_types(code) ON DELETE RESTRICT,
     quantity_total BIGINT NOT NULL DEFAULT 0 CHECK (quantity_total >= 0),
     cost_total_credits NUMERIC(18,6) NOT NULL DEFAULT 0,
@@ -230,7 +230,7 @@ CREATE TRIGGER trg_billing_events_after_insert
 CREATE TABLE IF NOT EXISTS job_filters (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    job_id UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
     filter_type TEXT NOT NULL CHECK (filter_type IN ('category','rating','website','title_match','custom')),
     parameters JSONB NOT NULL DEFAULT '{}'::jsonb,
     places_affected INTEGER NOT NULL DEFAULT 0 CHECK (places_affected >= 0),
