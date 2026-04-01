@@ -48,6 +48,7 @@ type HandlerGroup struct {
 	Billing     *BillingHandlers
 	Integration *IntegrationHandler
 	Version     *VersionHandler
+	Admin       *AdminHandlers
 }
 
 // NewHandlerGroup constructs a HandlerGroup with initialized handlers.
@@ -60,6 +61,7 @@ func NewHandlerGroup(deps Dependencies) *HandlerGroup {
 		Billing:     &BillingHandlers{Deps: deps},
 		Integration: NewIntegrationHandler(deps.IntegrationRepo, deps.Encryptor, deps.App, deps.GoogleSheetsSvc),
 		Version:     NewVersionHandler(),
+		Admin:       &AdminHandlers{Deps: deps},
 	}
 }
 
