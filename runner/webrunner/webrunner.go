@@ -589,6 +589,9 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		w.logger.Debug("job_status_persisted", slog.String("job_id", job.ID), slog.String("status", string(job.Status)))
 	}()
 
+	// Reset review circuit breaker for each new job
+	gmaps.ResetReviewCircuitBreaker()
+
 	// Charge actor_start at job start (requires sufficient balance).
 	// Admin jobs bypass billing entirely — they are internal operations.
 	if job.Source == models.SourceAdmin {
@@ -709,6 +712,9 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			}
 		}
 	}()
+
+	// Reset the review circuit breaker for this new job
+	gmaps.ResetReviewCircuitBreaker()
 
 	// Initialize deduper and exitMonitor before use
 	dedup := deduper.New()

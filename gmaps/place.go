@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"runtime/debug"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,6 +27,19 @@ import (
 	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/google-maps-scraper/gmaps/images"
 )
+
+// reviewCircuitBreaker tracks consecutive empty review API responses.
+// When it reaches the threshold, review extraction is skipped for remaining places.
+// Reset to 0 at the start of each scraping job (via ResetReviewCircuitBreaker).
+var (
+	reviewEmptyCount              atomic.Int32
+	reviewCircuitBreakerThreshold int32 = 3
+)
+
+// ResetReviewCircuitBreaker resets the counter. Call at job start.
+func ResetReviewCircuitBreaker() {
+	reviewEmptyCount.Store(0)
+}
 
 type PlaceJobOptions func(*PlaceJob)
 
@@ -372,15 +386,13 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 	j.extractImages(ctx, page, &resp)
 
 	// Extract reviews in an isolated block — panics here don't crash the PlaceJob.
-	// Reviews are a "Lego piece": they can fail independently without losing the place.
-	placeURL := page.URL()
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("review_extraction_panic",
 					slog.String("job_id", j.ID),
 					slog.String("parent_job_id", j.ParentID),
-					slog.String("place_url", placeURL),
+					slog.String("place_url", j.GetURL()),
 					slog.Any("panic", r),
 					slog.String("stack", string(debug.Stack())),
 				)
@@ -388,6 +400,18 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 		}()
 
 		if !j.ExtractExtraReviews {
+			return
+		}
+
+		// Circuit breaker: skip reviews if too many consecutive empty responses
+		if reviewEmptyCount.Load() >= reviewCircuitBreakerThreshold {
+			slog.Error("review_circuit_breaker_open",
+				slog.String("job_id", j.ID),
+				slog.String("parent_job_id", j.ParentID),
+				slog.Int("consecutive_failures", int(reviewEmptyCount.Load())),
+				slog.String("action", "skipping reviews for remaining places"),
+				slog.String("likely_cause", "cookies expired or IP rate-limited"),
+			)
 			return
 		}
 
@@ -408,11 +432,34 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 				slog.Warn("review_extraction_failed",
 					slog.String("job_id", j.ID),
 					slog.String("parent_job_id", j.ParentID),
-					slog.String("place_url", placeURL),
+					slog.String("place_url", j.GetURL()),
 					slog.Any("error", err),
 				)
 				return
 			}
+
+			// Detect "silent empty" responses — Google returns HTTP 200 with empty data
+			// when cookies are expired or IP is blocked, instead of an error.
+			if len(reviewData.pages) == 0 || (len(reviewData.pages) == 1 && len(reviewData.pages[0]) < 100) {
+				responseBytes := 0
+				if len(reviewData.pages) > 0 {
+					responseBytes = len(reviewData.pages[0])
+				}
+				count := reviewEmptyCount.Add(1)
+				slog.Warn("review_api_empty_response",
+					slog.String("job_id", j.ID),
+					slog.String("parent_job_id", j.ParentID),
+					slog.String("place_url", j.GetURL()),
+					slog.Int("review_count_on_page", reviewCount),
+					slog.Int("response_bytes", responseBytes),
+					slog.Int("consecutive_empty", int(count)),
+					slog.String("possible_cause", "expired cookies, IP blocked, or rate limited"),
+				)
+				return
+			}
+
+			// Success — reset the circuit breaker
+			reviewEmptyCount.Store(0)
 			resp.Meta["reviews_raw"] = reviewData
 		}
 	}()
