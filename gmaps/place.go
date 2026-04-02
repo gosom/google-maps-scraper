@@ -395,7 +395,7 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 		if reviewCount > 8 {
 			params := fetchReviewsParams{
 				page:        page,
-				mapURL:      placeURL,
+				mapURL:      j.GetURL(),
 				reviewCount: reviewCount,
 				maxReviews:  j.ReviewsMax,
 				langCode:    j.URLParams["hl"],
