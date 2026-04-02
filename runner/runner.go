@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -85,8 +86,10 @@ type Config struct {
 	// results-per-search limit imposed by Google Maps.
 	GridBBox   string  // "minLat,minLon,maxLat,maxLon"
 	GridCellKm float64 // size of each grid cell in km (default: 1.0)
+	Version    bool
 }
 
+//nolint:gocyclo // The cyclomatic complexity of this function is high due to the number of configuration options and validations.
 func ParseConfig() *Config {
 	cfg := Config{}
 
@@ -134,8 +137,31 @@ func ParseConfig() *Config {
 	flag.StringVar(&cfg.LeadsDBAPIKey, "leadsdb-api-key", "", "LeadsDB API key for exporting results to LeadsDB")
 	flag.StringVar(&cfg.GridBBox, "grid-bbox", "", "bounding box for grid scraping: 'minLat,minLon,maxLat,maxLon' (e.g. '40.30,-3.80,40.50,-3.60')")
 	flag.Float64Var(&cfg.GridCellKm, "grid-cell", 1.0, "grid cell size in km [default: 1.0]. Use with -grid-bbox")
+	flag.BoolVar(&cfg.Version, "version", false, "returns the version of the tool")
 
 	flag.Parse()
+
+	if cfg.Version {
+		info, ok := debug.ReadBuildInfo()
+		if !ok {
+			fmt.Println("build info not available")
+			os.Exit(1)
+		}
+
+		version := info.Main.Version
+
+		var commit string
+
+		for _, s := range info.Settings {
+			if s.Key == "vcs.revision" {
+				commit = s.Value[:7]
+			}
+		}
+
+		fmt.Printf("%s-%s\n", version, commit)
+
+		os.Exit(0)
+	}
 
 	if cfg.AwsAccessKey == "" {
 		cfg.AwsAccessKey = os.Getenv("MY_AWS_ACCESS_KEY")
