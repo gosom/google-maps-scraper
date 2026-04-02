@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,6 +25,19 @@ import (
 	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/google-maps-scraper/gmaps/images"
 )
+
+// reviewCircuitBreaker tracks consecutive empty review API responses.
+// When it reaches the threshold, review extraction is skipped for remaining places.
+// Reset to 0 at the start of each scraping job (via ResetReviewCircuitBreaker).
+var (
+	reviewEmptyCount              atomic.Int32
+	reviewCircuitBreakerThreshold int32 = 3
+)
+
+// ResetReviewCircuitBreaker resets the counter. Call at job start.
+func ResetReviewCircuitBreaker() {
+	reviewEmptyCount.Store(0)
+}
 
 type PlaceJobOptions func(*PlaceJob)
 
@@ -390,6 +404,14 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 	j.extractImages(ctx, page, &resp)
 
 	if j.ExtractExtraReviews {
+		// Circuit breaker: skip reviews if too many consecutive empty responses
+		if reviewEmptyCount.Load() >= reviewCircuitBreakerThreshold {
+			log := scrapemate.GetLoggerFromContext(ctx)
+			log.Error(fmt.Sprintf("review_circuit_breaker_open: job_id=%s parent_job_id=%s consecutive_failures=%d action=skipping_reviews likely_cause=cookies_expired_or_IP_rate_limited",
+				j.ID, j.ParentID, reviewEmptyCount.Load()))
+			return resp
+		}
+
 		reviewCount := j.getReviewCount(raw)
 		if reviewCount > 8 { // we have more reviews
 			params := fetchReviewsParams{
@@ -406,6 +428,22 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 				return resp
 			}
 
+			// Detect "silent empty" responses — Google returns HTTP 200 with empty data
+			// when cookies are expired or IP is blocked, instead of an error.
+			if len(reviewData.pages) == 0 || (len(reviewData.pages) == 1 && len(reviewData.pages[0]) < 100) {
+				responseBytes := 0
+				if len(reviewData.pages) > 0 {
+					responseBytes = len(reviewData.pages[0])
+				}
+				count := reviewEmptyCount.Add(1)
+				log := scrapemate.GetLoggerFromContext(ctx)
+				log.Warn(fmt.Sprintf("review_api_empty_response: job_id=%s parent_job_id=%s place_url=%s review_count_on_page=%d response_bytes=%d consecutive_empty=%d possible_cause=expired_cookies_IP_blocked_or_rate_limited",
+					j.ID, j.ParentID, j.GetURL(), reviewCount, responseBytes, count))
+				return resp
+			}
+
+			// Success — reset the circuit breaker
+			reviewEmptyCount.Store(0)
 			resp.Meta["reviews_raw"] = reviewData
 		}
 	}

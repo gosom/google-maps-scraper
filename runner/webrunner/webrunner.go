@@ -17,6 +17,7 @@ import (
 	"github.com/gosom/google-maps-scraper/config"
 	"github.com/gosom/google-maps-scraper/deduper"
 	"github.com/gosom/google-maps-scraper/exiter"
+	"github.com/gosom/google-maps-scraper/gmaps"
 	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/proxy"
@@ -422,6 +423,9 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			}
 		}
 	}()
+
+	// Reset the review circuit breaker for this new job
+	gmaps.ResetReviewCircuitBreaker()
 
 	// Initialize deduper and exitMonitor before use
 	dedup := deduper.New()
