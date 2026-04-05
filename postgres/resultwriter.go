@@ -427,7 +427,7 @@ func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []
 		}
 	}()
 
-	_, err = tx.ExecContext(dbCtx, q, args...)
+	result, err := tx.ExecContext(dbCtx, q, args...)
 	if err != nil {
 		queryPreview := q
 		if len(queryPreview) > 200 {
@@ -441,6 +441,17 @@ func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []
 		return fmt.Errorf("failed to insert results: %w", err)
 	}
 
+	// Increment denormalized result_count (same tx = atomic with INSERT)
+	rowsAffected, raErr := result.RowsAffected()
+	if raErr != nil {
+		slog.Warn("result_count_rows_affected_failed", slog.Any("error", raErr))
+		// Fallback: may over-count if duplicates existed, but RowsAffected failure is near-impossible on postgres
+		rowsAffected = int64(len(entries))
+	}
+	if err = updateResultCount(dbCtx, tx, r.jobID, rowsAffected); err != nil {
+		return err
+	}
+
 	err = tx.Commit()
 	if err != nil {
 		slog.Error("postgres_enhanced_writer_commit_failed", slog.Any("error", err), slog.String("job_id", r.jobID))
@@ -452,6 +463,23 @@ func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []
 		slog.String("user_id", r.userID),
 		slog.String("job_id", r.jobID),
 	)
+	return nil
+}
+
+// updateResultCount atomically increments the denormalized result_count on
+// the jobs row within the given transaction.
+func updateResultCount(ctx context.Context, tx *sql.Tx, jobID string, rowsAffected int64) error {
+	if rowsAffected <= 0 {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx,
+		"UPDATE jobs SET result_count = result_count + $1 WHERE id = $2",
+		rowsAffected, jobID)
+	if err != nil {
+		slog.Error("result_count_update_failed",
+			slog.Any("error", err), slog.String("job_id", jobID))
+		return fmt.Errorf("failed to update result count: %w", err)
+	}
 	return nil
 }
 
@@ -573,21 +601,27 @@ func (r *enhancedResultWriterWithExiter) batchSaveEnhancedWithCount(ctx context.
 		return 0, fmt.Errorf("failed to insert results: %w", err)
 	}
 
+	// Get the number of rows affected (inserted) BEFORE commit
+	rowsAffected, raErr := result.RowsAffected()
+	if raErr != nil {
+		slog.Warn("postgres_exiter_writer_rows_affected_failed", slog.Any("error", raErr))
+		// Fallback: may over-count if duplicates existed, but RowsAffected failure is near-impossible on postgres
+		rowsAffected = int64(len(entries))
+	}
+
+	insertedCount := int(rowsAffected)
+
+	// Increment denormalized result_count (same tx = atomic with INSERT)
+	if err = updateResultCount(dbCtx, tx, r.jobID, rowsAffected); err != nil {
+		return 0, err
+	}
+
 	err = tx.Commit()
 	if err != nil {
 		slog.Error("postgres_exiter_writer_commit_failed", slog.Any("error", err), slog.String("job_id", r.jobID))
 		return 0, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	// Get the number of rows affected (inserted)
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		slog.Warn("postgres_exiter_writer_rows_affected_failed", slog.Any("error", err))
-		// Assume all entries were inserted if we can't get the count
-		rowsAffected = int64(len(entries))
-	}
-
-	insertedCount := int(rowsAffected)
 	slog.Debug("postgres_exiter_writer_insert_success",
 		slog.Int("inserted_count", insertedCount),
 		slog.String("user_id", r.userID),
