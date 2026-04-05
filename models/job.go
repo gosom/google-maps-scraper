@@ -35,6 +35,8 @@ type Job struct {
 	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
 	FailureReason string     `json:"failure_reason,omitempty"`
 	Source        string     `json:"source"`
+	ResultCount   int        `json:"result_count"`
+	TotalCost     string     `json:"total_cost"`
 }
 
 // SelectParams defines parameters for filtering job selection
