@@ -164,6 +164,7 @@ type DashboardJob struct {
 	Name          string     `json:"name"`
 	Status        string     `json:"status"`
 	CreatedAt     *time.Time `json:"created_at,omitempty"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
 	FailureReason string     `json:"failure_reason,omitempty"`
 	Source        string     `json:"source"`
 	ResultCount   int        `json:"result_count"`

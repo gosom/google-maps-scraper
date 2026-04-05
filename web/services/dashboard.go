@@ -43,7 +43,7 @@ func (s *DashboardService) GetDashboard(ctx context.Context, userID string, limi
 	// Query 2: Recent jobs with inline cost + result_count
 	jobsQuery := `
 		SELECT id, name, status,
-			   created_at,
+			   created_at, updated_at,
 			   COALESCE(failure_reason, ''),
 			   COALESCE(source, 'web'),
 			   COALESCE(result_count, 0),
@@ -64,7 +64,7 @@ func (s *DashboardService) GetDashboard(ctx context.Context, userID string, limi
 		var j models.DashboardJob
 		if err := rows.Scan(
 			&j.ID, &j.Name, &j.Status,
-			&j.CreatedAt,
+			&j.CreatedAt, &j.UpdatedAt,
 			&j.FailureReason, &j.Source,
 			&j.ResultCount, &j.TotalCost,
 		); err != nil {
