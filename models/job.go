@@ -46,12 +46,33 @@ type SelectParams struct {
 	UserID string
 }
 
+// PaginatedJobsParams defines parameters for paginated job queries.
+type PaginatedJobsParams struct {
+	UserID string
+	Page   int    // 1-based page number
+	Limit  int    // items per page (max 100)
+	Sort   string // column to sort by: "created_at", "name", "status", "updated_at"
+	Order  string // "asc" or "desc"
+	Search string // optional case-insensitive search on name or status
+}
+
+// PaginatedJobsResponse wraps a page of jobs with pagination metadata.
+type PaginatedJobsResponse struct {
+	Jobs    []Job `json:"jobs"`
+	Total   int   `json:"total"`
+	Page    int   `json:"page"`
+	Limit   int   `json:"limit"`
+	HasNext bool  `json:"has_next"`
+	HasPrev bool  `json:"has_prev"`
+}
+
 // JobRepository defines the interface for job storage
 type JobRepository interface {
 	Get(ctx context.Context, id string, userID string) (Job, error)
 	Create(ctx context.Context, job *Job) error
 	Delete(ctx context.Context, id string, userID string) error
 	Select(ctx context.Context, params SelectParams) ([]Job, error)
+	SelectPaginated(ctx context.Context, params PaginatedJobsParams) ([]Job, int, error)
 	Update(ctx context.Context, job *Job) error
 	Cancel(ctx context.Context, id string, userID string) error
 }

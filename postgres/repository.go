@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gosom/google-maps-scraper/models"
@@ -153,6 +154,110 @@ func (repo *repository) Select(ctx context.Context, params models.SelectParams) 
 
 	repo.log.Debug("job_select_done", slog.String("user_id", params.UserID), slog.String("status", params.Status), slog.Int("count", len(ans)))
 	return ans, nil
+}
+
+// SelectPaginated returns a page of jobs for a user with optional search,
+// along with the total count matching the filter. This is the server-side
+// pagination companion to the existing Select method.
+func (repo *repository) SelectPaginated(ctx context.Context, params models.PaginatedJobsParams) ([]models.Job, int, error) {
+	// --- validate & default ---
+	if params.Page < 1 {
+		params.Page = 1
+	}
+	if params.Limit < 1 {
+		params.Limit = 10
+	}
+	if params.Limit > 100 {
+		params.Limit = 100
+	}
+
+	// Allowlist for sort columns to prevent SQL injection (CWE-89).
+	allowedSort := map[string]string{
+		"created_at": "created_at",
+		"name":       "name",
+		"status":     "status",
+		"updated_at": "updated_at",
+	}
+	sortCol, ok := allowedSort[params.Sort]
+	if !ok {
+		sortCol = "created_at"
+	}
+	orderDir := "DESC"
+	if params.Order == "asc" {
+		orderDir = "ASC"
+	}
+
+	// --- build WHERE clause ---
+	var conditions []string
+	var args []interface{}
+	argNum := 1
+
+	conditions = append(conditions, "deleted_at IS NULL")
+
+	if params.UserID != "" {
+		conditions = append(conditions, fmt.Sprintf("user_id = $%d", argNum))
+		args = append(args, params.UserID)
+		argNum++
+	}
+
+	if params.Search != "" {
+		conditions = append(conditions, fmt.Sprintf("(LOWER(name) LIKE $%d OR LOWER(status) LIKE $%d)", argNum, argNum))
+		args = append(args, "%"+strings.ToLower(params.Search)+"%")
+		argNum++
+	}
+
+	whereClause := ""
+	if len(conditions) > 0 {
+		whereClause = " WHERE " + conditions[0]
+		for i := 1; i < len(conditions); i++ {
+			whereClause += " AND " + conditions[i]
+		}
+	}
+
+	// --- COUNT query ---
+	countQ := "SELECT COUNT(*) FROM jobs" + whereClause
+	var total int
+	if err := repo.db.QueryRowContext(ctx, countQ, args...).Scan(&total); err != nil {
+		repo.log.Error("job_select_paginated_count_failed", slog.String("user_id", params.UserID), slog.Any("error", err))
+		return nil, 0, fmt.Errorf("failed to count jobs: %w", err)
+	}
+
+	// --- SELECT query ---
+	selectQ := `SELECT id, name, status, data, extract(epoch from created_at), extract(epoch from updated_at), user_id, COALESCE(failure_reason, ''), COALESCE(source, 'web'), COALESCE(result_count, 0), COALESCE(actual_cost_precise, 0)::text FROM jobs` +
+		whereClause +
+		fmt.Sprintf(" ORDER BY %s %s", sortCol, orderDir)
+
+	offset := (params.Page - 1) * params.Limit
+	selectQ += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argNum, argNum+1)
+	selectArgs := append(append([]interface{}{}, args...), params.Limit, offset)
+
+	rows, err := repo.db.QueryContext(ctx, selectQ, selectArgs...)
+	if err != nil {
+		repo.log.Error("job_select_paginated_failed", slog.String("user_id", params.UserID), slog.Any("error", err))
+		return nil, 0, fmt.Errorf("failed to select paginated jobs: %w", err)
+	}
+	defer rows.Close()
+
+	var jobs []models.Job
+	for rows.Next() {
+		job, err := rowToJob(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		jobs = append(jobs, job)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	repo.log.Debug("job_select_paginated_done",
+		slog.String("user_id", params.UserID),
+		slog.Int("page", params.Page),
+		slog.Int("limit", params.Limit),
+		slog.Int("total", total),
+		slog.Int("returned", len(jobs)),
+	)
+	return jobs, total, nil
 }
 
 // Update modifies an existing job

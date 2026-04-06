@@ -33,6 +33,9 @@ func (m *mockAdminJobService) All(_ context.Context, _ string) ([]models.Job, er
 	m.allCalled = true
 	return []models.Job{{ID: "job-1", Source: models.SourceAdmin}}, nil
 }
+func (m *mockAdminJobService) AllPaginated(_ context.Context, _ models.PaginatedJobsParams) ([]models.Job, int, error) {
+	return nil, 0, nil
+}
 func (m *mockAdminJobService) Get(_ context.Context, _ string, _ string) (models.Job, error) {
 	return models.Job{}, nil
 }

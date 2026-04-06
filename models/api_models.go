@@ -150,6 +150,16 @@ type JobCostResponse struct {
 	TotalRounded int                    `json:"total_rounded"`
 }
 
+// BatchJobCostsRequest is the request payload for POST /api/v1/jobs/costs/batch.
+type BatchJobCostsRequest struct {
+	JobIDs []string `json:"job_ids"`
+}
+
+// BatchJobCostsResponse is the response payload for the batch job costs endpoint.
+type BatchJobCostsResponse struct {
+	Costs map[string]JobCostResponse `json:"costs"`
+}
+
 // DashboardKPI holds aggregated metrics for the dashboard header.
 type DashboardKPI struct {
 	JobsToday          int   `json:"jobs_today"`

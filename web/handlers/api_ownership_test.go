@@ -25,6 +25,9 @@ func (m *mockJobService) Create(_ context.Context, _ *models.Job) error { return
 func (m *mockJobService) All(_ context.Context, _ string) ([]models.Job, error) {
 	return nil, nil
 }
+func (m *mockJobService) AllPaginated(_ context.Context, _ models.PaginatedJobsParams) ([]models.Job, int, error) {
+	return nil, 0, nil
+}
 func (m *mockJobService) Get(ctx context.Context, id string, userID string) (models.Job, error) {
 	if m.getFunc != nil {
 		return m.getFunc(ctx, id, userID)

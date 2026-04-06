@@ -261,13 +261,62 @@ func (h *APIHandlers) GetUserJobs(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
 		return
 	}
-	jobs, err := h.Deps.App.All(r.Context(), userID)
+
+	// Parse pagination query parameters
+	q := r.URL.Query()
+
+	page := 1
+	if v := q.Get("page"); v != "" {
+		if p, err := strconv.Atoi(v); err == nil && p > 0 {
+			page = p
+		}
+	}
+
+	limit := 10
+	if v := q.Get("limit"); v != "" {
+		if l, err := strconv.Atoi(v); err == nil && l > 0 && l <= 100 {
+			limit = l
+		}
+	}
+
+	sort := "created_at"
+	if v := q.Get("sort"); v != "" {
+		sort = v
+	}
+
+	order := "desc"
+	if v := q.Get("order"); v == "asc" || v == "desc" {
+		order = v
+	}
+
+	search := q.Get("search")
+
+	params := models.PaginatedJobsParams{
+		UserID: userID,
+		Page:   page,
+		Limit:  limit,
+		Sort:   sort,
+		Order:  order,
+		Search: search,
+	}
+
+	jobs, total, err := h.Deps.App.AllPaginated(r.Context(), params)
 	if err != nil {
 		internalError(w, h.Deps.Logger, err, "internal server error",
 			slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
 		return
 	}
-	renderJSON(w, http.StatusOK, jobs)
+
+	resp := models.PaginatedJobsResponse{
+		Jobs:    jobs,
+		Total:   total,
+		Page:    page,
+		Limit:   limit,
+		HasNext: page*limit < total,
+		HasPrev: page > 1,
+	}
+
+	renderJSON(w, http.StatusOK, resp)
 }
 
 func (h *APIHandlers) GetJob(w http.ResponseWriter, r *http.Request) {
@@ -443,6 +492,86 @@ func (h *APIHandlers) GetJobCosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	renderJSON(w, http.StatusOK, resp)
+}
+
+// GetBatchJobCosts returns cost breakdowns and totals for multiple jobs in a
+// single request, eliminating N+1 individual cost fetches.
+func (h *APIHandlers) GetBatchJobCosts(w http.ResponseWriter, r *http.Request) {
+	if h.Deps.Logger != nil {
+		h.Deps.Logger.Info("request", slog.String("method", "POST"), slog.String("path", r.URL.Path))
+	}
+	if h.Deps.Auth == nil {
+		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "Authentication not configured"})
+		return
+	}
+	userID, err := auth.GetUserID(r.Context())
+	if err != nil || userID == "" {
+		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
+		return
+	}
+	if h.Deps.DB == nil {
+		renderJSON(w, http.StatusServiceUnavailable, models.APIError{Code: http.StatusServiceUnavailable, Message: "database not available"})
+		return
+	}
+
+	var req models.BatchJobCostsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Invalid request body"})
+		return
+	}
+	if len(req.JobIDs) == 0 {
+		renderJSON(w, http.StatusOK, models.BatchJobCostsResponse{Costs: map[string]models.JobCostResponse{}})
+		return
+	}
+	if len(req.JobIDs) > 100 {
+		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: "Maximum 100 job IDs per request"})
+		return
+	}
+
+	// Validate all job IDs are valid UUIDs
+	for _, id := range req.JobIDs {
+		if _, err := uuid.Parse(id); err != nil {
+			renderJSON(w, http.StatusUnprocessableEntity, models.APIError{
+				Code:    http.StatusUnprocessableEntity,
+				Message: "Invalid job ID format: " + id,
+			})
+			return
+		}
+	}
+
+	// Verify ownership: fetch all user jobs and filter to only owned IDs.
+	// This reuses the existing App.All which already filters by user_id.
+	userJobs, err := h.Deps.App.All(r.Context(), userID)
+	if err != nil {
+		internalError(w, h.Deps.Logger, err, "failed to verify job ownership",
+			slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
+		return
+	}
+	ownedSet := make(map[string]struct{}, len(userJobs))
+	for _, j := range userJobs {
+		ownedSet[j.ID] = struct{}{}
+	}
+	var validIDs []string
+	for _, id := range req.JobIDs {
+		if _, ok := ownedSet[id]; ok {
+			validIDs = append(validIDs, id)
+		}
+	}
+
+	if len(validIDs) == 0 {
+		renderJSON(w, http.StatusOK, models.BatchJobCostsResponse{Costs: map[string]models.JobCostResponse{}})
+		return
+	}
+
+	cs := webservices.NewCostsService(h.Deps.DB)
+	costs, err := cs.GetBatchJobCosts(r.Context(), validIDs)
+	if err != nil {
+		internalError(w, h.Deps.Logger, err, "failed to retrieve batch job costs",
+			slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
+		return
+	}
+
+	renderJSON(w, http.StatusOK, models.BatchJobCostsResponse{Costs: costs})
 }
 
 func (h *APIHandlers) GetUserResults(w http.ResponseWriter, r *http.Request) {

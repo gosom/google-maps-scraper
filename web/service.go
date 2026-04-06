@@ -44,6 +44,10 @@ func (s *Service) All(ctx context.Context, userID string) ([]Job, error) {
 	return s.repo.Select(ctx, SelectParams{UserID: userID})
 }
 
+func (s *Service) AllPaginated(ctx context.Context, params models.PaginatedJobsParams) ([]Job, int, error) {
+	return s.repo.SelectPaginated(ctx, params)
+}
+
 func (s *Service) Get(ctx context.Context, id string, userID string) (Job, error) {
 	return s.repo.Get(ctx, id, userID)
 }

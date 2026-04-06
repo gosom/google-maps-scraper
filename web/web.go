@@ -216,6 +216,7 @@ func New(cfg ServerConfig) (*Server, error) {
 	apiRouter.HandleFunc("/jobs/{id}/download", hg.Web.Download).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/{id}/results", hg.API.GetJobResults).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/{id}/costs", hg.API.GetJobCosts).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/jobs/costs/batch", hg.API.GetBatchJobCosts).Methods(http.MethodPost)
 	apiRouter.HandleFunc("/jobs/estimate", hg.API.EstimateJobCost).Methods(http.MethodPost)
 	apiRouter.HandleFunc("/results", hg.API.GetUserResults).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/dashboard", hg.API.GetDashboard).Methods(http.MethodGet)
