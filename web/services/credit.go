@@ -131,7 +131,7 @@ func (s *CreditService) GetBillingHistory(ctx context.Context, userID string, li
 	// Count
 	if typeFilter == "" {
 		if err := s.db.QueryRowContext(ctx, countQ, userID).Scan(&resp.Total); err != nil {
-			s.log.Error("billing_history_count_failed", slog.String("user_id", userID), slog.Any("error", err))
+			s.log.Error("billing_history_count_failed", slog.String("user_id", userID), slog.String("type", ""), slog.Any("error", err))
 			return resp, err
 		}
 	} else {
