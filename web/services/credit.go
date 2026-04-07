@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -58,8 +59,33 @@ func (s *CreditService) HandleWebhook(ctx context.Context, payload []byte, signa
 	return s.billing.HandleWebhook(ctx, payload, signature)
 }
 
+// allowedBillingHistoryTypes is the set of transaction types the history
+// endpoint accepts as a filter. Must match the DB CHECK constraint on
+// credit_transactions.type (see migration 000012).
+var allowedBillingHistoryTypes = map[string]struct{}{
+	"purchase":    {},
+	"consumption": {},
+	"bonus":       {},
+	"refund":      {},
+	"adjustment":  {},
+}
+
+// IsAllowedBillingHistoryType reports whether the given type string is a
+// valid filter value for GetBillingHistory. Empty string is also allowed
+// and means "no filter".
+func IsAllowedBillingHistoryType(t string) bool {
+	if t == "" {
+		return true
+	}
+	_, ok := allowedBillingHistoryTypes[t]
+	return ok
+}
+
 // GetBillingHistory returns paginated credit transaction history for a user.
-func (s *CreditService) GetBillingHistory(ctx context.Context, userID string, limit, offset int) (models.BillingHistoryResponse, error) {
+// If typeFilter is non-empty it must be one of the values accepted by
+// IsAllowedBillingHistoryType; the caller is expected to validate before
+// calling this function.
+func (s *CreditService) GetBillingHistory(ctx context.Context, userID string, limit, offset int, typeFilter string) (models.BillingHistoryResponse, error) {
 	var resp models.BillingHistoryResponse
 	resp.Limit = limit
 	resp.Offset = offset
@@ -68,26 +94,58 @@ func (s *CreditService) GetBillingHistory(ctx context.Context, userID string, li
 		return resp, sql.ErrConnDone
 	}
 
-	// Get total count
-	const countQ = `SELECT COUNT(*) FROM credit_transactions WHERE user_id = $1`
-	if err := s.db.QueryRowContext(ctx, countQ, userID).Scan(&resp.Total); err != nil {
-		s.log.Error("billing_history_count_failed", slog.String("user_id", userID), slog.Any("error", err))
-		return resp, err
+	// Defense in depth: reject unknown type values even though the handler
+	// should have validated already. Never interpolate unchecked strings
+	// into SQL.
+	if !IsAllowedBillingHistoryType(typeFilter) {
+		return resp, fmt.Errorf("invalid transaction type filter: %q", typeFilter)
+	}
+
+	// Both queries share the same WHERE clause so counts stay in sync
+	// with the paginated rows.
+	var (
+		countQ string
+		listQ  string
+		args   []any
+	)
+	if typeFilter == "" {
+		countQ = `SELECT COUNT(*) FROM credit_transactions WHERE user_id = $1`
+		listQ = `SELECT id, type, amount::text, balance_before::text, balance_after::text, description,
+			reference_id, reference_type, created_at
+			FROM credit_transactions
+			WHERE user_id = $1
+			ORDER BY created_at DESC
+			LIMIT $2 OFFSET $3`
+		args = []any{userID, limit, offset}
+	} else {
+		countQ = `SELECT COUNT(*) FROM credit_transactions WHERE user_id = $1 AND type = $2`
+		listQ = `SELECT id, type, amount::text, balance_before::text, balance_after::text, description,
+			reference_id, reference_type, created_at
+			FROM credit_transactions
+			WHERE user_id = $1 AND type = $2
+			ORDER BY created_at DESC
+			LIMIT $3 OFFSET $4`
+		args = []any{userID, typeFilter, limit, offset}
+	}
+
+	// Count
+	if typeFilter == "" {
+		if err := s.db.QueryRowContext(ctx, countQ, userID).Scan(&resp.Total); err != nil {
+			s.log.Error("billing_history_count_failed", slog.String("user_id", userID), slog.Any("error", err))
+			return resp, err
+		}
+	} else {
+		if err := s.db.QueryRowContext(ctx, countQ, userID, typeFilter).Scan(&resp.Total); err != nil {
+			s.log.Error("billing_history_count_failed", slog.String("user_id", userID), slog.String("type", typeFilter), slog.Any("error", err))
+			return resp, err
+		}
 	}
 
 	resp.HasMore = offset+limit < resp.Total
 
-	// Get transactions
-	const q = `SELECT id, type, amount::text, balance_before::text, balance_after::text, description,
-		reference_id, reference_type, created_at
-		FROM credit_transactions
-		WHERE user_id = $1
-		ORDER BY created_at DESC
-		LIMIT $2 OFFSET $3`
-
-	rows, err := s.db.QueryContext(ctx, q, userID, limit, offset)
+	rows, err := s.db.QueryContext(ctx, listQ, args...)
 	if err != nil {
-		s.log.Error("billing_history_query_failed", slog.String("user_id", userID), slog.Int("limit", limit), slog.Int("offset", offset), slog.Any("error", err))
+		s.log.Error("billing_history_query_failed", slog.String("user_id", userID), slog.String("type", typeFilter), slog.Int("limit", limit), slog.Int("offset", offset), slog.Any("error", err))
 		return resp, err
 	}
 	defer rows.Close()
@@ -103,6 +161,6 @@ func (s *CreditService) GetBillingHistory(ctx context.Context, userID string, li
 		resp.Transactions = append(resp.Transactions, t)
 	}
 
-	s.log.Debug("billing_history_retrieved", slog.String("user_id", userID), slog.Int("count", len(resp.Transactions)), slog.Int("total", resp.Total))
+	s.log.Debug("billing_history_retrieved", slog.String("user_id", userID), slog.String("type", typeFilter), slog.Int("count", len(resp.Transactions)), slog.Int("total", resp.Total))
 	return resp, rows.Err()
 }
