@@ -64,12 +64,14 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, req CheckoutRequest
 	if req.UserID == "" {
 		return CheckoutResponse{}, fmt.Errorf("missing user id")
 	}
-	if req.Credits == "" || req.Credits == "0" {
-		return CheckoutResponse{}, fmt.Errorf("credits must be > 0")
-	}
 	// MVP: USD-only
 	if req.Currency != "USD" {
 		return CheckoutResponse{}, fmt.Errorf("unsupported currency; only USD is enabled in MVP")
+	}
+
+	creditsInt, err := parseCreditsStrict(req.Credits)
+	if err != nil {
+		return CheckoutResponse{}, err
 	}
 
 	// MVP: fixed $1 per credit
@@ -78,11 +80,6 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, req CheckoutRequest
 	// Build success/cancel URLs from config (env overrides allowed)
 	successURL, _ := s.cfg.GetString(ctx, "stripe_success_url", "https://example.com/success")
 	cancelURL, _ := s.cfg.GetString(ctx, "stripe_cancel_url", "https://example.com/cancel")
-
-	creditsInt, err := parseCreditsStrict(req.Credits)
-	if err != nil {
-		return CheckoutResponse{}, err
-	}
 
 	// Use price_data with unit_amount = price per credit and quantity = credits
 	params := &stripe.CheckoutSessionParams{

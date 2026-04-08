@@ -72,3 +72,24 @@ func TestCreateCheckoutSession_RejectsTrailingGarbage(t *testing.T) {
 		t.Errorf("expected 400 for trailing-garbage credits, got %d (body=%s)", rec.Code, rec.Body.String())
 	}
 }
+
+// TestCreateCheckoutSession_RejectsEmptyCredits verifies that an empty-string
+// credits value is rejected with 400. This case was previously caught by a
+// now-deleted dead guard in billing.Service.CreateCheckoutSession; the test
+// ensures parseCreditsStrict still catches it post-refactor. Empty is the
+// most common bad input (user clicks purchase without entering an amount).
+func TestCreateCheckoutSession_RejectsEmptyCredits(t *testing.T) {
+	t.Setenv("STRIPE_SUCCESS_URL", "https://example.com/success")
+	t.Setenv("STRIPE_CANCEL_URL", "https://example.com/cancel")
+
+	h := newBillingHandlersForTest()
+	req := billingPostReq(`{"credits":"","currency":"USD"}`)
+	req = withUserID(req, "user-1")
+	rec := httptest.NewRecorder()
+
+	h.CreateCheckoutSession(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty credits, got %d (body=%s)", rec.Code, rec.Body.String())
+	}
+}
