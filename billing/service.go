@@ -79,10 +79,9 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, req CheckoutRequest
 	successURL, _ := s.cfg.GetString(ctx, "stripe_success_url", "https://example.com/success")
 	cancelURL, _ := s.cfg.GetString(ctx, "stripe_cancel_url", "https://example.com/cancel")
 
-	// For Stripe MVP: accept only whole credits as quantity
-	var creditsInt int
-	if _, err := fmt.Sscan(req.Credits, &creditsInt); err != nil || creditsInt <= 0 {
-		return CheckoutResponse{}, fmt.Errorf("only whole credits are supported")
+	creditsInt, err := parseCreditsStrict(req.Credits)
+	if err != nil {
+		return CheckoutResponse{}, err
 	}
 
 	// Use price_data with unit_amount = price per credit and quantity = credits
