@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -48,9 +47,6 @@ const (
 	UserRoleKey ContextKey = "user_role"
 	// AuthHeaderName is the name of the authentication header.
 	AuthHeaderName = "Authorization"
-	// DevUserHeaderName allows local integration tests to bypass Clerk auth when explicitly enabled.
-	// MUST remain opt-in via BRAZA_DEV_AUTH_BYPASS=1 to avoid production misuse.
-	DevUserHeaderName = "X-Braza-Dev-User"
 )
 
 // NewAuthMiddleware creates a new AuthMiddleware.
@@ -100,34 +96,6 @@ func extractBearerToken(r *http.Request) string {
 // It dispatches to API key auth when the Bearer token has the APIKeyPrefix,
 // and falls back to Clerk JWT validation otherwise.
 func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
-	// Dev bypass: local integration tests only. Only allowed when APP_ENV is
-	// explicitly "development", "test", or empty (unset). Blocked in production,
-	// staging, and any other environment to prevent accidental admin access.
-	if strings.TrimSpace(os.Getenv("BRAZA_DEV_AUTH_BYPASS")) == "1" {
-		appEnv := strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
-		if appEnv == "" || appEnv == "development" || appEnv == "test" {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if devUserID := strings.TrimSpace(r.Header.Get(DevUserHeaderName)); devUserID != "" {
-					if m.logger != nil {
-						m.logger.Warn("dev_auth_bypass", slog.String("user_id", devUserID))
-					}
-					ctx := context.WithValue(r.Context(), UserIDKey, devUserID)
-					// Allow dev testing of role-based behavior
-					if devRole := strings.TrimSpace(r.Header.Get("X-Braza-Dev-Role")); devRole != "" {
-						ctx = context.WithValue(ctx, UserRoleKey, devRole)
-					}
-					next.ServeHTTP(w, r.WithContext(ctx))
-					return
-				}
-				m.authenticateRequest(next).ServeHTTP(w, r)
-			})
-		}
-		// Bypass requested but APP_ENV is not development/test — reject it.
-		if m.logger != nil {
-			m.logger.Error("dev_auth_bypass_rejected_for_env", slog.String("app_env", appEnv))
-		}
-	}
-
 	return m.authenticateRequest(next)
 }
 

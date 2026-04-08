@@ -34,7 +34,6 @@ const (
 var (
 	flagRunE2E          = flag.Bool("braza-run-scrape-e2e", false, "run live Google Maps scrape E2E tests (requires a running API)")
 	flagBaseURL         = flag.String("braza-api-base-url", "", "API base URL (default http://localhost:8080)")
-	flagDevUserID       = flag.String("braza-dev-user-id", "", "dev auth bypass user_id (server must run with BRAZA_DEV_AUTH_BYPASS=1)")
 	flagKeepJobs        = flag.Bool("braza-keep-jobs", false, "keep jobs after tests (no delete cleanup)")
 	flagIncludeFastMode = flag.Bool("braza-include-fast-mode", false, "include fast mode scenarios in the matrix")
 )
@@ -55,7 +54,6 @@ type e2eConfig struct {
 	sessionCookie       string
 	clerkSecretKey      string
 	clerkSessionID      string
-	devUserID           string
 	keepJobs            bool
 	pollInterval        time.Duration
 	jobTimeout          time.Duration
@@ -437,7 +435,6 @@ func loadE2EConfig(t *testing.T) (e2eConfig, bool) {
 		sessionCookie:       strings.TrimSpace(os.Getenv("BRAZA_SESSION_COOKIE")),
 		clerkSecretKey:      strings.TrimSpace(envOrDefaultE2E("BRAZA_CLERK_SECRET_KEY", os.Getenv("CLERK_SECRET_KEY"))),
 		clerkSessionID:      strings.TrimSpace(os.Getenv("BRAZA_CLERK_SESSION_ID")),
-		devUserID:           strings.TrimSpace(os.Getenv("BRAZA_DEV_USER_ID")),
 		keepJobs:            strings.TrimSpace(os.Getenv("BRAZA_KEEP_JOBS")) == "1" || (*flagKeepJobs),
 		pollInterval:        parseDurationEnv(t, "BRAZA_POLL_INTERVAL", 10*time.Second),
 		jobTimeout:          parseDurationEnv(t, "BRAZA_JOB_TIMEOUT", 35*time.Minute),
@@ -449,16 +446,6 @@ func loadE2EConfig(t *testing.T) (e2eConfig, bool) {
 
 	cfg.bearerToken = normalizeBearerToken(cfg.bearerToken)
 	cfg.sessionCookie = normalizeSessionCookie(cfg.sessionCookie)
-
-	if strings.TrimSpace(*flagDevUserID) != "" {
-		cfg.devUserID = strings.TrimSpace(*flagDevUserID)
-	}
-
-	// Dev auth bypass mode does not require any token/cookie as long as the server
-	// was started with BRAZA_DEV_AUTH_BYPASS=1.
-	if cfg.devUserID != "" {
-		return cfg, true
-	}
 
 	if cfg.clerkSessionID == "" && cfg.bearerToken != "" {
 		if sid, err := extractSessionIDFromJWT(cfg.bearerToken); err == nil {
@@ -474,7 +461,7 @@ func loadE2EConfig(t *testing.T) (e2eConfig, bool) {
 
 	canRefreshFromClerk := cfg.clerkSecretKey != "" && cfg.clerkSessionID != ""
 	if cfg.bearerToken == "" && cfg.sessionCookie == "" && !canRefreshFromClerk {
-		t.Skip("set BRAZA_DEV_USER_ID (server must run with BRAZA_DEV_AUTH_BYPASS=1) or set BRAZA_AUTH_TOKEN or BRAZA_SESSION_COOKIE or BRAZA_CLERK_SECRET_KEY+BRAZA_CLERK_SESSION_ID for authenticated API calls")
+		t.Skip("set BRAZA_AUTH_TOKEN or BRAZA_SESSION_COOKIE or BRAZA_CLERK_SECRET_KEY+BRAZA_CLERK_SESSION_ID for authenticated API calls")
 		return e2eConfig{}, false
 	}
 
@@ -762,9 +749,6 @@ func (c *apiE2EClient) doBytes(method, path string, body any, expectedStatus int
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if c.cfg.devUserID != "" {
-		req.Header.Set("X-Braza-Dev-User", c.cfg.devUserID)
-	}
 	authToken, err := c.authTokenForRequest()
 	if err != nil {
 		return nil, "", err
@@ -801,9 +785,6 @@ func (c *apiE2EClient) doBytes(method, path string, body any, expectedStatus int
 }
 
 func (c *apiE2EClient) authTokenForRequest() (string, error) {
-	if strings.TrimSpace(c.cfg.devUserID) != "" {
-		return "", nil
-	}
 	if c.cfg.clerkSecretKey != "" && c.cfg.clerkSessionID != "" {
 		if tok := c.getCachedToken(); tok != "" {
 			return tok, nil

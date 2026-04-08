@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
@@ -29,15 +28,6 @@ var version = "dev"
 
 func main() {
 	_ = godotenv.Load() // Load .env file if present
-
-	// Security guard: BRAZA_DEV_AUTH_BYPASS must never be enabled in production.
-	// If both flags are set simultaneously the server refuses to start to prevent
-	// accidental complete auth bypass on production deployments.
-	if strings.TrimSpace(os.Getenv("BRAZA_DEV_AUTH_BYPASS")) == "1" &&
-		strings.TrimSpace(os.Getenv("APP_ENV")) == "production" {
-		fmt.Fprintln(os.Stderr, "FATAL: BRAZA_DEV_AUTH_BYPASS=1 must not be set when APP_ENV=production — refusing to start")
-		os.Exit(1)
-	}
 
 	// Create structured JSON logger and set as global default (fallback for
 	// code that doesn't yet receive the logger via injection).
