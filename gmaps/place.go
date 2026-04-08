@@ -62,7 +62,7 @@ func NewPlaceJob(parentID, langCode, u string, extractEmail, extractImages bool,
 
 	job := PlaceJob{
 		Job: scrapemate.Job{
-			ID:         uuid.New().String(),
+			ID:         uuid.Must(uuid.NewV7()).String(),
 			ParentID:   parentID,
 			Method:     "GET",
 			URL:        u,

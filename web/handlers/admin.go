@@ -72,7 +72,7 @@ func (h *AdminHandlers) CreateJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	newJob := models.Job{
-		ID:     uuid.New().String(),
+		ID:     uuid.Must(uuid.NewV7()).String(),
 		UserID: userID,
 		Name:   req.Name,
 		Date:   time.Now().UTC(),

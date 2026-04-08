@@ -15,6 +15,7 @@ import (
 	"github.com/clerk/clerk-sdk-go/v2"
 	clerkhttp "github.com/clerk/clerk-sdk-go/v2/http"
 	"github.com/clerk/clerk-sdk-go/v2/user"
+	"github.com/google/uuid"
 	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/postgres"
 )
@@ -332,9 +333,9 @@ func (m *AuthMiddleware) grantSignupBonus(ctx context.Context, userID string) er
 	}
 
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO credit_transactions (user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
-		VALUES ($1, 'bonus', $2, $3, $4, 'Signup bonus', 'signup_bonus', 'system')`,
-		userID, SignupBonusAmount, currentBalance, newBalance)
+		INSERT INTO credit_transactions (id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
+		VALUES ($1, $2, 'bonus', $3, $4, $5, 'Signup bonus', 'signup_bonus', 'system')`,
+		uuid.Must(uuid.NewV7()).String(), userID, SignupBonusAmount, currentBalance, newBalance)
 	if err != nil {
 		return err
 	}

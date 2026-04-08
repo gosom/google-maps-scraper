@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/pkg/encryption"
 )
@@ -101,8 +102,8 @@ func (r *IntegrationRepository) Save(ctx context.Context, integration *models.Us
 	}
 
 	query := `
-		INSERT INTO user_integrations (user_id, provider, access_token, refresh_token, expiry, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO user_integrations (id, user_id, provider, access_token, refresh_token, expiry, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (user_id, provider) DO UPDATE SET
 			access_token = EXCLUDED.access_token,
 			refresh_token = EXCLUDED.refresh_token,
@@ -112,6 +113,7 @@ func (r *IntegrationRepository) Save(ctx context.Context, integration *models.Us
 	`
 
 	err := r.db.QueryRowContext(ctx, query,
+		uuid.Must(uuid.NewV7()).String(),
 		integration.UserID,
 		integration.Provider,
 		encAccessToken,

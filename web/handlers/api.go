@@ -96,7 +96,7 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
-	newJob := models.Job{ID: uuid.New().String(), UserID: userID, Name: req.Name, Date: time.Now().UTC(), Status: models.StatusPending, Data: req.JobData}
+	newJob := models.Job{ID: uuid.Must(uuid.NewV7()).String(), UserID: userID, Name: req.Name, Date: time.Now().UTC(), Status: models.StatusPending, Data: req.JobData}
 	if auth.GetAPIKeyID(r.Context()) != "" {
 		newJob.Source = models.SourceAPI
 	} else {

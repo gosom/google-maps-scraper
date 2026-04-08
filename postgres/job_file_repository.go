@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/gosom/google-maps-scraper/models"
 )
 
@@ -30,13 +31,14 @@ func (r *jobFileRepository) Create(ctx context.Context, jobFile *models.JobFile)
 			version_id, etag, size_bytes, mime_type, status, error_message,
 			created_at, uploaded_at, last_accessed_at
 		) VALUES (
-			gen_random_uuid(), $1, $2, $3, $4, $5,
-			$6, $7, $8, $9, $10, $11,
-			$12, $13, $14
+			$1, $2, $3, $4, $5, $6,
+			$7, $8, $9, $10, $11, $12,
+			$13, $14, $15
 		) RETURNING id`
 
 	err := r.db.QueryRowContext(
 		ctx, q,
+		uuid.Must(uuid.NewV7()).String(),
 		jobFile.JobID,
 		jobFile.UserID,
 		jobFile.FileType,

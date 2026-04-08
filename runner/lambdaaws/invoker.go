@@ -108,7 +108,7 @@ func (i *invoker) setPayloads(cfg *runner.Config) error {
 	var currentChunk []string
 
 	chunkNumber := 0
-	jobID := uuid.New().String()
+	jobID := uuid.Must(uuid.NewV7()).String()
 
 	for scanner.Scan() {
 		keyword := strings.TrimSpace(scanner.Text())
