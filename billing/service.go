@@ -268,7 +268,7 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 		// Idempotent: tolerate webhook replays (where the PI ID may already be set)
 		// by matching both NULL and the same value.
 		const updPI = `UPDATE stripe_payments
-			SET stripe_payment_intent_id = $1, updated_at = NOW()
+			SET stripe_payment_intent_id = $1
 			WHERE stripe_checkout_session_id = $2
 			  AND (stripe_payment_intent_id IS NULL OR stripe_payment_intent_id = $1)`
 		if _, err := tx.ExecContext(ctx, updPI, paymentIntentID, session.ID); err != nil {
