@@ -255,6 +255,39 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 		return 200, nil // tx deferred Rollback handles cleanup
 	}
 
+	// Backfill the Stripe PaymentIntent ID onto the stripe_payments row. The
+	// row was created during CreateCheckoutSession with only the checkout
+	// session ID; this is the first and canonical opportunity to learn the PI
+	// ID and link them. Without this backfill, the charge.refunded handler's
+	// primary lookup by stripe_payment_intent_id always misses. (S-C2)
+	paymentIntentID := ""
+	if session.PaymentIntent != nil && session.PaymentIntent.ID != "" {
+		paymentIntentID = session.PaymentIntent.ID
+	}
+	if paymentIntentID != "" {
+		// Idempotent: tolerate webhook replays (where the PI ID may already be set)
+		// by matching both NULL and the same value.
+		const updPI = `UPDATE stripe_payments
+			SET stripe_payment_intent_id = $1, updated_at = NOW()
+			WHERE stripe_checkout_session_id = $2
+			  AND (stripe_payment_intent_id IS NULL OR stripe_payment_intent_id = $1)`
+		if _, err := tx.ExecContext(ctx, updPI, paymentIntentID, session.ID); err != nil {
+			s.logger.Error("failed_to_backfill_payment_intent_id",
+				slog.String("session_id", session.ID),
+				slog.String("payment_intent_id", paymentIntentID),
+				slog.Any("error", err),
+			)
+			return 500, fmt.Errorf("failed to backfill payment intent: %w", err)
+		}
+	} else {
+		// Missing PI on a payment-mode session should not happen, but we log
+		// rather than fail because balance credit is more important than the link.
+		s.logger.Warn("checkout_completed_missing_payment_intent",
+			slog.String("session_id", session.ID),
+			slog.String("event_id", event.ID),
+		)
+	}
+
 	// Get current balance before update for accurate transaction records
 	var currentBalance float64
 	err = tx.QueryRowContext(ctx, "SELECT COALESCE(credit_balance, 0) FROM users WHERE id = $1 FOR UPDATE", userID).Scan(&currentBalance)
