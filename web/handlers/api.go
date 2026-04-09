@@ -40,7 +40,7 @@ func internalError(w http.ResponseWriter, log *slog.Logger, err error, userMsg s
 }
 
 type apiScrapeRequest struct {
-	Name string `validate:"required"`
+	Name string `json:"name" validate:"required,min=1,max=200"`
 	models.JobData
 }
 

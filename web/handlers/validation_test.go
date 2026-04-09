@@ -8,6 +8,37 @@ import (
 	"testing"
 )
 
+// validBody returns a baseline request body that satisfies every cap. Each
+// table-driven case clones this map and mutates one field to assert the
+// corresponding rejection branch.
+func validBody() map[string]interface{} {
+	return map[string]interface{}{
+		"name":        "test job",
+		"keywords":    []string{"pizza"},
+		"lang":        "en",
+		"depth":       5,
+		"reviews_max": 100,
+		"max_results": 10,
+		"max_time":    60,
+	}
+}
+
+func cloneBody(overrides map[string]interface{}) map[string]interface{} {
+	out := validBody()
+	for k, v := range overrides {
+		out[k] = v
+	}
+	return out
+}
+
+// dropKey returns a clone of the valid body with one key removed. Used to
+// assert that required fields are enforced.
+func dropKey(key string) map[string]interface{} {
+	out := validBody()
+	delete(out, key)
+	return out
+}
+
 func TestAPIHandlers_Scrape_Validation(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -16,202 +47,123 @@ func TestAPIHandlers_Scrape_Validation(t *testing.T) {
 	}{
 		{
 			name: "Valid Request",
-			body: map[string]interface{}{
-				"name":        "test job",
-				"keywords":    []string{"pizza"},
-				"lang":        "en",
-				"depth":       5,
-				"reviews_max": 100,
-			},
+			body: validBody(),
 			// Expect 401 because validation passes but auth is missing
 			expectedStatus: http.StatusUnauthorized,
 		},
 		{
-			name: "Missing Name",
-			body: map[string]interface{}{
-				"keywords": []string{"pizza"},
-			},
+			name:           "Missing Name",
+			body:           dropKey("name"),
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name: "Missing Keywords",
-			body: map[string]interface{}{
-				"name": "test job",
-			},
+			name:           "Missing Keywords",
+			body:           dropKey("keywords"),
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name: "Empty Keywords",
-			body: map[string]interface{}{
-				"name":     "test job",
-				"keywords": []string{},
-			},
+			name:           "Empty Keywords",
+			body:           cloneBody(map[string]interface{}{"keywords": []string{}}),
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name: "Invalid Lang",
-			body: map[string]interface{}{
-				"name":        "test job",
-				"keywords":    []string{"pizza"},
-				"lang":        "eng", // Too long
-				"depth":       5,
-				"reviews_max": 100,
-			},
+			name:           "Invalid Lang Length",
+			body:           cloneBody(map[string]interface{}{"lang": "eng"}),
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name: "Invalid Zoom",
-			body: map[string]interface{}{
-				"name":        "test job",
-				"keywords":    []string{"pizza"},
-				"lang":        "en",
-				"zoom":        22, // Max is 21
-				"depth":       5,
-				"reviews_max": 100,
-			},
+			name:           "Invalid Zoom",
+			body:           cloneBody(map[string]interface{}{"zoom": 22}),
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name: "Missing Depth",
-			body: map[string]interface{}{
-				"name":        "test job",
-				"keywords":    []string{"pizza"},
-				"lang":        "en",
-				"reviews_max": 100,
-			},
+			name:           "Missing Depth",
+			body:           dropKey("depth"),
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name: "Missing ReviewsMax",
-			body: map[string]interface{}{
-				"name":     "test job",
-				"keywords": []string{"pizza"},
-				"lang":     "en",
-				"depth":    5,
-			},
+			name:           "Invalid Depth Low",
+			body:           cloneBody(map[string]interface{}{"depth": 0}),
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "Invalid Depth High",
+			body:           cloneBody(map[string]interface{}{"depth": 21}),
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "Valid ReviewsMax",
+			body:           cloneBody(map[string]interface{}{"reviews_max": 11}),
 			expectedStatus: http.StatusUnauthorized,
 		},
 		{
-			name: "Invalid Depth Low",
-			body: map[string]interface{}{
-				"name":        "test job",
-				"keywords":    []string{"pizza"},
-				"lang":        "en",
-				"depth":       0, // Min is 1
-				"reviews_max": 100,
-			},
+			name:           "Invalid ReviewsMax Negative",
+			body:           cloneBody(map[string]interface{}{"reviews_max": -1}),
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name: "Invalid Depth High",
-			body: map[string]interface{}{
-				"name":        "test job",
-				"keywords":    []string{"pizza"},
-				"lang":        "en",
-				"depth":       21, // Max is 20
-				"reviews_max": 100,
-			},
+			name:           "Invalid Keywords Max",
+			body:           cloneBody(map[string]interface{}{"keywords": []string{"1", "2", "3", "4", "5", "6"}}),
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name: "Valid ReviewsMax",
-			body: map[string]interface{}{
-				"name":        "test job",
-				"keywords":    []string{"pizza"},
-				"lang":        "en",
-				"reviews_max": 11, // Min is 11
-				"depth":       5,
-			},
+			name:           "Missing Lang",
+			body:           dropKey("lang"),
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "Valid ReviewsMax 0",
+			body:           cloneBody(map[string]interface{}{"reviews_max": 0}),
 			expectedStatus: http.StatusUnauthorized,
 		},
 		{
-			name: "Invalid ReviewsMax Low",
-			body: map[string]interface{}{
-				"name":        "test job",
-				"keywords":    []string{"pizza"},
-				"lang":        "en",
-				"reviews_max": -1, // Min is 0
-				"depth":       5,
-			},
+			name:           "Invalid ReviewsMax Above Cap",
+			body:           cloneBody(map[string]interface{}{"reviews_max": 501}),
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name: "Invalid Keywords Max",
-			body: map[string]interface{}{
-				"name":        "test job",
-				"keywords":    []string{"1", "2", "3", "4", "5", "6"}, // Max is 5
-				"lang":        "en",
-				"depth":       5,
-				"reviews_max": 100,
-			},
+			name:           "Invalid ReviewsMax Legacy 9999",
+			body:           cloneBody(map[string]interface{}{"reviews_max": 9999}),
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name: "Missing Lang",
-			body: map[string]interface{}{
-				"name":        "test job",
-				"keywords":    []string{"pizza"},
-				"depth":       5,
-				"reviews_max": 100,
-			},
+			name:           "Invalid MaxResults Zero",
+			body:           cloneBody(map[string]interface{}{"max_results": 0}),
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name: "Valid ReviewsMax 0",
-			body: map[string]interface{}{
-				"name":        "test job",
-				"keywords":    []string{"pizza"},
-				"lang":        "en",
-				"depth":       5,
-				"reviews_max": 0, // 0 is now allowed
-			},
+			name:           "Invalid MaxResults Above Cap",
+			body:           cloneBody(map[string]interface{}{"max_results": 501}),
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "Valid MaxResults At Cap",
+			body:           cloneBody(map[string]interface{}{"max_results": 500}),
 			expectedStatus: http.StatusUnauthorized,
 		},
 		{
-			name: "Invalid ReviewsMax High",
-			body: map[string]interface{}{
-				"name":        "test job",
-				"keywords":    []string{"pizza"},
-				"lang":        "en",
-				"depth":       5,
-				"reviews_max": 10000, // Max is 9999
-			},
+			name:           "Invalid MaxResults Legacy 1000",
+			body:           cloneBody(map[string]interface{}{"max_results": 1000}),
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name: "Valid MaxResults 0",
-			body: map[string]interface{}{
-				"name":        "test job",
-				"keywords":    []string{"pizza"},
-				"max_results": 0, // 0 is allowed
-				"depth":       5,
-				"reviews_max": 100,
-				"lang":        "en",
-			},
+			name:           "Missing MaxTime",
+			body:           dropKey("max_time"),
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "Valid ImagesMax",
+			body:           cloneBody(map[string]interface{}{"images_max": 5000}),
 			expectedStatus: http.StatusUnauthorized,
 		},
 		{
-			name: "Valid MaxResults 1000",
-			body: map[string]interface{}{
-				"name":        "test job",
-				"keywords":    []string{"pizza"},
-				"max_results": 1000, // Max is 1000
-				"depth":       5,
-				"reviews_max": 100,
-				"lang":        "en",
-			},
-			expectedStatus: http.StatusUnauthorized,
+			name:           "Invalid ImagesMax Above Cap",
+			body:           cloneBody(map[string]interface{}{"images_max": 20001}),
+			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name: "Invalid MaxResults High",
-			body: map[string]interface{}{
-				"name":        "test job",
-				"keywords":    []string{"pizza"},
-				"max_results": 1001, // Max is 1000
-				"depth":       5,
-				"reviews_max": 100,
-				"lang":        "en",
-			},
+			name:           "Invalid Radius Above Cap",
+			body:           cloneBody(map[string]interface{}{"radius": 50001}),
 			expectedStatus: http.StatusBadRequest,
 		},
 	}
@@ -241,36 +193,18 @@ func TestAPIHandlers_EstimateJobCost_Validation(t *testing.T) {
 	}{
 		{
 			name: "Valid Request",
-			body: map[string]interface{}{
-				"name":        "test job",
-				"keywords":    []string{"pizza"},
-				"lang":        "en",
-				"depth":       5,
-				"reviews_max": 100,
-			},
+			body: validBody(),
 			// Expect 401 because validation passes but auth is missing
 			expectedStatus: http.StatusUnauthorized,
 		},
 		{
-			name: "Missing Name",
-			body: map[string]interface{}{
-				"keywords":    []string{"pizza"},
-				"lang":        "en",
-				"depth":       5,
-				"reviews_max": 100,
-			},
-			// Name is required in apiScrapeRequest
+			name:           "Missing Name",
+			body:           dropKey("name"),
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name: "Invalid Keywords",
-			body: map[string]interface{}{
-				"name":        "test job",
-				"keywords":    []string{},
-				"lang":        "en",
-				"depth":       5,
-				"reviews_max": 100,
-			},
+			name:           "Invalid Keywords",
+			body:           cloneBody(map[string]interface{}{"keywords": []string{}}),
 			expectedStatus: http.StatusBadRequest,
 		},
 	}

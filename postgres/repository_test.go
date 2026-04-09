@@ -151,14 +151,15 @@ func createTestJob(t *testing.T) models.Job {
 		Date:   time.Now().UTC(),
 		Status: models.StatusPending,
 		Data: models.JobData{
-			Keywords: []string{"coffee", "shop"},
-			Lang:     "en",
-			Zoom:     15,
-			Lat:      "40.712776",
-			Lon:      "-74.005974",
-			FastMode: true,
-			Depth:    1,
-			MaxTime:  time.Minute * 5,
+			Keywords:   []string{"coffee", "shop"},
+			Lang:       "en",
+			Zoom:       15,
+			Lat:        "40.712776",
+			Lon:        "-74.005974",
+			FastMode:   true,
+			Depth:      1,
+			MaxResults: 10,
+			MaxTime:    time.Minute * 5,
 		},
 	}
 }

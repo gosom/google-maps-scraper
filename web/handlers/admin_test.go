@@ -62,11 +62,12 @@ func TestAdminCreateJob_SetsAdminSource(t *testing.T) {
 	}
 
 	body := map[string]interface{}{
-		"name":     "Berlin mass scrape",
-		"keywords": []string{"restaurants in Berlin"},
-		"lang":     "de",
-		"depth":    10,
-		"max_time": 60,
+		"name":        "Berlin mass scrape",
+		"keywords":    []string{"restaurants in Berlin"},
+		"lang":        "de",
+		"depth":       10,
+		"max_time":    60,
+		"max_results": 100,
 	}
 	b, _ := json.Marshal(body)
 

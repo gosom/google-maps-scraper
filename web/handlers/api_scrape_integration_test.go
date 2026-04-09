@@ -27,8 +27,11 @@ import (
 
 const (
 	berlinWeddingCafeKeyword = "Berlin wedding cafe"
-	unlimitedMaxResults      = 0
-	unlimitedReviewsMax      = 9999
+	// Concrete values that fit within the post-Task-2.2 caps. The previous
+	// "unlimited" sentinels (max_results=0, reviews_max=9999) are now
+	// rejected by the validator — see web/utils/cap_params.go.
+	boundedMaxResults = 100
+	boundedReviewsMax = 50
 )
 
 var (
@@ -159,7 +162,7 @@ func TestAPIJobs_ScrapeParameterMatrix(t *testing.T) {
 			expectReviews:   true,
 		},
 		{
-			name: "unlimited_results_images_no_reviews_depth6",
+			name: "bounded100_images_no_reviews_depth6",
 			jobData: map[string]any{
 				"keywords":    []string{berlinWeddingCafeKeyword},
 				"lang":        "de",
@@ -167,14 +170,14 @@ func TestAPIJobs_ScrapeParameterMatrix(t *testing.T) {
 				"images":      true,
 				"max_time":    900,
 				"reviews_max": 0,
-				"max_results": unlimitedMaxResults,
+				"max_results": boundedMaxResults,
 			},
 			expectedData: map[string]any{
 				"keywords":    []string{berlinWeddingCafeKeyword},
 				"depth":       6,
 				"images":      true,
 				"reviews_max": 0,
-				"max_results": unlimitedMaxResults,
+				"max_results": boundedMaxResults,
 			},
 			minResults:      1,
 			assertMaxResult: false,
@@ -182,22 +185,22 @@ func TestAPIJobs_ScrapeParameterMatrix(t *testing.T) {
 			expectReviews:   false,
 		},
 		{
-			name: "unlimited_results_images_reviews_depth5",
+			name: "bounded100_images_reviews_depth5",
 			jobData: map[string]any{
 				"keywords":    []string{berlinWeddingCafeKeyword},
 				"lang":        "de",
 				"depth":       5,
 				"images":      true,
 				"max_time":    900,
-				"reviews_max": unlimitedReviewsMax,
-				"max_results": unlimitedMaxResults,
+				"reviews_max": boundedReviewsMax,
+				"max_results": boundedMaxResults,
 			},
 			expectedData: map[string]any{
 				"keywords":    []string{berlinWeddingCafeKeyword},
 				"depth":       5,
 				"images":      true,
-				"reviews_max": unlimitedReviewsMax,
-				"max_results": unlimitedMaxResults,
+				"reviews_max": boundedReviewsMax,
+				"max_results": boundedMaxResults,
 			},
 			minResults:      1,
 			assertMaxResult: false,
@@ -205,22 +208,22 @@ func TestAPIJobs_ScrapeParameterMatrix(t *testing.T) {
 			expectReviews:   true,
 		},
 		{
-			name: "unlimited_results_images_reviews_depth6",
+			name: "bounded100_images_reviews_depth6",
 			jobData: map[string]any{
 				"keywords":    []string{berlinWeddingCafeKeyword},
 				"lang":        "de",
 				"depth":       6,
 				"images":      true,
 				"max_time":    900,
-				"reviews_max": unlimitedReviewsMax,
-				"max_results": unlimitedMaxResults,
+				"reviews_max": boundedReviewsMax,
+				"max_results": boundedMaxResults,
 			},
 			expectedData: map[string]any{
 				"keywords":    []string{berlinWeddingCafeKeyword},
 				"depth":       6,
 				"images":      true,
-				"reviews_max": unlimitedReviewsMax,
-				"max_results": unlimitedMaxResults,
+				"reviews_max": boundedReviewsMax,
+				"max_results": boundedMaxResults,
 			},
 			minResults:      1,
 			assertMaxResult: false,
@@ -228,22 +231,22 @@ func TestAPIJobs_ScrapeParameterMatrix(t *testing.T) {
 			expectReviews:   true,
 		},
 		{
-			name: "unlimited_results_images_reviews_depth7",
+			name: "bounded100_images_reviews_depth7",
 			jobData: map[string]any{
 				"keywords":    []string{berlinWeddingCafeKeyword},
 				"lang":        "de",
 				"depth":       7,
 				"images":      true,
 				"max_time":    900,
-				"reviews_max": unlimitedReviewsMax,
-				"max_results": unlimitedMaxResults,
+				"reviews_max": boundedReviewsMax,
+				"max_results": boundedMaxResults,
 			},
 			expectedData: map[string]any{
 				"keywords":    []string{berlinWeddingCafeKeyword},
 				"depth":       7,
 				"images":      true,
-				"reviews_max": unlimitedReviewsMax,
-				"max_results": unlimitedMaxResults,
+				"reviews_max": boundedReviewsMax,
+				"max_results": boundedMaxResults,
 			},
 			minResults:      1,
 			assertMaxResult: false,

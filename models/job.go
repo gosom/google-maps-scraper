@@ -5,22 +5,35 @@ import (
 	"time"
 )
 
-// JobData contains the configurable options for a job
+// JobData contains the configurable options for a job.
+//
+// All integer caps mirror the constants in web/utils/cap_params.go (struct
+// tags can't reference Go consts, so the literal values must be kept in sync
+// — the web/utils.ValidateJobData service-layer check uses the named consts).
+// There is NO "unlimited" sentinel: every integer field has a strict min and
+// max, and clients paginate or run multiple jobs.
 type JobData struct {
-	Keywords   []string      `json:"keywords" validate:"required,min=1,max=5"`
-	Lang       string        `json:"lang" validate:"required,len=2"`
-	Depth      int           `json:"depth" validate:"min=1,max=20"`
-	Email      bool          `json:"email"`
-	Images     bool          `json:"images"`
-	ReviewsMax int           `json:"reviews_max" validate:"min=0,max=9999"` // Max Reviews: 0-9999 (0 = don't scrape reviews)
-	MaxResults int           `json:"max_results" validate:"min=0,max=1000"` // Max results: 0-1000 (0 = unlimited)
-	Lat        string        `json:"lat" validate:"omitempty,latitude"`
-	Lon        string        `json:"lon" validate:"omitempty,longitude"`
-	Zoom       int           `json:"zoom" validate:"omitempty,min=0,max=21"`
-	Radius     int           `json:"radius" validate:"omitempty,min=0"`
-	MaxTime    time.Duration `json:"max_time"`
+	Keywords []string `json:"keywords" validate:"required,min=1,max=5,dive,min=1,max=200"`
+	Lang     string   `json:"lang"     validate:"required,len=2"`
+	Depth    int      `json:"depth"    validate:"required,min=1,max=20"`
+	Email    bool     `json:"email"`
+	// Images is the legacy on/off flag for image scraping. It is preserved
+	// here so the runner plumbing in Task 2.3 can drop it in one focused
+	// commit. New code MUST consume ImagesMax instead.
+	Images bool `json:"images"`
+	// ImagesMax is the TOTAL number of images across all places in the job
+	// — NOT per place. The literal 20000 here mirrors utils.CapImagesMaxTotal.
+	// 0 means "skip image scraping" (the billing-safe default).
+	ImagesMax  int           `json:"images_max"  validate:"omitempty,min=0,max=20000"`
+	ReviewsMax int           `json:"reviews_max" validate:"omitempty,min=0,max=500"`
+	MaxResults int           `json:"max_results" validate:"required,min=1,max=500"`
+	Lat        string        `json:"lat"         validate:"omitempty,latitude"`
+	Lon        string        `json:"lon"         validate:"omitempty,longitude"`
+	Zoom       int           `json:"zoom"        validate:"omitempty,min=0,max=21"`
+	Radius     int           `json:"radius"      validate:"omitempty,min=0,max=50000"`
+	MaxTime    time.Duration `json:"max_time"    validate:"required"`
 	FastMode   bool          `json:"fast_mode"`
-	Proxies    []string      `json:"proxies"`
+	Proxies    []string      `json:"proxies"     validate:"omitempty,max=100,dive,max=2048"`
 }
 
 // Job represents a scraping job
