@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
@@ -254,6 +255,31 @@ func (h *APIHandlers) GetJobs(w http.ResponseWriter, r *http.Request) {
 	renderJSON(w, http.StatusOK, jobs)
 }
 
+// allowedJobSorts is the closed allowlist of columns the GetUserJobs
+// endpoint will sort by. Anything outside this set is rejected with 400
+// — this prevents an attacker from sniffing column names by passing
+// `?sort=password` and observing whether the request succeeds.
+//
+// Security: this MUST be a literal set, not a tag scan or reflection
+// over models.Job. A reflection-based allowlist would silently include
+// any field added to the Job struct in the future, defeating the
+// allowlist. Adding a column requires a deliberate code change here.
+var allowedJobSorts = map[string]struct{}{
+	"created_at": {},
+	"name":       {},
+	"status":     {},
+	"updated_at": {},
+}
+
+// maxJobSearchLen caps the `?search=` query parameter at 200 bytes.
+// The search value flows into a SQL ILIKE in the repository layer; an
+// unbounded search string forces the database into a full table scan
+// against arbitrary input, which is both a CWE-400 and a slow-path
+// amplifier (one user can DoS the jobs list for everyone). 200 bytes
+// is generous for human-typed search input — anything beyond that is
+// almost certainly an attack or a buggy client.
+const maxJobSearchLen = 200
+
 func (h *APIHandlers) GetUserJobs(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
 		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
@@ -287,6 +313,17 @@ func (h *APIHandlers) GetUserJobs(w http.ResponseWriter, r *http.Request) {
 
 	sort := "created_at"
 	if v := q.Get("sort"); v != "" {
+		// Strict allowlist — see allowedJobSorts above. Reject unknown
+		// values with 400 instead of silently coercing to default,
+		// which would mask client typos and let an attacker fingerprint
+		// the schema by observing default-vs-explicit behavior.
+		if _, ok := allowedJobSorts[v]; !ok {
+			renderJSON(w, http.StatusBadRequest, models.APIError{
+				Code:    http.StatusBadRequest,
+				Message: "invalid sort field (allowed: created_at, name, status, updated_at)",
+			})
+			return
+		}
 		sort = v
 	}
 
@@ -296,6 +333,18 @@ func (h *APIHandlers) GetUserJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	search := q.Get("search")
+	// len() is bytes, not runes — that matches what the validator/v10
+	// `max=N` tag does in models/job.go and what the SQL LIKE engine
+	// actually consumes. A 200-byte cap is ~200 ASCII characters or
+	// ~50-66 CJK characters; both are well above any human-typed
+	// search input.
+	if len(search) > maxJobSearchLen {
+		renderJSON(w, http.StatusBadRequest, models.APIError{
+			Code:    http.StatusBadRequest,
+			Message: fmt.Sprintf("search exceeds maximum length of %d bytes", maxJobSearchLen),
+		})
+		return
+	}
 
 	params := models.PaginatedJobsParams{
 		UserID: userID,
