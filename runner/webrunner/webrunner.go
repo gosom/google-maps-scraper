@@ -756,13 +756,25 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		coords = job.Data.Lat + "," + job.Data.Lon
 	}
 
+	// Per-job total image budget. When ImagesMax > 0, every PlaceJob in
+	// this scrape job shares this counter; once exhausted, image extraction
+	// is skipped for the remaining places (place metadata, reviews, and
+	// contact details continue to scrape — only image extraction stops).
+	// See gmaps.PlaceJob.extractImages for the enforcement logic.
+	var imageBudget *atomic.Int64
+	if job.Data.ImagesMax > 0 {
+		imageBudget = &atomic.Int64{}
+		imageBudget.Store(int64(job.Data.ImagesMax))
+	}
+
 	seedJobs, err := runner.CreateSeedJobs(runner.SeedJobConfig{
 		FastMode:       job.Data.FastMode,
 		LangCode:       job.Data.Lang,
 		Input:          strings.NewReader(strings.Join(job.Data.Keywords, "\n")),
 		MaxDepth:       job.Data.Depth,
 		Email:          job.Data.Email,
-		Images:         job.Data.Images,
+		Images:         job.Data.ImagesMax > 0,
+		ImageBudget:    imageBudget,
 		Debug:          w.cfg.Debug,
 		ReviewsMax:     job.Data.ReviewsMax,
 		GeoCoordinates: coords,

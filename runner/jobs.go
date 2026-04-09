@@ -9,6 +9,7 @@ import (
 	"plugin"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/gosom/google-maps-scraper/deduper"
 	"github.com/gosom/google-maps-scraper/exiter"
@@ -18,12 +19,22 @@ import (
 
 // SeedJobConfig groups all parameters needed to create seed jobs.
 type SeedJobConfig struct {
-	FastMode       bool
-	LangCode       string
-	Input          io.Reader
-	MaxDepth       int
-	Email          bool
-	Images         bool
+	FastMode bool
+	LangCode string
+	Input    io.Reader
+	MaxDepth int
+	Email    bool
+	// Images enables image extraction at all. When false, no images are
+	// scraped regardless of ImageBudget. When true, images are scraped
+	// subject to the ImageBudget cross-place enforcement (if non-nil).
+	Images bool
+	// ImageBudget is the per-job total image budget shared across every
+	// PlaceJob in this seed batch. When non-nil, the scraper checks the
+	// counter before extracting images for each place and decrements after,
+	// stopping image extraction once the budget is exhausted. Place metadata,
+	// reviews, and contact details continue to scrape — only image extraction
+	// stops. When nil (CLI mode), no cross-place enforcement.
+	ImageBudget    *atomic.Int64
 	Debug          bool
 	ReviewsMax     int
 	GeoCoordinates string
@@ -114,6 +125,13 @@ func CreateSeedJobs(cfg SeedJobConfig) (jobs []scrapemate.IJob, err error) {
 
 			if cfg.Debug {
 				opts = append(opts, gmaps.WithDebug())
+			}
+
+			// Per-job total image budget (cross-place enforcement). When the
+			// counter reaches zero, image extraction is skipped for all
+			// subsequent places — see gmaps.PlaceJob.extractImages.
+			if cfg.ImageBudget != nil {
+				opts = append(opts, gmaps.WithImageBudget(cfg.ImageBudget))
 			}
 
 			job = gmaps.NewGmapJob(id, cfg.LangCode, query, cfg.MaxDepth, cfg.Email, cfg.Images, cfg.ReviewsMax, cfg.GeoCoordinates, cfg.Zoom, opts...)

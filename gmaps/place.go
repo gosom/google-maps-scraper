@@ -52,6 +52,12 @@ type PlaceJob struct {
 	ExitMonitor         exiter.Exiter
 	ExtractExtraReviews bool
 	ReviewsMax          int // Maximum number of reviews to extract
+	// ImageBudget is a per-job total image budget shared with all sibling
+	// PlaceJobs in the same scrape job. When non-nil, extractImages checks
+	// the counter before scraping and decrements after — once the budget
+	// is exhausted, image extraction is skipped for the remaining places
+	// in the job. When nil, no cross-place enforcement.
+	ImageBudget *atomic.Int64
 }
 
 func NewPlaceJob(parentID, langCode, u string, extractEmail, extractImages bool, reviewsMax int, opts ...PlaceJobOptions) *PlaceJob {
@@ -88,6 +94,17 @@ func NewPlaceJob(parentID, langCode, u string, extractEmail, extractImages bool,
 func WithPlaceJobExitMonitor(exitMonitor exiter.Exiter) PlaceJobOptions {
 	return func(j *PlaceJob) {
 		j.ExitMonitor = exitMonitor
+	}
+}
+
+// WithPlaceJobImageBudget attaches a per-job total image budget to the
+// PlaceJob. The counter is shared via pointer with sibling PlaceJobs in
+// the same scrape job — once exhausted, image extraction is skipped for
+// the remaining places. Pass nil (or omit this option) to disable
+// cross-place image budget enforcement.
+func WithPlaceJobImageBudget(budget *atomic.Int64) PlaceJobOptions {
+	return func(j *PlaceJob) {
+		j.ImageBudget = budget
 	}
 }
 
@@ -295,11 +312,32 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 	return &entry, nil, nil
 }
 
-// extractImages performs enhanced image extraction if enabled
+// extractImages performs enhanced image extraction if enabled.
+//
+// When j.ImageBudget is non-nil, the budget is checked BEFORE scraping
+// (skip if exhausted) and decremented AFTER scraping by the number of
+// images actually extracted. This is the cross-place enforcement that
+// bounds total image extraction across an entire scrape job — see §2 of
+// docs/superpowers/plans/2026-04-08-api-production-readiness-audit.md
+// for the rationale.
+//
+// Race-safety note: Load() and Add() are independent operations, so two
+// concurrent PlaceJobs can both observe a non-zero budget at the same
+// instant and both decide to scrape, even if the post-scrape decrement
+// would push the counter below zero. The result is a small overshoot
+// bounded by `concurrency × images_per_place`. This is acceptable: the
+// goal is bounding billing exposure, not exact accounting, and the API
+// already enforces a hard cap of 20000 at the validator layer.
 func (j *PlaceJob) extractImages(ctx context.Context, page playwright.Page, resp *scrapemate.Response) {
 	log := scrapemate.GetLoggerFromContext(ctx)
 
 	if !j.ExtractImages {
+		return
+	}
+
+	// Cross-place per-job total budget check (Task 2.3).
+	if j.ImageBudget != nil && j.ImageBudget.Load() <= 0 {
+		log.Info(fmt.Sprintf("Image budget exhausted — skipping image extraction for job %s", j.ID))
 		return
 	}
 
@@ -315,6 +353,13 @@ func (j *PlaceJob) extractImages(ctx context.Context, page playwright.Page, resp
 		// Log error but don't fail the entire operation
 		log.Warn(fmt.Sprintf("Image extraction failed for job %s: %v", j.ID, err))
 		return
+	}
+
+	// Decrement the per-job total budget by the number of images we just
+	// extracted. The next PlaceJob to call extractImages will observe the
+	// reduced counter and bail early if the budget is exhausted.
+	if j.ImageBudget != nil && len(imageResult) > 0 {
+		j.ImageBudget.Add(-int64(len(imageResult)))
 	}
 
 	// Store images data and metadata for processing in Process method

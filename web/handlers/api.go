@@ -83,7 +83,7 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 			slog.String("lang", req.JobData.Lang),
 			slog.Int("depth", req.JobData.Depth),
 			slog.Bool("email", req.JobData.Email),
-			slog.Bool("images", req.JobData.Images),
+			slog.Int("images_max", req.JobData.ImagesMax),
 			slog.Int("reviews_max", req.JobData.ReviewsMax),
 			slog.Int("max_results", req.JobData.MaxResults),
 			slog.String("lat", req.JobData.Lat),

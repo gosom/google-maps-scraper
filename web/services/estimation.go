@@ -194,9 +194,16 @@ func (s *EstimationService) EstimateJobCost(ctx context.Context, jobData *models
 		reviewsMicro = int64(estimatedReviews) * priceReview
 	}
 
-	// 6. Calculate images cost (if images are requested)
-	if jobData.Images {
+	// 6. Calculate images cost (if images are requested).
+	// images_max > 0 is the on/off signal — the legacy `images` bool was
+	// dropped in migration 000033. The estimate is bounded by ImagesMax
+	// when set, since the runner stops extracting once the per-job total
+	// budget is exhausted.
+	if jobData.ImagesMax > 0 {
 		estimatedImages := s.estimateImageCount(jobData, estimatedPlaces)
+		if estimatedImages > jobData.ImagesMax {
+			estimatedImages = jobData.ImagesMax
+		}
 		estimate.EstimatedImages = estimatedImages
 		imagesMicro = int64(estimatedImages) * priceImage
 	}

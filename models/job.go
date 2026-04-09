@@ -17,13 +17,12 @@ type JobData struct {
 	Lang     string   `json:"lang"     validate:"required,len=2"`
 	Depth    int      `json:"depth"    validate:"required,min=1,max=20"`
 	Email    bool     `json:"email"`
-	// Images is the legacy on/off flag for image scraping. It is preserved
-	// here so the runner plumbing in Task 2.3 can drop it in one focused
-	// commit. New code MUST consume ImagesMax instead.
-	Images bool `json:"images"`
 	// ImagesMax is the TOTAL number of images across all places in the job
 	// — NOT per place. The literal 20000 here mirrors utils.CapImagesMaxTotal.
-	// 0 means "skip image scraping" (the billing-safe default).
+	// 0 means "skip image scraping" (the billing-safe default). Any positive
+	// value enables image scraping with a per-job total budget enforced by
+	// the runner via a shared atomic counter (cross-place). The legacy
+	// `images` boolean was dropped in migration 000033.
 	ImagesMax  int           `json:"images_max"  validate:"omitempty,min=0,max=20000"`
 	ReviewsMax int           `json:"reviews_max" validate:"omitempty,min=0,max=500"`
 	MaxResults int           `json:"max_results" validate:"required,min=1,max=500"`
