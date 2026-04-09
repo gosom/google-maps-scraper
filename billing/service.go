@@ -70,6 +70,16 @@ func New(db *sql.DB, cfg *config.Service, stripeSecretKey, webhookSigningKey str
 	}
 }
 
+// checkoutIdempotencyKey builds the Stripe idempotency key for a checkout
+// session. Scoped to (user, credits, currency, hour-bucket) so the 24h
+// Stripe dedup window collapses retries-within-an-hour to the same
+// session and lets retries-across-hours create a fresh one. Pure function
+// to enable unit testing. (S-H1)
+func checkoutIdempotencyKey(userID string, credits int, currency string, now time.Time) string {
+	bucket := now.Truncate(time.Hour).Unix()
+	return fmt.Sprintf("checkout:%s:%d:%s:%d", userID, credits, currency, bucket)
+}
+
 // CreateCheckoutSession creates a Stripe Checkout Session for purchasing credits.
 func (s *Service) CreateCheckoutSession(ctx context.Context, req CheckoutRequest) (CheckoutResponse, error) {
 	if req.UserID == "" {
@@ -138,6 +148,20 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, req CheckoutRequest
 			"currency": req.Currency,
 		},
 	}
+
+	// Idempotency key scoped to (user, credits, currency, hour). Stripe's
+	// 24h dedup window means repeated attempts within an hour collapse to
+	// the same Stripe session — which prevents network retries / SDK retries
+	// / double-clicks from creating duplicate sessions and duplicate
+	// stripe_payments rows. Crossing an hour boundary creates a fresh
+	// session so a user who closed the tab can retry without being stuck on
+	// a stale checkout URL. (S-H1)
+	//
+	// Stripe docs: https://docs.stripe.com/error-low-level#idempotency
+	//   "Use [idempotency keys] for all POST requests to the Stripe API."
+	params.Params.IdempotencyKey = stripe.String(
+		checkoutIdempotencyKey(req.UserID, creditsInt, req.Currency, time.Now().UTC()),
+	)
 
 	sess, err := checkoutsession.New(params)
 	if err != nil {
