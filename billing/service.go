@@ -713,11 +713,20 @@ func (s *Service) ReconcileSession(ctx context.Context, sessionID, callerUserID 
 		// path. The S-M6 fetch in handleCheckoutSessionCompleted may have
 		// failed silently (Stripe outage etc.); reconcile is the operator's
 		// retry hook to set it after the fact. (S-M6)
+		//
+		// Best-effort: log on failure but do NOT abort the commit. A genuine
+		// transient DB error (e.g. serialization failure) will surface from
+		// tx.Commit() below anyway, so we don't lose the signal.
 		if sess.PaymentIntent != nil && sess.PaymentIntent.LatestCharge != nil && sess.PaymentIntent.LatestCharge.ReceiptURL != "" {
-			_, _ = tx.ExecContext(ctx,
+			if _, err := tx.ExecContext(ctx,
 				`UPDATE stripe_payments SET stripe_receipt_url = $1
 				 WHERE stripe_checkout_session_id = $2 AND stripe_receipt_url IS NULL`,
-				sess.PaymentIntent.LatestCharge.ReceiptURL, sessionID)
+				sess.PaymentIntent.LatestCharge.ReceiptURL, sessionID); err != nil {
+				s.logger.Warn("reconcile_receipt_url_repair_failed",
+					slog.String("session_id", sessionID),
+					slog.Any("error", err),
+				)
+			}
 		}
 		return tx.Commit()
 	}
