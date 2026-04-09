@@ -219,23 +219,65 @@ This change ships as a **breaking** change from the frontend's perspective. Coor
 
 ## Chunk 2: Cap Parameter Convention Rollout — ✅ COMPLETE (2026-04-09)
 
-This is the §2 decision applied. **Coordinate with the frontend** before merging — `reviews_max=9999` will become a 400 error.
+This is the §2 decision applied. **Coordinate with the frontend** before merging — `reviews_max=9999` and `max_results=0` (the legacy "unlimited" sentinels) will become 400 errors, and the `max_time` ceiling is now 1 hour (was 4 hours).
 
-**Status:** All three tasks landed.
+**Status:** Four tasks landed.
 
 - Task 2.1 — `fa30aa4` `feat(api): add unified cap-parameter constants and lang allowlist`
 - Task 2.2 — `79845e8` `feat(api): unified cap-parameter convention; cap job name`
 - Task 2.3 — `84f687a` `feat(scraper): replace images bool with images_max cap; backfill in-flight jobs`
+- Task 2.4 — *(this commit)* `feat(api): REST defaults + headless-realistic max_time` — applied the brainstorm outcome (REST best-practice posture, ApplyJobDataDefaults helper, max_time ceiling 4h→1h, images_max ceiling 20k→40k for production concurrency 8)
 
-The cap convention is now end-to-end:
-- `web/utils/cap_params.go` is the single source of truth for every integer cap.
-- `models.JobData` struct tags mirror the constants and the `Images` boolean is gone.
-- `web/utils/validation.go` enforces every cap at the service layer for non-HTTP callers.
+### REST best-practice resolution (the brainstorm outcome — 2026-04-09)
+
+The pay-as-you-go business model creates tension between two design goals:
+- **REST best practice**: conservative defaults so clients hitting the API directly don't accidentally trigger expensive operations (Stripe/GitHub/Google Places all do this).
+- **Pay-as-you-go revenue alignment**: when a user does NOT cap a field, scrape generously rather than miserably.
+
+The resolution: **API stays REST-compliant; the frontend handles the revenue nudging.**
+
+- API defaults are conservative (small, cheap, fail-safe). A client hitting the API with only `name`/`keywords`/`lang` gets a 50-place job at depth 5 with no enrichment — small bill, surprising-bill-free.
+- Hard ceilings exist on every resource-consuming parameter and exceeding them returns a descriptive 400.
+- "Missing" never means "unlimited" — `web/utils.ApplyJobDataDefaults` fills in the documented defaults at the API entry point. There's no magic semantic.
+- The frontend's "no cap" UX toggles send the hard ceiling explicitly. Users who want generous scraping get it; users who hit the API directly without context get a safe default.
+
+### Final cap values (locked after the brainstorm)
+
+| Field | Default | Ceiling | Required? | Notes |
+|---|---|---|---|---|
+| `keywords` | — | 5 (≤200 bytes each) | **yes** | minimum viable request |
+| `lang` | — | 35-code ISO 639-1 allowlist | **yes** | minimum viable request |
+| `name` | — | 200 chars | **yes** | apiScrapeRequest top-level |
+| `depth` | **5** | **20** | optional | filled by ApplyJobDataDefaults |
+| `max_results` | **50** | **500** | optional | per-job total across all keywords |
+| `max_time` | **30 min** | **1 hour** | optional | headless-browser realistic ceiling |
+| `reviews_max` | **0 (skip)** | **500/place** | optional | toggle semantic — frontend sends positive value when user enables reviews |
+| `images_max` | **0 (skip)** | **40 000 total** | optional | per-job total; sized for production concurrency 8 × 1h × ~80 imgs/place |
+| `radius` | 0 (no constraint) | 50 000 m | optional | |
+| `zoom` | 0 (no zoom override) | 21 | optional | |
+| `proxies` | — | 100 (each ≤2048 bytes) | optional | |
+
+Why these specific numbers (the math the user and I worked through):
+
+- **`max_results` default = 50**: depth=5 (the depth default) naturally returns 40-50 places. The default matches the natural yield, so a client hitting the API with no parameters gets a complete (rather than truncated) job at the conservative depth.
+- **`max_results` ceiling = 500**: covers 5-keyword power-user jobs at depth=20 (~600 natural ceiling, clipped to 500).
+- **`max_time` ceiling = 1 hour**: headless Chromium scraping Google Maps degrades sharply over time — Chromium memory creep, Google's anti-bot escalation, session staleness, container supervisor SIGTERMs. 4 hours was unrealistic. 1 hour is the practical wall-clock limit; users who need more should split into multiple jobs.
+- **`images_max` ceiling = 40 000**: at production concurrency 8 with max_time = 1h and ~60s per place at full enrichment, the realistic worst case is ~480 places × ~80 images/place ≈ 38 400 images. 40 000 covers this with small headroom.
+- **`reviews_max` and `images_max` defaults = 0**: enrichments are opt-in. The frontend toggle sends a positive value when the user enables the toggle; the API default is "off."
+
+### What's wired up
+
+- `web/utils/cap_params.go` is the single source of truth for every cap and default.
+- `web/utils/validation.go` adds `ApplyJobDataDefaults(d *models.JobData)` — fills zero-valued optional fields with their defaults. Idempotent and nil-safe.
+- The HTTP handlers (`Scrape`, `EstimateJobCost`, admin `CreateJob`) all call `ApplyJobDataDefaults` between JSON decode and `validate.Struct`. This is the API safety net.
+- `models.JobData` struct tags drop `required` from `Depth`, `MaxResults`, `MaxTime`. The minimum viable request is now just `name` + `keywords` + `lang`.
 - `runner/jobs.go` plumbs an `*atomic.Int64` per-job total image budget through `gmaps.GmapJob` → `gmaps.PlaceJob`. `gmaps.PlaceJob.extractImages` checks the budget before scraping and decrements after, stopping image extraction once the budget is exhausted.
 - Migration `000033_drop_images_bool_default_images_max` backfills in-flight rows.
-- Test coverage: `web/utils/validation_test.go` (18 cases), `runner/jobs_test.go` (3 cases for budget plumbing), `gmaps/image_budget_test.go` (3 cases for the option attach behavior).
+- Test coverage: `web/utils/validation_test.go` (24 cases — 18 from Task 2.2 + 6 added by Task 2.4 for the new defaults/ceilings), `runner/jobs_test.go` (3 cases for budget plumbing), `gmaps/image_budget_test.go` (3 cases for the option attach behavior), `web/handlers/validation_test.go` (24 cases including a "minimal valid request" case that locks the new REST posture).
 
-There is one known runtime gap: the Load/Add race in `extractImages` allows concurrent PlaceJobs to overshoot the budget by `concurrency × images_per_place`. This is acceptable for billing exposure (the goal is bounding, not exact accounting) and was an explicit design decision.
+### Known runtime gap (intentional)
+
+The `Load()`/`Add(-N)` race in `extractImages` allows concurrent PlaceJobs to overshoot the budget by `concurrency × images_per_place`. At production concurrency 8 × ~80 imgs/place, worst-case overshoot is ~640 images. This is acceptable for billing exposure (the goal is bounding, not exact accounting), and was an explicit design decision — exact accounting would require a mutex on the hot path.
 
 ### Task 2.1: Create the central caps file
 

@@ -12,16 +12,16 @@ func TestCapConstants_AreSane(t *testing.T) {
 		got, want int
 	}{
 		"CapMaxResults":         {CapMaxResults, 500},
-		"DefaultMaxResults":     {DefaultMaxResults, 20},
+		"DefaultMaxResults":     {DefaultMaxResults, 50},
 		"CapReviewsMax":         {CapReviewsMax, 500},
-		"DefaultReviewsMax":     {DefaultReviewsMax, 10},
-		"CapImagesMaxTotal":     {CapImagesMaxTotal, 20_000},
+		"DefaultReviewsMax":     {DefaultReviewsMax, 0},
+		"CapImagesMaxTotal":     {CapImagesMaxTotal, 40_000},
 		"DefaultImagesMaxTotal": {DefaultImagesMaxTotal, 0},
 		"CapDepth":              {CapDepth, 20},
 		"DefaultDepth":          {DefaultDepth, 5},
 		"CapRadiusMeters":       {CapRadiusMeters, 50_000},
 		"DefaultRadiusMeters":   {DefaultRadiusMeters, 0},
-		"CapMaxTimeSeconds":     {CapMaxTimeSeconds, 14_400},
+		"CapMaxTimeSeconds":     {CapMaxTimeSeconds, 3_600},
 		"DefaultMaxTimeSeconds": {DefaultMaxTimeSeconds, 1_800},
 	}
 	for name, c := range cases {

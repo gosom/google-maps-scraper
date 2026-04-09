@@ -52,6 +52,19 @@ func TestAPIHandlers_Scrape_Validation(t *testing.T) {
 			expectedStatus: http.StatusUnauthorized,
 		},
 		{
+			// After Task 2.4: only Name + Keywords + Lang are required.
+			// Everything else is optional and filled by ApplyJobDataDefaults.
+			// This is the "minimal valid request" — locks in the REST
+			// best-practice posture from the audit plan §2.
+			name: "Minimal Valid Request With Only Required Fields",
+			body: map[string]interface{}{
+				"name":     "minimal",
+				"keywords": []string{"pizza"},
+				"lang":     "en",
+			},
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
 			name:           "Missing Name",
 			body:           dropKey("name"),
 			expectedStatus: http.StatusBadRequest,
@@ -77,13 +90,19 @@ func TestAPIHandlers_Scrape_Validation(t *testing.T) {
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name:           "Missing Depth",
+			// After Task 2.4: depth is optional with default 5. Missing
+			// depth no longer 400s — ApplyJobDataDefaults fills it in.
+			name:           "Missing Depth Defaults To 5",
 			body:           dropKey("depth"),
-			expectedStatus: http.StatusBadRequest,
+			expectedStatus: http.StatusUnauthorized,
 		},
 		{
+			// After Task 2.4: depth=0 is treated as "unset" and the default
+			// (5) fills in. To assert that the lower bound is enforced,
+			// send a NEGATIVE value — that bypasses the default-fill (only
+			// fires on zero) and trips the min=1 struct tag.
 			name:           "Invalid Depth Low",
-			body:           cloneBody(map[string]interface{}{"depth": 0}),
+			body:           cloneBody(map[string]interface{}{"depth": -1}),
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
@@ -127,9 +146,11 @@ func TestAPIHandlers_Scrape_Validation(t *testing.T) {
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name:           "Invalid MaxResults Zero",
+			// After Task 2.4: max_results is optional with default 50. An
+			// explicit zero is treated as "unset" and the default fills in.
+			name:           "MaxResults Zero Coerced To Default",
 			body:           cloneBody(map[string]interface{}{"max_results": 0}),
-			expectedStatus: http.StatusBadRequest,
+			expectedStatus: http.StatusUnauthorized,
 		},
 		{
 			name:           "Invalid MaxResults Above Cap",
@@ -147,18 +168,26 @@ func TestAPIHandlers_Scrape_Validation(t *testing.T) {
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name:           "Missing MaxTime",
+			// After Task 2.4: max_time is optional with default 30 min.
+			// Missing max_time no longer 400s.
+			name:           "Missing MaxTime Defaults To 30m",
 			body:           dropKey("max_time"),
-			expectedStatus: http.StatusBadRequest,
+			expectedStatus: http.StatusUnauthorized,
 		},
+		// Note: max_time cap (1h ceiling) is enforced in the service-layer
+		// ValidateJob, which runs AFTER auth. An unauth test request with
+		// bad max_time would get 401, not a useful cap-related 4xx, so the
+		// cap is asserted directly in web/utils/validation_test.go via
+		// TestValidateJobData_RejectsMaxTimeAboveCap instead.
 		{
 			name:           "Valid ImagesMax",
 			body:           cloneBody(map[string]interface{}{"images_max": 5000}),
 			expectedStatus: http.StatusUnauthorized,
 		},
 		{
+			// After Task 2.4: images_max ceiling bumped 20k → 40k.
 			name:           "Invalid ImagesMax Above Cap",
-			body:           cloneBody(map[string]interface{}{"images_max": 20001}),
+			body:           cloneBody(map[string]interface{}{"images_max": 40001}),
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
