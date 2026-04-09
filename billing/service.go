@@ -71,11 +71,6 @@ func New(db *sql.DB, cfg *config.Service, stripeSecretKey, webhookSigningKey str
 	}
 }
 
-// checkoutIdempotencyKey builds the Stripe idempotency key for a checkout
-// session. Scoped to (user, credits, currency, hour-bucket) so the 24h
-// Stripe dedup window collapses retries-within-an-hour to the same
-// session and lets retries-across-hours create a fresh one. Pure function
-// to enable unit testing. (S-H1)
 // buildCheckoutSessionParams constructs the *stripe.CheckoutSessionParams for
 // CreateCheckoutSession. Extracted as a pure builder so the field assignments
 // (especially the S-H4 ClientReferenceID and PaymentIntentData.Metadata) can
@@ -147,6 +142,11 @@ func buildCheckoutSessionParams(
 	}
 }
 
+// checkoutIdempotencyKey builds the Stripe idempotency key for a checkout
+// session. Scoped to (user, credits, currency, hour-bucket) so the 24h
+// Stripe dedup window collapses retries-within-an-hour to the same
+// session and lets retries-across-hours create a fresh one. Pure function
+// to enable unit testing. (S-H1)
 func checkoutIdempotencyKey(userID string, credits int, currency string, now time.Time) string {
 	bucket := now.Truncate(time.Hour).Unix()
 	return fmt.Sprintf("checkout:%s:%d:%s:%d", userID, credits, currency, bucket)
