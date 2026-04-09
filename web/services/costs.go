@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -25,15 +26,47 @@ func NewCostsService(db *sql.DB) *CostsService {
 	}
 }
 
-// GetJobCosts returns per-event breakdown and totals for a job.
-func (s *CostsService) GetJobCosts(ctx context.Context, jobID string) (models.JobCostResponse, error) {
+// GetJobCosts returns per-event breakdown and totals for a job, scoped
+// to the requesting user.
+//
+// Defense-in-depth: the totals query runs FIRST and is gated by
+// `user_id = $2 AND deleted_at IS NULL`. If the job doesn't exist or
+// belongs to another tenant, sql.ErrNoRows surfaces from the totals
+// query and we return before reading any breakdown rows. This is also
+// why the breakdown query stays scoped by job_id only — the
+// job_cost_breakdown table has no user_id column (see migration 000017),
+// and a breakdown row can only be reached after the totals query has
+// already proven ownership of the parent job.
+//
+// The handler still pre-checks ownership via App.Get for the not-found
+// 404 mapping; that pre-check is intentionally redundant. If a future
+// caller invokes this service directly (a job, an admin tool, a batch
+// endpoint), the ownership gate inside the service is what protects them.
+func (s *CostsService) GetJobCosts(ctx context.Context, jobID, userID string) (models.JobCostResponse, error) {
 	var resp models.JobCostResponse
 	if s.db == nil {
 		return resp, fmt.Errorf("database not available")
 	}
 	resp.JobID = jobID
 
-	// Fetch breakdown rows
+	// Fetch totals first — this is the ownership gate. ErrNoRows means
+	// the job is missing OR not owned by userID; in both cases the
+	// caller should treat it as not-found.
+	const totalsQ = `
+		SELECT COALESCE(actual_cost_precise, 0)::text, COALESCE(actual_cost, 0)
+		FROM jobs
+		WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`
+	if err := s.db.QueryRowContext(ctx, totalsQ, jobID, userID).Scan(&resp.TotalCredits, &resp.TotalRounded); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return resp, fmt.Errorf("job not found")
+		}
+		s.log.Error("job_costs_totals_query_failed", slog.String("job_id", jobID), slog.String("user_id", userID), slog.Any("error", err))
+		return resp, fmt.Errorf("failed to query job totals: %w", err)
+	}
+
+	// Fetch breakdown rows. Ownership has already been proven by the
+	// totals query above, so this query intentionally has no user_id
+	// term (and the table has no user_id column).
 	const breakdownQ = `
 		SELECT event_type_code, quantity_total, cost_total_credits::text
 		FROM job_cost_breakdown
@@ -56,15 +89,6 @@ func (s *CostsService) GetJobCosts(ctx context.Context, jobID string) (models.Jo
 	}
 	if err := rows.Err(); err != nil {
 		return resp, fmt.Errorf("row iteration error: %w", err)
-	}
-
-	// Fetch totals from jobs table
-	const totalsQ = `
-		SELECT COALESCE(actual_cost_precise, 0)::text, COALESCE(actual_cost, 0)
-		FROM jobs WHERE id = $1`
-	if err := s.db.QueryRowContext(ctx, totalsQ, jobID).Scan(&resp.TotalCredits, &resp.TotalRounded); err != nil {
-		s.log.Error("job_costs_totals_query_failed", slog.String("job_id", jobID), slog.Any("error", err))
-		return resp, fmt.Errorf("failed to query job totals: %w", err)
 	}
 
 	s.log.Debug("job_costs_retrieved", slog.String("job_id", jobID), slog.String("total_credits", resp.TotalCredits), slog.Int("breakdown_items", len(resp.Items)))

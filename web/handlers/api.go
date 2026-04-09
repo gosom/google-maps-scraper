@@ -547,7 +547,7 @@ func (h *APIHandlers) GetJobCosts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cs := webservices.NewCostsService(h.Deps.DB)
-	resp, err := cs.GetJobCosts(r.Context(), jobID)
+	resp, err := cs.GetJobCosts(r.Context(), jobID, userID)
 	if err != nil {
 		internalError(w, h.Deps.Logger, err, "failed to retrieve job costs",
 			slog.String("user_id", userID), slog.String("job_id", jobID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
