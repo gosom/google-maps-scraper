@@ -44,23 +44,32 @@ func TestIsAllowedBillingHistoryType(t *testing.T) {
 
 // TestAllowedTypesMatchEnum is a contract test: the in-memory allowlist
 // must exactly match the DB CHECK constraint on credit_transactions.type
-// (see scripts/migrations/000012_add_credit_system.up.sql line 35).
+// (see scripts/migrations/000012_add_credit_system.up.sql and the S-C4
+// expansion in scripts/migrations/000031_stripe_refund_deficit_ledger.up.sql).
 // If a new type is added to the DB enum, this test forces a matching
 // update here — otherwise that type would be silently rejected.
 func TestAllowedTypesMatchEnum(t *testing.T) {
 	t.Parallel()
 
-	// The DB enum, verbatim from migration 000012.
-	expected := []string{"purchase", "consumption", "bonus", "refund", "adjustment"}
+	// The DB enum, verbatim from migrations 000012 + 000031.
+	expected := []string{
+		"purchase",
+		"consumption",
+		"bonus",
+		"refund",
+		"refund_deficit",  // S-C4: uncollectable refund portion
+		"deficit_paydown", // S-C4: deficit paid down by next purchase
+		"adjustment",
+	}
 
 	if len(allowedBillingHistoryTypes) != len(expected) {
-		t.Fatalf("allowedBillingHistoryTypes has %d entries, expected %d (see migration 000012)",
+		t.Fatalf("allowedBillingHistoryTypes has %d entries, expected %d (see migrations 000012 + 000031)",
 			len(allowedBillingHistoryTypes), len(expected))
 	}
 
 	for _, tp := range expected {
 		if _, ok := allowedBillingHistoryTypes[tp]; !ok {
-			t.Errorf("allowedBillingHistoryTypes missing %q — is migration 000012 out of sync?", tp)
+			t.Errorf("allowedBillingHistoryTypes missing %q — is migration 000031 out of sync?", tp)
 		}
 	}
 }

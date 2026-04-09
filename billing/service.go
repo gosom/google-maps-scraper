@@ -562,27 +562,75 @@ func (s *Service) ReconcileSession(ctx context.Context, sessionID, callerUserID 
 		return tx.Commit()
 	}
 
-	// Get current balance with row lock
+	// Read the user's current balance AND refund deficit in one
+	// SELECT FOR UPDATE. Same row-level lock protects both fields. The
+	// deficit-paydown logic mirrors handleCheckoutSessionCompleted (S-C4)
+	// so the webhook-fallback reconcile path applies the same paydown
+	// invariant — without this, a user could exploit a delayed webhook to
+	// bypass the deficit ledger by triggering reconcile from the frontend.
 	var currentBalance float64
-	err = tx.QueryRowContext(ctx, "SELECT COALESCE(credit_balance, 0) FROM users WHERE id = $1 FOR UPDATE", userID).Scan(&currentBalance)
+	var deficitStr string
+	err = tx.QueryRowContext(ctx,
+		`SELECT COALESCE(credit_balance, 0)::float8, COALESCE(refund_deficit_credits, 0)::text
+		 FROM users WHERE id = $1 FOR UPDATE`, userID).Scan(&currentBalance, &deficitStr)
 	if err != nil {
-		return fmt.Errorf("failed to get user balance: %w", err)
+		return fmt.Errorf("failed to get user balance and deficit: %w", err)
 	}
+	deficitFloat, _ := strconv.ParseFloat(deficitStr, 64)
+	deficitMicro := int64(math.Round(deficitFloat * models.MicroUnit))
 
-	// Update balances using SQL arithmetic with NULL safety
-	const updUser = `UPDATE users SET 
-		credit_balance = COALESCE(credit_balance, 0) + $1::numeric, 
-		total_credits_purchased = COALESCE(total_credits_purchased, 0) + $1::numeric, 
-		updated_at=NOW() 
-		WHERE id=$2`
-	if _, err := tx.ExecContext(ctx, updUser, credits, userID); err != nil {
+	// Apply incoming credits to deficit first, remainder to balance.
+	// Integer micro-credit math avoids float drift on the split.
+	purchaseMicro := int64(credits) * models.MicroUnit
+	appliedToDeficitMicro := int64(0)
+	appliedToBalanceMicro := purchaseMicro
+	if deficitMicro > 0 {
+		if purchaseMicro >= deficitMicro {
+			appliedToDeficitMicro = deficitMicro
+			appliedToBalanceMicro = purchaseMicro - deficitMicro
+		} else {
+			appliedToDeficitMicro = purchaseMicro
+			appliedToBalanceMicro = 0
+		}
+	}
+	appliedToDeficitFloat := float64(appliedToDeficitMicro) / models.MicroUnit
+	appliedToBalanceFloat := float64(appliedToBalanceMicro) / models.MicroUnit
+
+	// Update user row: add to balance, add to lifetime, decrement deficit.
+	// updated_at handled by trigger.
+	const updUser = `UPDATE users SET
+		credit_balance = COALESCE(credit_balance, 0) + $1::numeric,
+		total_credits_purchased = COALESCE(total_credits_purchased, 0) + $2::numeric,
+		refund_deficit_credits = GREATEST(0, refund_deficit_credits - $3::numeric)
+		WHERE id = $4`
+	if _, err := tx.ExecContext(ctx, updUser, appliedToBalanceFloat, credits, appliedToDeficitFloat, userID); err != nil {
 		return fmt.Errorf("failed to update user credits: %w", err)
 	}
 
-	// Insert credit transaction with accurate balances
-	const insTxn = `INSERT INTO credit_transactions (id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
+	// If any portion paid down deficit, record a deficit_paydown ledger row.
+	// amount=0 because deficit lives outside the spendable balance ledger.
+	if appliedToDeficitMicro > 0 {
+		const insTxnPaydown = `INSERT INTO credit_transactions
+			(id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
+			VALUES ($1, $2, 'deficit_paydown', 0, $3, $3, $4, $5, 'payment')`
+		desc := fmt.Sprintf("Deficit paydown from Stripe purchase %s (reconcile): %.6f credits", sessionID, appliedToDeficitFloat)
+		if _, err := tx.ExecContext(ctx, insTxnPaydown,
+			uuid.Must(uuid.NewV7()).String(), userID, currentBalance, desc, sessionID); err != nil {
+			return fmt.Errorf("failed to insert deficit paydown transaction: %w", err)
+		}
+	}
+
+	// Insert the purchase ledger row using appliedToBalanceFloat (not full
+	// credits) so the balance_calculation_check constraint holds.
+	const insTxn = `INSERT INTO credit_transactions
+		(id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
 		VALUES ($1, $2, 'purchase', $3, $4, $5, $6, $7, 'payment')`
-	if _, err := tx.ExecContext(ctx, insTxn, uuid.Must(uuid.NewV7()).String(), userID, credits, currentBalance, currentBalance+float64(credits), "Stripe purchase (reconcile)", sessionID); err != nil {
+	if _, err := tx.ExecContext(ctx, insTxn,
+		uuid.Must(uuid.NewV7()).String(), userID,
+		appliedToBalanceFloat,
+		currentBalance,
+		currentBalance+appliedToBalanceFloat,
+		"Stripe purchase (reconcile)", sessionID); err != nil {
 		return fmt.Errorf("failed to insert credit transaction: %w", err)
 	}
 
