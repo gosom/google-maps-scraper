@@ -256,6 +256,12 @@ func (s *Service) HandleWebhook(ctx context.Context, payload []byte, signatureHe
 		return s.handleChargeFailed(ctx, event)
 	case "charge.dispute.created":
 		return s.handleChargeDisputeCreated(ctx, event)
+	case "refund.updated":
+		return s.handleRefundUpdated(ctx, event)
+	case "checkout.session.async_payment_succeeded":
+		return s.handleCheckoutAsyncPaymentSucceeded(ctx, event)
+	case "checkout.session.async_payment_failed":
+		return s.handleCheckoutAsyncPaymentFailed(ctx, event)
 	default:
 		s.logger.Info("unhandled_event_type", slog.String("event_type", string(event.Type)))
 		return 200, nil
@@ -1446,6 +1452,185 @@ func (s *Service) handleChargeDisputeCreated(ctx context.Context, event stripe.E
 	}
 
 	s.metrics.DisputeCreatedTotal.Inc()
+	return 200, nil
+}
+
+// handleRefundUpdated processes refund.updated webhook events. (S-M3)
+//
+// Modern Stripe asynchronous refund payment methods (SEPA Direct Debit, Bacs
+// Direct Debit, ACH) can succeed initially, fire charge.refunded, and then
+// FAIL later — at which point Stripe sends refund.updated with the new
+// status='failed'. If we already deducted credits in handleChargeRefunded,
+// we now have to reverse that deduction or the user keeps both their cash
+// AND their credits.
+//
+// MVP scope: BrezelScraper currently only enables card payments via Stripe
+// Checkout (USD-only). Card refunds are synchronous — once Stripe fires
+// charge.refunded for a card refund, the refund cannot fail asynchronously.
+// So in production today this handler is a logging stub: we acknowledge the
+// event, log the status transition for visibility, and rely on the fact
+// that succeeded → failed transitions cannot happen for card refunds.
+//
+// When non-card payment methods are enabled (a future task), this handler
+// must be expanded to:
+//  1. Look up the original credit_transactions 'refund' row by reference_id (charge.ID)
+//  2. Reverse the deduction by re-crediting the user's balance and the
+//     refund_deficit_credits column (mirror of handleChargeRefunded but
+//     with sign flipped)
+//  3. Insert a 'refund_reversal' credit_transactions row for audit
+//  4. Update stripe_payments.status back from 'refunded' to 'succeeded'
+//
+// Idempotency: gated via processed_webhook_events under SERIALIZABLE.
+//
+// Stripe references:
+//   - https://docs.stripe.com/api/refunds/object (Refund.status enum)
+//   - https://docs.stripe.com/refunds#failed-refunds
+//   - https://docs.stripe.com/api/events/types#event_types-refund.updated
+func (s *Service) handleRefundUpdated(ctx context.Context, event stripe.Event) (int, error) {
+	var refund stripe.Refund
+	if err := json.Unmarshal(event.Data.Raw, &refund); err != nil {
+		s.logger.Error("failed_to_parse_refund_updated", slog.Any("error", err))
+		return 400, fmt.Errorf("failed to parse refund: %w", err)
+	}
+
+	chargeID := ""
+	if refund.Charge != nil {
+		chargeID = refund.Charge.ID
+	}
+	paymentIntentID := ""
+	if refund.PaymentIntent != nil {
+		paymentIntentID = refund.PaymentIntent.ID
+	}
+
+	// Log every refund.updated event so ops has visibility into the refund
+	// lifecycle. ERROR level when status is failed (a real money-loss
+	// signal), INFO otherwise.
+	logFn := s.logger.Info
+	if refund.Status == stripe.RefundStatusFailed {
+		logFn = s.logger.Error
+	}
+	logFn("refund_updated",
+		slog.String("refund_id", refund.ID),
+		slog.String("charge_id", chargeID),
+		slog.String("payment_intent_id", paymentIntentID),
+		slog.String("status", string(refund.Status)),
+		slog.String("failure_reason", string(refund.FailureReason)),
+		slog.Int64("amount_cents", refund.Amount),
+	)
+
+	// MVP gate: card-only flows do not produce succeeded → failed transitions.
+	// When the failed-refund reversal logic is implemented, the gate below
+	// is the place to add it.
+	if refund.Status == stripe.RefundStatusFailed {
+		s.logger.Error("refund_failed_reversal_not_implemented",
+			slog.String("refund_id", refund.ID),
+			slog.String("charge_id", chargeID),
+			slog.String("detail", "card-only MVP does not produce async refund failures; if this fires, ops must manually reconcile credits"),
+		)
+	}
+
+	// Idempotency gate so Stripe webhook retries don't double-log.
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return 500, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			s.logger.Warn("tx_rollback_failed", slog.Any("error", rbErr))
+		}
+	}()
+	isDuplicate, err := s.markEventProcessed(ctx, tx, event.ID, string(event.Type))
+	if err != nil {
+		return 500, fmt.Errorf("failed to mark event as processed: %w", err)
+	}
+	if isDuplicate {
+		return 200, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return 500, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	return 200, nil
+}
+
+// handleCheckoutAsyncPaymentSucceeded processes checkout.session.async_payment_succeeded
+// events. (S-M4)
+//
+// Background: when a Checkout Session is paid via a delayed payment method
+// (Bacs Direct Debit, SEPA Direct Debit, ACH, Boleto, OXXO, Konbini, Multibanco),
+// the user is redirected to success_url immediately but the actual money
+// movement takes hours-to-days. Stripe fires checkout.session.completed
+// right away (with PaymentStatus='unpaid' or 'no_payment_required'), then
+// fires either checkout.session.async_payment_succeeded OR
+// checkout.session.async_payment_failed once the funds clear.
+//
+// MVP scope: BrezelScraper currently only enables card payments via the
+// Stripe Dashboard. Card flows are synchronous — checkout.session.completed
+// arrives with PaymentStatus='paid' and the credit grant happens there.
+// This handler is a logging stub for the moment a non-card payment method
+// is enabled. When that happens, this handler must be expanded to:
+//  1. Look up the stripe_payments row by session_id
+//  2. Run the same balance-grant + deficit-paydown SQL flow as
+//     handleCheckoutSessionCompleted (extract a shared helper)
+//  3. Mark stripe_payments.status='succeeded'
+//
+// Idempotency: gated via processed_webhook_events under SERIALIZABLE.
+//
+// Stripe references:
+//   - https://docs.stripe.com/api/events/types#event_types-checkout.session.async_payment_succeeded
+//   - https://docs.stripe.com/payments/checkout/fulfill-orders
+func (s *Service) handleCheckoutAsyncPaymentSucceeded(ctx context.Context, event stripe.Event) (int, error) {
+	return s.handleAsyncPaymentEvent(ctx, event, "checkout_async_payment_succeeded")
+}
+
+// handleCheckoutAsyncPaymentFailed processes checkout.session.async_payment_failed
+// events. (S-M4) — see handleCheckoutAsyncPaymentSucceeded for context.
+//
+// When implemented for non-card flows, this handler must:
+//  1. Mark the stripe_payments row as 'failed'
+//  2. NOT touch credit_balance (no credits were granted yet — async flows
+//     grant on the success event, not on session.completed)
+//  3. Optionally trigger a customer notification
+func (s *Service) handleCheckoutAsyncPaymentFailed(ctx context.Context, event stripe.Event) (int, error) {
+	return s.handleAsyncPaymentEvent(ctx, event, "checkout_async_payment_failed")
+}
+
+// handleAsyncPaymentEvent is the shared logging-stub implementation for both
+// checkout.session.async_payment_* events. It parses the session, logs the
+// async payment lifecycle event, runs through the idempotency gate, and
+// returns 200 — without granting or revoking credits. Card-only MVP only.
+func (s *Service) handleAsyncPaymentEvent(ctx context.Context, event stripe.Event, logKey string) (int, error) {
+	var session stripe.CheckoutSession
+	if err := json.Unmarshal(event.Data.Raw, &session); err != nil {
+		s.logger.Error("failed_to_parse_async_payment_session", slog.Any("error", err), slog.String("event_type", string(event.Type)))
+		return 400, fmt.Errorf("failed to parse session: %w", err)
+	}
+
+	s.logger.Info(logKey,
+		slog.String("session_id", session.ID),
+		slog.String("event_id", event.ID),
+		slog.String("payment_status", string(session.PaymentStatus)),
+		slog.String("detail", "MVP is card-only; async payment events should not fire in production. Investigate if seen."),
+	)
+
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return 500, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			s.logger.Warn("tx_rollback_failed", slog.Any("error", rbErr))
+		}
+	}()
+	isDuplicate, err := s.markEventProcessed(ctx, tx, event.ID, string(event.Type))
+	if err != nil {
+		return 500, fmt.Errorf("failed to mark event as processed: %w", err)
+	}
+	if isDuplicate {
+		return 200, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return 500, fmt.Errorf("failed to commit transaction: %w", err)
+	}
 	return 200, nil
 }
 

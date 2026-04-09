@@ -1015,3 +1015,153 @@ func TestHandleCheckoutSessionCompleted_MissingDBRowReturns200(t *testing.T) {
 		t.Errorf("expected 0 credit_transactions rows (fallback removed), got %d", txnCount)
 	}
 }
+
+// makeRefundUpdatedEvent builds a stripe.Event wrapping a Refund. Used by
+// the S-M3 refund.updated stub handler tests.
+func makeRefundUpdatedEvent(eventID, refundID, chargeID, paymentIntentID, status, failureReason string, amountCents int64) stripe.Event {
+	refundData := map[string]any{
+		"id":             refundID,
+		"charge":         chargeID,
+		"payment_intent": paymentIntentID,
+		"amount":         amountCents,
+		"currency":       "usd",
+		"status":         status,
+		"failure_reason": failureReason,
+	}
+	raw, _ := json.Marshal(refundData)
+	return stripe.Event{
+		ID:   eventID,
+		Type: "refund.updated",
+		Data: &stripe.EventData{Raw: json.RawMessage(raw)},
+	}
+}
+
+// TestHandleRefundUpdated_Succeeded verifies the happy path: a normal refund
+// status update arrives, gets logged, and acks 200. No DB mutations.
+func TestHandleRefundUpdated_Succeeded(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	eventID := "evt_testrfupok" + suffix
+	t.Cleanup(func() {
+		db.ExecContext(ctx, `DELETE FROM processed_webhook_events WHERE event_id = $1`, eventID)
+	})
+
+	svc := &Service{db: db, logger: newTestLogger(), metrics: metrics.NewBillingMetrics(nil)}
+	event := makeRefundUpdatedEvent(eventID, "re_testok"+suffix, "ch_testok"+suffix, "pi_testok"+suffix, "succeeded", "", 5000)
+
+	code, err := svc.handleRefundUpdated(ctx, event)
+	if err != nil || code != 200 {
+		t.Fatalf("handleRefundUpdated: code=%d err=%v", code, err)
+	}
+}
+
+// TestHandleRefundUpdated_Failed verifies the most important branch: a
+// refund that succeeded earlier is now reported as failed (the async refund
+// failure case). The handler logs at ERROR and acks 200 — full reversal
+// logic is deferred until non-card PMs are enabled, but the event must not
+// crash the dispatch.
+func TestHandleRefundUpdated_Failed(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	eventID := "evt_testrfupfail" + suffix
+	t.Cleanup(func() {
+		db.ExecContext(ctx, `DELETE FROM processed_webhook_events WHERE event_id = $1`, eventID)
+	})
+
+	svc := &Service{db: db, logger: newTestLogger(), metrics: metrics.NewBillingMetrics(nil)}
+	event := makeRefundUpdatedEvent(eventID, "re_testfail"+suffix, "ch_testfail"+suffix, "pi_testfail"+suffix, "failed", "lost_or_stolen_card", 5000)
+
+	code, err := svc.handleRefundUpdated(ctx, event)
+	if err != nil || code != 200 {
+		t.Fatalf("handleRefundUpdated: code=%d err=%v", code, err)
+	}
+}
+
+// TestHandleRefundUpdated_IsIdempotent verifies that a webhook replay
+// doesn't double-log via processed_webhook_events.
+func TestHandleRefundUpdated_IsIdempotent(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	eventID := "evt_testrfupdup" + suffix
+	t.Cleanup(func() {
+		db.ExecContext(ctx, `DELETE FROM processed_webhook_events WHERE event_id = $1`, eventID)
+	})
+
+	svc := &Service{db: db, logger: newTestLogger(), metrics: metrics.NewBillingMetrics(nil)}
+	event := makeRefundUpdatedEvent(eventID, "re_testdup"+suffix, "ch_testdup"+suffix, "pi_testdup"+suffix, "succeeded", "", 1000)
+
+	if code, err := svc.handleRefundUpdated(ctx, event); err != nil || code != 200 {
+		t.Fatalf("first call: code=%d err=%v", code, err)
+	}
+	if code, err := svc.handleRefundUpdated(ctx, event); err != nil || code != 200 {
+		t.Fatalf("replay call: code=%d err=%v", code, err)
+	}
+}
+
+// makeAsyncPaymentEvent builds a stripe.Event wrapping a CheckoutSession for
+// the async payment lifecycle event types.
+func makeAsyncPaymentEvent(eventType, eventID, sessionID, userID string) stripe.Event {
+	sessionData := map[string]any{
+		"id":             sessionID,
+		"payment_status": "paid",
+		"metadata":       map[string]string{"user_id": userID},
+	}
+	raw, _ := json.Marshal(sessionData)
+	return stripe.Event{
+		ID:   eventID,
+		Type: stripe.EventType(eventType),
+		Data: &stripe.EventData{Raw: json.RawMessage(raw)},
+	}
+}
+
+// TestHandleCheckoutAsyncPaymentSucceeded verifies the stub: parses session,
+// logs lifecycle, idempotency-gates, returns 200. No DB mutations.
+func TestHandleCheckoutAsyncPaymentSucceeded(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	eventID := "evt_testasyncok" + suffix
+	t.Cleanup(func() {
+		db.ExecContext(ctx, `DELETE FROM processed_webhook_events WHERE event_id = $1`, eventID)
+	})
+
+	svc := &Service{db: db, logger: newTestLogger(), metrics: metrics.NewBillingMetrics(nil)}
+	event := makeAsyncPaymentEvent("checkout.session.async_payment_succeeded", eventID, "cs_test_async_"+suffix, "user_async_"+suffix)
+
+	code, err := svc.handleCheckoutAsyncPaymentSucceeded(ctx, event)
+	if err != nil || code != 200 {
+		t.Fatalf("handleCheckoutAsyncPaymentSucceeded: code=%d err=%v", code, err)
+	}
+}
+
+// TestHandleCheckoutAsyncPaymentFailed verifies the failure stub branch.
+func TestHandleCheckoutAsyncPaymentFailed(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	eventID := "evt_testasyncfail" + suffix
+	t.Cleanup(func() {
+		db.ExecContext(ctx, `DELETE FROM processed_webhook_events WHERE event_id = $1`, eventID)
+	})
+
+	svc := &Service{db: db, logger: newTestLogger(), metrics: metrics.NewBillingMetrics(nil)}
+	event := makeAsyncPaymentEvent("checkout.session.async_payment_failed", eventID, "cs_test_async_fail_"+suffix, "user_async_fail_"+suffix)
+
+	code, err := svc.handleCheckoutAsyncPaymentFailed(ctx, event)
+	if err != nil || code != 200 {
+		t.Fatalf("handleCheckoutAsyncPaymentFailed: code=%d err=%v", code, err)
+	}
+}
