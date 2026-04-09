@@ -1,5 +1,7 @@
 # Stripe Production Readiness Implementation Plan
 
+> **STATUS as of 2026-04-09:** ✅ **P0 chunk (Critical, 5 tasks) — COMPLETE.** All five S-C1 through S-C5 findings shipped on `feat/stripe-production-readiness` between commits `9f7d928` and `237f2bd`. Each task went through implementer → spec review → code quality review → fix loop until reviewers delivered zero Critical/Important issues. The refund money-loss bug is fixed end-to-end. P1 / P2 / P3 chunks remain pending — see §7 below for the per-task checklist with commit references.
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Fix every Stripe integration issue — including a silently-broken refund path, missing Customer/PaymentIntent persistence, and an uncapped checkout surface — so BrezelScraper's credit-purchase flow is financially correct, idempotent, auditable, and aligned with current Stripe docs and SaaS best practice (Vercel, Anthropic, OpenAI, Stripe-for-Stripe's own credits).
@@ -2240,12 +2242,35 @@ The following are related but explicitly out of this plan. File a follow-up tick
 
 ## §7 — Summary Checklist (for the executor)
 
-### P0 Critical (release blockers)
-- [ ] **S-C1** Task 1.1: Cap credits per checkout session (10,000)
-- [ ] **S-C2** Task 1.2: Backfill `stripe_payment_intent_id` on `checkout.session.completed`
-- [ ] **S-C3** Task 1.3: Create Stripe Customer at user provisioning + persist + pass to checkout
-- [ ] **S-C4** Task 1.4: Refund deficit ledger (migration 000027 + refund handler rewrite + paydown logic)
-- [ ] **S-C5** Task 1.5: Fail-fast on missing `STRIPE_WEBHOOK_SECRET` / `ENCRYPTION_KEY` in production
+### P0 Critical (release blockers) — ✅ ALL COMPLETE (2026-04-09)
+- [x] **S-C1** Task 1.1: Cap credits per checkout session (10,000) — commits `9f7d928`, `a388188`
+- [x] **S-C2** Task 1.2: Backfill `stripe_payment_intent_id` on `checkout.session.completed` — commits `3d7f976`, `307b8b2`, `996283d`
+- [x] **S-C3** Task 1.3: Create Stripe Customer at user provisioning + persist + pass to checkout — commits `6ad1fff`, `3b63397`
+- [x] **S-C4** Task 1.4: Refund deficit ledger (migration **000031** + refund handler rewrite + paydown logic) — commits `ce18e60`, `155247e`
+- [x] **S-C5** Task 1.5: Fail-fast on missing `ENCRYPTION_KEY` in production (Stripe secrets were already enforced; this added the missing `ENCRYPTION_KEY` check) — commit `237f2bd`
+
+**P0 chunk delivery notes:**
+- Migration was renumbered from 000027 (planned) to **000031** because 000027 is already used by `add_webhook_configs`. Plan body still references 000027 in older sections — the actual migration on disk is 000031.
+- Each task went through implementer → spec review → code quality review → fix loop until reviewers delivered zero Critical/Important issues. Minor items deferred per scope.
+- `runner/webrunner/webrunner.go` had pre-existing uncommitted debug logging from a prior session (around lines 909-925 in `scrapeJob`); a backup-restore pattern was used to keep S-C3 and S-C5 commits scoped strictly to their lines and leave the user's pre-existing work uncommitted.
+- Task 1.4 used the existing `handleChargeRefunded` location in `billing/service.go` rather than extracting to `billing/refund.go` (the plan suggested the extraction as optional; YAGNI).
+- A small cleanup commit `996283d` fixed pre-existing broken `TestWebhookIdempotency_*` tests that violated the `chk_event_id_format` constraint added in migration 000018 — unblocked the regression net for the rest of the P0 chunk.
+- Pre-existing failures in `gmaps/`, `TestPostgresRepository/*`, and `TestCreateWebhook_HTTPRejected` were verified to predate the P0 work and remain out of scope.
+
+**Complete P0 commit history (oldest first):**
+```
+78e57b7 docs(plans): add Stripe production readiness plan
+9f7d928 fix(billing): cap credits per Stripe checkout session at 10000 (S-C1)
+a388188 fix(billing): address code review feedback on credit cap (S-C1)
+3d7f976 fix(billing): backfill stripe_payment_intent_id on checkout.session.completed (S-C2)
+307b8b2 refactor(billing): drop redundant updated_at from PI backfill UPDATE
+996283d test(billing): fix pre-existing broken webhook idempotency tests
+6ad1fff feat(billing): create Stripe Customer at user provisioning (S-C3)
+3b63397 fix(postgres): disambiguate SetStripeCustomerID failure modes (S-C3 review)
+ce18e60 feat(billing): refund deficit ledger (S-C4, covers audit M-4)
+155247e fix(billing): address S-C4 code review feedback
+237f2bd feat(webrunner): fail-fast on missing ENCRYPTION_KEY in production (S-C5)
+```
 
 ### P1 High (fix before launch)
 - [ ] **S-H1** Task 2.1: Stripe `Idempotency-Key` on `checkoutsession.New` (and `customer.New` already in Task 1.3)
