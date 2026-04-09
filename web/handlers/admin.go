@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -62,7 +61,11 @@ func (h *AdminHandlers) CreateJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req apiScrapeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeStrict(r, &req); err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Warn("admin_create_job_decode_failed",
+				slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+		}
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Invalid request body"})
 		return
 	}

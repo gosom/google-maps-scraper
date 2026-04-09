@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"math"
@@ -51,7 +50,7 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req apiScrapeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeStrict(r, &req); err != nil {
 		if h.Deps.Logger != nil {
 			h.Deps.Logger.Error("json_decode_failed", slog.String("path", r.URL.Path), slog.Any("error", err))
 		}
@@ -522,7 +521,11 @@ func (h *APIHandlers) GetBatchJobCosts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.BatchJobCostsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeStrict(r, &req); err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Warn("json_decode_failed",
+				slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+		}
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Invalid request body"})
 		return
 	}
@@ -618,7 +621,7 @@ func (h *APIHandlers) EstimateJobCost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req apiScrapeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeStrict(r, &req); err != nil {
 		if h.Deps.Logger != nil {
 			h.Deps.Logger.Error("json_decode_failed", slog.String("path", r.URL.Path), slog.Any("error", err))
 		}

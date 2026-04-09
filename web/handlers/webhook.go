@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -99,10 +98,17 @@ func (h *WebhookHandlers) CreateWebhook(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Limit request body size (defense in depth — middleware also enforces 1MB).
+	// The MaxBytesReader wrap is preserved through decodeStrict — that
+	// helper does NOT install its own MaxBytesReader, so the tighter
+	// per-route 64 KB cap stays in effect.
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<16) // 64 KB
 
 	var req createWebhookRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeStrict(r, &req); err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Warn("create_webhook_decode_failed",
+				slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+		}
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "invalid request body"})
 		return
 	}
@@ -218,10 +224,15 @@ func (h *WebhookHandlers) UpdateWebhook(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Limit request body size (defense in depth — middleware also enforces 1MB).
+	// MaxBytesReader wrap is preserved through decodeStrict.
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<16) // 64 KB
 
 	var req updateWebhookRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeStrict(r, &req); err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Warn("update_webhook_decode_failed",
+				slog.String("user_id", userID), slog.String("webhook_id", webhookID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+		}
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "invalid request body"})
 		return
 	}

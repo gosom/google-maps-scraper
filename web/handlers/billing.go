@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -64,13 +63,17 @@ func (h *BillingHandlers) CreateCheckoutSession(w http.ResponseWriter, r *http.R
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
 		return
 	}
-	// DisallowUnknownFields rejects requests with extra JSON fields. This
-	// prevents request-smuggling and confusion-attack vectors where a client
-	// sends fields the server silently ignores. (S-L2)
+	// Strict JSON decoding via the shared helper. The S-L2 guard
+	// (DisallowUnknownFields) is now centralized in decodeStrict, which
+	// also rejects trailing data — closing the parser-divergence gap the
+	// original S-L2 patch left open. See web/handlers/decode.go for the
+	// full security rationale.
 	var req checkoutSessionRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
+	if err := decodeStrict(r, &req); err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Warn("checkout_decode_failed",
+				slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+		}
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "invalid payload"})
 		return
 	}
@@ -101,11 +104,17 @@ func (h *BillingHandlers) Reconcile(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
 		return
 	}
-	// DisallowUnknownFields rejects requests with extra JSON fields. (S-L2)
+	// Strict JSON decoding via the shared helper — see decode.go.
 	var req reconcileRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil || req.SessionID == "" {
+	if err := decodeStrict(r, &req); err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Warn("reconcile_decode_failed",
+				slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+		}
+		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "invalid payload"})
+		return
+	}
+	if req.SessionID == "" {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "invalid payload"})
 		return
 	}
