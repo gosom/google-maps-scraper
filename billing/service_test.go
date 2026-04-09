@@ -805,3 +805,147 @@ func TestReconcileSession_PaysDownDeficitFirst(t *testing.T) {
 		t.Errorf("expected lifetime=100, got %f", lifetime)
 	}
 }
+
+// makeChargeDisputeCreatedEvent builds a stripe.Event wrapping a Dispute
+// with the given parameters. Used by the S-H5 dispute handler tests.
+// Event IDs must match chk_event_id_format.
+func makeChargeDisputeCreatedEvent(eventID, disputeID, chargeID, paymentIntentID string, amountCents int64, reason, status string, dueByUnix int64) stripe.Event {
+	disputeData := map[string]any{
+		"id":                   disputeID,
+		"charge":               chargeID,
+		"payment_intent":       paymentIntentID,
+		"amount":               amountCents,
+		"currency":             "usd",
+		"reason":               reason,
+		"status":               status,
+		"is_charge_refundable": true,
+		"evidence_details":     map[string]any{"due_by": dueByUnix},
+	}
+	raw, _ := json.Marshal(disputeData)
+	return stripe.Event{
+		ID:   eventID,
+		Type: "charge.dispute.created",
+		Data: &stripe.EventData{Raw: json.RawMessage(raw)},
+	}
+}
+
+// TestHandleChargeDisputeCreated_FlagsPaymentRow verifies the happy path:
+// a dispute event arrives, the matching stripe_payments row gets
+// status='disputed', and the metric increments.
+func TestHandleChargeDisputeCreated_FlagsPaymentRow(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	paymentIntentID := "pi_testdispute" + suffix
+	userID := seedRefundFixture(t, db, suffix, 100.0, 0.0, paymentIntentID, 100)
+	_ = userID
+
+	svc := &Service{db: db, logger: newTestLogger(), metrics: metrics.NewBillingMetrics(nil)}
+	event := makeChargeDisputeCreatedEvent(
+		"evt_testdispute"+suffix,
+		"dp_testdispute"+suffix,
+		"ch_testdispute"+suffix,
+		paymentIntentID,
+		10000,
+		"fraudulent",
+		"needs_response",
+		time.Now().Add(21*24*time.Hour).Unix(),
+	)
+
+	code, err := svc.handleChargeDisputeCreated(ctx, event)
+	if err != nil || code != 200 {
+		t.Fatalf("handleChargeDisputeCreated: code=%d err=%v", code, err)
+	}
+
+	var status string
+	if err := db.QueryRowContext(ctx,
+		`SELECT status FROM stripe_payments WHERE stripe_payment_intent_id = $1`,
+		paymentIntentID).Scan(&status); err != nil {
+		t.Fatalf("query stripe_payments: %v", err)
+	}
+	if status != "disputed" {
+		t.Errorf("expected status=disputed, got %q", status)
+	}
+}
+
+// TestHandleChargeDisputeCreated_IsIdempotent verifies that a webhook
+// replay does not double-process the dispute event. The processed_webhook_events
+// gate should short-circuit the second call cleanly.
+func TestHandleChargeDisputeCreated_IsIdempotent(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	paymentIntentID := "pi_testdupdispute" + suffix
+	userID := seedRefundFixture(t, db, suffix, 100.0, 0.0, paymentIntentID, 100)
+	_ = userID
+
+	svc := &Service{db: db, logger: newTestLogger(), metrics: metrics.NewBillingMetrics(nil)}
+	event := makeChargeDisputeCreatedEvent(
+		"evt_testdupdispute"+suffix,
+		"dp_testdup"+suffix,
+		"ch_testdup"+suffix,
+		paymentIntentID,
+		10000,
+		"general",
+		"needs_response",
+		time.Now().Add(7*24*time.Hour).Unix(),
+	)
+
+	if code, err := svc.handleChargeDisputeCreated(ctx, event); err != nil || code != 200 {
+		t.Fatalf("first call: code=%d err=%v", code, err)
+	}
+	// Replay
+	if code, err := svc.handleChargeDisputeCreated(ctx, event); err != nil || code != 200 {
+		t.Fatalf("replay call: code=%d err=%v", code, err)
+	}
+
+	var status string
+	db.QueryRowContext(ctx,
+		`SELECT status FROM stripe_payments WHERE stripe_payment_intent_id = $1`,
+		paymentIntentID).Scan(&status)
+	if status != "disputed" {
+		t.Errorf("expected status=disputed after replay, got %q", status)
+	}
+}
+
+// TestHandleChargeDisputeCreated_NoMatchingPaymentRow verifies that a
+// dispute for an unknown PaymentIntent (e.g. legacy payment without
+// backfilled PI ID, or a non-checkout charge) doesn't error out — the
+// handler logs at ERROR but returns 200 so Stripe doesn't keep retrying.
+func TestHandleChargeDisputeCreated_NoMatchingPaymentRow(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	// No seedRefundFixture call — no matching stripe_payments row.
+	// Use a unique event ID and clean up the processed_webhook_events row.
+	eventID := "evt_testorphandispute" + suffix
+	t.Cleanup(func() {
+		db.ExecContext(ctx, `DELETE FROM processed_webhook_events WHERE event_id = $1`, eventID)
+	})
+
+	svc := &Service{db: db, logger: newTestLogger(), metrics: metrics.NewBillingMetrics(nil)}
+	event := makeChargeDisputeCreatedEvent(
+		eventID,
+		"dp_testorphan"+suffix,
+		"ch_testorphan"+suffix,
+		"pi_testorphan"+suffix,
+		5000,
+		"unrecognized",
+		"warning_needs_response",
+		time.Now().Add(14*24*time.Hour).Unix(),
+	)
+
+	code, err := svc.handleChargeDisputeCreated(ctx, event)
+	if err != nil {
+		t.Fatalf("expected no error for orphan dispute, got: %v", err)
+	}
+	if code != 200 {
+		t.Errorf("expected 200 (Stripe ack), got %d", code)
+	}
+}

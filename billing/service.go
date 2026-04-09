@@ -254,6 +254,8 @@ func (s *Service) HandleWebhook(ctx context.Context, payload []byte, signatureHe
 		return s.handleChargeRefunded(ctx, event)
 	case "charge.failed":
 		return s.handleChargeFailed(ctx, event)
+	case "charge.dispute.created":
+		return s.handleChargeDisputeCreated(ctx, event)
 	default:
 		s.logger.Info("unhandled_event_type", slog.String("event_type", string(event.Type)))
 		return 200, nil
@@ -1322,6 +1324,121 @@ func (s *Service) handleChargeFailed(ctx context.Context, event stripe.Event) (i
 		slog.String("failure_code", string(charge.FailureCode)),
 	)
 
+	return 200, nil
+}
+
+// handleChargeDisputeCreated processes charge.dispute.created Stripe webhook
+// events. A dispute is a chargeback initiated by the cardholder against one
+// of our charges; Stripe pulls the disputed funds AND a dispute fee out of
+// our balance immediately, and we have until evidence_details.due_by to
+// submit evidence.
+//
+// This handler does NOT touch credit_balance or refund_deficit_credits — the
+// chargeback is a separate financial event from the proportional credit
+// reversal that charge.refunded handles. We only:
+//
+//  1. Mark the affected stripe_payments row with status='disputed' so the ops
+//     dashboard can surface it
+//  2. Increment dispute_created_total Prometheus metric for alerting
+//  3. Log at ERROR level with dispute_id, charge_id, payment_intent_id,
+//     amount_cents, reason, due_by — everything ops needs to start an
+//     evidence response
+//
+// Idempotency: gated via processed_webhook_events under SERIALIZABLE, same as
+// every other webhook handler in this file. Stripe webhook retries do not
+// double-flag the payment row.
+//
+// Stripe references:
+//   - https://docs.stripe.com/disputes
+//   - https://docs.stripe.com/api/disputes/object
+//   - https://docs.stripe.com/api/events/types#event_types-charge.dispute.created
+//
+// (S-H5)
+func (s *Service) handleChargeDisputeCreated(ctx context.Context, event stripe.Event) (int, error) {
+	var dispute stripe.Dispute
+	if err := json.Unmarshal(event.Data.Raw, &dispute); err != nil {
+		s.logger.Error("failed_to_parse_charge_dispute_created", slog.Any("error", err))
+		return 400, fmt.Errorf("failed to parse dispute: %w", err)
+	}
+
+	// Extract identifiers. Stripe sends both Charge and PaymentIntent as
+	// either string IDs (default) or expanded objects (when expand was set
+	// on the original API call). The stripe-go custom UnmarshalJSON
+	// (`charge.go`, `paymentintent.go`) handles both shapes — we get the .ID
+	// regardless.
+	chargeID := ""
+	if dispute.Charge != nil {
+		chargeID = dispute.Charge.ID
+	}
+	paymentIntentID := ""
+	if dispute.PaymentIntent != nil {
+		paymentIntentID = dispute.PaymentIntent.ID
+	}
+
+	// Evidence response deadline. Stripe documents this as the date by which
+	// we must submit evidence to challenge the dispute; missing it forfeits.
+	var dueBy int64
+	if dispute.EvidenceDetails != nil {
+		dueBy = dispute.EvidenceDetails.DueBy
+	}
+
+	s.logger.Error("charge_dispute_created",
+		slog.String("dispute_id", dispute.ID),
+		slog.String("charge_id", chargeID),
+		slog.String("payment_intent_id", paymentIntentID),
+		slog.Int64("amount_cents", dispute.Amount),
+		slog.String("currency", string(dispute.Currency)),
+		slog.String("reason", string(dispute.Reason)),
+		slog.String("status", string(dispute.Status)),
+		slog.Bool("is_charge_refundable", dispute.IsChargeRefundable),
+		slog.Int64("evidence_due_by_unix", dueBy),
+	)
+
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		s.logger.Error("failed_to_begin_transaction_charge_dispute_created", slog.Any("error", err))
+		return 500, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			s.logger.Warn("tx_rollback_failed", slog.Any("error", rbErr))
+		}
+	}()
+
+	isDuplicate, err := s.markEventProcessed(ctx, tx, event.ID, string(event.Type))
+	if err != nil {
+		s.logger.Error("failed_to_mark_dispute_event_processed", slog.Any("error", err))
+		return 500, fmt.Errorf("failed to mark event as processed: %w", err)
+	}
+	if isDuplicate {
+		s.logger.Info("event_already_processed", slog.String("event_id", event.ID))
+		return 200, nil
+	}
+
+	// Flag the affected stripe_payments row with status='disputed'. We use
+	// the PaymentIntent ID as the join key (the same path the refund handler
+	// uses, populated by the S-C2 backfill on checkout.session.completed).
+	// If the row doesn't exist (legacy payment without backfilled PI ID, or
+	// non-checkout charge), we fall through to the metric/log only — the
+	// ERROR log above is the only ops signal in that case.
+	if paymentIntentID != "" {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE stripe_payments SET status = 'disputed' WHERE stripe_payment_intent_id = $1`,
+			paymentIntentID); err != nil {
+			s.logger.Error("failed_to_flag_disputed_payment",
+				slog.String("payment_intent_id", paymentIntentID),
+				slog.Any("error", err),
+			)
+			return 500, fmt.Errorf("failed to flag disputed payment: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		s.logger.Error("failed_to_commit_charge_dispute_created", slog.Any("error", err))
+		return 500, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	s.metrics.DisputeCreatedTotal.Inc()
 	return 200, nil
 }
 

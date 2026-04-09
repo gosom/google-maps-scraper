@@ -53,6 +53,12 @@ type BillingMetrics struct {
 	// remaining spendable balance, and the uncollectable remainder was
 	// written to users.refund_deficit_credits for next-purchase paydown.
 	RefundDeficitAppliedTotal prometheus.Counter
+
+	// DisputeCreatedTotal counts charge.dispute.created webhook events.
+	// Each increment is a chargeback initiated by a cardholder against one
+	// of our charges. Stripe pulls funds + a dispute fee out of our balance
+	// and gives us until evidence_details.due_by to respond. (S-H5)
+	DisputeCreatedTotal prometheus.Counter
 }
 
 // NewBillingMetrics registers and returns a BillingMetrics instance using the
@@ -75,7 +81,19 @@ func NewBillingMetrics(reg prometheus.Registerer) *BillingMetrics {
 			panic(err)
 		}
 	}
+	disputeCreated := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "dispute_created_total",
+		Help: "Total count of charge.dispute.created webhook events. Each increment is a chargeback initiated against one of our charges. Stripe withdraws disputed funds and a dispute fee from our balance; we have until evidence_details.due_by to submit evidence. Any non-zero rate is worth investigating.",
+	})
+	if err := reg.Register(disputeCreated); err != nil {
+		if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			disputeCreated = are.ExistingCollector.(prometheus.Counter)
+		} else {
+			panic(err)
+		}
+	}
 	return &BillingMetrics{
 		RefundDeficitAppliedTotal: refundDeficit,
+		DisputeCreatedTotal:       disputeCreated,
 	}
 }
