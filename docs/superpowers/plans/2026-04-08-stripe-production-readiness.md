@@ -1,6 +1,9 @@
 # Stripe Production Readiness Implementation Plan
 
-> **STATUS as of 2026-04-09:** ✅ **P0 chunk (Critical, 5 tasks) — COMPLETE.** All five S-C1 through S-C5 findings shipped on `feat/stripe-production-readiness` between commits `9f7d928` and `237f2bd`. Each task went through implementer → spec review → code quality review → fix loop until reviewers delivered zero Critical/Important issues. The refund money-loss bug is fixed end-to-end. P1 / P2 / P3 chunks remain pending — see §7 below for the per-task checklist with commit references.
+> **STATUS as of 2026-04-09:**
+> - ✅ **P0 chunk (Critical, 5 tasks) — COMPLETE.** All five S-C1 through S-C5 findings shipped between `9f7d928` and `237f2bd`. The refund money-loss bug is fixed end-to-end.
+> - ✅ **P1 chunk (High, 4 tasks + S-H3 covered by P0) — COMPLETE.** S-H1, S-H2, S-H4, S-H5 shipped between `35f8691` and `ebc3408`. Stripe idempotency keys, decimal-safe refund math, ClientReferenceID + PI metadata propagation, and charge.dispute.created webhook handler all live. Each task verified against current Stripe docs (docs.stripe.com).
+> - P2 / P3 chunks remain pending — see §7 below for the per-task checklist with commit references.
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -2272,12 +2275,29 @@ ce18e60 feat(billing): refund deficit ledger (S-C4, covers audit M-4)
 237f2bd feat(webrunner): fail-fast on missing ENCRYPTION_KEY in production (S-C5)
 ```
 
-### P1 High (fix before launch)
-- [ ] **S-H1** Task 2.1: Stripe `Idempotency-Key` on `checkoutsession.New` (and `customer.New` already in Task 1.3)
-- [ ] **S-H2** Task 2.2: Decimal-safe refund math via `shopspring/decimal`
-- [ ] **S-H3** Task 2.3: Strict credit parsing (`strconv.Atoi`, not `fmt.Sscan`) — covered by Task 1.1
-- [ ] **S-H4** Task 2.4: `ClientReferenceID` + `PaymentIntentData.Metadata` on checkout session
-- [ ] **S-H5** Task 2.5: `charge.dispute.created` handler
+### P1 High (fix before launch) — ✅ ALL COMPLETE (2026-04-09)
+- [x] **S-H1** Task 2.1: Stripe `Idempotency-Key` on `checkoutsession.New` — commit `35f8691`
+- [x] **S-H2** Task 2.2: Decimal-safe refund math via `shopspring/decimal` — commit `0931f06`
+- [x] **S-H3** Task 2.3: Strict credit parsing (`strconv.Atoi`, not `fmt.Sscan`) — already covered by Task 1.1 (`9f7d928` + `a388188`)
+- [x] **S-H4** Task 2.4: `ClientReferenceID` + `PaymentIntentData.Metadata` on checkout session — commit `b258a92`
+- [x] **S-H5** Task 2.5: `charge.dispute.created` handler — commit `d2720f8`
+
+**P1 chunk delivery notes:**
+- Each P1 task verified against current Stripe docs via WebFetch on docs.stripe.com (Stripe MCP was unauthenticated for this chunk; user can re-authenticate for P2/P3 if desired).
+- Migration 000032 adds `'disputed'` to `stripe_payments.status` CHECK constraint.
+- Final cross-task review found zero Critical and zero Important issues; one Minor doc-comment fix shipped as `ebc3408`.
+- All 27 billing tests pass (10 S-H2 + 6 S-H1 + 5 S-H4 + 3 S-H5 + 13 P0 carry-over).
+- The refund handler now reads `credits_purchased` and `credit_balance` as `::text` and parses with `decimal.NewFromString`. All arithmetic is `decimal.Decimal`; float64 only appears at leaf log/insert sites where the existing schema requires it.
+- `PaymentIntentData.Metadata` propagation chain (Session → PaymentIntent → Charge) is now wired so `brezel_user_id` is available on every Charge-derived webhook event for direct user lookup. The current refund/dispute handlers still use the PI ID lookup as their primary path; the metadata is defense-in-depth, ready for the S-M5 P2 task to consume.
+
+**Complete P1 commit history (oldest first):**
+```
+35f8691 feat(billing): Stripe Idempotency-Key on checkoutsession.New (S-H1)
+0931f06 refactor(billing): decimal-safe refund math via shopspring/decimal (S-H2)
+b258a92 feat(billing): ClientReferenceID + PaymentIntentData metadata on checkout (S-H4)
+d2720f8 feat(billing): charge.dispute.created webhook handler (S-H5)
+ebc3408 docs(billing): fix misplaced godoc comment on checkoutIdempotencyKey
+```
 
 ### P2 Medium (fix shortly after launch)
 - [ ] **S-M1** Task 3.1: Drop `session.Metadata` fallback for credit amounts
