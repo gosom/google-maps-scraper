@@ -160,14 +160,22 @@ func (s *ResultsService) GetUserResults(ctx context.Context, userID string, limi
 	return results, nil
 }
 
-func (s *ResultsService) GetEnhancedJobResultsPaginated(ctx context.Context, jobID string, limit, offset int) ([]models.EnhancedResult, int, error) {
+// GetEnhancedJobResultsPaginated returns the enhanced (full-fat) result
+// rows for a job, scoped to the requesting user. Both the COUNT and the
+// SELECT carry `user_id = $2` so the query layer cannot leak rows from
+// other tenants even if a future handler forgets the App.Get ownership
+// pre-check, and so result rows that drift out of sync with their job's
+// owner (data integrity bug) are also masked. The handler still does an
+// App.Get up-front so it can check the StatusFailed billing gate — that
+// pre-check is not redundant, it provides distinct behavior.
+func (s *ResultsService) GetEnhancedJobResultsPaginated(ctx context.Context, jobID, userID string, limit, offset int) ([]models.EnhancedResult, int, error) {
 	if s.db == nil {
 		return nil, 0, fmt.Errorf("database not available")
 	}
-	const countQ = `SELECT COUNT(1) FROM results WHERE job_id = $1`
+	const countQ = `SELECT COUNT(1) FROM results WHERE job_id = $1 AND user_id = $2`
 	var total int
-	if err := s.db.QueryRowContext(ctx, countQ, jobID).Scan(&total); err != nil {
-		s.log.Error("enhanced_results_count_failed", slog.String("job_id", jobID), slog.Any("error", err))
+	if err := s.db.QueryRowContext(ctx, countQ, jobID, userID).Scan(&total); err != nil {
+		s.log.Error("enhanced_results_count_failed", slog.String("job_id", jobID), slog.String("user_id", userID), slog.Any("error", err))
 		return nil, 0, fmt.Errorf("failed to count results: %w", err)
 	}
 
@@ -210,14 +218,14 @@ func (s *ResultsService) GetEnhancedJobResultsPaginated(ctx context.Context, job
             COALESCE(user_reviews_extended, '[]') as user_reviews_extended,
             COALESCE(emails, '') as emails,
             COALESCE(created_at, NOW()) as created_at
-        FROM results 
-        WHERE job_id = $1
+        FROM results
+        WHERE job_id = $1 AND user_id = $2
         ORDER BY created_at DESC
-        LIMIT $2 OFFSET $3`
+        LIMIT $3 OFFSET $4`
 
-	rows, err := s.db.QueryContext(ctx, q, jobID, limit, offset)
+	rows, err := s.db.QueryContext(ctx, q, jobID, userID, limit, offset)
 	if err != nil {
-		s.log.Error("enhanced_results_query_failed", slog.String("job_id", jobID), slog.Int("limit", limit), slog.Int("offset", offset), slog.Any("error", err))
+		s.log.Error("enhanced_results_query_failed", slog.String("job_id", jobID), slog.String("user_id", userID), slog.Int("limit", limit), slog.Int("offset", offset), slog.Any("error", err))
 		return nil, 0, fmt.Errorf("failed to query enhanced results: %w", err)
 	}
 	defer rows.Close()

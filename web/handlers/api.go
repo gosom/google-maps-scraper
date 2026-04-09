@@ -502,7 +502,7 @@ func (h *APIHandlers) GetJobResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, total, err := h.Deps.ResultsSvc.GetEnhancedJobResultsPaginated(r.Context(), jobID, limit, offset)
+	results, total, err := h.Deps.ResultsSvc.GetEnhancedJobResultsPaginated(r.Context(), jobID, userID, limit, offset)
 	if err != nil {
 		internalError(w, h.Deps.Logger, err, "failed to retrieve results",
 			slog.String("user_id", userID), slog.String("job_id", jobID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
