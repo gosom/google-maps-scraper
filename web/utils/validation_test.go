@@ -335,3 +335,139 @@ func TestValidateJobData_RejectsTooManyKeywords(t *testing.T) {
 		t.Fatal("expected error for 6 keywords, got nil")
 	}
 }
+
+// ───────────────────── Task 3.5: proxies SSRF + caps ─────────────────────
+
+// TestValidateJobData_RejectsTooManyProxies locks the per-job element
+// cap. Without this, a client can submit a 10 000-element proxies array
+// and stall the validator on per-element DNS lookups.
+func TestValidateJobData_RejectsTooManyProxies(t *testing.T) {
+	t.Parallel()
+	d := newValidJobData()
+	d.Proxies = make([]string, 101)
+	for i := range d.Proxies {
+		d.Proxies[i] = "http://proxy.example.com:8080"
+	}
+	err := ValidateJobData(d)
+	if err == nil {
+		t.Fatal("expected error for 101 proxies, got nil")
+	}
+	if !strings.Contains(err.Error(), "100") {
+		t.Errorf("expected error to mention the 100-element cap, got: %v", err)
+	}
+}
+
+// TestValidateProxyURL_RejectsPrivateIPs is the core SSRF defense.
+// Each of these would be devastating if accepted: 127.0.0.1 hits any
+// service on the scraper host, 169.254.169.254 hits AWS instance
+// metadata (and would expose IAM credentials), 10.x/192.168.x reach
+// the internal VPC. localhost resolves to a loopback address through
+// the system DNS resolver — same outcome.
+func TestValidateProxyURL_RejectsPrivateIPs(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		"http://127.0.0.1:5432",
+		"http://localhost:5432",
+		"http://169.254.169.254/latest/meta-data/",
+		"http://10.0.0.1:8080",
+		"http://192.168.1.1:8080",
+		"http://[::1]:8080",
+	}
+	for _, p := range cases {
+		t.Run(p, func(t *testing.T) {
+			if err := ValidateProxyURL(p); err == nil {
+				t.Errorf("expected %q to be rejected as private/internal", p)
+			}
+		})
+	}
+}
+
+// TestValidateProxyURL_RejectsBadSchemes covers the scheme allowlist.
+// file:// and gopher:// have no meaningful "proxy" interpretation but
+// would let an attacker funnel internal file reads through the scraper
+// if accepted. The scheme check is the cheap defense — it short-circuits
+// before any DNS lookup.
+func TestValidateProxyURL_RejectsBadSchemes(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		"file:///etc/passwd",
+		"gopher://attacker.example.com/",
+		"javascript:alert(1)",
+		"data:text/plain,hi",
+		"ftp://example.com/",
+	}
+	for _, p := range cases {
+		t.Run(p, func(t *testing.T) {
+			err := ValidateProxyURL(p)
+			if err == nil {
+				t.Errorf("expected %q to be rejected", p)
+			}
+			// Specifically expect the scheme-allowlist message — if we
+			// accidentally fall through to a different validator path,
+			// the error mentions something else and this assertion
+			// catches the regression.
+			if err != nil && !strings.Contains(err.Error(), "scheme") && !strings.Contains(err.Error(), "host") {
+				t.Errorf("%q rejected for unexpected reason: %v", p, err)
+			}
+		})
+	}
+}
+
+// TestValidateProxyURL_AcceptsValidPublicProxies — the positive path.
+// Authentication credentials in the URL (user:pass@host) and SOCKS5
+// schemes both pass.
+//
+// Uses literal public IPs (8.8.8.8 = Google DNS) and example.com (RFC
+// 2606 reserved domain that's been live since 1999) to avoid depending
+// on a flaky test-environment DNS for the canonical "should accept"
+// path. Skips in -short mode for total isolation.
+func TestValidateProxyURL_AcceptsValidPublicProxies(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("requires DNS resolution; skipped in short mode")
+	}
+	cases := []string{
+		"http://user:pass@8.8.8.8:8080",
+		"socks5://8.8.8.8:1080",
+		"socks5h://1.1.1.1:1080",
+		"https://example.com:8443",
+	}
+	for _, p := range cases {
+		t.Run(p, func(t *testing.T) {
+			if err := ValidateProxyURL(p); err != nil {
+				t.Errorf("expected %q to be accepted, got: %v", p, err)
+			}
+		})
+	}
+}
+
+// TestValidateProxyURL_RejectsOversizeURL covers the byte-length cap.
+func TestValidateProxyURL_RejectsOversizeURL(t *testing.T) {
+	t.Parallel()
+	long := "http://" + strings.Repeat("a", 2050) + ".example.com/"
+	err := ValidateProxyURL(long)
+	if err == nil {
+		t.Fatal("expected error for oversize proxy URL, got nil")
+	}
+	if !strings.Contains(err.Error(), "2048") {
+		t.Errorf("expected error to mention 2048-byte cap, got: %v", err)
+	}
+}
+
+// TestValidateProxyURL_RejectsEmptyHost catches the URL parser
+// accepting strings like "http:///path" with no hostname.
+func TestValidateProxyURL_RejectsEmptyHost(t *testing.T) {
+	t.Parallel()
+	if err := ValidateProxyURL("http:///path"); err == nil {
+		t.Fatal("expected error for missing host, got nil")
+	}
+}
+
+// TestValidateProxyURL_RejectsEmpty catches the empty-string case so
+// the loop in ValidateJobData doesn't silently accept padding.
+func TestValidateProxyURL_RejectsEmpty(t *testing.T) {
+	t.Parallel()
+	if err := ValidateProxyURL(""); err == nil {
+		t.Fatal("expected error for empty proxy URL, got nil")
+	}
+}

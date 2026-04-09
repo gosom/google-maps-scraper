@@ -4,8 +4,14 @@ import (
 	"net"
 	"strings"
 	"testing"
+
+	webutils "github.com/gosom/google-maps-scraper/web/utils"
 )
 
+// TestCheckIPBlocklist exercises the predicate that ValidateWebhookURL
+// (and now ValidateProxyURL) use to reject internal/private/metadata IPs.
+// Lives in the handlers package for git-history continuity — the actual
+// function moved to web/utils/private_ip.go in Task 3.5.
 func TestCheckIPBlocklist(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -30,7 +36,7 @@ func TestCheckIPBlocklist(t *testing.T) {
 			if ip == nil {
 				t.Fatalf("failed to parse IP %q", tt.ip)
 			}
-			err := checkIPBlocklist(ip)
+			err := webutils.CheckIPBlocklist(ip)
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("expected error containing %q, got nil", tt.errMsg)

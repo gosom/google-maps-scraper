@@ -3,7 +3,9 @@ package utils
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gosom/google-maps-scraper/models"
@@ -18,7 +20,92 @@ const (
 	maxKeywordLen = 200
 	minMaxTime    = 60 * time.Second
 	maxMaxTime    = time.Duration(CapMaxTimeSeconds) * time.Second
+
+	// maxProxiesPerJob caps the number of proxy URLs in a single job
+	// request. The struct tag in models/job.go enforces the same value;
+	// this constant is the source of truth and the service-layer check
+	// is defensive (catches non-HTTP callers like CLI/workers).
+	maxProxiesPerJob = 100
+
+	// maxProxyURLLen caps each individual proxy URL string length. Same
+	// rationale as the struct tag — bound the worst-case length so we
+	// don't pass arbitrarily large strings to url.Parse and the
+	// downstream proxy library.
+	maxProxyURLLen = 2048
 )
+
+// allowedProxySchemes is the closed set of URL schemes the scraper
+// accepts as proxies. Anything else is rejected at validation time.
+//
+// Why these four:
+//   - http/https: standard HTTP proxies (CONNECT-tunneled HTTPS)
+//   - socks5:     SOCKS5 with client-side DNS
+//   - socks5h:    SOCKS5 with proxy-side DNS resolution
+//
+// Notably absent: file://, gopher://, javascript:, data:, ftp://. None
+// of these have a meaningful "proxy" interpretation, but a relaxed
+// scheme check would let an attacker funnel internal file reads through
+// the scraper. This is the proxy-side equivalent of the URL scheme
+// check the audit plan also calls out for webhook URLs.
+var allowedProxySchemes = map[string]struct{}{
+	"http":    {},
+	"https":   {},
+	"socks5":  {},
+	"socks5h": {},
+}
+
+// ValidateProxyURL parses a proxy URL string and rejects it if:
+//
+//   - the URL is malformed or missing a scheme/host
+//   - the scheme is not in allowedProxySchemes
+//   - the host (after DNS resolution) lands in any private, loopback,
+//     link-local, unspecified, or cloud-metadata range
+//   - the URL exceeds maxProxyURLLen bytes
+//
+// The SSRF defense reuses CheckIPBlocklist via AssertPublicHost from
+// private_ip.go, keeping the proxy and webhook validators in sync.
+//
+// Known limitation — DNS TOCTOU: this validator resolves the host at
+// validation time. An attacker who controls a DNS record can return a
+// public IP at validation time and 169.254.169.254 at scrape time,
+// bypassing this check. The complete fix lives at the HTTP transport
+// layer (a custom Dialer.Control hook that re-validates the resolved
+// IP just before the TCP connect). That layer lives inside the
+// scrapemate library, not in our code — we cannot fix it here without
+// forking. Track the upstream issue in audit plan §3.5.
+//
+// The validation-time check is still valuable: it blocks the naive
+// attack and forces the adversary into an active DNS attack rather
+// than a passive one. The remaining defense-in-depth recommendation
+// is to disable the `proxies` field entirely for free-tier users via
+// a feature flag.
+func ValidateProxyURL(raw string) error {
+	if raw == "" {
+		return errors.New("proxy URL is empty")
+	}
+	if len(raw) > maxProxyURLLen {
+		return fmt.Errorf("proxy URL exceeds %d bytes", maxProxyURLLen)
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid proxy URL: %w", err)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if _, ok := allowedProxySchemes[scheme]; !ok {
+		return fmt.Errorf("proxy scheme %q is not allowed (allowed: http, https, socks5, socks5h)", u.Scheme)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return errors.New("proxy URL is missing a host")
+	}
+	// AssertPublicHost does DNS resolution + per-IP CheckIPBlocklist
+	// against EVERY resolved address. A dual-homed host that returns
+	// [8.8.8.8, 127.0.0.1] is correctly rejected.
+	if _, err := AssertPublicHost(host); err != nil {
+		return fmt.Errorf("proxy host %q rejected: %w", host, err)
+	}
+	return nil
+}
 
 // ApplyJobDataDefaults fills in safe defaults for any zero-valued OPTIONAL
 // fields. Call this at the API entry point AFTER JSON decode and BEFORE
@@ -182,6 +269,20 @@ func ValidateJobData(d *models.JobData) error {
 	}
 	if d.Radius > CapRadiusMeters {
 		return fmt.Errorf("radius exceeds maximum of %d meters", CapRadiusMeters)
+	}
+
+	// Proxies — element count cap and per-element SSRF + scheme check.
+	// The struct tag in models/job.go enforces the count and per-element
+	// length at the HTTP boundary; the service-layer check below catches
+	// non-HTTP callers (CLI, workers, internal queues) and runs the SSRF
+	// defense which the validator/v10 tag layer cannot do (no DNS access).
+	if len(d.Proxies) > maxProxiesPerJob {
+		return fmt.Errorf("proxies exceeds maximum of %d", maxProxiesPerJob)
+	}
+	for i, p := range d.Proxies {
+		if err := ValidateProxyURL(p); err != nil {
+			return fmt.Errorf("proxies[%d]: %w", i, err)
+		}
 	}
 
 	return nil
