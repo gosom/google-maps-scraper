@@ -1320,3 +1320,90 @@ func TestHandleChargeFailed_OrphanReturns200(t *testing.T) {
 		t.Errorf("expected 200/nil for orphan charge.failed, got %d/%v", code, err)
 	}
 }
+
+// TestHandleCheckoutSessionCompleted_BackfillSucceedsEvenIfReceiptFetchFails
+// verifies the S-M6 best-effort guarantee: when paymentintent.Get returns an
+// error (e.g. because we're hitting a fake/empty Stripe key against a
+// non-existent PI ID in the test environment), the handler still completes
+// successfully — credit balance is granted, the PI ID is backfilled, and
+// only the receipt URL is left NULL. The receipt fetch is a soft warn,
+// not a hard failure.
+func TestHandleCheckoutSessionCompleted_BackfillSucceedsEvenIfReceiptFetchFails(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	eventID := "evt_testreceiptfail" + suffix
+	sessionID := "cs_test_receiptfail_" + suffix
+	paymentIntentID := "pi_testreceiptfail" + suffix
+	userID := "user_test_receiptfail_" + suffix
+
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO users (id, email, credit_balance, refund_deficit_credits, created_at, updated_at)
+		 VALUES ($1, $2, 0, 0, NOW(), NOW())`,
+		userID, userID+"@test.invalid")
+	if err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO stripe_payments (id, user_id, stripe_checkout_session_id, amount_cents, currency, credits_purchased, status)
+		 VALUES ($1, $2, $3, 10000, 'USD', 100, 'pending')`,
+		uuid.Must(uuid.NewV7()).String(), userID, sessionID)
+	if err != nil {
+		t.Fatalf("seed stripe_payments: %v", err)
+	}
+	t.Cleanup(func() {
+		db.ExecContext(ctx, `DELETE FROM credit_transactions WHERE user_id = $1`, userID)
+		db.ExecContext(ctx, `DELETE FROM processed_webhook_events WHERE event_id = $1`, eventID)
+		db.ExecContext(ctx, `DELETE FROM stripe_payments WHERE user_id = $1`, userID)
+		db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, userID)
+	})
+
+	svc := &Service{db: db, logger: newTestLogger(), metrics: metrics.NewBillingMetrics(nil)}
+	event := makeCheckoutCompletedEventWithPI(eventID, sessionID, paymentIntentID, userID, 100)
+
+	// The paymentintent.Get call inside handleCheckoutSessionCompleted will
+	// fail because we don't have a real Stripe API key in tests — it returns
+	// a wrapped error which our handler catches and logs as a warn. The
+	// handler should still complete successfully.
+	code, err := svc.handleCheckoutSessionCompleted(ctx, event)
+	if err != nil {
+		t.Fatalf("expected nil error despite receipt fetch failure, got: %v", err)
+	}
+	if code != 200 {
+		t.Errorf("expected 200, got %d", code)
+	}
+
+	// Balance should be granted normally.
+	var balance float64
+	if err := db.QueryRowContext(ctx,
+		`SELECT credit_balance::float8 FROM users WHERE id = $1`, userID).Scan(&balance); err != nil {
+		t.Fatalf("balance query: %v", err)
+	}
+	if balance != 100 {
+		t.Errorf("expected balance=100 (S-M6 receipt fetch failure must not block credit grant), got %f", balance)
+	}
+
+	// PI ID still backfilled.
+	var gotPI sql.NullString
+	if err := db.QueryRowContext(ctx,
+		`SELECT stripe_payment_intent_id FROM stripe_payments WHERE stripe_checkout_session_id = $1`,
+		sessionID).Scan(&gotPI); err != nil {
+		t.Fatalf("query PI: %v", err)
+	}
+	if !gotPI.Valid || gotPI.String != paymentIntentID {
+		t.Errorf("expected PI=%s backfilled, got %v", paymentIntentID, gotPI)
+	}
+
+	// Receipt URL stays NULL because the Stripe API call failed (no real key).
+	var gotReceipt sql.NullString
+	if err := db.QueryRowContext(ctx,
+		`SELECT stripe_receipt_url FROM stripe_payments WHERE stripe_checkout_session_id = $1`,
+		sessionID).Scan(&gotReceipt); err != nil {
+		t.Fatalf("query receipt: %v", err)
+	}
+	if gotReceipt.Valid {
+		t.Logf("note: receipt URL is %q — this is OK if a real Stripe key is configured in the test env", gotReceipt.String)
+	}
+}

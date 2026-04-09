@@ -20,6 +20,7 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/stripe/stripe-go/v82"
 	checkoutsession "github.com/stripe/stripe-go/v82/checkout/session"
+	"github.com/stripe/stripe-go/v82/paymentintent"
 	"github.com/stripe/stripe-go/v82/webhook"
 )
 
@@ -401,6 +402,39 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 			)
 			return 500, fmt.Errorf("failed to backfill payment intent: %w", err)
 		}
+
+		// Fetch the PaymentIntent with latest_charge expanded so we can
+		// persist the Stripe-hosted receipt URL into stripe_payments. The
+		// receipt URL is "kept up-to-date to the latest state of the charge,
+		// including any refunds" (Stripe docs), so persisting it once is
+		// sufficient — the rendered receipt always reflects current state.
+		// (S-M6)
+		//
+		// This is best-effort: if Stripe is unreachable or the receipt URL
+		// is unexpectedly missing, we log a WARN and continue. The credit
+		// grant is more important than the receipt link, and a future
+		// reconcile call can repair the link via the same code path in
+		// ReconcileSession.
+		piParams := &stripe.PaymentIntentParams{}
+		piParams.AddExpand("latest_charge")
+		if pi, piErr := paymentintent.Get(paymentIntentID, piParams); piErr == nil {
+			if pi.LatestCharge != nil && pi.LatestCharge.ReceiptURL != "" {
+				const updReceipt = `UPDATE stripe_payments
+					SET stripe_receipt_url = $1
+					WHERE stripe_checkout_session_id = $2 AND stripe_receipt_url IS NULL`
+				if _, err := tx.ExecContext(ctx, updReceipt, pi.LatestCharge.ReceiptURL, session.ID); err != nil {
+					s.logger.Warn("failed_to_persist_receipt_url",
+						slog.String("session_id", session.ID),
+						slog.Any("error", err),
+					)
+				}
+			}
+		} else {
+			s.logger.Warn("failed_to_fetch_payment_intent_for_receipt",
+				slog.String("payment_intent_id", paymentIntentID),
+				slog.Any("error", piErr),
+			)
+		}
 	} else {
 		// Missing PI on a payment-mode session should not happen, but we log
 		// rather than fail because balance credit is more important than the link.
@@ -675,6 +709,16 @@ func (s *Service) ReconcileSession(ctx context.Context, sessionID, callerUserID 
 		if _, err := tx.ExecContext(ctx, `UPDATE stripe_payments SET status='succeeded', completed_at=NOW() WHERE stripe_checkout_session_id=$1`, sessionID); err != nil {
 			return fmt.Errorf("failed to update payment status (idempotent path): %w", err)
 		}
+		// Repair the receipt URL if it's missing on this idempotent-success
+		// path. The S-M6 fetch in handleCheckoutSessionCompleted may have
+		// failed silently (Stripe outage etc.); reconcile is the operator's
+		// retry hook to set it after the fact. (S-M6)
+		if sess.PaymentIntent != nil && sess.PaymentIntent.LatestCharge != nil && sess.PaymentIntent.LatestCharge.ReceiptURL != "" {
+			_, _ = tx.ExecContext(ctx,
+				`UPDATE stripe_payments SET stripe_receipt_url = $1
+				 WHERE stripe_checkout_session_id = $2 AND stripe_receipt_url IS NULL`,
+				sess.PaymentIntent.LatestCharge.ReceiptURL, sessionID)
+		}
 		return tx.Commit()
 	}
 
@@ -750,8 +794,22 @@ func (s *Service) ReconcileSession(ctx context.Context, sessionID, callerUserID 
 		return fmt.Errorf("failed to insert credit transaction: %w", err)
 	}
 
-	// Update payment status
-	if _, err := tx.ExecContext(ctx, `UPDATE stripe_payments SET status='succeeded', completed_at=NOW() WHERE stripe_checkout_session_id=$1`, sessionID); err != nil {
+	// Update payment status and persist the receipt URL if available. The
+	// receipt URL is fetched in one shot via the payment_intent.latest_charge
+	// expansion (S-M2 added the expand call). If Stripe didn't return a
+	// receipt URL — e.g. the charge is still pending or the expansion failed
+	// — we leave stripe_receipt_url NULL and a future reconcile call can
+	// fill it in. (S-M6)
+	receiptURL := ""
+	if sess.PaymentIntent != nil && sess.PaymentIntent.LatestCharge != nil {
+		receiptURL = sess.PaymentIntent.LatestCharge.ReceiptURL
+	}
+	const updPaymentStatus = `UPDATE stripe_payments
+		SET status = 'succeeded',
+		    completed_at = NOW(),
+		    stripe_receipt_url = COALESCE(stripe_receipt_url, NULLIF($1, ''))
+		WHERE stripe_checkout_session_id = $2`
+	if _, err := tx.ExecContext(ctx, updPaymentStatus, receiptURL, sessionID); err != nil {
 		return fmt.Errorf("failed to update payment status: %w", err)
 	}
 
