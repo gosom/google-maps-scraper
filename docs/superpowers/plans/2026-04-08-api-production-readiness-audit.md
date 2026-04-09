@@ -149,19 +149,27 @@ reviews_max:
 
 Notes:
 - **No `nullable`** — OAS 3.1 dropped the keyword. We do not accept `null` for cap fields.
-- **`min: 0` only when "skip" is semantically distinct from "default"** — for `reviews_max` and `images_max` it is (skip vs. some). For `max_results` and `depth` it isn't, so `minimum: 1`.
+- **`min: 0` only when "skip" is semantically distinct from "default"** — for `reviews_max` (per-place) it is (skip-this-place's-reviews vs. some). For `images_max` (per-job total) it is also distinct (skip-all-images vs. some, where "skip all" is the billing-safe default). For `max_results` and `depth` it isn't, so `minimum: 1`.
 - **Reject, don't coerce.** Google AIP coerces silently; for a billing API that's a support-ticket generator. We reject with 400 so the client knows exactly what they sent and how the bill will be calculated.
+- **Most caps are per-job; `reviews_max` is per-place; `images_max` is per-job total.** The `Scope` column in the table below makes this explicit. Per-place caps multiply with `max_results` to give the per-job worst case; per-job-total caps don't multiply.
 
 ### Concrete caps for our API (initial values — tune before launch)
 
-| Field | min | max | default | "skip" allowed | Notes |
-|-------|----:|----:|--------:|---------------:|-------|
-| `max_results` | 1 | 500 | 20 | no | Places per job. Today 0=unlimited; we change `0` semantics to `400 invalid` and require an explicit number. |
-| `reviews_max` | 0 | 500 | 10 | yes (`0`) | Reviews per place. Replaces today's 9999 sentinel. `0` keeps the existing "skip reviews" semantic. |
-| `images_max` | 0 | 30 | 5 | yes (`0`) | NEW field — today images are bool + hardcoded 30/place. Replace with explicit cap. |
-| `depth` | 1 | 20 | 5 | no | Search depth. Already correct, keep as-is. |
-| `radius` | 0 | 50000 | 0 | yes (`0`) | Meters. `0` = no radius constraint. Add the missing `max=50000`. |
-| `max_time` | 60 | 14400 | 1800 | no | Seconds. Already capped at 4h in service-layer; surface it in struct tags. |
+| Field | min | max | default | "skip" allowed | Scope | Notes |
+|-------|----:|----:|--------:|---------------:|-------|-------|
+| `max_results` | 1 | 500 | 20 | no | per-job | Places per job. Today 0=unlimited; we change `0` semantics to `400 invalid` and require an explicit number. Real-world test: 1 search × depth=20 yielded 112 places, so 500 is a comfortable headroom over typical jobs. |
+| `reviews_max` | 0 | 500 | 10 | yes (`0`) | **per-place** | Reviews per place. Replaces today's 9999 sentinel. `0` keeps the existing "skip reviews" semantic. A single business rarely has more than a few hundred reviews; 500 is the safe ceiling. |
+| `images_max` | 0 | 20000 | 0 | yes (`0`) | **per-job total** | NEW field — today images are bool + hardcoded behavior. Cap is the **total number of images across all places** in the job, NOT per-place. Real-world test: 112 places × ~79 avg images/place = 8870 total images. The 20k ceiling allows ~250 places worth of imagery before triggering, which covers any normal job at the 500-place ceiling. Default `0` skips image scraping entirely (billing-safe default — image events are the largest cost line item per the test job). |
+| `depth` | 1 | 20 | 5 | no | per-job | Search depth. Already correct, keep as-is. |
+| `radius` | 0 | 50000 | 0 | yes (`0`) | per-job | Meters. `0` = no radius constraint. Add the missing `max=50000`. |
+| `max_time` | 60 | 14400 | 1800 | no | per-job | Seconds. Already capped at 4h in service-layer; surface it in struct tags. |
+
+**Why `images_max` is per-job total, not per-place** — this is the only cap field with non-uniform scope, and the choice is deliberate:
+
+- A single business listing on Google Maps can have anywhere from 0 to several hundred images (popular restaurants, hotels, tourist attractions). A per-place cap that's high enough to cover real businesses (e.g. 100/place) lets a 500-place job produce 50k images, which is far beyond any user's billing intent.
+- Reviews are naturally bounded per place (we either scrape what's there up to a limit, and the limit is rarely binding). Images are not — Google often returns hundreds per place. The per-job total cap is the only way to bound total billing for image scraping.
+- Test data confirms this: a single search "Cafe Mitte Berlin" at depth 20 produced 112 places and 8870 images (~79 avg/place). At max_results=500 with the same density, an uncapped job would produce ~39,500 images. The 20,000 cap is the billing-side safety net that prevents a single job from consuming more than ~$X worth of image credits (substitute actual unit price at launch).
+- Implementation note: the runner must track running image count across places and stop scraping additional images (not stop scraping places — the place metadata is much cheaper than images) once `images_max` is reached. Implementation lives in **Task 2.3**.
 
 ### Backward compatibility
 
@@ -190,7 +198,7 @@ This change ships as a **breaking** change from the frontend's perspective. Coor
 - `docs/api.md` (or wherever the OpenAPI spec lives) — update spec to reflect new caps and document the convention
 
 **Created:**
-- `web/utils/cap_params.go` — single source of truth for cap constants (`CapMaxResults`, `CapReviewsMax`, `CapImagesMax`, `CapRadiusMeters`, …) and the lang allowlist
+- `web/utils/cap_params.go` — single source of truth for cap constants (`CapMaxResults`, `CapReviewsMax`, `CapImagesMaxTotal`, `CapRadiusMeters`, …) and the lang allowlist
 - `web/utils/cap_params_test.go` — table-driven tests for the validator
 - `web/handlers/decode.go` — `decodeStrict` helper (DisallowUnknownFields + trailing-data check; body size handled by middleware)
 - `web/handlers/pagination.go` — `parsePagination` helper with overflow guard and unified caps
@@ -229,7 +237,7 @@ import "testing"
 func TestCapConstants_AreSane(t *testing.T) {
     require.Equal(t, 500, CapMaxResults)
     require.Equal(t, 500, CapReviewsMax)
-    require.Equal(t, 30,  CapImagesMax)
+    require.Equal(t, 20_000, CapImagesMaxTotal)
     require.Equal(t, 50_000, CapRadiusMeters)
     require.Equal(t, 14_400, CapMaxTimeSeconds)
 }
@@ -263,17 +271,35 @@ package utils
 // every integer cap field has min, max, and default. There is NO sentinel for
 // "unlimited" — clients paginate or run multiple jobs.
 const (
-    // CapMaxResults bounds places per job. min 1.
+    // CapMaxResults bounds places per job. Per-job. min 1.
+    // Real-world test: 1 search × depth=20 yielded 112 places, so 500 is
+    // a comfortable headroom over typical jobs.
     CapMaxResults     = 500
     DefaultMaxResults = 20
 
-    // CapReviewsMax bounds reviews per place. min 0 — 0 means "skip reviews".
+    // CapReviewsMax bounds reviews PER PLACE. min 0 — 0 means "skip reviews".
+    // A single business rarely has more than a few hundred reviews; 500 is
+    // the safe per-place ceiling.
     CapReviewsMax     = 500
     DefaultReviewsMax = 10
 
-    // CapImagesMax bounds images per place. min 0 — 0 means "skip images".
-    CapImagesMax     = 30
-    DefaultImagesMax = 5
+    // CapImagesMaxTotal bounds the TOTAL number of images across all places
+    // in a job — NOT per place. Image counts on Google Maps are unbounded
+    // per business (popular venues return hundreds), so a per-place cap that
+    // covers real businesses would let a 500-place job produce ~50k images.
+    // The per-job total cap is the only way to bound total billing for image
+    // scraping. Real-world test: 112 places × ~79 avg images/place = 8870
+    // total. The 20k ceiling allows ~250 places-worth of imagery before
+    // triggering, which covers any normal job at the 500-place ceiling.
+    //
+    // The runner must stop scraping additional IMAGES (not stop scraping
+    // places — place metadata is much cheaper) once this cap is reached.
+    //
+    // min 0 — 0 means "skip all image scraping". The default is 0 (the
+    // billing-safe default — image events were the largest cost line item
+    // in the test job).
+    CapImagesMaxTotal     = 20_000
+    DefaultImagesMaxTotal = 0
 
     // CapDepth bounds search depth. min 1.
     CapDepth     = 20
@@ -395,13 +421,13 @@ Replace the constants block:
 ```go
 const (
     // Caps now live in cap_params.go — references kept here for clarity.
-    minDepth      = 1
-    maxDepthCap   = CapDepth
-    maxResultsCap = CapMaxResults
-    maxReviewsCap = CapReviewsMax
-    maxImagesCap  = CapImagesMax
-    maxRadiusCap  = CapRadiusMeters
-    maxTimeCap    = time.Duration(CapMaxTimeSeconds) * time.Second
+    minDepth          = 1
+    maxDepthCap       = CapDepth
+    maxResultsCap     = CapMaxResults
+    maxReviewsCap     = CapReviewsMax
+    maxImagesTotalCap = CapImagesMaxTotal // per-job total, NOT per-place
+    maxRadiusCap      = CapRadiusMeters
+    maxTimeCap        = time.Duration(CapMaxTimeSeconds) * time.Second
 )
 ```
 
@@ -409,8 +435,8 @@ Rewrite `ValidateJobData` body to:
 - Reject `Lang` not in `IsSupportedLang`
 - Reject `Depth < 1 || > CapDepth`
 - Reject `MaxResults < 1 || > CapMaxResults` (note: `MaxResults < 1` is the change — no more 0 = unlimited)
-- Reject `ReviewsMax < 0 || > CapReviewsMax`
-- Reject `ImagesMax < 0 || > CapImagesMax` (new field, see Task 2.3)
+- Reject `ReviewsMax < 0 || > CapReviewsMax` (per-place cap)
+- Reject `ImagesMax < 0 || > CapImagesMaxTotal` (new field, **per-job total**, see Task 2.3)
 - Parse `Lat`/`Lon` as floats and reject if out of `[-90,90]`/`[-180,180]`
 - Reject `Radius < 0 || > CapRadiusMeters`
 - Reject `MaxTime < 60s || > 4h`
@@ -425,8 +451,12 @@ type JobData struct {
     Lang       string        `json:"lang"         validate:"required,len=2"`
     Depth      int           `json:"depth"        validate:"required,min=1,max=20"`
     Email      bool          `json:"email"`
-    Images     bool          `json:"images"`
-    ImagesMax  int           `json:"images_max"   validate:"omitempty,min=0,max=30"`
+    // ImagesMax is the TOTAL number of images across all places in the job
+    // — NOT per place. See §2 of this plan for the rationale. 20000 is the
+    // hard ceiling; 0 means skip image scraping entirely (billing-safe).
+    ImagesMax  int           `json:"images_max"   validate:"omitempty,min=0,max=20000"`
+    // ReviewsMax is the cap on reviews per place. 500 is a safe per-place
+    // ceiling; 0 means skip reviews.
     ReviewsMax int           `json:"reviews_max"  validate:"omitempty,min=0,max=500"`
     MaxResults int           `json:"max_results"  validate:"required,min=1,max=500"`
     Lat        string        `json:"lat"          validate:"omitempty,latitude"`
@@ -439,7 +469,7 @@ type JobData struct {
 }
 ```
 
-(Add `ImagesMax` to the struct, with appropriate JSON tag. The runner config in `runner/webrunner/webrunner.go:750` will need a corresponding field. The per-proxy URL content check — scheme allowlist + private-IP block — lives in `ValidateProxyURL` in Task 3.5, not in the struct tag.)
+(Add `ImagesMax` to the struct, with the per-job-total semantic. The `Images bool` field is removed in Task 2.3 — `ImagesMax > 0` is now the on/off signal. The runner config in `runner/webrunner/webrunner.go:750` will need a corresponding `ImagesBudgetTotal int` field plus the cross-place enforcement counter described in Task 2.3 Step 4. The per-proxy URL content check — scheme allowlist + private-IP block — lives in `ValidateProxyURL` in Task 3.5, not in the struct tag.)
 
 **Byte-vs-rune semantics note (H-4):** `validator/v10`'s `max=200` on a string counts **bytes** via `len()`, not runes. A 200-byte cap on a UTF-8 keyword is ~200 ASCII characters or ~50-66 CJK characters. For search keywords this is fine and intentional — the point is to prevent a 100KB keyword from hitting a downstream `LIKE` query, not to enforce a human-centric character limit. Document this in the OpenAPI spec description so international users aren't surprised when they hit the cap earlier than expected.
 
@@ -495,34 +525,43 @@ git commit -m "feat(api): unified cap-parameter convention; cap job name; remove
 
 ---
 
-### Task 2.3: Plumb `images_max` through the runner — with migration
+### Task 2.3: Plumb `images_max` (per-job total) through the runner — with migration
 
 **Files:**
-- Modify: `runner/webrunner/webrunner.go:750-766` — pass `job.Data.ImagesMax` into `GmapJobConfig`
-- Modify: `gmaps/job.go` (or wherever `GmapJobConfig` is defined) — accept `MaxImages int` and respect it
-- Modify: `models/job.go` — drop the `Images` boolean (see decision below)
+- Modify: `runner/webrunner/webrunner.go:750-766` — pass `job.Data.ImagesMax` into `GmapJobConfig` and enforce the per-job total cap by passing a running counter the scraper can decrement
+- Modify: `gmaps/job.go` (or wherever `GmapJobConfig` is defined) — accept `ImagesBudgetTotal int` and a budget tracker; the scraper consults the tracker before scraping each place's images
+- Modify: `models/job.go` — drop the `Images` boolean (see decision below); add `ImagesMax int`
 - Modify: `web/handlers/api.go` — drop `Images` from the request struct
 - Create: `scripts/migrations/<NNN>_drop_images_bool_default_images_max.up.sql` (and `.down.sql`) — backfill in-flight rows
 - Test: `runner/webrunner/webrunner_test.go`
 
-**Design problem the first draft missed:** existing rows in `jobs.data` have `images: true` but no `images_max` key. After deserialization the new struct field defaults to `0`, which under the new convention means *skip images* — opposite of intent. Three resolution options:
+**Critical semantic note (changed from first draft):** `images_max` is the **TOTAL number of images across the entire job**, NOT per-place. See §2 of this plan for the rationale and the worked test data (1 search × depth=20 → 112 places × ~79 avg images = 8870 total). The cap is 20,000 to bound total billing for image scraping.
 
-1. **Default-on-read defensively**: in the runner, if `Images && ImagesMax == 0`, treat as `DefaultImagesMax`.
-2. **Backfill migration**: one-shot UPDATE on `jobs.data` to set `images_max = 5` where `(data->>'images')::bool = true AND (data->>'images_max') IS NULL`.
-3. **Drop the `images` boolean entirely** (cleanest API): use `images_max > 0` as the on/off signal. One field, no ambiguity. API-breaking — only viable pre-launch. **We are pre-launch, so we pick this option.**
+**Why per-job-total instead of per-place:**
+- Image counts on Google Maps are unbounded per business — popular venues return hundreds. A per-place cap that covers real businesses (e.g. 100/place) would let a 500-place job produce ~50k images, far beyond any user's billing intent.
+- The runner must track running image count across places and stop scraping additional images (not stop scraping places — place metadata is much cheaper) once `images_max` is reached.
+- The cap is enforced in the runner via a shared atomic counter passed into the scraper; once the counter reaches `images_max`, image extraction is skipped for all subsequent places in the job. The job continues to scrape place metadata, reviews, and contact details — only image extraction stops.
 
-**Decision: drop `Images` boolean.** Use `images_max > 0` as the toggle. Frontend coordinates the change in the same release as the `reviews_max` rename (Chunk 2). Backfill any in-flight rows with the migration so already-running jobs don't lose their image-extraction setting.
+**Design problem the first draft missed:** existing rows in `jobs.data` have `images: true` but no `images_max` key. After deserialization the new struct field defaults to `0`, which under the new convention means *skip images* — opposite of intent. Resolution:
+
+- **Drop the `images` boolean entirely** (cleanest API): use `images_max > 0` as the on/off signal. One field, no ambiguity. API-breaking — only viable pre-launch. **We are pre-launch, so we pick this option.**
+- The migration backfills `images_max = 1000` (a sane mid-job-total default) on in-flight rows that previously had `images: true`. Historical completed rows are untouched.
+
+**Decision: drop `Images` boolean.** Use `images_max > 0` as the toggle. Frontend coordinates the change in the same release as the `reviews_max` rename (Chunk 2).
 
 - [ ] **Step 1: Write the migration SQL** — `scripts/migrations/<NNN>_drop_images_bool_default_images_max.up.sql`
 
 ```sql
 -- Backfill images_max for in-flight jobs that used the old `images` boolean.
--- Only touches rows that haven't completed yet — historical rows are read-only.
+-- 1000 is a sane mid-default per-job total: enough to cover a typical 20-50
+-- place job at ~20 images/place average without hitting the cap, but well
+-- under the 20000 hard ceiling. Only touches rows that haven't completed yet
+-- — historical rows are read-only.
 UPDATE jobs
 SET data = jsonb_set(
     data,
     '{images_max}',
-    to_jsonb(5),
+    to_jsonb(1000),
     true  -- create the key if missing
 )
 WHERE status IN ('pending', 'working')
@@ -546,16 +585,16 @@ WHERE status IN ('pending', 'working')
   AND COALESCE((data->>'images_max')::int, 0) > 0;
 ```
 
-- [ ] **Step 2: Write the failing runner test**
+- [ ] **Step 2: Write the failing runner tests**
 
 ```go
-func TestRunJob_PassesImagesMaxToScraper(t *testing.T) {
+func TestRunJob_PassesImagesBudgetToScraper(t *testing.T) {
     job := models.Job{Data: models.JobData{
         Keywords: []string{"pizza"}, Lang: "en", Depth: 5,
-        MaxResults: 10, ImagesMax: 7, MaxTime: 60 * time.Second,
+        MaxResults: 10, ImagesMax: 700, MaxTime: 60 * time.Second,
     }}
     cfg := buildGmapJobConfig(job)
-    require.Equal(t, 7, cfg.MaxImages)
+    require.Equal(t, 700, cfg.ImagesBudgetTotal)
     require.True(t, cfg.ExtractImages, "ExtractImages must be true when ImagesMax > 0")
 }
 
@@ -566,6 +605,18 @@ func TestRunJob_ImagesMaxZeroDisablesImages(t *testing.T) {
     }}
     cfg := buildGmapJobConfig(job)
     require.False(t, cfg.ExtractImages)
+    require.Equal(t, 0, cfg.ImagesBudgetTotal)
+}
+
+// TestRunJob_ImagesBudgetEnforcedAcrossPlaces is the key test for the
+// per-job-total semantic: a job with 5 places where each place has 100
+// candidate images and a budget of 250 must produce exactly 250 images
+// across all places, not 500 (which would be 100 × 5).
+func TestRunJob_ImagesBudgetEnforcedAcrossPlaces(t *testing.T) {
+    // Requires either a real scraper integration or a mock that returns a
+    // fixed image count per place. Skip if integration test infra is missing.
+    // The assertion is on total images in the resulting job results.
+    t.Skip("integration test — requires scraper mock or stripe-mock-equivalent")
 }
 ```
 
@@ -575,18 +626,30 @@ In `runner/webrunner/webrunner.go` around line 750:
 
 ```go
 cfg := &gmaps.GmapJobConfig{
-    MaxDepth:      job.Data.Depth,
-    ReviewsMax:    job.Data.ReviewsMax,
-    ExtraReviews:  job.Data.ReviewsMax > 0,
-    MaxResults:    job.Data.MaxResults,
-    MaxImages:     job.Data.ImagesMax,
-    ExtractImages: job.Data.ImagesMax > 0,
-    FastMode:      job.Data.FastMode,
-    ExtractEmails: job.Data.Email,
+    MaxDepth:          job.Data.Depth,
+    ReviewsMax:        job.Data.ReviewsMax,
+    ExtraReviews:      job.Data.ReviewsMax > 0,
+    MaxResults:        job.Data.MaxResults,
+    ImagesBudgetTotal: job.Data.ImagesMax, // per-job total, NOT per-place
+    ExtractImages:     job.Data.ImagesMax > 0,
+    FastMode:          job.Data.FastMode,
+    ExtractEmails:     job.Data.Email,
 }
 ```
 
-- [ ] **Step 4: Update `models/job.go`** — remove the `Images bool` field, keep `ImagesMax int`
+- [ ] **Step 4: Update `gmaps/job.go` — accept the per-job total budget and enforce cross-place**
+
+The scraper currently has no concept of a per-job image budget. Add:
+
+1. `ImagesBudgetTotal int` field on `GmapJobConfig`.
+2. A shared `*atomic.Int64` counter in the job runner that the scraper decrements as it extracts images per place.
+3. Before extracting images for a new place, the scraper checks `if counter.Load() <= 0 { skip image extraction for this place }`.
+4. After extracting N images for a place, the scraper does `counter.Add(-int64(N))`.
+5. The counter is initialized to `ImagesBudgetTotal` when the job starts.
+
+The exact integration depends on how `gmaps/job.go` and the scrapemate integration handle per-place result yields — read the existing code before designing the counter-pass mechanism. The unit test from Step 2 (`TestRunJob_ImagesBudgetEnforcedAcrossPlaces`) is the acceptance test for this.
+
+- [ ] **Step 5: Update `models/job.go`** — remove the `Images bool` field, add `ImagesMax int`
 
 - [ ] **Step 5: Run the migration locally, run all tests, commit**
 
@@ -1266,7 +1329,7 @@ git commit -m "fix(costs): scope GetJobCosts query by user_id (defense-in-depth)
 
 - [ ] **Step 2: Replace the `JobData` schema with the new cap fields**
 
-For every cap field, set `minimum`, `maximum`, `default`, and a `description` that names the billing unit. Example for `reviews_max`:
+For every cap field, set `minimum`, `maximum`, `default`, and a `description` that names the billing unit and the **scope** (per-place, per-job, or per-job-total). The two non-uniform-scope fields are `reviews_max` (per-place) and `images_max` (per-job total) — both descriptions must call this out explicitly so API consumers don't assume the default.
 
 ```yaml
 reviews_max:
@@ -1276,12 +1339,43 @@ reviews_max:
   maximum: 500
   default: 10
   description: |
-    Maximum number of reviews to scrape per place. Each review counts toward
+    Maximum number of reviews to scrape PER PLACE. Each review counts toward
     billing. Hard ceiling is 500 reviews/place — values above this are
     rejected with HTTP 400. Set to 0 to skip review scraping entirely.
+
+    Note: this cap is per-place, not per-job. A job that scrapes 100 places
+    with reviews_max=500 can produce up to 50,000 reviews total. Use
+    max_results to bound the total.
+
+images_max:
+  type: integer
+  format: int32
+  minimum: 0
+  maximum: 20000
+  default: 0
+  description: |
+    Maximum TOTAL number of images to scrape across ALL places in the job.
+    NOT per-place. The runner stops scraping additional images (but
+    continues scraping place metadata) once this budget is reached.
+
+    Image events are billed per image. The hard ceiling of 20000 is the
+    safety net that prevents a high-place job (max_results=500) from
+    consuming runaway image credits. Real-world reference: a typical
+    100-place job at depth=20 produces ~8000 images at the natural Google
+    Maps density (~80 images/place average), so the 20000 cap kicks in
+    around 250 places-worth of imagery.
+
+    Set to 0 (the default) to skip all image scraping. This is the
+    billing-safe default — image events are typically the largest cost
+    line item per job.
+
+    UNUSUAL SCOPE: this is the only cap field with a per-job-total scope
+    rather than per-place or per-job. The choice is deliberate because
+    image counts on Google Maps are unbounded per-business and a per-place
+    cap would not bound total billing.
 ```
 
-Repeat for `max_results`, `images_max`, `depth`, `radius`, `max_time`. Add a section at the top of the spec titled **"Cap parameter convention"** that links to this plan and explains the rule once so future API additions are consistent.
+Repeat for `max_results`, `depth`, `radius`, `max_time` (all per-job, conventional scope). Add a section at the top of the spec titled **"Cap parameter convention"** that links to this plan and explains the rule once — including the scope-column distinction (per-place vs per-job vs per-job-total) so future API additions are consistent.
 
 - [ ] **Step 3: Verify ReDoc renders the new spec without warnings**
 
