@@ -83,19 +83,23 @@ func New(cfg ServerConfig) (*Server, error) {
 		},
 	}
 
+	// Initialize billing service first so the auth middleware can receive
+	// it as a dependency for lazy Stripe Customer creation on signup.
+	// billingSvc may remain nil when no Stripe API key is configured;
+	// NewAuthMiddleware tolerates nil and the signup path then skips
+	// Stripe Customer creation (the next checkout will lazy-create).
+	if cfg.StripeAPIKey != "" && cfg.PgDB != nil {
+		cfgSvc := config.New(cfg.PgDB)
+		ans.billingSvc = billing.New(cfg.PgDB, cfgSvc, cfg.StripeAPIKey, cfg.StripeWebhookSecret, cfg.UserRepo)
+	}
+
 	// Initialize authentication middleware if Clerk secret key is provided
 	if cfg.ClerkSecretKey != "" && cfg.UserRepo != nil {
 		var err error
-		ans.authMiddleware, err = auth.NewAuthMiddleware(cfg.ClerkSecretKey, cfg.PgDB, cfg.UserRepo, cfg.APIKeyRepo, cfg.ServerSecret, ans.logger)
+		ans.authMiddleware, err = auth.NewAuthMiddleware(cfg.ClerkSecretKey, cfg.PgDB, cfg.UserRepo, cfg.APIKeyRepo, cfg.ServerSecret, ans.logger, ans.billingSvc)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize authentication: %w", err)
 		}
-	}
-
-	// Initialize billing service if Stripe API key is provided
-	if cfg.StripeAPIKey != "" && cfg.PgDB != nil {
-		cfgSvc := config.New(cfg.PgDB)
-		ans.billingSvc = billing.New(cfg.PgDB, cfgSvc, cfg.StripeAPIKey, cfg.StripeWebhookSecret)
 	}
 
 	staticFS, err := fs.Sub(static, "static")

@@ -12,15 +12,18 @@ import (
 )
 
 // newBillingHandlersForTest builds a BillingHandlers wired with a real
-// billing.Service that has a nil DB — this is intentional. The tests below
-// exercise the credit-validation path which runs before any DB writes or
-// Stripe API calls, so a nil DB is never dereferenced.
+// billing.Service that has a nil DB and nil userRepo — this is intentional.
+// The tests below exercise the credit-validation path which runs before any
+// DB writes, user lookups, or Stripe API calls, so neither dependency is
+// dereferenced. parseCreditsStrict rejects the test inputs (above-cap,
+// trailing garbage, empty) before CreateCheckoutSession reaches the user
+// lookup added in S-C3.
 //
 // STRIPE_SUCCESS_URL / STRIPE_CANCEL_URL are set by the caller so that the
 // config.Service hits the env-override path and never touches the nil DB.
 func newBillingHandlersForTest() *BillingHandlers {
 	cfgSvc := config.New(nil)
-	billingSvc := billing.New(nil, cfgSvc, "", "")
+	billingSvc := billing.New(nil, cfgSvc, "", "", nil)
 	return &BillingHandlers{
 		Deps: Dependencies{
 			BillingSvc: billingSvc,

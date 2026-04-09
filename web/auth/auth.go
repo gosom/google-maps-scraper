@@ -15,6 +15,7 @@ import (
 	clerkhttp "github.com/clerk/clerk-sdk-go/v2/http"
 	"github.com/clerk/clerk-sdk-go/v2/user"
 	"github.com/google/uuid"
+	"github.com/gosom/google-maps-scraper/billing"
 	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/postgres"
 )
@@ -29,7 +30,12 @@ type AuthMiddleware struct {
 	userRepo     postgres.UserRepository
 	apiKeyRepo   models.APIKeyRepository // nil if API key auth is not configured
 	serverSecret []byte                  // HMAC secret for API key lookup hashes
-	logger       *slog.Logger
+	// billingSvc is used to lazily provision a Stripe Customer for new
+	// users at signup time. nil-safe: when nil (e.g. test builds without a
+	// Stripe key), signup proceeds without creating a Customer and the
+	// first checkout will lazy-create one via CreateCheckoutSession.
+	billingSvc *billing.Service
+	logger     *slog.Logger
 }
 
 // ContextKey is used to store user information in the request context.
@@ -52,7 +58,10 @@ const (
 // NewAuthMiddleware creates a new AuthMiddleware.
 // apiKeyRepo and serverSecret may be nil/empty; when either is nil/empty, API key
 // authentication is disabled and all Bearer tokens are validated as Clerk JWTs.
-func NewAuthMiddleware(clerkAPIKey string, db *sql.DB, userRepo postgres.UserRepository, apiKeyRepo models.APIKeyRepository, serverSecret []byte, logger *slog.Logger) (*AuthMiddleware, error) {
+// billingSvc may be nil (in test builds or when Stripe is not configured); when
+// nil, the lazy Stripe Customer creation on signup is skipped and the user's
+// first checkout will create the Customer instead.
+func NewAuthMiddleware(clerkAPIKey string, db *sql.DB, userRepo postgres.UserRepository, apiKeyRepo models.APIKeyRepository, serverSecret []byte, logger *slog.Logger, billingSvc *billing.Service) (*AuthMiddleware, error) {
 	clerk.SetKey(clerkAPIKey)
 
 	return &AuthMiddleware{
@@ -65,6 +74,7 @@ func NewAuthMiddleware(clerkAPIKey string, db *sql.DB, userRepo postgres.UserRep
 		userRepo:     userRepo,
 		apiKeyRepo:   apiKeyRepo,
 		serverSecret: serverSecret,
+		billingSvc:   billingSvc,
 		logger:       logger,
 	}, nil
 }
@@ -147,6 +157,19 @@ func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
 					slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
 				http.Error(w, "Failed to create user record", http.StatusInternalServerError)
 				return
+			}
+			// Lazily create a Stripe Customer for the new user. Non-fatal:
+			// signup must succeed even if Stripe is unreachable. The next
+			// checkout attempt will lazy-create via CreateCheckoutSession.
+			// Logged at ERROR so ops sees the orphan signup path. Same
+			// pattern as grantSignupBonus below.
+			if m.billingSvc != nil {
+				if _, err := m.billingSvc.EnsureStripeCustomer(r.Context(), newUser.ID, newUser.Email, "", m.userRepo); err != nil {
+					m.logger.Error("stripe_customer_ensure_failed_on_signup",
+						slog.String("user_id", newUser.ID),
+						slog.Any("error", err),
+					)
+				}
 			}
 			if err := m.grantSignupBonus(r.Context(), userID); err != nil {
 				m.logger.Error("failed_to_grant_signup_bonus", slog.String("user_id", userID), slog.Any("error", err))

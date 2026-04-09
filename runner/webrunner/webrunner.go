@@ -279,9 +279,14 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 		return nil, err
 	}
 
-	// Initialize billing service for event charging (no Stripe required here)
+	// Initialize billing service for event charging (no Stripe required here).
+	// userRepo is required by billing.New (S-C3) so checkout-path operations
+	// can resolve users.stripe_customer_id; this background charging service
+	// does not call CreateCheckoutSession but the constructor signature is
+	// shared, so we wire a real repo rather than nil.
 	cfgSvc := config.New(db)
-	billSvc := billing.New(db, cfgSvc, "", "")
+	billUserRepo := postgres.NewUserRepository(db)
+	billSvc := billing.New(db, cfgSvc, "", "", billUserRepo)
 	if billSvc != nil {
 		slog.Info("billing_service_initialized")
 	} else {

@@ -26,8 +26,13 @@ type Service struct {
 	db                *sql.DB
 	cfg               *config.Service
 	webhookSigningKey string
-	logger            *slog.Logger
-	metrics           *metrics.BillingMetrics
+	// userRepo is required by CreateCheckoutSession to look up the user's
+	// stripe_customer_id (and lazy-create it via EnsureStripeCustomer if
+	// missing). nil-safe: tests that don't exercise the checkout path can
+	// leave it unset, but CreateCheckoutSession will return a clean error.
+	userRepo models.UserRepository
+	logger   *slog.Logger
+	metrics  *metrics.BillingMetrics
 }
 
 type CheckoutRequest struct {
@@ -41,7 +46,12 @@ type CheckoutResponse struct {
 	URL       string `json:"url"`
 }
 
-func New(db *sql.DB, cfg *config.Service, stripeSecretKey, webhookSigningKey string) *Service {
+// New constructs a billing.Service. userRepo is required for the checkout
+// path (it powers the stripe_customer_id lookup); pass nil only when
+// constructing a Service for non-checkout flows like background event
+// charging in webrunner. CreateCheckoutSession returns a clean error if
+// userRepo is nil rather than panicking on a nil dereference.
+func New(db *sql.DB, cfg *config.Service, stripeSecretKey, webhookSigningKey string, userRepo models.UserRepository) *Service {
 	// Set the Stripe API key once at startup to avoid a data race from
 	// concurrent goroutines writing the package-level global on every request.
 	// Guard: only set when non-empty so a second billing.New("") used for
@@ -54,6 +64,7 @@ func New(db *sql.DB, cfg *config.Service, stripeSecretKey, webhookSigningKey str
 		db:                db,
 		cfg:               cfg,
 		webhookSigningKey: webhookSigningKey,
+		userRepo:          userRepo,
 		logger:            pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "billing"),
 		metrics:           metrics.NewBillingMetrics(nil), // uses default Prometheus registry
 	}
@@ -74,6 +85,28 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, req CheckoutRequest
 		return CheckoutResponse{}, err
 	}
 
+	// Ensure the user has a Stripe Customer (lazy-create for legacy users
+	// who signed up before S-C3 added signup-time provisioning). Passing
+	// Customer on the CheckoutSessionParams links the session, payment
+	// intent, and charge to a single durable Customer record. Without this,
+	// every checkout creates a fresh guest Customer in Stripe and the
+	// refund handler's fallback lookup by stripe_customer_id always misses.
+	if s.userRepo == nil {
+		return CheckoutResponse{}, errors.New("user repository not configured")
+	}
+	user, err := s.userRepo.GetByID(ctx, req.UserID)
+	if err != nil {
+		return CheckoutResponse{}, fmt.Errorf("failed to look up user: %w", err)
+	}
+	var existingCustomerID string
+	if user.StripeCustomerID != nil {
+		existingCustomerID = *user.StripeCustomerID
+	}
+	stripeCustomerID, err := s.EnsureStripeCustomer(ctx, req.UserID, user.Email, existingCustomerID, s.userRepo)
+	if err != nil {
+		return CheckoutResponse{}, fmt.Errorf("failed to ensure stripe customer: %w", err)
+	}
+
 	// MVP: fixed $1 per credit
 	unitPriceCents := 100
 
@@ -84,6 +117,7 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, req CheckoutRequest
 	// Use price_data with unit_amount = price per credit and quantity = credits
 	params := &stripe.CheckoutSessionParams{
 		Mode:       stripe.String(string(stripe.CheckoutSessionModePayment)),
+		Customer:   stripe.String(stripeCustomerID),
 		SuccessURL: stripe.String(successURL),
 		CancelURL:  stripe.String(cancelURL),
 		LineItems: []*stripe.CheckoutSessionLineItemParams{
