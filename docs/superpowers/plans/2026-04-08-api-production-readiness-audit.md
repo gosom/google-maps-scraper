@@ -217,9 +217,25 @@ This change ships as a **breaking** change from the frontend's perspective. Coor
 
 ---
 
-## Chunk 2: Cap Parameter Convention Rollout
+## Chunk 2: Cap Parameter Convention Rollout — ✅ COMPLETE (2026-04-09)
 
 This is the §2 decision applied. **Coordinate with the frontend** before merging — `reviews_max=9999` will become a 400 error.
+
+**Status:** All three tasks landed.
+
+- Task 2.1 — `fa30aa4` `feat(api): add unified cap-parameter constants and lang allowlist`
+- Task 2.2 — `79845e8` `feat(api): unified cap-parameter convention; cap job name`
+- Task 2.3 — `84f687a` `feat(scraper): replace images bool with images_max cap; backfill in-flight jobs`
+
+The cap convention is now end-to-end:
+- `web/utils/cap_params.go` is the single source of truth for every integer cap.
+- `models.JobData` struct tags mirror the constants and the `Images` boolean is gone.
+- `web/utils/validation.go` enforces every cap at the service layer for non-HTTP callers.
+- `runner/jobs.go` plumbs an `*atomic.Int64` per-job total image budget through `gmaps.GmapJob` → `gmaps.PlaceJob`. `gmaps.PlaceJob.extractImages` checks the budget before scraping and decrements after, stopping image extraction once the budget is exhausted.
+- Migration `000033_drop_images_bool_default_images_max` backfills in-flight rows.
+- Test coverage: `web/utils/validation_test.go` (18 cases), `runner/jobs_test.go` (3 cases for budget plumbing), `gmaps/image_budget_test.go` (3 cases for the option attach behavior).
+
+There is one known runtime gap: the Load/Add race in `extractImages` allows concurrent PlaceJobs to overshoot the budget by `concurrency × images_per_place`. This is acceptable for billing exposure (the goal is bounding, not exact accounting) and was an explicit design decision.
 
 ### Task 2.1: Create the central caps file
 
