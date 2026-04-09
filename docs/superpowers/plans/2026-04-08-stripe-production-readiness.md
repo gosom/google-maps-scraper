@@ -1,10 +1,12 @@
 # Stripe Production Readiness Implementation Plan
 
-> **STATUS as of 2026-04-09:**
-> - ✅ **P0 chunk (Critical, 5 tasks) — COMPLETE.** All five S-C1 through S-C5 findings shipped between `9f7d928` and `237f2bd`. The refund money-loss bug is fixed end-to-end.
-> - ✅ **P1 chunk (High, 4 tasks + S-H3 covered by P0) — COMPLETE.** S-H1, S-H2, S-H4, S-H5 shipped between `35f8691` and `ebc3408`. Stripe idempotency keys, decimal-safe refund math, ClientReferenceID + PI metadata propagation, and charge.dispute.created webhook handler all live. Each task verified against current Stripe docs (docs.stripe.com).
-> - ✅ **P2 chunk (Medium, 6 tasks) — COMPLETE.** S-M1 through S-M6 shipped between `ecbedb6` and `7b7759c`. Foot-gun metadata fallback removed; line_items expand + quantity verification on reconcile; refund.updated and async-payment-* stubs for non-card PMs; three-path user lookup in handleChargeFailed; receipt URL persistence on both webhook and reconcile paths. Each task verified against current Stripe docs.
-> - P3 chunk (Minor, code hygiene) remains pending — see §7 below.
+> **STATUS as of 2026-04-09:** ✅ **ALL FOUR PRIORITY TIERS COMPLETE.**
+> - ✅ **P0 Critical (5 tasks)** — refund money-loss bug fixed end-to-end. Commits `9f7d928`..`237f2bd`.
+> - ✅ **P1 High (4 tasks + S-H3 in P0)** — idempotency keys, decimal-safe refund math, ClientReferenceID + PI metadata propagation, charge.dispute.created handler. Commits `35f8691`..`ebc3408`.
+> - ✅ **P2 Medium (6 tasks)** — metadata fallback removal, line_items expand + verify, refund.updated + async PM stubs, handleChargeFailed three-path lookup, receipt URL persistence. Commits `ecbedb6`..`7b7759c`.
+> - ✅ **P3 Minor (4 tasks)** — Stripe API version pin doc + startup log, DisallowUnknownFields, refund_cap metric verified retired, OpenAPI webhook docs. Commits `444699f`..`6748ea3`.
+>
+> All 24 plan findings closed. The full Stripe integration surface has been audited, fixed, and verified against current Stripe docs (via WebFetch on docs.stripe.com). Branch ready to merge.
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -2329,11 +2331,24 @@ a59273e feat(billing): persist stripe_receipt_url from PaymentIntent.LatestCharg
 7b7759c fix(billing): log dropped error in ReconcileSession receipt URL repair (S-M6 review)
 ```
 
-### P3 Minor (code hygiene)
-- [ ] **S-L1** Task 4.1: Pin Stripe API version
-- [ ] **S-L2** Task 4.2: `DisallowUnknownFields` on checkout + reconcile handlers
-- [ ] **S-L3** Task 4.3: Replace `refund_cap_applied` metric with `refund_deficit_applied`
-- [ ] **S-L4** Task 4.4: Document webhook path in OpenAPI spec
+### P3 Minor (code hygiene) — ✅ ALL COMPLETE (2026-04-09)
+- [x] **S-L1** Task 4.1: Stripe API version pinning is auto-handled by the SDK (`stripe.APIVersion` is a `const`); added doc comment + INFO startup log emitting `stripe.APIVersion` and the SDK identifier — commit `444699f`
+- [x] **S-L2** Task 4.2: `DisallowUnknownFields` on `CreateCheckoutSession` + `Reconcile` handlers, with regression tests for both — commit `949af5f`
+- [x] **S-L3** Task 4.3: Verified the `refund_cap_applied` metric was already cleanly retired by S-C4 (`ce18e60`) and the env template fix in `155247e`. Zero live references in code or configs. No code change needed.
+- [x] **S-L4** Task 4.4: Three new entries in `web/static/spec/spec.yaml` — `/api/v1/billing/webhook` (canonical) plus 410 Gone documentation for `/webhooks/stripe` and `/api/stripe/webhook`. Validated via Go yaml.v3 parse — commit `6748ea3`
+
+**P3 chunk delivery notes:**
+- S-L1 was redefined in scope: the plan suggested `stripe.APIVersion = "..."` but `stripe-go/v82` declares `APIVersion` as a `const`, so reassignment is impossible. The SDK already pins the version automatically. Added a doc comment explaining the pinning model and an INFO startup log so ops can confirm at a glance.
+- S-L3 collapsed to a verification task — the metric retirement was already done in P0/S-C4 work. No new commit needed.
+- S-L4 chose `web/static/spec/spec.yaml` as the canonical OpenAPI source (consumed by ReDoc at `web/static/templates/redoc.html`). Total paths in spec is now 8 (5 existing + 3 new webhook entries).
+- Two new tests on the handler (`TestCreateCheckoutSession_RejectsUnknownFields`, `TestReconcile_RejectsUnknownFields`) lock in the S-L2 hardening.
+
+**Complete P3 commit history (oldest first):**
+```
+444699f chore(billing): document Stripe API version pinning + startup log (S-L1)
+949af5f fix(handlers): DisallowUnknownFields on checkout + reconcile (S-L2)
+6748ea3 docs(api): document Stripe webhook path + retired legacy paths in OpenAPI (S-L4)
+```
 
 ### Verified-correct (do NOT touch)
 - [x] Webhook signature verification (`webhook.ConstructEvent`)
