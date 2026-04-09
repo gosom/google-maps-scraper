@@ -4,8 +4,11 @@ BEGIN;
 -- credits have been consumed. Next purchase applies here first, then to balance.
 -- The >= 0 CHECK preserves the financial safety invariant — deficit can only
 -- grow (via refunds) and shrink (via paydowns), never go negative.
+-- IF NOT EXISTS matches the codebase convention (000025, 000028, etc.) so a
+-- partial-apply that left the migration in golang-migrate's dirty state can
+-- be safely re-run after the operator clears the dirty flag.
 ALTER TABLE users
-    ADD COLUMN refund_deficit_credits NUMERIC(18,6) NOT NULL DEFAULT 0
+    ADD COLUMN IF NOT EXISTS refund_deficit_credits NUMERIC(18,6) NOT NULL DEFAULT 0
         CHECK (refund_deficit_credits >= 0);
 
 COMMENT ON COLUMN users.refund_deficit_credits IS

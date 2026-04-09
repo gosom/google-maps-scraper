@@ -1069,10 +1069,19 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 				(id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type, metadata)
 				VALUES ($1, $2, 'refund_deficit', 0, $3, $3, $4, $5, 'payment', $6::jsonb)`
 			desc := fmt.Sprintf("Stripe refund deficit for charge %s: %.6f credits uncollectable", charge.ID, deficitIncreaseFloat)
-			metadata := fmt.Sprintf(`{"deficit_amount":"%s","charge_id":"%s"}`,
-				strconv.FormatFloat(deficitIncreaseFloat, 'f', 6, 64), charge.ID)
+			// Use json.Marshal rather than hand-formatting the JSON: even though
+			// charge.ID is alphanumeric by Stripe convention, defensive encoding
+			// removes injection-shape concerns regardless of what Stripe ever sends.
+			metadataBytes, err := json.Marshal(map[string]string{
+				"deficit_amount": strconv.FormatFloat(deficitIncreaseFloat, 'f', 6, 64),
+				"charge_id":      charge.ID,
+			})
+			if err != nil {
+				s.logger.Error("failed_to_marshal_refund_deficit_metadata", slog.Any("error", err))
+				return 500, fmt.Errorf("failed to marshal refund deficit metadata: %w", err)
+			}
 			if _, err := tx.ExecContext(ctx, insTxnDeficit,
-				uuid.Must(uuid.NewV7()).String(), userID, newBalanceFloat, desc, charge.ID, metadata); err != nil {
+				uuid.Must(uuid.NewV7()).String(), userID, newBalanceFloat, desc, charge.ID, string(metadataBytes)); err != nil {
 				s.logger.Error("failed_to_insert_refund_deficit_transaction", slog.Any("error", err))
 				return 500, fmt.Errorf("failed to insert refund deficit transaction: %w", err)
 			}
