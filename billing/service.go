@@ -76,6 +76,77 @@ func New(db *sql.DB, cfg *config.Service, stripeSecretKey, webhookSigningKey str
 // Stripe dedup window collapses retries-within-an-hour to the same
 // session and lets retries-across-hours create a fresh one. Pure function
 // to enable unit testing. (S-H1)
+// buildCheckoutSessionParams constructs the *stripe.CheckoutSessionParams for
+// CreateCheckoutSession. Extracted as a pure builder so the field assignments
+// (especially the S-H4 ClientReferenceID and PaymentIntentData.Metadata) can
+// be unit-tested without requiring a Stripe mock.
+//
+// Stripe propagation rules (verified against docs.stripe.com/metadata):
+//   - top-level Metadata stays on the Checkout Session object only
+//   - PaymentIntentData.Metadata is stored on the underlying PaymentIntent at
+//     creation, and from there is snapshot-copied to the Charge object — so
+//     fields here are visible on charge.refunded AND charge.dispute.created
+//     webhook event payloads
+//   - ClientReferenceID is NOT metadata; it's a top-level reconciliation
+//     reference (max 200 chars) surfaced in the Stripe Dashboard
+func buildCheckoutSessionParams(
+	req CheckoutRequest,
+	stripeCustomerID string,
+	creditsInt, unitPriceCents int,
+	successURL, cancelURL string,
+) *stripe.CheckoutSessionParams {
+	return &stripe.CheckoutSessionParams{
+		Mode: stripe.String(string(stripe.CheckoutSessionModePayment)),
+		// Customer links the session, payment intent, and charge to a single
+		// durable Stripe Customer record (S-C3).
+		Customer: stripe.String(stripeCustomerID),
+		// ClientReferenceID surfaces the internal user ID in the Stripe
+		// Dashboard for search/reconciliation. Max 200 chars per Stripe docs;
+		// Clerk user IDs are well under this limit. (S-H4)
+		ClientReferenceID: stripe.String(req.UserID),
+		SuccessURL:        stripe.String(successURL),
+		CancelURL:         stripe.String(cancelURL),
+		LineItems: []*stripe.CheckoutSessionLineItemParams{
+			{
+				PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
+					Currency: stripe.String(req.Currency),
+					ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
+						Name: stripe.String("Brezel Credits"),
+					},
+					UnitAmount: stripe.Int64(int64(unitPriceCents)),
+				},
+				Quantity: stripe.Int64(int64(creditsInt)),
+			},
+		},
+		// Top-level Metadata stays on the Checkout Session object only — it
+		// does NOT propagate to the resulting PaymentIntent or Charge per
+		// Stripe's metadata propagation rules. handleCheckoutSessionCompleted
+		// still reads session.Metadata as a defense against the (rare) case
+		// where the stripe_payments DB row is missing.
+		Metadata: map[string]string{
+			"user_id":  req.UserID,
+			"credits":  fmt.Sprintf("%d", creditsInt),
+			"currency": req.Currency,
+		},
+		// PaymentIntentData.Metadata DOES propagate downstream:
+		// Session → PaymentIntent → Charge (one-time snapshot at PI creation).
+		// Stripe docs: "Data you specify with the payment_intent_data.metadata
+		// attribute is stored in the metadata of the underlying PaymentIntent."
+		// And: "When a PaymentIntent creates a payment, the metadata is copied
+		// to the charge in a one-time snapshot."
+		// This means brezel_user_id is available on the Charge object delivered
+		// by both charge.refunded AND charge.dispute.created webhooks, enabling
+		// direct user lookups without joining through stripe_payments. (S-H4)
+		PaymentIntentData: &stripe.CheckoutSessionPaymentIntentDataParams{
+			Description: stripe.String(fmt.Sprintf("Brezel Credits x%d", creditsInt)),
+			Metadata: map[string]string{
+				"brezel_user_id": req.UserID,
+				"credits":        fmt.Sprintf("%d", creditsInt),
+			},
+		},
+	}
+}
+
 func checkoutIdempotencyKey(userID string, credits int, currency string, now time.Time) string {
 	bucket := now.Truncate(time.Hour).Unix()
 	return fmt.Sprintf("checkout:%s:%d:%s:%d", userID, credits, currency, bucket)
@@ -125,30 +196,7 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, req CheckoutRequest
 	successURL, _ := s.cfg.GetString(ctx, "stripe_success_url", "https://example.com/success")
 	cancelURL, _ := s.cfg.GetString(ctx, "stripe_cancel_url", "https://example.com/cancel")
 
-	// Use price_data with unit_amount = price per credit and quantity = credits
-	params := &stripe.CheckoutSessionParams{
-		Mode:       stripe.String(string(stripe.CheckoutSessionModePayment)),
-		Customer:   stripe.String(stripeCustomerID),
-		SuccessURL: stripe.String(successURL),
-		CancelURL:  stripe.String(cancelURL),
-		LineItems: []*stripe.CheckoutSessionLineItemParams{
-			{
-				PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
-					Currency: stripe.String(req.Currency),
-					ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
-						Name: stripe.String("Brezel Credits"),
-					},
-					UnitAmount: stripe.Int64(int64(unitPriceCents)),
-				},
-				Quantity: stripe.Int64(int64(creditsInt)),
-			},
-		},
-		Metadata: map[string]string{
-			"user_id":  req.UserID,
-			"credits":  fmt.Sprintf("%d", creditsInt),
-			"currency": req.Currency,
-		},
-	}
+	params := buildCheckoutSessionParams(req, stripeCustomerID, creditsInt, unitPriceCents, successURL, cancelURL)
 
 	// Idempotency key scoped to (user, credits, currency, hour). Stripe's
 	// 24h dedup window means repeated attempts within an hour collapse to
