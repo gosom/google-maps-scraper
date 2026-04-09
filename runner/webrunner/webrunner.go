@@ -589,6 +589,9 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		w.logger.Debug("job_status_persisted", slog.String("job_id", job.ID), slog.String("status", string(job.Status)))
 	}()
 
+	// Reset review circuit breaker for each new job
+	gmaps.ResetReviewCircuitBreaker()
+
 	// Charge actor_start at job start (requires sufficient balance).
 	// Admin jobs bypass billing entirely — they are internal operations.
 	if job.Source == models.SourceAdmin {
@@ -602,9 +605,15 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		err := w.billingSvc.ChargeActorStart(actorStartCtx, job.UserID, job.ID)
 		actorStartCancel() // release resources immediately
 		if err != nil {
-			w.logger.Error("actor_start_charge_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 			job.Status = web.StatusFailed
 			job.FailureReason = "insufficient credit balance to start job"
+			w.logger.Error("actor_start_charge_failed",
+				slog.String("job_id", job.ID),
+				slog.String("user_id", job.UserID),
+				slog.String("job_name", job.Name),
+				slog.String("failure_reason", job.FailureReason),
+				slog.Any("error", err),
+			)
 			return err
 		}
 		w.logger.Info("actor_start_charge_succeeded", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
@@ -704,6 +713,9 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		}
 	}()
 
+	// Reset the review circuit breaker for this new job
+	gmaps.ResetReviewCircuitBreaker()
+
 	// Initialize deduper and exitMonitor before use
 	dedup := deduper.New()
 	exitMonitor := exiter.New()
@@ -711,7 +723,14 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	mate, err := w.setupMate(jobCtx, outfile, job, exitMonitor)
 	if err != nil {
 		job.Status = web.StatusFailed
-		job.FailureReason = fmt.Sprintf("setupMate failed: %v", err)
+		job.FailureReason = "job initialization failed"
+		w.logger.Error("setup_mate_failed",
+			slog.String("job_id", job.ID),
+			slog.String("user_id", job.UserID),
+			slog.String("job_name", job.Name),
+			slog.String("failure_reason", job.FailureReason),
+			slog.Any("error", err),
+		)
 		return err
 	}
 
@@ -748,7 +767,14 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	})
 	if err != nil {
 		job.Status = web.StatusFailed
-		job.FailureReason = fmt.Sprintf("CreateSeedJobs failed: %v", err)
+		job.FailureReason = "job configuration failed"
+		w.logger.Error("create_seed_jobs_failed",
+			slog.String("job_id", job.ID),
+			slog.String("user_id", job.UserID),
+			slog.String("job_name", job.Name),
+			slog.String("failure_reason", job.FailureReason),
+			slog.Any("error", err),
+		)
 		return err
 	}
 
@@ -873,9 +899,33 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			err, _ = w.shutdownMate(job.ID, cancel, closeMate, resultCh)
 			w.logger.Debug("forced_completion", slog.String("job_id", job.ID), slog.Any("error", err))
 		case <-forcedCompletionCh:
-			// Exit monitor triggered cancellation, 30s grace elapsed, mate.Start still not done
-			w.logger.Debug("forced_completion_timeout", slog.String("job_id", job.ID))
-			err, _ = w.shutdownMate(job.ID, cancel, closeMate, resultCh)
+			w.logger.Warn("mate_exit_monitor_forced_shutdown",
+				slog.String("job_id", job.ID),
+				slog.String("detail", "exit monitor detected completion, 30s grace elapsed, forcing shutdown"),
+			)
+			mateErr, leaked := w.shutdownMate(job.ID, cancel, closeMate, resultCh)
+			if leaked {
+				var resultCount int
+				if w.db != nil {
+					countCtx, countCancel := context.WithTimeout(context.Background(), 10*time.Second)
+					if dbErr := w.db.QueryRowContext(countCtx, `SELECT COUNT(*) FROM results WHERE job_id=$1`, job.ID).Scan(&resultCount); dbErr != nil {
+						w.logger.Error("result_count_after_leak_failed", slog.String("job_id", job.ID), slog.Any("error", dbErr))
+					}
+					countCancel()
+				}
+				if resultCount > 0 {
+					w.logger.Info("goroutine_leaked_but_results_exist",
+						slog.String("job_id", job.ID),
+						slog.String("user_id", job.UserID),
+						slog.Int("result_count", resultCount),
+					)
+					err = nil
+				} else {
+					err = mateErr
+				}
+			} else {
+				err = mateErr
+			}
 		}
 
 		w.logger.Debug("context_after_mate_start", slog.String("job_id", job.ID), slog.Any("context_err", mateCtx.Err()))
@@ -947,7 +997,18 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 				w.logger.Debug("real_error_occurred", slog.String("job_id", job.ID), slog.Any("error", err))
 				cancel()
 				job.Status = web.StatusFailed
-				job.FailureReason = fmt.Sprintf("runtime error: %v", err)
+				if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "leaked") {
+					job.FailureReason = "job timed out"
+				} else {
+					job.FailureReason = "job failed due to a runtime error"
+				}
+				w.logger.Error("job_runtime_error",
+					slog.String("job_id", job.ID),
+					slog.String("user_id", job.UserID),
+					slog.String("job_name", job.Name),
+					slog.String("failure_reason", job.FailureReason),
+					slog.Any("error", err),
+				)
 
 				return err
 			}
@@ -962,7 +1023,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		if seedTotal > 0 && seedCompleted < seedTotal {
 			w.logger.Debug("seeds_incomplete", slog.String("job_id", job.ID), slog.Int("completed", seedCompleted), slog.Int("total", seedTotal))
 			if job.FailureReason == "" {
-				job.FailureReason = fmt.Sprintf("seeds incomplete %d/%d", seedCompleted, seedTotal)
+				job.FailureReason = fmt.Sprintf("job partially completed (%d/%d searches finished)", seedCompleted, seedTotal)
 			}
 			jobSuccess = false
 		}
@@ -1004,7 +1065,13 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 				err := w.billingSvc.ChargeAllJobEvents(chargeAllCtx, job.UserID, job.ID, resultCount)
 				chargeAllCancel() // release resources immediately
 				if err != nil {
-					w.logger.Error("billing_atomic_charge_failed", slog.String("job_id", job.ID), slog.Any("error", err))
+					w.logger.Error("billing_atomic_charge_failed",
+						slog.String("job_id", job.ID),
+						slog.String("user_id", job.UserID),
+						slog.String("job_name", job.Name),
+						slog.String("failure_reason", "billing processing failed"),
+						slog.Any("error", err),
+					)
 					jobSuccess = false
 					job.Status = web.StatusFailed
 					job.FailureReason = "billing processing failed"
@@ -1046,7 +1113,14 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		// File close errors can indicate I/O errors (EIO) meaning data was lost
 		// This should fail the job to ensure data integrity
 		job.Status = web.StatusFailed
-		job.FailureReason = fmt.Sprintf("failed to close CSV file: %v", err)
+		job.FailureReason = "failed to save results file"
+		w.logger.Error("csv_file_close_failed",
+			slog.String("job_id", job.ID),
+			slog.String("user_id", job.UserID),
+			slog.String("job_name", job.Name),
+			slog.String("failure_reason", job.FailureReason),
+			slog.Any("error", err),
+		)
 		return fmt.Errorf("failed to close CSV file: %w", err)
 	}
 	fileClosed = true

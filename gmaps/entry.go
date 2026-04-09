@@ -282,32 +282,36 @@ func (e *Entry) CsvRow() []string {
 }
 
 func (e *Entry) AddExtraReviews(pages [][]byte) {
-	if len(pages) == 0 {
-		return
-	}
-
-	for _, page := range pages {
-		reviews := extractReviews(page)
-		if len(reviews) > 0 {
-			e.UserReviewsExtended = append(e.UserReviewsExtended, reviews...)
+	for i, page := range pages {
+		reviews, err := extractReviews(page)
+		if err != nil {
+			slog.Warn("review_page_parse_failed",
+				slog.Int("page", i+1),
+				slog.Int("total_pages", len(pages)),
+				slog.Any("error", err),
+			)
+			continue
 		}
+		e.UserReviewsExtended = append(e.UserReviewsExtended, reviews...)
 	}
 }
 
-func extractReviews(data []byte) []Review {
+func extractReviews(data []byte) ([]Review, error) {
 	if len(data) >= 4 && string(data[0:4]) == `)]}'` {
-		data = data[4:] // Skip security prefix
+		data = data[4:]
 	}
 
 	var jd []any
 	if err := json.Unmarshal(data, &jd); err != nil {
-		slog.Error("entry_extract_reviews_unmarshal_failed", slog.Any("error", err))
-		return nil
+		return nil, fmt.Errorf("unmarshal review response: %w", err)
 	}
 
 	reviewsI := getNthElementAndCast[[]any](jd, 2)
+	if len(reviewsI) == 0 {
+		return nil, fmt.Errorf("no reviews at index 2 (array length: %d)", len(jd))
+	}
 
-	return parseReviews(reviewsI)
+	return parseReviews(reviewsI), nil
 }
 
 // extractMultipleImages extracts all images per category from the data array

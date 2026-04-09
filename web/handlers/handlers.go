@@ -78,6 +78,7 @@ type BillingHandlers struct{ Deps Dependencies }
 type JobService interface {
 	Create(ctx context.Context, job *models.Job) error
 	All(ctx context.Context, userID string) ([]models.Job, error)
+	AllPaginated(ctx context.Context, params models.PaginatedJobsParams) ([]models.Job, int, error)
 	Get(ctx context.Context, id string, userID string) (models.Job, error)
 	Delete(ctx context.Context, id string, userID string) error
 	Cancel(ctx context.Context, id string, userID string) error

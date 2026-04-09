@@ -158,7 +158,7 @@ func (h *WebhookHandlers) CreateWebhook(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Generate signing secret: 32 bytes of crypto/rand, hex-encoded (256-bit entropy).
-	id := uuid.New().String()
+	id := uuid.Must(uuid.NewV7()).String()
 	secretBytes := make([]byte, 32)
 	if _, err := rand.Read(secretBytes); err != nil {
 		internalError(w, h.Deps.Logger, err, "failed to generate signing secret",

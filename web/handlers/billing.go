@@ -165,8 +165,20 @@ func (h *BillingHandlers) GetBillingHistory(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	// Optional transaction type filter. Empty string means "no filter".
+	// Reject unknown values with 400 instead of silently ignoring so clients
+	// get feedback when they send a typo like ?type=purchases (plural).
+	typeFilter := r.URL.Query().Get("type")
+	if !webservices.IsAllowedBillingHistoryType(typeFilter) {
+		renderJSON(w, http.StatusBadRequest, models.APIError{
+			Code:    http.StatusBadRequest,
+			Message: "invalid type filter (allowed: purchase, consumption, bonus, refund, adjustment)",
+		})
+		return
+	}
+
 	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc)
-	resp, err := cs.GetBillingHistory(r.Context(), userID, limit, offset)
+	resp, err := cs.GetBillingHistory(r.Context(), userID, limit, offset, typeFilter)
 	if err != nil {
 		if h.Deps.Logger != nil {
 			h.Deps.Logger.Error("billing_history_fetch_failed",

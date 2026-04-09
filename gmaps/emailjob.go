@@ -28,7 +28,7 @@ func NewEmailJob(parentID string, entry *Entry, opts ...EmailExtractJobOptions) 
 
 	job := EmailExtractJob{
 		Job: scrapemate.Job{
-			ID:         uuid.New().String(),
+			ID:         uuid.Must(uuid.NewV7()).String(),
 			ParentID:   parentID,
 			Method:     "GET",
 			URL:        entry.WebSite,

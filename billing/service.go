@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gosom/google-maps-scraper/config"
 	"github.com/gosom/google-maps-scraper/models"
 	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
@@ -114,9 +115,9 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, req CheckoutRequest
 	}
 
 	// Persist pending payment
-	const ins = `INSERT INTO stripe_payments (user_id, stripe_checkout_session_id, amount_cents, currency, credits_purchased, status)
-                 VALUES ($1, $2, $3, $4, $5, 'pending') ON CONFLICT (stripe_checkout_session_id) DO NOTHING`
-	if _, err := s.db.ExecContext(ctx, ins, req.UserID, sess.ID, unitPriceCents*creditsInt, req.Currency, creditsInt); err != nil {
+	const ins = `INSERT INTO stripe_payments (id, user_id, stripe_checkout_session_id, amount_cents, currency, credits_purchased, status)
+                 VALUES ($1, $2, $3, $4, $5, $6, 'pending') ON CONFLICT (stripe_checkout_session_id) DO NOTHING`
+	if _, err := s.db.ExecContext(ctx, ins, uuid.Must(uuid.NewV7()).String(), req.UserID, sess.ID, unitPriceCents*creditsInt, req.Currency, creditsInt); err != nil {
 		s.logger.Error("failed_to_persist_pending_payment",
 			slog.String("user_id", req.UserID),
 			slog.String("session_id", sess.ID),
@@ -294,9 +295,9 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 	}
 
 	// Insert credit transaction with accurate balances
-	const insTxn = `INSERT INTO credit_transactions (user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
-					VALUES ($1, 'purchase', $2, $3, $4, $5, $6, 'payment')`
-	_, err = tx.ExecContext(ctx, insTxn, userID, credits, currentBalance, currentBalance+float64(credits), "Stripe purchase", session.ID)
+	const insTxn = `INSERT INTO credit_transactions (id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
+					VALUES ($1, $2, 'purchase', $3, $4, $5, $6, $7, 'payment')`
+	_, err = tx.ExecContext(ctx, insTxn, uuid.Must(uuid.NewV7()).String(), userID, credits, currentBalance, currentBalance+float64(credits), "Stripe purchase", session.ID)
 	if err != nil {
 		s.logger.Error("failed_to_insert_credit_transaction", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to insert credit transaction: %w", err)
@@ -452,9 +453,9 @@ func (s *Service) ReconcileSession(ctx context.Context, sessionID, callerUserID 
 	}
 
 	// Insert credit transaction with accurate balances
-	const insTxn = `INSERT INTO credit_transactions (user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type) 
-		VALUES ($1, 'purchase', $2, $3, $4, $5, $6, 'payment')`
-	if _, err := tx.ExecContext(ctx, insTxn, userID, credits, currentBalance, currentBalance+float64(credits), "Stripe purchase (reconcile)", sessionID); err != nil {
+	const insTxn = `INSERT INTO credit_transactions (id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
+		VALUES ($1, $2, 'purchase', $3, $4, $5, $6, $7, 'payment')`
+	if _, err := tx.ExecContext(ctx, insTxn, uuid.Must(uuid.NewV7()).String(), userID, credits, currentBalance, currentBalance+float64(credits), "Stripe purchase (reconcile)", sessionID); err != nil {
 		return fmt.Errorf("failed to insert credit transaction: %w", err)
 	}
 
@@ -505,13 +506,13 @@ func (s *Service) ChargeEvent(ctx context.Context, userID, jobID, eventType stri
 		eventID               string
 		unitPrice, totalPrice string // scan as text to preserve precision
 	)
-	const insEvent = `INSERT INTO billing_events (user_id, job_id, event_type_code, quantity, metadata)
-	                  VALUES ($1,$2,$3,$4,$5::jsonb)
+	const insEvent = `INSERT INTO billing_events (id, user_id, job_id, event_type_code, quantity, metadata)
+	                  VALUES ($1,$2,$3,$4,$5,$6::jsonb)
 	                  ON CONFLICT (job_id, event_type_code, (metadata->>'idempotency_key'))
 	                  WHERE (metadata ? 'idempotency_key')
 	                  DO UPDATE SET quantity = billing_events.quantity
 	                  RETURNING id, unit_price_credits::text, total_price_credits::text`
-	if err := tx.QueryRowContext(ctx, insEvent, userID, jobID, eventType, quantity, string(metaJSON)).Scan(&eventID, &unitPrice, &totalPrice); err != nil {
+	if err := tx.QueryRowContext(ctx, insEvent, uuid.Must(uuid.NewV7()).String(), userID, jobID, eventType, quantity, string(metaJSON)).Scan(&eventID, &unitPrice, &totalPrice); err != nil {
 		return fmt.Errorf("insert billing event: %w", err)
 	}
 
@@ -532,14 +533,14 @@ func (s *Service) ChargeEvent(ctx context.Context, userID, jobID, eventType stri
 
 	// Insert credit transaction (consumption), linking to billing event via metadata reference_id
 	const insTxn = `INSERT INTO credit_transactions (
-		user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type, metadata
+		id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type, metadata
 	) VALUES (
-		$1, 'consumption', -$2::numeric,
-		($3::numeric + $2::numeric),
-		$3::numeric,
-		$4, $5, 'job', jsonb_build_object('billing_event_id', $6::text)
+		$1, $2, 'consumption', -$3::numeric,
+		($4::numeric + $3::numeric),
+		$4::numeric,
+		$5, $6, 'job', jsonb_build_object('billing_event_id', $7::text)
 	)`
-	if _, err := tx.ExecContext(ctx, insTxn, userID, totalPrice, newBalance, fmt.Sprintf("Billing charge: %s", eventType), jobID, eventID); err != nil {
+	if _, err := tx.ExecContext(ctx, insTxn, uuid.Must(uuid.NewV7()).String(), userID, totalPrice, newBalance, fmt.Sprintf("Billing charge: %s", eventType), jobID, eventID); err != nil {
 		return fmt.Errorf("insert credit transaction: %w", err)
 	}
 
@@ -681,14 +682,14 @@ func (s *Service) ChargeAllJobEvents(ctx context.Context, userID, jobID string, 
 
 		// Insert billing event
 		var eventID, unitPrice, totalPrice string
-		const insEvent = `INSERT INTO billing_events (user_id, job_id, event_type_code, quantity, metadata)
-			VALUES ($1,$2,$3,$4,$5::jsonb)
+		const insEvent = `INSERT INTO billing_events (id, user_id, job_id, event_type_code, quantity, metadata)
+			VALUES ($1,$2,$3,$4,$5,$6::jsonb)
 			ON CONFLICT (job_id, event_type_code, (metadata->>'idempotency_key'))
 			WHERE (metadata ? 'idempotency_key')
 			DO UPDATE SET quantity = billing_events.quantity
 			RETURNING id, unit_price_credits::text, total_price_credits::text`
 
-		if err := tx.QueryRowContext(ctx, insEvent, userID, jobID, eventType, quantity, string(metaJSON)).Scan(&eventID, &unitPrice, &totalPrice); err != nil {
+		if err := tx.QueryRowContext(ctx, insEvent, uuid.Must(uuid.NewV7()).String(), userID, jobID, eventType, quantity, string(metaJSON)).Scan(&eventID, &unitPrice, &totalPrice); err != nil {
 			return fmt.Errorf("insert %s event: %w", eventType, err)
 		}
 
@@ -710,14 +711,14 @@ func (s *Service) ChargeAllJobEvents(ctx context.Context, userID, jobID string, 
 
 		// Insert credit transaction
 		const insTxn = `INSERT INTO credit_transactions (
-			user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type, metadata
+			id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type, metadata
 		) VALUES (
-			$1, 'consumption', -$2::numeric,
-			($3::numeric + $2::numeric),
-			$3::numeric,
-			$4, $5, 'job', jsonb_build_object('billing_event_id', $6::text)
+			$1, $2, 'consumption', -$3::numeric,
+			($4::numeric + $3::numeric),
+			$4::numeric,
+			$5, $6, 'job', jsonb_build_object('billing_event_id', $7::text)
 		)`
-		if _, err := tx.ExecContext(ctx, insTxn, userID, totalPrice, newBalance, fmt.Sprintf("Billing charge: %s", eventType), jobID, eventID); err != nil {
+		if _, err := tx.ExecContext(ctx, insTxn, uuid.Must(uuid.NewV7()).String(), userID, totalPrice, newBalance, fmt.Sprintf("Billing charge: %s", eventType), jobID, eventID); err != nil {
 			return fmt.Errorf("insert credit transaction for %s: %w", eventType, err)
 		}
 
@@ -918,10 +919,10 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 		}
 
 		// Record the refund transaction.
-		const insTxn = `INSERT INTO credit_transactions (user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
-		                VALUES ($1, 'refund', $2, $3, $4, $5, $6, 'payment')`
+		const insTxn = `INSERT INTO credit_transactions (id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
+		                VALUES ($1, $2, 'refund', $3, $4, $5, $6, $7, 'payment')`
 		desc := fmt.Sprintf("Stripe refund for charge %s", charge.ID)
-		if _, err := tx.ExecContext(ctx, insTxn, userID, -actualDeductFloat, balanceFloat, newBalanceFloat, desc, charge.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, insTxn, uuid.Must(uuid.NewV7()).String(), userID, -actualDeductFloat, balanceFloat, newBalanceFloat, desc, charge.ID); err != nil {
 			s.logger.Error("failed_to_insert_refund_transaction", slog.Any("error", err))
 			return 500, fmt.Errorf("failed to insert refund transaction: %w", err)
 		}

@@ -46,7 +46,7 @@ func NewSearchJob(params *MapSearchParams, opts ...SearchJobOptions) *SearchJob 
 
 	job := SearchJob{
 		Job: scrapemate.Job{
-			ID:         uuid.New().String(),
+			ID:         uuid.Must(uuid.NewV7()).String(),
 			Method:     http.MethodGet,
 			URL:        baseURL,
 			URLParams:  buildGoogleMapsParams(params),

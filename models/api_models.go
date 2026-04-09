@@ -149,3 +149,40 @@ type JobCostResponse struct {
 	TotalCredits string                 `json:"total_credits"`
 	TotalRounded int                    `json:"total_rounded"`
 }
+
+// BatchJobCostsRequest is the request payload for POST /api/v1/jobs/costs/batch.
+type BatchJobCostsRequest struct {
+	JobIDs []string `json:"job_ids"`
+}
+
+// BatchJobCostsResponse is the response payload for the batch job costs endpoint.
+type BatchJobCostsResponse struct {
+	Costs map[string]JobCostResponse `json:"costs"`
+}
+
+// DashboardKPI holds aggregated metrics for the dashboard header.
+type DashboardKPI struct {
+	JobsToday          int   `json:"jobs_today"`
+	PlacesScrapedTotal int64 `json:"places_scraped_total"`
+	ActiveJobs         int   `json:"active_jobs"`
+}
+
+// DashboardJob is a lightweight job representation for the dashboard list.
+// Includes inline result_count and cost to avoid N+1 fetches.
+type DashboardJob struct {
+	ID            string     `json:"id"`
+	Name          string     `json:"name"`
+	Status        string     `json:"status"`
+	CreatedAt     *time.Time `json:"created_at,omitempty"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
+	FailureReason string     `json:"failure_reason,omitempty"`
+	Source        string     `json:"source"`
+	ResultCount   int        `json:"result_count"`
+	TotalCost     string     `json:"total_cost"`
+}
+
+// DashboardResponse is the payload for GET /api/v1/dashboard.
+type DashboardResponse struct {
+	KPI        DashboardKPI   `json:"kpi"`
+	RecentJobs []DashboardJob `json:"recent_jobs"`
+}

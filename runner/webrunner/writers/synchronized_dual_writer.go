@@ -267,6 +267,16 @@ func (w *SynchronizedDualWriter) writeToPostgreSQL(ctx context.Context, entry *g
 		return false, err
 	}
 	rowsAffected, _ := res.RowsAffected()
+	if rowsAffected > 0 {
+		_, err = w.db.ExecContext(dbCtx,
+			"UPDATE jobs SET result_count = result_count + 1 WHERE id = $1",
+			w.jobID)
+		if err != nil {
+			slog.Error("result_count_update_failed",
+				slog.Any("error", err), slog.String("job_id", w.jobID))
+			return false, fmt.Errorf("failed to update result count: %w", err)
+		}
+	}
 	return rowsAffected > 0, nil
 }
 

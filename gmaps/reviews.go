@@ -26,7 +26,8 @@ type fetchReviewsParams struct {
 	page        playwright.Page
 	mapURL      string
 	reviewCount int
-	maxReviews  int // Maximum number of reviews to fetch
+	maxReviews  int    // Maximum number of reviews to fetch
+	langCode    string // Language code for the review API (e.g., "en", "de")
 }
 
 type fetchReviewsResponse struct {
@@ -46,6 +47,13 @@ func newReviewFetcher(params fetchReviewsParams) *fetcher {
 	}
 
 	return &ans
+}
+
+func (f *fetcher) langForURL() string {
+	if f.params.langCode != "" {
+		return f.params.langCode
+	}
+	return "en"
 }
 
 func (f *fetcher) fetch(ctx context.Context) (fetchReviewsResponse, error) {
@@ -164,8 +172,8 @@ func (f *fetcher) generateURL(mapURL, pageToken string, pageSize int, requestID 
 	}
 
 	fullURL := fmt.Sprintf(
-		"https://www.google.com/maps/rpc/listugcposts?authuser=0&hl=el&pb=%s",
-		strings.Join(pbComponents, ""),
+		"https://www.google.com/maps/rpc/listugcposts?authuser=0&hl=%s&pb=%s",
+		f.langForURL(), strings.Join(pbComponents, ""),
 	)
 
 	return fullURL, nil

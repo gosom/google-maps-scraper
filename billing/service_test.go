@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/stripe/stripe-go/v82"
 )
@@ -85,10 +86,10 @@ func TestWebhookIdempotency_ConcurrentSameEvent(t *testing.T) {
 
 	// Seed stripe_payments row so the handler can find the session
 	_, err = db.ExecContext(ctx,
-		`INSERT INTO stripe_payments (user_id, stripe_checkout_session_id, amount_cents, currency, credits_purchased, status)
-		 VALUES ($1, $2, 1000, 'USD', 10, 'pending')
+		`INSERT INTO stripe_payments (id, user_id, stripe_checkout_session_id, amount_cents, currency, credits_purchased, status)
+		 VALUES ($1, $2, $3, 1000, 'USD', 10, 'pending')
 		 ON CONFLICT (stripe_checkout_session_id) DO NOTHING`,
-		userID, sessionID)
+		uuid.Must(uuid.NewV7()).String(), userID, sessionID)
 	if err != nil {
 		t.Fatalf("failed to seed stripe_payments: %v", err)
 	}
@@ -169,10 +170,10 @@ func TestWebhookIdempotency_SequentialDuplicate(t *testing.T) {
 	})
 
 	_, err = db.ExecContext(ctx,
-		`INSERT INTO stripe_payments (user_id, stripe_checkout_session_id, amount_cents, currency, credits_purchased, status)
-		 VALUES ($1, $2, 1000, 'USD', 10, 'pending')
+		`INSERT INTO stripe_payments (id, user_id, stripe_checkout_session_id, amount_cents, currency, credits_purchased, status)
+		 VALUES ($1, $2, $3, 1000, 'USD', 10, 'pending')
 		 ON CONFLICT (stripe_checkout_session_id) DO NOTHING`,
-		userID, sessionID)
+		uuid.Must(uuid.NewV7()).String(), userID, sessionID)
 	if err != nil {
 		t.Fatalf("failed to seed stripe_payments: %v", err)
 	}

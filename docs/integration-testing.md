@@ -95,10 +95,6 @@ Pick one:
 3. **Mint fresh JWTs from Clerk (recommended if you have backend secrets)**
    - `BRAZA_CLERK_SECRET_KEY`
    - `BRAZA_CLERK_SESSION_ID`
-4. **Dev auth bypass (local-only, no Clerk dependency)**
-   - Start the API with `BRAZA_DEV_AUTH_BYPASS=1`
-   - Run tests with `BRAZA_DEV_USER_ID='<existing user_id>'`
-   - This sets `X-Braza-Dev-User` on requests and the server trusts it only when bypass is enabled.
 
 Notes:
 
@@ -113,23 +109,6 @@ cd /Users/yasseen/Documents/google-maps-scraper-2
 BRAZA_RUN_SCRAPE_E2E=1 \
 BRAZA_API_BASE_URL='http://localhost:8080' \
 BRAZA_SESSION_COOKIE='<__session cookie value>' \
-go test ./web/handlers -tags integration \
-  -run 'TestAPIJobs_ScrapeParameterMatrix/happy_path_default_depth_minimal_payload' \
-  -v -count=1 -timeout 1h
-```
-
-Dev auth bypass example:
-
-```bash
-cd /Users/yasseen/Documents/google-maps-scraper-2
-
-# Terminal A (server):
-# BRAZA_DEV_AUTH_BYPASS=1 ./brezel-api -web -debug -dsn 'postgres://...'
-
-# Terminal B (tests):
-BRAZA_RUN_SCRAPE_E2E=1 \
-BRAZA_DEV_USER_ID='<existing user_id>' \
-BRAZA_API_BASE_URL='http://localhost:8080' \
 go test ./web/handlers -tags integration \
   -run 'TestAPIJobs_ScrapeParameterMatrix/happy_path_default_depth_minimal_payload' \
   -v -count=1 -timeout 1h
@@ -177,7 +156,6 @@ Auth (pick one strategy):
 - `BRAZA_SESSION_COOKIE`
 - `BRAZA_AUTH_TOKEN`
 - `BRAZA_CLERK_SECRET_KEY` + `BRAZA_CLERK_SESSION_ID`
-- `BRAZA_DEV_USER_ID` (requires server started with `BRAZA_DEV_AUTH_BYPASS=1`)
 
 Job retention:
 

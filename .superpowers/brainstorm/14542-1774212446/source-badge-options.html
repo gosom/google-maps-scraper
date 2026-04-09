@@ -1,0 +1,124 @@
+<h2>Where should the source badge appear?</h2>
+<p class="subtitle">Jobs created via API key vs the web form need a visual distinction. Here are three placement options using your actual table layout.</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Badge next to Job Name</h3>
+      <p>Compact — badge sits inline right after the name, no extra column needed</p>
+      <div style="margin-top: 12px; background: #f9f9f9; border-radius: 6px; padding: 16px; overflow-x: auto;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px; font-family: -apple-system, system-ui, sans-serif;">
+          <thead>
+            <tr style="border-bottom: 2px solid #e0e0e0;">
+              <th style="padding: 10px; text-align: left; color: #4a4a4a;">Job ID</th>
+              <th style="padding: 10px; text-align: left; color: #4a4a4a;">Job Name</th>
+              <th style="padding: 10px; text-align: left; color: #4a4a4a;">Job Date</th>
+              <th style="padding: 10px; text-align: left; color: #4a4a4a;">Status</th>
+              <th style="padding: 10px; text-align: left; color: #4a4a4a;">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="border-bottom: 1px solid #e0e0e0;">
+              <td style="padding: 10px; color: #666;">a3f8...</td>
+              <td style="padding: 10px;">NYC Restaurants <span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;background:#e3f2fd;color:#1565c0;margin-left:6px;">API</span></td>
+              <td style="padding: 10px; color: #666;">2026-03-22</td>
+              <td style="padding: 10px;"><span style="background:#43a047;color:white;padding:4px 10px;border-radius:12px;font-size:12px;">ok</span></td>
+              <td style="padding: 10px;"><span style="background:#43a047;color:white;padding:4px 8px;border-radius:4px;font-size:11px;">Download</span></td>
+            </tr>
+            <tr style="border-bottom: 1px solid #e0e0e0;">
+              <td style="padding: 10px; color: #666;">b7e5...</td>
+              <td style="padding: 10px;">LA Coffee Shops <span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;background:#f3e5f5;color:#7b1fa2;margin-left:6px;">Web</span></td>
+              <td style="padding: 10px; color: #666;">2026-03-21</td>
+              <td style="padding: 10px;"><span style="background:#fdd835;color:#333;padding:4px 10px;border-radius:12px;font-size:12px;">working</span></td>
+              <td style="padding: 10px;"></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Dedicated "Source" Column</h3>
+      <p>Explicit — a new column between Name and Date makes it easy to scan and sort</p>
+      <div style="margin-top: 12px; background: #f9f9f9; border-radius: 6px; padding: 16px; overflow-x: auto;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px; font-family: -apple-system, system-ui, sans-serif;">
+          <thead>
+            <tr style="border-bottom: 2px solid #e0e0e0;">
+              <th style="padding: 10px; text-align: left; color: #4a4a4a;">Job ID</th>
+              <th style="padding: 10px; text-align: left; color: #4a4a4a;">Job Name</th>
+              <th style="padding: 10px; text-align: left; color: #4a4a4a;">Source</th>
+              <th style="padding: 10px; text-align: left; color: #4a4a4a;">Job Date</th>
+              <th style="padding: 10px; text-align: left; color: #4a4a4a;">Status</th>
+              <th style="padding: 10px; text-align: left; color: #4a4a4a;">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="border-bottom: 1px solid #e0e0e0;">
+              <td style="padding: 10px; color: #666;">a3f8...</td>
+              <td style="padding: 10px;">NYC Restaurants</td>
+              <td style="padding: 10px;"><span style="display:inline-block;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:600;background:#e3f2fd;color:#1565c0;">API</span></td>
+              <td style="padding: 10px; color: #666;">2026-03-22</td>
+              <td style="padding: 10px;"><span style="background:#43a047;color:white;padding:4px 10px;border-radius:12px;font-size:12px;">ok</span></td>
+              <td style="padding: 10px;"><span style="background:#43a047;color:white;padding:4px 8px;border-radius:4px;font-size:11px;">Download</span></td>
+            </tr>
+            <tr style="border-bottom: 1px solid #e0e0e0;">
+              <td style="padding: 10px; color: #666;">b7e5...</td>
+              <td style="padding: 10px;">LA Coffee Shops</td>
+              <td style="padding: 10px;"><span style="display:inline-block;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:600;background:#f3e5f5;color:#7b1fa2;">Web</span></td>
+              <td style="padding: 10px; color: #666;">2026-03-21</td>
+              <td style="padding: 10px;"><span style="background:#fdd835;color:#333;padding:4px 10px;border-radius:12px;font-size:12px;">working</span></td>
+              <td style="padding: 10px;"></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Badge next to Status</h3>
+      <p>Grouped — source and status appear together as complementary info pills</p>
+      <div style="margin-top: 12px; background: #f9f9f9; border-radius: 6px; padding: 16px; overflow-x: auto;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px; font-family: -apple-system, system-ui, sans-serif;">
+          <thead>
+            <tr style="border-bottom: 2px solid #e0e0e0;">
+              <th style="padding: 10px; text-align: left; color: #4a4a4a;">Job ID</th>
+              <th style="padding: 10px; text-align: left; color: #4a4a4a;">Job Name</th>
+              <th style="padding: 10px; text-align: left; color: #4a4a4a;">Job Date</th>
+              <th style="padding: 10px; text-align: left; color: #4a4a4a;">Status</th>
+              <th style="padding: 10px; text-align: left; color: #4a4a4a;">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="border-bottom: 1px solid #e0e0e0;">
+              <td style="padding: 10px; color: #666;">a3f8...</td>
+              <td style="padding: 10px;">NYC Restaurants</td>
+              <td style="padding: 10px; color: #666;">2026-03-22</td>
+              <td style="padding: 10px;">
+                <span style="background:#43a047;color:white;padding:4px 10px;border-radius:12px;font-size:12px;">ok</span>
+                <span style="display:inline-block;padding:3px 8px;border-radius:10px;font-size:10px;font-weight:600;background:#e3f2fd;color:#1565c0;margin-left:6px;">API</span>
+              </td>
+              <td style="padding: 10px;"><span style="background:#43a047;color:white;padding:4px 8px;border-radius:4px;font-size:11px;">Download</span></td>
+            </tr>
+            <tr style="border-bottom: 1px solid #e0e0e0;">
+              <td style="padding: 10px; color: #666;">b7e5...</td>
+              <td style="padding: 10px;">LA Coffee Shops</td>
+              <td style="padding: 10px; color: #666;">2026-03-21</td>
+              <td style="padding: 10px;">
+                <span style="background:#fdd835;color:#333;padding:4px 10px;border-radius:12px;font-size:12px;">working</span>
+                <span style="display:inline-block;padding:3px 8px;border-radius:10px;font-size:10px;font-weight:600;background:#f3e5f5;color:#7b1fa2;margin-left:6px;">Web</span>
+              </td>
+              <td style="padding: 10px;"></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>

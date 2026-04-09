@@ -53,7 +53,7 @@ func NewGmapJob(
 	)
 
 	if id == "" {
-		id = uuid.New().String()
+		id = uuid.Must(uuid.NewV7()).String()
 	}
 
 	mapURL := ""

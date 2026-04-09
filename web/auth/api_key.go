@@ -66,7 +66,7 @@ func GenerateAPIKey(userID, name string, serverSecret []byte) (*models.APIKey, s
 	suffix := fullKey[len(fullKey)-4:]
 
 	apiKey := &models.APIKey{
-		ID:            uuid.New().String(),
+		ID:            uuid.Must(uuid.NewV7()).String(),
 		UserID:        userID,
 		Name:          name,
 		LookupHash:    lookupHash,
