@@ -96,3 +96,42 @@ func TestCreateCheckoutSession_RejectsEmptyCredits(t *testing.T) {
 		t.Errorf("expected 400 for empty credits, got %d (body=%s)", rec.Code, rec.Body.String())
 	}
 }
+
+// TestCreateCheckoutSession_RejectsUnknownFields verifies the S-L2 hardening:
+// requests with extra JSON fields are rejected with 422 instead of being
+// silently accepted. This prevents request-smuggling and confusion-attack
+// vectors where a client sends fields the server ignores.
+func TestCreateCheckoutSession_RejectsUnknownFields(t *testing.T) {
+	t.Setenv("STRIPE_SUCCESS_URL", "https://example.com/success")
+	t.Setenv("STRIPE_CANCEL_URL", "https://example.com/cancel")
+
+	h := newBillingHandlersForTest()
+	// Adds an extra "admin":true field that doesn't exist on
+	// checkoutSessionRequest. Pre-S-L2 this was silently dropped.
+	req := billingPostReq(`{"credits":"100","currency":"USD","admin":true}`)
+	req = withUserID(req, "user-1")
+	rec := httptest.NewRecorder()
+
+	h.CreateCheckoutSession(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422 for unknown fields, got %d (body=%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestReconcile_RejectsUnknownFields covers the same hardening on the
+// reconcile endpoint.
+func TestReconcile_RejectsUnknownFields(t *testing.T) {
+	h := newBillingHandlersForTest()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/billing/reconcile",
+		bytes.NewBufferString(`{"session_id":"cs_test","extra_field":"oops"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUserID(req, "user-1")
+	rec := httptest.NewRecorder()
+
+	h.Reconcile(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422 for unknown fields, got %d (body=%s)", rec.Code, rec.Body.String())
+	}
+}
