@@ -17,6 +17,7 @@ import (
 	"github.com/gosom/google-maps-scraper/models"
 	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	"github.com/gosom/google-maps-scraper/pkg/metrics"
+	"github.com/shopspring/decimal"
 	"github.com/stripe/stripe-go/v82"
 	checkoutsession "github.com/stripe/stripe-go/v82/checkout/session"
 	"github.com/stripe/stripe-go/v82/webhook"
@@ -980,10 +981,12 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 	}
 
 	// Look up the payment record using the payment intent ID to find the user and credits.
+	// Scan credits_purchased as text to preserve NUMERIC(18,6) precision; the
+	// proportional refund math below runs in decimal.Decimal to avoid float drift. (S-H2)
 	var (
-		userID         string
-		creditsGranted float64
-		amountCents    int64
+		userID            string
+		creditsGrantedStr string
+		amountCents       int64
 	)
 
 	paymentIntentID := ""
@@ -992,8 +995,8 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 	}
 
 	if paymentIntentID != "" {
-		const sel = `SELECT user_id, credits_purchased::float8, amount_cents FROM stripe_payments WHERE stripe_payment_intent_id = $1 LIMIT 1`
-		err := s.db.QueryRowContext(ctx, sel, paymentIntentID).Scan(&userID, &creditsGranted, &amountCents)
+		const sel = `SELECT user_id, credits_purchased::text, amount_cents FROM stripe_payments WHERE stripe_payment_intent_id = $1 LIMIT 1`
+		err := s.db.QueryRowContext(ctx, sel, paymentIntentID).Scan(&userID, &creditsGrantedStr, &amountCents)
 		if err != nil && err != sql.ErrNoRows {
 			s.logger.Error("failed_to_lookup_payment_for_charge", slog.Any("error", err))
 			return 500, fmt.Errorf("failed to lookup payment: %w", err)
@@ -1019,11 +1022,37 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 		return 200, nil
 	}
 
-	// Calculate credits to deduct proportionally.
-	// If we couldn't determine creditsGranted or amountCents, skip the deduction.
-	var creditsToDeduct float64
-	if creditsGranted > 0 && amountCents > 0 {
-		creditsToDeduct = (float64(charge.AmountRefunded) / float64(amountCents)) * creditsGranted
+	// Parse credits_purchased into a decimal.Decimal so the proportional refund
+	// math runs without float drift. The customer-fallback lookup path
+	// (line ~1004) does not populate creditsGrantedStr, so an empty string
+	// here means we have no granted-credits info and must skip the deduction.
+	// (S-H2)
+	var creditsGranted decimal.Decimal
+	if creditsGrantedStr != "" {
+		var parseErr error
+		creditsGranted, parseErr = decimal.NewFromString(creditsGrantedStr)
+		if parseErr != nil {
+			s.logger.Error("failed_to_parse_credits_granted",
+				slog.String("credits_granted_str", creditsGrantedStr),
+				slog.Any("error", parseErr),
+			)
+			return 500, fmt.Errorf("failed to parse credits_granted: %w", parseErr)
+		}
+	}
+	// shouldDeduct guards the same condition the old `creditsToDeduct > 0`
+	// branch did: we need both a non-zero granted credit amount and a valid
+	// original cents value to compute the proportional split.
+	shouldDeduct := !creditsGranted.IsZero() && amountCents > 0
+
+	// Compute the proportional credit deduction in decimal (for the trailing
+	// "charge_refunded_processed" log). The actual balance/deficit split
+	// happens inside the if-shouldDeduct branch via computeRefundSplit; this
+	// scalar is the same value that split sums to. Zero when shouldDeduct=false.
+	var creditsToDeductDec decimal.Decimal
+	if shouldDeduct {
+		refunded := decimal.NewFromInt(charge.AmountRefunded)
+		original := decimal.NewFromInt(amountCents)
+		creditsToDeductDec = refunded.Div(original).Mul(creditsGranted).Round(6)
 	}
 
 	// Begin transaction for idempotency and credit deduction.
@@ -1048,10 +1077,10 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 		return 200, nil
 	}
 
-	if creditsToDeduct > 0 {
-		// Get current balance with a row lock — scan as text and convert to
-		// integer micro-credits to avoid IEEE 754 float rounding errors in
-		// monetary comparisons.
+	if shouldDeduct {
+		// Get current balance with a row lock — scan as text and parse with
+		// decimal.NewFromString to preserve NUMERIC(18,6) precision through
+		// the proportional refund math. (S-H2)
 		var balanceStr string
 		err = tx.QueryRowContext(ctx,
 			"SELECT COALESCE(credit_balance, 0)::text FROM users WHERE id = $1 FOR UPDATE", userID).Scan(&balanceStr)
@@ -1059,17 +1088,14 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 			s.logger.Error("failed_to_get_user_balance_for_refund", slog.Any("error", err))
 			return 500, fmt.Errorf("failed to get user balance: %w", err)
 		}
-		balanceFloat, parseErr := strconv.ParseFloat(balanceStr, 64)
+		balance, parseErr := decimal.NewFromString(balanceStr)
 		if parseErr != nil {
 			s.logger.Error("failed_to_parse_user_balance_for_refund", slog.Any("error", parseErr))
 			return 500, fmt.Errorf("failed to parse user balance: %w", parseErr)
 		}
-		balanceMicro := int64(math.Round(balanceFloat * models.MicroUnit))
-		deductMicro := int64(math.Round(creditsToDeduct * models.MicroUnit))
 
-		// Split the refund deduction across (balance, deficit):
-		//   - deductFromBalance = min(deductMicro, balanceMicro)
-		//   - deductFromDeficit = deductMicro - deductFromBalance (>= 0)
+		// Compute the (balance, deficit) split using exact decimal arithmetic.
+		// See computeRefundSplit godoc for the rule. (S-H2)
 		//
 		// The deficit portion represents credits that were already consumed
 		// before this refund arrived. Instead of failing the refund or silently
@@ -1091,25 +1117,29 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 		// incremented when any deficit is created. Any non-zero rate indicates
 		// users buying, consuming, then refunding — possibly benign churn or
 		// possibly fraud. See pkg/metrics/billing.go for the ops runbook.
-		deductFromBalanceMicro := deductMicro
-		deductFromDeficitMicro := int64(0)
-		if deductFromBalanceMicro > balanceMicro {
-			deductFromBalanceMicro = balanceMicro
-			deductFromDeficitMicro = deductMicro - balanceMicro
-		}
+		deductFromBalanceDec, deductFromDeficitDec := computeRefundSplit(balance, creditsGranted, amountCents, charge.AmountRefunded)
+		newBalanceDec := balance.Sub(deductFromBalanceDec)
 
-		newBalanceMicro := balanceMicro - deductFromBalanceMicro
-		actualDeductFloat := float64(deductFromBalanceMicro) / models.MicroUnit
-		newBalanceFloat := float64(newBalanceMicro) / models.MicroUnit
-		deficitIncreaseFloat := float64(deductFromDeficitMicro) / models.MicroUnit
+		// Float64 values are computed ONLY for ledger row inserts and slog
+		// log fields where the existing schema/types require float64. All
+		// arithmetic operands above are decimal.Decimal — these conversions
+		// happen at the leaf rendering edge only.
+		balanceFloat, _ := balance.Float64()
+		newBalanceFloat, _ := newBalanceDec.Float64()
+		actualDeductFloat, _ := deductFromBalanceDec.Float64()
+		deficitIncreaseFloat, _ := deductFromDeficitDec.Float64()
 
-		// Update both columns in one UPDATE — same row, single lock acquisition.
-		// updated_at is intentionally NOT touched; the trigger handles it.
+		// Update both columns in one UPDATE — pass decimal values as strings
+		// so Postgres NUMERIC handles the arithmetic without any Go-side float
+		// rounding. updated_at is intentionally NOT touched; the trigger handles it.
 		const updBalance = `UPDATE users
 			SET credit_balance = $1::numeric,
 			    refund_deficit_credits = refund_deficit_credits + $2::numeric
 			WHERE id = $3`
-		if _, err := tx.ExecContext(ctx, updBalance, newBalanceFloat, deficitIncreaseFloat, userID); err != nil {
+		if _, err := tx.ExecContext(ctx, updBalance,
+			newBalanceDec.StringFixed(6),
+			deductFromDeficitDec.StringFixed(6),
+			userID); err != nil {
 			s.logger.Error("failed_to_deduct_credits_for_refund", slog.Any("error", err))
 			return 500, fmt.Errorf("failed to deduct credits: %w", err)
 		}
@@ -1118,7 +1148,7 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 		// any portion actually hit the spendable balance. The amount,
 		// balance_before, and balance_after triple satisfies the
 		// balance_calculation_check constraint (balance_after = balance_before + amount).
-		if deductFromBalanceMicro > 0 {
+		if !deductFromBalanceDec.IsZero() {
 			const insTxnRefund = `INSERT INTO credit_transactions
 				(id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
 				VALUES ($1, $2, 'refund', $3, $4, $5, $6, $7, 'payment')`
@@ -1136,7 +1166,7 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 		// ledger; balance_before and balance_after are identical (newBalanceFloat)
 		// so the balance_calculation_check constraint is satisfied. The
 		// deficit amount is captured in metadata for audit queries.
-		if deductFromDeficitMicro > 0 {
+		if !deductFromDeficitDec.IsZero() {
 			const insTxnDeficit = `INSERT INTO credit_transactions
 				(id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type, metadata)
 				VALUES ($1, $2, 'refund_deficit', 0, $3, $3, $4, $5, 'payment', $6::jsonb)`
@@ -1182,7 +1212,7 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 			if charge.AmountRefunded < charge.Amount {
 				paymentStatus = "partial_refund"
 			}
-			if deductFromDeficitMicro > 0 {
+			if !deductFromDeficitDec.IsZero() {
 				paymentStatus = "refund_deficit_applied"
 			}
 			if _, err := tx.ExecContext(ctx,
@@ -1203,10 +1233,11 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 		return 500, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
+	creditsToDeductFloat, _ := creditsToDeductDec.Float64()
 	s.logger.Info("charge_refunded_processed",
 		slog.String("user_id", userID),
 		slog.String("charge_id", charge.ID),
-		slog.Float64("credits_deducted", creditsToDeduct),
+		slog.Float64("credits_deducted", creditsToDeductFloat),
 	)
 	return 200, nil
 }

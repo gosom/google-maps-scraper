@@ -29,6 +29,7 @@ require (
 	github.com/posthog/posthog-go v1.5.2
 	github.com/prometheus/client_golang v1.12.1
 	github.com/shirou/gopsutil/v4 v4.25.4
+	github.com/shopspring/decimal v1.2.0
 	github.com/stretchr/testify v1.10.0
 	github.com/stripe/stripe-go/v82 v82.5.0
 	golang.org/x/crypto v0.45.0
