@@ -262,3 +262,77 @@ func TestGetUserJobs_RejectsNegativeLimit(t *testing.T) {
 		t.Fatalf("expected 400 for negative limit, got %d (body=%s)", rr.Code, rr.Body.String())
 	}
 }
+
+// ───────────────────── Task 3.4: UUID validation in path params ─────────
+
+// TestGetJobResults_RejectsMalformedID covers the gap that GetJobResults
+// previously had — it accepted any string in the {id} path variable and
+// passed it straight to App.Get / GetEnhancedJobResultsPaginated. The
+// SQL placeholder protected against injection but the database error
+// path leaked Postgres-specific error messages back to the client,
+// helping an attacker fingerprint the database. parseJobID rejects
+// malformed IDs at the handler boundary with a generic 422.
+func TestGetJobResults_RejectsMalformedID(t *testing.T) {
+	t.Parallel()
+
+	h := &APIHandlers{Deps: Dependencies{Auth: &auth.AuthMiddleware{}}}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/not-a-uuid/results", nil)
+	req = mux.SetURLVars(req, map[string]string{"id": "not-a-uuid"})
+	req = withUserID(req, "user-1")
+	rr := httptest.NewRecorder()
+
+	h.GetJobResults(rr, req)
+
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 for malformed job id, got %d (body=%s)", rr.Code, rr.Body.String())
+	}
+}
+
+// TestGetJobCosts_RejectsMalformedID covers the same gap on the costs
+// endpoint, which had the identical missing-validation problem.
+func TestGetJobCosts_RejectsMalformedID(t *testing.T) {
+	t.Parallel()
+
+	h := &APIHandlers{Deps: Dependencies{Auth: &auth.AuthMiddleware{}}}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/not-a-uuid/costs", nil)
+	req = mux.SetURLVars(req, map[string]string{"id": "not-a-uuid"})
+	req = withUserID(req, "user-1")
+	rr := httptest.NewRecorder()
+
+	h.GetJobCosts(rr, req)
+
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 for malformed job id, got %d (body=%s)", rr.Code, rr.Body.String())
+	}
+}
+
+// TestParseJobID_AcceptsCanonicalUUID is a unit test for the helper
+// itself — verifies that a valid UUID round-trips through normalization
+// (lowercase hyphens) so downstream queries see a canonical value.
+func TestParseJobID_AcceptsCanonicalUUID(t *testing.T) {
+	t.Parallel()
+
+	// Mixed-case input — parseJobID should normalize to lowercase.
+	const input = "01958A5E-2BC0-7321-9876-543210ABCDEF"
+	const want = "01958a5e-2bc0-7321-9876-543210abcdef"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/"+input, nil)
+	req = mux.SetURLVars(req, map[string]string{"id": input})
+	got, err := parseJobID(req)
+	if err != nil {
+		t.Fatalf("expected nil error for valid UUID, got: %v", err)
+	}
+	if got != want {
+		t.Errorf("parseJobID returned %q, want canonical %q", got, want)
+	}
+}
+
+// TestParseJobID_RejectsEmpty covers the empty-string branch.
+func TestParseJobID_RejectsEmpty(t *testing.T) {
+	t.Parallel()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/", nil)
+	req = mux.SetURLVars(req, map[string]string{"id": ""})
+	if _, err := parseJobID(req); err == nil {
+		t.Fatal("expected error for empty id, got nil")
+	}
+}

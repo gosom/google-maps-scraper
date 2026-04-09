@@ -255,6 +255,38 @@ func (h *APIHandlers) GetJobs(w http.ResponseWriter, r *http.Request) {
 	renderJSON(w, http.StatusOK, jobs)
 }
 
+// parseJobID extracts and validates the {id} path variable from a
+// gorilla/mux request. Returns the canonical lowercase UUID string on
+// success or an error suitable for rendering as a 422 response.
+//
+// Why this helper exists: GetJob, DeleteJob, and CancelJob each had
+// their own copy of this five-line block, but GetJobResults and
+// GetJobCosts forgot to validate at all — passing an arbitrary string
+// straight to the SQL layer. The arbitrary string couldn't trigger SQL
+// injection (the query uses placeholders) but it WAS leaking
+// db-specific error messages back to the client when the cast failed,
+// helping an attacker fingerprint the database.
+//
+// Centralizing the parse here ensures (a) every job-id endpoint
+// validates the same way, and (b) adding a new endpoint is one
+// `parseJobID(r)` call instead of five lines of boilerplate that
+// might get skipped.
+//
+// Returns the canonical (lowercase, hyphen-separated) UUID form so
+// downstream queries see a normalized value regardless of how the
+// client cased the input.
+func parseJobID(r *http.Request) (string, error) {
+	raw := mux.Vars(r)["id"]
+	if raw == "" {
+		return "", errors.New("missing job ID")
+	}
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		return "", errors.New("invalid job ID format")
+	}
+	return id.String(), nil
+}
+
 // allowedJobSorts is the closed allowlist of columns the GetUserJobs
 // endpoint will sort by. Anything outside this set is rejected with 400
 // — this prevents an attacker from sniffing column names by passing
@@ -372,14 +404,9 @@ func (h *APIHandlers) GetJob(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
 		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
 	}
-	idStr := mux.Vars(r)["id"]
-	if idStr == "" {
-		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Missing job ID"})
-		return
-	}
-	id, err := uuid.Parse(idStr)
+	jobID, err := parseJobID(r)
 	if err != nil {
-		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Invalid ID format"})
+		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: err.Error()})
 		return
 	}
 	userID, err := auth.GetUserID(r.Context())
@@ -387,7 +414,7 @@ func (h *APIHandlers) GetJob(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
 		return
 	}
-	job, err := h.Deps.App.Get(r.Context(), id.String(), userID)
+	job, err := h.Deps.App.Get(r.Context(), jobID, userID)
 	if err != nil {
 		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: http.StatusText(http.StatusNotFound)})
 		return
@@ -399,14 +426,9 @@ func (h *APIHandlers) DeleteJob(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
 		h.Deps.Logger.Info("request", slog.String("method", "DELETE"), slog.String("path", r.URL.Path))
 	}
-	idStr := mux.Vars(r)["id"]
-	if idStr == "" {
-		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Missing job ID"})
-		return
-	}
-	id, err := uuid.Parse(idStr)
+	jobID, err := parseJobID(r)
 	if err != nil {
-		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Invalid ID format"})
+		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: err.Error()})
 		return
 	}
 	userID, err := auth.GetUserID(r.Context())
@@ -414,7 +436,7 @@ func (h *APIHandlers) DeleteJob(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
 		return
 	}
-	if err := h.Deps.App.Delete(r.Context(), id.String(), userID); err != nil {
+	if err := h.Deps.App.Delete(r.Context(), jobID, userID); err != nil {
 		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: http.StatusText(http.StatusNotFound)})
 		return
 	}
@@ -425,14 +447,9 @@ func (h *APIHandlers) CancelJob(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
 		h.Deps.Logger.Info("request", slog.String("method", "POST"), slog.String("path", r.URL.Path))
 	}
-	idStr := mux.Vars(r)["id"]
-	if idStr == "" {
-		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Missing job ID"})
-		return
-	}
-	id, err := uuid.Parse(idStr)
+	jobID, err := parseJobID(r)
 	if err != nil {
-		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Invalid ID format"})
+		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: err.Error()})
 		return
 	}
 	userID, err := auth.GetUserID(r.Context())
@@ -440,20 +457,20 @@ func (h *APIHandlers) CancelJob(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
 		return
 	}
-	if err := h.Deps.App.Cancel(r.Context(), id.String(), userID); err != nil {
+	if err := h.Deps.App.Cancel(r.Context(), jobID, userID); err != nil {
 		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: http.StatusText(http.StatusNotFound)})
 		return
 	}
-	renderJSON(w, http.StatusOK, map[string]any{"message": "Job cancellation initiated", "job_id": id.String()})
+	renderJSON(w, http.StatusOK, map[string]any{"message": "Job cancellation initiated", "job_id": jobID})
 }
 
 func (h *APIHandlers) GetJobResults(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
 		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
 	}
-	jobID := mux.Vars(r)["id"]
-	if jobID == "" {
-		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Missing job ID"})
+	jobID, err := parseJobID(r)
+	if err != nil {
+		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: err.Error()})
 		return
 	}
 	// Unified pagination — see web/handlers/pagination.go. Caps the
@@ -511,9 +528,9 @@ func (h *APIHandlers) GetJobCosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobID := mux.Vars(r)["id"]
-	if jobID == "" {
-		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Missing job ID"})
+	jobID, err := parseJobID(r)
+	if err != nil {
+		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: err.Error()})
 		return
 	}
 
