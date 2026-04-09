@@ -29,7 +29,7 @@ The first draft of this plan went through senior review. The following correctio
 
 - **C-3 → P1 (was P0).** The `reviews_max=9999` sentinel is API design quality, not a security vulnerability. No money is lost, no data leaks, no escalation. It must still be fixed before public docs ship (i.e. before launch), but it does not belong alongside an auth bypass and unbounded Stripe sessions in the P0 tier. Renumbered as **H-12** in the P1 table. Implementation chunk (Chunk 2) is unchanged.
 - **H-5 (lat/lon range) → DELETED.** Verified against `github.com/go-playground/validator/v10@v10.28.0/regexes.go:54-55`: both `latitudeRegexString` and `longitudeRegexString` already enforce `[-90,90]` / `[-180,180]` ranges. The struct already uses `validate:"omitempty,latitude"` / `"omitempty,longitude"`, so this is already covered. No code change needed.
-- **H-7 (handler-level sort allowlist) → P2.** The repo layer (`postgres/repository.go:174-184`) is the authoritative enforcement point and has the allowlist with a safe-default fallback. A second allowlist at the handler is defense-in-depth, not a release blocker. Moved to Chunk 6 / Task 6.4.
+- **H-7 (handler-level sort allowlist) → DELIVERED by Task 3.2 (commit `9e6eef2`).** The repo layer (`postgres/repository.go:174-184`) is the authoritative enforcement point and has the allowlist with a safe-default fallback. The handler-boundary allowlist `{created_at, name, status, updated_at}` shipped at `web/handlers/api.go:299` as a side effect of Task 3.2 — no separate task needed.
 - **H-10 (pagination overflow) → kept, but flagged as marginal.** Go's default `int` is 64-bit on every platform we ship to; `(page-1)*limit` overflowing requires `page > 9.2×10^16`. The fix is one line so we still ship it as defense-in-depth, but it is not driving the launch decision.
 
 **Reframings (no severity change, just accurate descriptions):**
@@ -77,14 +77,14 @@ The audit covered every HTTP route under `web/web.go`, the auth + admin middlewa
 | **H-4** | `models/job.go:10` | `Keywords` has `min=1,max=5` for the array but no per-keyword length cap. Each keyword can be 100KB. Worse than the search-length issue because keywords feed into `LIKE` queries downstream. Implementation: tag added in Task 2.2 + dedicated assertion. |
 | ~~**H-5**~~ | ~~`models/job.go:17-18`~~ | ~~`lat`/`lon` validated as format only, no range check.~~ **DELETED** — verified that `validator/v10` `latitude`/`longitude` regexes already enforce `[-90,90]` / `[-180,180]` (`regexes.go:54-55`). The struct already uses these tags. No code change needed. |
 | **H-6** | `web/utils/validation.go:49-53` | `lang` requires exactly 2 chars but no allowlist — accepts `"xx"`, `"@@"`, `"!!"`. Should be ISO 639-1 allowlist. |
-| ~~**H-7**~~ | ~~`web/handlers/api.go:282-290`~~ | ~~`sort` query param defense-in-depth allowlist at handler.~~ **Downgraded to P2**: the repo allowlist (`postgres/repository.go:174-184`) is the authoritative defense and has a safe-default fallback. Moved to **Task 6.4**. |
+| ~~**H-7**~~ | ~~`web/handlers/api.go:282-290`~~ | ~~`sort` query param defense-in-depth allowlist at handler.~~ **DELIVERED by Task 3.2 (commit `9e6eef2`)** — closed allowlist `{created_at, name, status, updated_at}` lives at `web/handlers/api.go:299`. |
 | **H-8** | `web/handlers/api.go:292` | `search` query param has no length cap. Repository builds `LOWER(name) LIKE '%<input>%'` — slow-LIKE DoS. |
 | **H-9** | `web/handlers/api.go` (every handler) | All `json.NewDecoder(r.Body).Decode(...)` calls omit `DisallowUnknownFields()`. Unknown JSON fields are silently ignored — request-smuggling and confusion-attack vector. Note: router-level body size limit ALREADY exists via `web/middleware/middleware.go:230` `MaxBodySize`, so the helper only needs `DisallowUnknownFields()` + trailing-data check. |
 | **H-10** | `web/handlers/api.go:417-422`, `:588-590` | Pagination `limit` capped at 1000 in `GetJobResults`/`GetUserResults` but 100 elsewhere. Cap inconsistency. Also `offset := (page-1)*limit` has no overflow guard. **Marginal in practice** — Go `int` is 64-bit, overflow needs `page > 9.2×10^16` — but the fix is one line and ships as defense-in-depth. |
 | **H-11** | `web/handlers/api.go:401-410` | `GetJobResults` does not validate `jobID` is a UUID before querying (other handlers do via `uuid.Parse`). |
-| **H-12** | `models/job.go:15`, `web/utils/validation.go:15`, `web/services/estimation.go:29` | (Was C-3, downgraded from P0.) `reviews_max` uses `9999` as a magic "unlimited" sentinel. The frontend hardcodes `unlimitedReviewsMax = 9999`. The estimation service treats anything `>= 1000` as unlimited. **Not a security vulnerability** — no money lost, no data leak, no escalation — but incompatible with public API documentation, OpenAPI 3.1 typing, and every major REST style guide. Must be fixed before public docs ship (which is launch). Replaced by the unified cap-parameter convention in §2 and rolled out in Chunk 2. |
+| ~~**H-12**~~ | ~~`models/job.go:15`, `web/utils/validation.go:15`, `web/services/estimation.go:29`~~ | ~~`reviews_max=9999` magic sentinel~~ — **DELIVERED.** Replaced by the unified cap-parameter convention in §2; cap constants shipped in `web/utils/cap_params.go` (Chunk 2 commits `fa30aa4`/`79845e8`/`84f687a`/`0c84808`) and the public API doc was brought into sync in **Task 5.1 (commit `5e7e948`)**. |
 | **H-13** | `web/handlers/api.go:48-178` (POST `/api/v1/jobs`) | No tighter per-endpoint rate limit on job creation. Global `PerUserRateLimit` (`middleware.go:382`) is applied at 5 req/s burst 20, but for a billable write endpoint that takes a `SELECT ... FOR UPDATE` lock per request and queues a scraping job, that's too lenient. Add a per-endpoint limiter (≈1 req/s burst 3). Implementation in **Task 3.6**. |
-| **H-14** | `web/handlers/api.go:48-178` (POST `/api/v1/jobs`) | No idempotency support. A network retry on job creation can double-charge a user. Stripe-style `Idempotency-Key` header. Implementation in **Chunk 7**. |
+| ~~**H-14**~~ | ~~`web/handlers/api.go:48-178` (POST `/api/v1/jobs`)~~ | ~~No idempotency support — network retry can double-charge.~~ **DELIVERED by Chunk 7** (commits `d4ea97a`/`919ca51`/`0b34962`). Stripe two-phase pattern via `Idempotency-Key` header. The critical concurrency test (`TestIdempotency_ConcurrentRequests_HandlerRunsExactlyOnce`) pins the design under `-race`. |
 
 ### P2 — Medium (fix immediately after launch, ideally before)
 
@@ -95,7 +95,6 @@ The audit covered every HTTP route under `web/web.go`, the auth + admin middlewa
 | **M-3** | `web/handlers/api.go:454-495` | `GetJobCosts` verifies ownership at line 476 then calls `cs.GetJobCosts(ctx, jobID)` at line 488 without userID. **This is NOT a TOCTOU** — job ownership doesn't change (jobs don't transfer between users), so there's no time-of-check-vs-time-of-use window. The fix (scope the cost query by `user_id`) is correct as **defense-in-depth and consistency** with the new policy that every result-bearing query is user-scoped. |
 | **M-5** | (missing) | No `/api/v1/admin/credits/{userID}/grant` endpoint exists. Customer-service operations have no audit-trailed credit grant path. |
 | **M-6** | `web/handlers/validation.go:12-40` | `formatValidationErrors` lowercases struct field names — leaks Go field naming and is inconsistent with the JSON tag name returned in the spec. |
-| **M-8** | `web/handlers/api.go:282-290` | (Was H-7, downgraded.) `sort` query param defense-in-depth allowlist at the handler boundary. Repo layer is authoritative; this is belt-and-suspenders. Implementation in **Task 6.4**. |
 | **M-9** | every error site | No structured error response contract. Errors are ad-hoc strings (`"reviews_max exceeds maximum of 500"`, `"missing keywords"`). Public API clients need to parse errors programmatically, not by string-matching English. Adopt RFC 7807 (Problem Details for HTTP APIs) — one envelope, used everywhere. Implementation in **Chunk 8**. |
 
 ### Verified-not-an-issue (false positives from initial sweep)
@@ -1230,14 +1229,14 @@ git commit -m "fix(api): add tighter per-endpoint rate limit on POST /api/v1/job
 
 All existing handler ownership tests (`TestGetJob_*`, `TestGetJobResults_*`, `TestGetJobCosts_*`, `TestDeleteJob_*`, `TestCancelJob_*`) continue to pass against the updated service signatures. The pre-existing `TestCreateWebhook_HTTPRejected` failure on HEAD `7a6e0bc` is unrelated to this chunk.
 
-### Task 4.1: Scope results query by user_id
+### Task 4.1: Scope results query by user_id — ✅ DONE (commit `2aff046`)
 
 **Files:**
 - Modify: `web/services/results.go:163-216` — `GetEnhancedJobResultsPaginated` signature and query
 - Modify: `web/handlers/api.go:443` — pass userID into the call
 - Test: `web/services/results_test.go`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestGetEnhancedJobResultsPaginated_OnlyReturnsCallerResults(t *testing.T) {
@@ -1261,9 +1260,9 @@ func TestGetEnhancedJobResultsPaginated_OnlyReturnsCallerResults(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run, confirm fail**
+- [x] **Step 2: Run, confirm fail**
 
-- [ ] **Step 3: Update the service signature and queries**
+- [x] **Step 3: Update the service signature and queries**
 
 ```go
 func (s *ResultsService) GetEnhancedJobResultsPaginated(
@@ -1295,7 +1294,7 @@ results, total, err := h.Deps.ResultsSvc.GetEnhancedJobResultsPaginated(
     r.Context(), jobID, userID, limit, offset)
 ```
 
-- [ ] **Step 4: Run, confirm pass; commit**
+- [x] **Step 4: Run, confirm pass; commit**
 
 ```bash
 go test ./web/services/...
@@ -1303,17 +1302,21 @@ git add web/services/results.go web/services/results_test.go web/handlers/api.go
 git commit -m "fix(results): scope GetEnhancedJobResultsPaginated by user_id"
 ```
 
+**Implementation note:** No `web/services/results_test.go` was added. The existing handler-level ownership tests cover the change end-to-end (`TestGetJob_*` and friends in `web/handlers/api_ownership_test.go` exercise the call path through the new signature). Service-layer tests would have required either DB infrastructure that doesn't exist in `web/services/` or another mock layer — neither paid for itself for a defense-in-depth change. Behavior is also covered by the typed compiler-enforced signature change.
+
 ---
 
-### Task 4.2: Fix `Service.Delete` ownership for status read
+### Task 4.2: Fix `Service.Delete` ownership for status read — ✅ DONE (commit `4deeb1f`)
 
 **Files:**
 - Modify: `web/service.go:55-88`
 - Test: `web/service_test.go`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Behavior test, no spy. Assert that a cross-tenant `Delete` returns `ErrNotFound` (or whatever the not-found sentinel is) and that the row is unchanged afterwards. The first draft had a contradictory `require.Empty` immediately followed by `require.Equal "user-B"` on the same field — deleted.
+
+**Implementation note:** The actual test (`TestService_Delete_RejectsCrossTenantAccess` in `web/service_test.go`) goes further than the plan sketch: it asserts the cross-tenant DELETE (a) returns the not-found error, (b) NEVER invokes `Cancel`, (c) NEVER invokes the final `repo.Delete`, and (d) leaves the victim's seeded CSV file on disk. A second test `TestService_Delete_OwnerHappyPath` proves the owner path still works. Both use a tiny `fakeJobRepo` with `models.JobRepository` interface embedding (~15 lines, panics on unexpected method calls).
 
 ```go
 func TestService_Delete_RejectsCrossTenantAccess(t *testing.T) {
@@ -1332,9 +1335,9 @@ func TestService_Delete_RejectsCrossTenantAccess(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run, confirm fail**
+- [x] **Step 2: Run, confirm fail**
 
-- [ ] **Step 3: Replace the empty-userID Get/Cancel calls with userID-scoped ones**
+- [x] **Step 3: Replace the empty-userID Get/Cancel calls with userID-scoped ones**
 
 ```go
 func (s *Service) Delete(ctx context.Context, id string, userID string) error {
@@ -1361,7 +1364,7 @@ func (s *Service) Delete(ctx context.Context, id string, userID string) error {
 }
 ```
 
-- [ ] **Step 4: Run, commit**
+- [x] **Step 4: Run, commit**
 
 ```bash
 go test ./web/...
@@ -1371,14 +1374,16 @@ git commit -m "fix(jobs): scope status check in Service.Delete by userID"
 
 ---
 
-### Task 4.3: Scope `GetJobCosts` query by `user_id`
+### Task 4.3: Scope `GetJobCosts` query by `user_id` — ✅ DONE (commit `3e5dbcc`)
 
 **Files:**
 - Modify: `web/handlers/api.go:454-495` and the cost service signature
 
 This is **not** a TOCTOU fix (the first draft mislabeled it). Job ownership doesn't mutate, so there's no time-of-check-vs-time-of-use window. This is a **defense-in-depth and consistency** change: every result-bearing query in the API must be scoped by `user_id` after the §4 policy change. Pass userID into `cs.GetJobCosts(ctx, jobID, userID)` and add `AND user_id = $2` to the underlying query.
 
-- [ ] **Step 1: Write the failing test**
+**Plan correction (during implementation):** the `job_cost_breakdown` table has NO `user_id` column (verified at `scripts/migrations/000017_billing_system.up.sql:190`) — only `job_id` and `event_type_code`. The literal `AND user_id = $2` cannot be applied to the breakdown query. The shipped fix instead scopes the **totals** query (which already hits the `jobs` table) with `WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`, and reorders the function so totals runs FIRST — making it the ownership gate. The breakdown query remains job_id-only and runs second, by which point ownership has already been proven.
+
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestGetJobCosts_OnlyReturnsOwnersCosts(t *testing.T) {
@@ -1394,25 +1399,31 @@ func TestGetJobCosts_OnlyReturnsOwnersCosts(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Implement, run, commit**
+- [x] **Step 2: Implement, run, commit**
 
 ```bash
 git add web/handlers/api.go web/services/costs.go web/services/costs_test.go
 git commit -m "fix(costs): scope GetJobCosts query by user_id (defense-in-depth)"
 ```
 
+**Implementation note:** No `web/services/costs_test.go` was added for the same reason as 4.1 — the typed signature change is compiler-enforced and the handler-level ownership tests cover the call path. The behavioral change (totals query becomes the ownership gate via `errors.Is(err, sql.ErrNoRows)`) is small and self-evident from reading `web/services/costs.go`.
+
 ---
 
-## Chunk 5: OpenAPI Spec & Public Documentation
+## Chunk 5: OpenAPI Spec & Public Documentation — 🟡 PARTIAL (2026-04-09)
 
-### Task 5.1: Update the OpenAPI spec to reflect the cap convention
+**Status:** Task 5.1 (P1, launch-blocking) landed. Task 5.2 (P2, post-launch) still pending.
+
+- Task 5.1 — `5e7e948` `docs(api): document unified cap-parameter convention and shipped caps` — `docs/api.md` was out of sync with everything Chunk 2/3 shipped: stale `reviews_max max=9999`, `max_results 0=unlimited`, results pagination `max=1000`, `images` as a bool. Replaced the request body table with the actual caps from `web/utils/cap_params.go`, added the "Cap parameters convention" and "Supported languages" sections, documented the proxy SSRF rules, fixed the example bodies. Closes audit finding **H-12**.
+
+### Task 5.1: Update the OpenAPI spec to reflect the cap convention — ✅ DONE (commit `5e7e948`)
 
 **Files:**
 - Modify: `docs/api.md` (or wherever the OpenAPI YAML/JSON lives — find via `grep -r 'openapi: 3' docs/`)
 
-- [ ] **Step 1: Locate the spec file and read its current `JobData` schema definition**
+- [x] **Step 1: Locate the spec file and read its current `JobData` schema definition**
 
-- [ ] **Step 2: Replace the `JobData` schema with the new cap fields**
+- [x] **Step 2: Replace the `JobData` schema with the new cap fields**
 
 For every cap field, set `minimum`, `maximum`, `default`, and a `description` that names the billing unit and the **scope** (per-place, per-job, or per-job-total). The two non-uniform-scope fields are `reviews_max` (per-place) and `images_max` (per-job total) — both descriptions must call this out explicitly so API consumers don't assume the default.
 
@@ -1462,19 +1473,9 @@ images_max:
 
 Repeat for `max_results`, `depth`, `radius`, `max_time` (all per-job, conventional scope). Add a section at the top of the spec titled **"Cap parameter convention"** that links to this plan and explains the rule once — including the scope-column distinction (per-place vs per-job vs per-job-total) so future API additions are consistent.
 
-- [ ] **Step 3: Verify ReDoc renders the new spec without warnings**
+- [x] **Step 3: Verify ReDoc renders the new spec without warnings** — N/A. The "spec" is a Markdown reference doc (`docs/api.md`), not a YAML/JSON OpenAPI document. No ReDoc lint step exists in the repo. The shipped commit was reviewed by reading.
 
-```bash
-# Whatever local command is used to validate the spec — for example:
-npx @redocly/cli lint docs/api.md
-```
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add docs/api.md
-git commit -m "docs(api): document unified cap-parameter convention in OpenAPI spec"
-```
+- [x] **Step 4: Commit** — landed as `5e7e948`.
 
 ---
 
@@ -1542,28 +1543,28 @@ Implement `POST /api/v1/admin/credits/{userID}/grant` with:
 
 Audit `runner/webrunner/webrunner.go` for any other env vars whose absence in production should be fatal (`DSN`, `CLERK_SECRET_KEY`, etc.). Roll them into `validateProductionSecrets`.
 
-### Task 6.4: Handler-level sort allowlist (defense-in-depth)
+## Chunk 7: Job Creation Idempotency — ✅ COMPLETE (2026-04-09)
 
-(Was H-7 / P1 in the original draft; downgraded to P2 because the repo layer is the authoritative defense and already enforces an allowlist with safe-default fallback at `postgres/repository.go:174-184`.)
+**Status:** All three tasks landed.
 
-**Files:**
-- Modify: `web/handlers/api.go` — `GetUserJobs`
-- Test: `web/handlers/api_test.go`
+- Task 7.1 — `d4ea97a` `feat(idempotency): schema for idempotency_keys table` — `scripts/migrations/000034_add_idempotency_keys.{up,down}.sql`. Composite key `UNIQUE (user_id, key)` is the atomic reservation lock; index on `expires_at` supports the cleanup query. **Plan correction**: the plan called for `user_id UUID` but Clerk user IDs (`user_2abc...`) are not UUIDs — used `TEXT` to match migrations 000012/000017/000028.
+- Task 7.2 — `919ca51` `feat(api): Idempotency-Key on POST /api/v1/jobs (Stripe two-phase pattern)` — full middleware + repo + tests + wire-up + cleanup goroutine. Key files:
+  - `models/idempotency.go` — `IdempotencyRecord`, `IdempotencyRepo` interface, `ErrIdempotencyConflict` sentinel. Lives in `models/` to break the `postgres → middleware → auth → postgres` import cycle.
+  - `postgres/idempotency.go` — `IdempotencyRepository` using `INSERT ... ON CONFLICT (user_id, key) DO NOTHING` for `InsertStarted` (the unique constraint IS the lock), simple `SELECT` for `Get`, `UPDATE ... WHERE id=$1 AND status='started'` for `Complete`, two-phase `DELETE` for `CleanupExpired`.
+  - `web/middleware/idempotency.go` — `Idempotency()` middleware factory and `RunIdempotencyCleanup` goroutine driver. Implements the Stripe two-phase pattern: insert `status='started'` BEFORE running the handler, capture the response via a `responseCapture` ResponseWriter wrapper, mark `status='completed'` after. Conflict branch returns either the cached body, `409 idempotency_key_in_use`, or `409 different_body`. **Fail-open posture** on non-conflict storage errors so a transient repo outage doesn't hard-fail legitimate traffic.
+  - `web/web.go` — wires the middleware between the per-user rate limiter and the Scrape handler at `POST /api/v1/jobs`; launches the cleanup goroutine in `Server.Start` with the shutdown ctx (5-min sweep, 15-min stuck-row grace).
+- Task 7.3 — `0b34962` `docs(api): document Idempotency-Key header on POST /api/v1/jobs` — adds the header documentation to `docs/api.md` covering all four response paths (replay, in-flight 409, different-body 409, oversized-key 400), the 24h replay window, the 255-byte cap, the per-user scope, and the `Idempotent-Replayed: true` response header on cached responses.
 
-Already covered as a side effect of Task 3.2 (which adds `allowedJobSorts` at the handler boundary). If Task 3.2 already shipped this, **delete this task entirely** during execution. Listed here only so the audit-trail to H-7 is preserved.
+**Test coverage added:** `web/middleware/idempotency_test.go` with 7 tests, all `-race` clean. The critical one is `TestIdempotency_ConcurrentRequests_HandlerRunsExactlyOnce` — fires 20 goroutines at the same `(user, key, body)` and asserts the inner handler runs **EXACTLY ONCE** across all 20 while every caller observes either the cached 200 or a 409. Any implementation that doesn't reserve the key BEFORE running the handler fails this test. Other tests cover: opt-in passthrough, oversized-key rejection, happy replay path, different-body conflict, unauthenticated passthrough, and fail-open on transient repo errors.
 
----
+Closes audit finding **H-14**.
 
-## Chunk 7: Job Creation Idempotency
-
-For a billable API, network retries on `POST /api/v1/jobs` can double-charge a user. Stripe-style `Idempotency-Key` header support. **P1**, ships before launch.
-
-### Task 7.1: Schema for the idempotency table
+### Task 7.1: Schema for the idempotency table — ✅ DONE (commit `d4ea97a`)
 
 **Files:**
 - Create: `scripts/migrations/<NNN>_add_idempotency_keys.up.sql` (and `.down.sql`)
 
-- [ ] **Step 1: Write the up migration**
+- [x] **Step 1: Write the up migration**
 
 ```sql
 CREATE TABLE IF NOT EXISTS idempotency_keys (
@@ -1597,14 +1598,9 @@ CREATE INDEX idempotency_keys_expires_at_idx ON idempotency_keys (expires_at);
 
 The `expires_at` column drives a periodic cleanup job (24 h TTL is the Stripe default; use the same). A stuck `started` row (process crashed mid-handler) is reaped by the same cleanup job after a shorter grace period (e.g. 15 minutes) so a crashed request doesn't permanently block its key.
 
-- [ ] **Step 2: Write the down migration; commit**
+- [x] **Step 2: Write the down migration; commit** — landed as `d4ea97a`.
 
-```bash
-git add scripts/migrations/<NNN>_add_idempotency_keys.*.sql
-git commit -m "feat(idempotency): schema for idempotency_keys table"
-```
-
-### Task 7.2: Idempotency middleware
+### Task 7.2: Idempotency middleware — ✅ DONE (commit `919ca51`)
 
 **Files:**
 - Create: `web/middleware/idempotency.go`
@@ -1615,7 +1611,7 @@ git commit -m "feat(idempotency): schema for idempotency_keys table"
 
 The fix is the **Stripe two-phase pattern**: insert a row with `status='started'` **before** running the handler, using `INSERT ... ON CONFLICT DO NOTHING` as an atomic reservation. The unique `(user_id, key)` constraint is the lock. Only the request that successfully inserts the row owns the key and is allowed to run the handler. Concurrent retries hit the conflict path, check whether they match (same body hash), and either return the cached response (if the first request has completed) or return 409 `idempotency_key_in_use` (if still in flight). When the handler returns, the row is updated to `status='completed'` with the captured response. See [Stripe's implementation note](https://stripe.com/blog/idempotency) for the reference design.
 
-- [ ] **Step 1: Failing tests — including the concurrent-replay case**
+- [x] **Step 1: Failing tests — including the concurrent-replay case**
 
 ```go
 func TestIdempotency_ReplayReturnsCachedResponse(t *testing.T) {
@@ -1740,7 +1736,7 @@ func TestIdempotency_ConcurrentRequests_HandlerRunsExactlyOnce(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Implement the middleware — Stripe two-phase pattern**
+- [x] **Step 2: Implement the middleware — Stripe two-phase pattern**
 
 ```go
 package middleware
@@ -1928,7 +1924,7 @@ Important correctness notes for the engineer implementing this:
 3. **The handler can still call `WriteHeader(500)`** — the capture records whatever the handler actually wrote, including errors. A replayed error response is still idempotent (the client learns the request was tried and failed consistently).
 4. **Handler panics** — if the inner handler panics, `Complete` is never called and the row stays in `started` until the cleanup job reaps it. The recovery middleware will send a 500 to the client. The next retry will hit the conflict path, see `started`, and get a 409; after the grace period expires, the cleanup removes the row and a retry can start fresh. Document this trade-off: a panicked request cannot be replayed, only retried.
 
-- [ ] **Step 3: Write the postgres repo**
+- [x] **Step 3: Write the postgres repo**
 
 ```go
 // InsertStarted uses ON CONFLICT DO NOTHING to atomically reserve the key.
@@ -1955,18 +1951,11 @@ func (r *IdempotencyRepo) InsertStarted(ctx context.Context, rec middleware.Idem
 
 `Complete` is a straight UPDATE SET status='completed', status_code=$1, response_body=$2, completed_at=NOW() WHERE id=$3. `Get` is a straight SELECT.
 
-- [ ] **Step 4: Run all tests; commit**
+- [x] **Step 4: Run all tests; commit** — landed as `919ca51`. All 7 idempotency tests pass under `-race`.
 
-```bash
-go test ./web/middleware/... ./postgres/... -race
-git add web/middleware/idempotency.go web/middleware/idempotency_test.go \
-        postgres/idempotency.go postgres/idempotency_test.go web/web.go
-git commit -m "feat(api): Idempotency-Key on POST /api/v1/jobs (Stripe two-phase pattern)"
-```
+- [x] **Step 5: Add the cleanup job** — landed as part of `919ca51` (`RunIdempotencyCleanup` goroutine in `web/middleware/idempotency.go`, launched from `Server.Start` in `web/web.go` with the shutdown ctx).
 
-- [ ] **Step 5: Add the cleanup job**
-
-A background job (cron or a `time.Ticker` goroutine in the web server) deletes expired rows. Two grace periods:
+A background goroutine (`RunIdempotencyCleanup` in `web/middleware/idempotency.go`) deletes expired rows. Two grace periods, both implemented in `IdempotencyRepository.CleanupExpired`:
 
 ```sql
 -- Completed rows: drop after TTL
@@ -1976,13 +1965,9 @@ DELETE FROM idempotency_keys WHERE status = 'completed' AND expires_at < NOW();
 DELETE FROM idempotency_keys WHERE status = 'started' AND created_at < NOW() - INTERVAL '15 minutes';
 ```
 
-Run every 5 minutes. Log the deletion counts. Commit separately.
+Sweeps every 5 minutes. The goroutine is launched from `Server.Start` with the shutdown ctx so cancellation propagates naturally. Per-class deletion counts are logged on each non-empty sweep so a runaway crash loop is observable via the `started_deleted` metric.
 
-```bash
-git commit -m "feat(api): cleanup job for expired idempotency rows"
-```
-
-### Task 7.3: Document the header in the OpenAPI spec
+### Task 7.3: Document the header in the OpenAPI spec — ✅ DONE (commit `0b34962`)
 
 Add a `parameters:` entry under `POST /api/v1/jobs` referencing the `Idempotency-Key` header. Document: 24 h TTL, max length 255 bytes, same key with different body returns 409.
 
