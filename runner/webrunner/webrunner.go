@@ -151,6 +151,14 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.Se
 		if os.Getenv("ALLOWED_ORIGINS") == "" {
 			missing = append(missing, "ALLOWED_ORIGINS")
 		}
+		// ENCRYPTION_KEY is required in production to prevent integration
+		// credentials from being stored as plaintext in the user_integrations
+		// table. web/web.go silently downgrades to plaintext storage with a
+		// WARN log if this is empty — fine for local dev, dangerous in prod.
+		// (S-C5, audit M-7)
+		if os.Getenv("ENCRYPTION_KEY") == "" {
+			missing = append(missing, "ENCRYPTION_KEY")
+		}
 		if len(missing) > 0 {
 			return web.ServerConfig{}, fmt.Errorf("production mode requires these environment variables: %s", strings.Join(missing, ", "))
 		}
