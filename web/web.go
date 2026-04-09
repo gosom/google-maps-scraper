@@ -210,10 +210,25 @@ func New(cfg ServerConfig) (*Server, error) {
 		webmiddleware.RequestLogger(ans.logger),
 	)
 
-	// API endpoints (these are protected by middleware if enabled)
+	// API endpoints (these are protected by middleware if enabled).
+	//
+	// Per-endpoint rate limit on POST /api/v1/jobs (Task 3.6):
+	// the global PerAPIKeyRateLimit on apiRouter caps every endpoint at
+	// the same rate (free 2/s burst 5, paid 10/s burst 30, session
+	// fallback 5/s burst 20). For job CREATION specifically — billable,
+	// takes a SELECT ... FOR UPDATE row lock, queues a scraping worker —
+	// that ceiling is too lenient. A single authenticated user could fire
+	// 30 paid-tier requests per second and exhaust their credit balance,
+	// flood the worker queue, or hold the user-row lock under contention.
+	//
+	// This tighter limiter wraps ONLY the POST /jobs route on top of the
+	// existing middleware chain. Burst 3 lets a human-driven UI submit
+	// a small batch of jobs without hitting the limit; the 1 req/s
+	// refill keeps any sustained automation honest.
+	jobCreateLimiter := webmiddleware.PerUserRateLimit(rate.Limit(1), 3)
 	apiRouter.HandleFunc("/jobs", hg.API.GetJobs).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/user", hg.API.GetUserJobs).Methods(http.MethodGet)
-	apiRouter.HandleFunc("/jobs", hg.API.Scrape).Methods(http.MethodPost)
+	apiRouter.Handle("/jobs", jobCreateLimiter(http.HandlerFunc(hg.API.Scrape))).Methods(http.MethodPost)
 	apiRouter.HandleFunc("/jobs/{id}", hg.API.GetJob).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/{id}", hg.API.DeleteJob).Methods(http.MethodDelete)
 	apiRouter.HandleFunc("/jobs/{id}/cancel", hg.API.CancelJob).Methods(http.MethodPost)

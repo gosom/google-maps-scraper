@@ -327,3 +327,73 @@ func TestPerAPIKeyRateLimit_SessionAuthUseFallback_Denied(t *testing.T) {
 		t.Fatalf("expected 429 for session user via denied fallback, got %d", rr.Code)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// PerUserRateLimit tests — added in Task 3.6 to lock the (1 req/s, burst 3)
+// configuration that wraps POST /api/v1/jobs in web.go. The tighter limit
+// covers a billable endpoint that the global PerAPIKeyRateLimit (paid 10/s
+// burst 30) was too lenient for.
+// ---------------------------------------------------------------------------
+
+// TestPerUserRateLimit_AllowsBurstThenDenies verifies the exact wired
+// configuration: 1 req/s with burst 3 means a user can fire 3 requests
+// immediately, then must wait ~1 second between subsequent requests.
+// The audit assertion is "at least 5 of 10 burst requests rejected" —
+// with this config the actual count is 7 of 10 (3 allowed, 7 denied).
+func TestPerUserRateLimit_AllowsBurstThenDenies(t *testing.T) {
+	handler := PerUserRateLimit(rate.Limit(1), 3)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	allowed, denied := 0, 0
+	for i := 0; i < 10; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", nil)
+		req = injectSessionUser(req, "user-burst-test")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		switch rr.Code {
+		case http.StatusOK:
+			allowed++
+		case http.StatusTooManyRequests:
+			denied++
+		default:
+			t.Errorf("unexpected status %d", rr.Code)
+		}
+	}
+	// Burst is 3, so the first 3 are allowed and the remaining 7 are
+	// denied (the rate limiter refills at 1 token/sec but 10 requests
+	// in a tight loop don't take a full second).
+	if allowed != 3 {
+		t.Errorf("expected 3 allowed (burst), got %d", allowed)
+	}
+	if denied < 5 {
+		t.Errorf("expected at least 5 denied, got %d", denied)
+	}
+}
+
+// TestPerUserRateLimit_BucketsAreScopedPerUser ensures one user
+// exhausting their bucket doesn't affect a different user. Without
+// this guarantee a single noisy client could effectively DoS every
+// other user on the same endpoint.
+func TestPerUserRateLimit_BucketsAreScopedPerUser(t *testing.T) {
+	handler := PerUserRateLimit(rate.Limit(1), 3)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Exhaust user A's burst.
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", nil)
+		req = injectSessionUser(req, "user-a")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+	}
+
+	// User B should still get a fresh burst.
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", nil)
+	req = injectSessionUser(req, "user-b")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected user-b to get a fresh burst, got %d", rr.Code)
+	}
+}
