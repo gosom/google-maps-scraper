@@ -597,7 +597,20 @@ func (s *Service) ReconcileSession(ctx context.Context, sessionID, callerUserID 
 	if callerUserID == "" {
 		return fmt.Errorf("missing user id")
 	}
-	sess, err := checkoutsession.Get(sessionID, nil)
+
+	// Expand line_items so we can verify the quantity matches the DB row,
+	// and expand payment_intent.latest_charge so we can capture the receipt
+	// URL (S-M6) without an extra API call. Stripe docs:
+	//   - line_items is NOT included by default; "die Eigenschaft line_items
+	//     der Checkout-Sitzung [...] ist nur in Antworten enthalten, wenn sie
+	//     z. B. mit dem Parameter expand angefordert wird"
+	//   - expand has a max nesting depth of 4 levels; we use 2
+	// (S-M2 + S-M6)
+	getParams := &stripe.CheckoutSessionParams{}
+	getParams.AddExpand("line_items")
+	getParams.AddExpand("payment_intent")
+	getParams.AddExpand("payment_intent.latest_charge")
+	sess, err := checkoutsession.Get(sessionID, getParams)
 	if err != nil {
 		return fmt.Errorf("failed to fetch session: %w", err)
 	}
@@ -622,6 +635,21 @@ func (s *Service) ReconcileSession(ctx context.Context, sessionID, callerUserID 
 	// Check if session is paid
 	if sess.PaymentStatus != stripe.CheckoutSessionPaymentStatusPaid {
 		return fmt.Errorf("session not paid")
+	}
+
+	// Defense-in-depth: verify the line_item quantity from Stripe matches the
+	// credits_purchased recorded in our DB. A mismatch would mean either the
+	// DB row was tampered with or the original CreateCheckoutSession wrote
+	// the wrong quantity to one of the two systems. Bail out before crediting
+	// any balance — let an operator investigate. (S-M2)
+	if mismatchErr := verifyLineItemsQuantity(sess.LineItems, credits); mismatchErr != nil {
+		s.logger.Error("reconcile_line_item_mismatch",
+			slog.String("session_id", sessionID),
+			slog.String("user_id", userID),
+			slog.Int("db_credits_purchased", credits),
+			slog.Any("error", mismatchErr),
+		)
+		return mismatchErr
 	}
 
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
