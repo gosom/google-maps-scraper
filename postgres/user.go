@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/gosom/google-maps-scraper/models"
@@ -91,6 +92,11 @@ func (repo *userRepository) Create(ctx context.Context, user *User) error {
 //
 // updated_at is intentionally NOT touched here: the table-level trigger
 // already bumps it on every UPDATE.
+//
+// Errors are disambiguated when the UPDATE affects 0 rows so ops can tell
+// "user does not exist" from "row exists but customer_id is already set
+// to a different value" — these are very different failure modes during
+// incident investigation.
 func (repo *userRepository) SetStripeCustomerID(ctx context.Context, userID, stripeCustomerID string) error {
 	if stripeCustomerID == "" {
 		return errors.New("stripeCustomerID cannot be empty")
@@ -107,7 +113,29 @@ func (repo *userRepository) SetStripeCustomerID(ctx context.Context, userID, str
 		return err
 	}
 	if n == 0 {
-		return errors.New("user not found or stripe_customer_id already set to a different value")
+		// Disambiguate: did the user not exist, or did the row exist with
+		// a different stripe_customer_id? A second SELECT on the cold error
+		// path is acceptable for clearer ops diagnostics.
+		var existing sql.NullString
+		err := repo.db.QueryRowContext(ctx,
+			`SELECT stripe_customer_id FROM users WHERE id = $1`, userID).Scan(&existing)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return errors.New("user not found")
+			}
+			return fmt.Errorf("failed to disambiguate SetStripeCustomerID failure: %w", err)
+		}
+		// Row exists. Either the customer_id is already set to a different
+		// value (the conflict we want to surface), or it matches the requested
+		// value (which the WHERE clause should have allowed — if we hit this
+		// branch it means a concurrent write changed the value out from
+		// under us, which is itself a conflict).
+		if existing.Valid {
+			return fmt.Errorf("stripe_customer_id already set to a different value: have %q, requested %q", existing.String, stripeCustomerID)
+		}
+		// Defensive: row has NULL stripe_customer_id but our UPDATE missed.
+		// Shouldn't happen given the WHERE clause; treat as a transient error.
+		return errors.New("SetStripeCustomerID UPDATE missed a row with NULL customer_id (transient race?)")
 	}
 	return nil
 }

@@ -139,6 +139,23 @@ func TestSetStripeCustomerID_RejectsEmpty(t *testing.T) {
 	}
 }
 
+func TestSetStripeCustomerID_RejectsMissingUser(t *testing.T) {
+	db := openUserTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	repo := NewUserRepository(db).(*userRepository)
+	missingUserID := "user_test_missing_" + fmt.Sprintf("%d", time.Now().UnixNano())
+
+	err := repo.SetStripeCustomerID(ctx, missingUserID, "cus_test_missing")
+	if err == nil {
+		t.Fatal("expected error for missing user, got nil")
+	}
+	if !strings.Contains(err.Error(), "user not found") {
+		t.Errorf("expected error to mention 'user not found', got: %v", err)
+	}
+}
+
 func TestGetByID_IncludesStripeCustomerID(t *testing.T) {
 	db := openUserTestDB(t)
 	defer db.Close()
