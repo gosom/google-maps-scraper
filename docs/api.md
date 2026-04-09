@@ -66,6 +66,37 @@ Both methods are equivalent — use whichever is more convenient.
 
 Start a new scraping job. The job runs asynchronously — poll `GET /api/v1/jobs/{id}` to track progress.
 
+**Headers:**
+
+| Header | Required | Description |
+|--------|----------|-------------|
+| `Authorization` / `X-API-Key` | yes | See [Authentication](#authentication) |
+| `Content-Type` | yes | Must be `application/json` |
+| `Idempotency-Key` | no | Opt-in deduplication key — see below |
+
+#### Idempotency
+
+Job creation is **billable**, so a network retry on `POST /api/v1/jobs` could double-charge you. To make retries safe, send an `Idempotency-Key` header with a unique value (a UUID is fine):
+
+```bash
+curl -X POST https://api.brezel.ai/api/v1/jobs \
+  -H "Authorization: Bearer bscraper_YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: 5a2c6b7e-3f9d-4f4f-9e1e-1d3b0a8c1c2e" \
+  -d '{ "Name": "Cafes Berlin", ... }'
+```
+
+Behavior:
+
+- **Replay window:** 24 hours. The first request with a given key is processed normally and its full response is cached. Subsequent requests with the same key + same body return the cached response — the job is created exactly once.
+- **Same key, different body:** returns `409 Conflict` (`idempotency_key_in_use_with_different_body`). This catches a client bug — never reuse a key for a different request.
+- **Same key, in flight:** if a retry arrives while the first request is still being processed, you get `409 Conflict` (`idempotency_key_in_use`) with a `Retry-After: 1` header. Wait one second and retry; you'll then receive the cached response.
+- **Replayed responses** include the header `Idempotent-Replayed: true` so clients can distinguish them from fresh executions.
+- **Maximum key length:** 255 bytes. Longer keys return `400 Bad Request`.
+- **Scope:** keys are scoped per user — two users can use the same key without colliding.
+
+The header is **opt-in**: requests without it work exactly as before, with no idempotency guarantee. Send it for every billable retry-loop you implement (CI pipelines, scheduled jobs, anything that might fire twice).
+
 **Request body:**
 
 ```json
