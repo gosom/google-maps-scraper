@@ -58,19 +58,31 @@ func (s *Service) Delete(ctx context.Context, id string, userID string) error {
 	}
 	log := pkglogger.FromContext(ctx)
 
-	// First check the current job status using admin bypass (ownership enforced at Delete level)
-	job, err := s.repo.Get(ctx, id, "")
-	if err == nil {
-		// If job is still running, cancel it first
-		if job.Status == StatusWorking || job.Status == StatusPending {
-			// Try to cancel the job first (admin bypass since ownership is checked at Delete)
-			if cancelErr := s.repo.Cancel(ctx, id, ""); cancelErr != nil {
-				// Log the error but continue with deletion
-				log.Warn("cancel_before_delete_failed",
-					slog.String("job_id", id),
-					slog.Any("error", cancelErr),
-				)
-			}
+	// Ownership-scoped status read. Previously this passed userID="" which
+	// triggered the repo's admin-bypass branch and let any authenticated
+	// user (a) read another user's job status, (b) cancel another user's
+	// running job via the Cancel call below, and (c) os.Remove that user's
+	// CSV file from dataFolder — only the final repo.Delete enforced
+	// ownership, by which point the side effects had already executed.
+	// Scoping the Get aborts the entire flow before any of those side
+	// effects when the caller is not the owner: cross-tenant requests
+	// surface as a "not found" error and return immediately.
+	job, err := s.repo.Get(ctx, id, userID)
+	if err != nil {
+		return err
+	}
+	// If job is still running, cancel it first. The Cancel call is also
+	// scoped by userID — belt-and-suspenders, since we already proved
+	// ownership above, but it keeps the repo call uniform.
+	if job.Status == StatusWorking || job.Status == StatusPending {
+		if cancelErr := s.repo.Cancel(ctx, id, userID); cancelErr != nil {
+			// Log the error but continue with deletion — a failed cancel
+			// doesn't block the delete (the worker will see the deleted
+			// row on its next poll and stop).
+			log.Warn("cancel_before_delete_failed",
+				slog.String("job_id", id),
+				slog.Any("error", cancelErr),
+			)
 		}
 	}
 
