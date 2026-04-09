@@ -1216,7 +1216,19 @@ git commit -m "fix(api): add tighter per-endpoint rate limit on POST /api/v1/job
 
 ---
 
-## Chunk 4: Defense-in-Depth & IDOR Hardening
+## Chunk 4: Defense-in-Depth & IDOR Hardening — ✅ COMPLETE (2026-04-09)
+
+**Status:** All three tasks landed.
+
+- Task 4.2 (priority — real active vulnerability) — `web/service.go` `Service.Delete` was passing `userID=""` to `repo.Get` and `repo.Cancel`, which the repo treats as an admin-bypass sentinel (`WHERE id = $1 AND (user_id = $2 OR $2 = '')`). An attacker who knew or guessed a victim's job UUID could trigger cross-tenant cancellation of the running job AND `os.Remove` the victim's CSV file from `dataFolder` — only the final `repo.Delete` call enforced ownership, by which point the destructive side effects had already executed. Replaced both empty-userID calls with `userID`-scoped equivalents and changed the swallowed `if err == nil` pattern to an early `return err` so cross-tenant requests fail fast before any side effects.
+- Task 4.1 (defense-in-depth) — `web/services/results.go` `GetEnhancedJobResultsPaginated` now takes `userID` and the COUNT + SELECT both carry `AND user_id = $2`. Handler at `web/handlers/api.go` already pre-checks ownership via `App.Get` (which it must keep for the StatusFailed billing gate), so this is belt-and-suspenders against future regressions and against `results` rows ever drifting out of sync with their parent job's `user_id`.
+- Task 4.3 (defense-in-depth + plan correction) — `web/services/costs.go` `GetJobCosts` now takes `userID`. **Plan correction**: the `job_cost_breakdown` table has no `user_id` column (see migration 000017), so the original `AND user_id = $2` cannot apply there. Instead the **totals** query (which hits the `jobs` table) now reads `WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`, and the query order was swapped so totals runs first — the totals query now functions as the ownership gate, returning `ErrNoRows`/"job not found" before any breakdown rows are read. Added `errors.Is(err, sql.ErrNoRows)` mapping for clean not-found handling.
+
+**Test coverage added:** `web/service_test.go` introduces `fakeJobRepo` (a tiny stub via `models.JobRepository` interface embedding — only the three methods `Service.Delete` calls are implemented, anything else panics) and two regression tests:
+- `TestService_Delete_RejectsCrossTenantAccess` — proves the IDOR is closed: a cross-tenant DELETE returns the not-found error, never invokes `Cancel`, never invokes `repo.Delete`, and leaves the victim's seeded CSV file untouched on disk.
+- `TestService_Delete_OwnerHappyPath` — proves the owner can still delete their own running job, with `Cancel` and `repo.Delete` both called exactly once with the owner's userID and the CSV removed.
+
+All existing handler ownership tests (`TestGetJob_*`, `TestGetJobResults_*`, `TestGetJobCosts_*`, `TestDeleteJob_*`, `TestCancelJob_*`) continue to pass against the updated service signatures. The pre-existing `TestCreateWebhook_HTTPRejected` failure on HEAD `7a6e0bc` is unrelated to this chunk.
 
 ### Task 4.1: Scope results query by user_id
 
