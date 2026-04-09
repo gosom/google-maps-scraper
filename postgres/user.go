@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/gosom/google-maps-scraper/models"
@@ -27,12 +28,12 @@ func NewUserRepository(db *sql.DB) UserRepository {
 
 // GetByID retrieves a user by ID
 func (repo *userRepository) GetByID(ctx context.Context, id string) (User, error) {
-	const q = `SELECT id, email, role, created_at, updated_at FROM users WHERE id = $1`
+	const q = `SELECT id, email, role, stripe_customer_id, COALESCE(refund_deficit_credits, 0)::float8, created_at, updated_at FROM users WHERE id = $1`
 
 	row := repo.db.QueryRowContext(ctx, q, id)
 
 	var user User
-	err := row.Scan(&user.ID, &user.Email, &user.Role, &user.CreatedAt, &user.UpdatedAt)
+	err := row.Scan(&user.ID, &user.Email, &user.Role, &user.StripeCustomerID, &user.RefundDeficitCredits, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return User{}, errors.New("user not found")
@@ -45,12 +46,12 @@ func (repo *userRepository) GetByID(ctx context.Context, id string) (User, error
 
 // GetByEmail retrieves a user by email
 func (repo *userRepository) GetByEmail(ctx context.Context, email string) (User, error) {
-	const q = `SELECT id, email, role, created_at, updated_at FROM users WHERE email = $1`
+	const q = `SELECT id, email, role, stripe_customer_id, COALESCE(refund_deficit_credits, 0)::float8, created_at, updated_at FROM users WHERE email = $1`
 
 	row := repo.db.QueryRowContext(ctx, q, email)
 
 	var user User
-	err := row.Scan(&user.ID, &user.Email, &user.Role, &user.CreatedAt, &user.UpdatedAt)
+	err := row.Scan(&user.ID, &user.Email, &user.Role, &user.StripeCustomerID, &user.RefundDeficitCredits, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return User{}, errors.New("user not found")
@@ -78,6 +79,65 @@ func (repo *userRepository) Create(ctx context.Context, user *User) error {
 
 	_, err := repo.db.ExecContext(ctx, q, user.ID, user.Email, user.CreatedAt, user.UpdatedAt)
 	return err
+}
+
+// SetStripeCustomerID writes the Stripe customer ID to the user row.
+//
+// Uses a guarded UPDATE so a racing write cannot replace an already-set
+// customer ID with a DIFFERENT one — that would be a billing-integrity
+// breach (the user's charges would split across two Stripe Customers and
+// future refund lookups would always miss). Writing the same value is a
+// tolerated no-op so concurrent EnsureStripeCustomer callers can both
+// succeed without coordination.
+//
+// updated_at is intentionally NOT touched here: the table-level trigger
+// already bumps it on every UPDATE.
+//
+// Errors are disambiguated when the UPDATE affects 0 rows so ops can tell
+// "user does not exist" from "row exists but customer_id is already set
+// to a different value" — these are very different failure modes during
+// incident investigation.
+func (repo *userRepository) SetStripeCustomerID(ctx context.Context, userID, stripeCustomerID string) error {
+	if stripeCustomerID == "" {
+		return errors.New("stripeCustomerID cannot be empty")
+	}
+	const q = `UPDATE users
+		SET stripe_customer_id = $1
+		WHERE id = $2 AND (stripe_customer_id IS NULL OR stripe_customer_id = $1)`
+	res, err := repo.db.ExecContext(ctx, q, stripeCustomerID, userID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		// Disambiguate: did the user not exist, or did the row exist with
+		// a different stripe_customer_id? A second SELECT on the cold error
+		// path is acceptable for clearer ops diagnostics.
+		var existing sql.NullString
+		err := repo.db.QueryRowContext(ctx,
+			`SELECT stripe_customer_id FROM users WHERE id = $1`, userID).Scan(&existing)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return errors.New("user not found")
+			}
+			return fmt.Errorf("failed to disambiguate SetStripeCustomerID failure: %w", err)
+		}
+		// Row exists. Either the customer_id is already set to a different
+		// value (the conflict we want to surface), or it matches the requested
+		// value (which the WHERE clause should have allowed — if we hit this
+		// branch it means a concurrent write changed the value out from
+		// under us, which is itself a conflict).
+		if existing.Valid {
+			return fmt.Errorf("stripe_customer_id already set to a different value: have %q, requested %q", existing.String, stripeCustomerID)
+		}
+		// Defensive: row has NULL stripe_customer_id but our UPDATE missed.
+		// Shouldn't happen given the WHERE clause; treat as a transient error.
+		return errors.New("SetStripeCustomerID UPDATE missed a row with NULL customer_id (transient race?)")
+	}
+	return nil
 }
 
 // Delete removes a user

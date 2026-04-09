@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -33,6 +34,13 @@ type GmapJob struct {
 	ExitMonitor         exiter.Exiter
 	ExtractExtraReviews bool
 	ReviewsMax          int // Maximum number of reviews to extract
+	// ImageBudget is the per-job total image budget shared across every
+	// PlaceJob spawned by this GmapJob. When non-nil, the scraper checks
+	// the counter before extracting images for each place and decrements
+	// after, stopping image extraction once the budget is exhausted. When
+	// nil, no cross-place enforcement (images are extracted unbounded —
+	// CLI/lambda mode).
+	ImageBudget *atomic.Int64
 }
 
 func NewGmapJob(
@@ -112,6 +120,16 @@ func WithDebug() GmapJobOptions {
 	}
 }
 
+// WithImageBudget attaches a per-job total image budget to the GmapJob and
+// every PlaceJob it spawns. The counter is shared across places via pointer
+// — see PlaceJob.extractImages for the enforcement logic. Pass nil (or omit
+// this option) to disable cross-place image budget enforcement.
+func WithImageBudget(budget *atomic.Int64) GmapJobOptions {
+	return func(j *GmapJob) {
+		j.ImageBudget = budget
+	}
+}
+
 func (j *GmapJob) UseInResults() bool {
 	return false
 }
@@ -156,6 +174,9 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 		if j.ExitMonitor != nil {
 			jopts = append(jopts, WithPlaceJobExitMonitor(j.ExitMonitor))
 		}
+		if j.ImageBudget != nil {
+			jopts = append(jopts, WithPlaceJobImageBudget(j.ImageBudget))
+		}
 
 		log.Debug("gmap_job_creating_single_place_job",
 			slog.String("job_id", j.ID),
@@ -196,6 +217,9 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 				jopts := []PlaceJobOptions{}
 				if j.ExitMonitor != nil {
 					jopts = append(jopts, WithPlaceJobExitMonitor(j.ExitMonitor))
+				}
+				if j.ImageBudget != nil {
+					jopts = append(jopts, WithPlaceJobImageBudget(j.ImageBudget))
 				}
 
 				log.Debug("gmap_job_creating_place_job_from_search_result",

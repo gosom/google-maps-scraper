@@ -24,9 +24,8 @@ type EstimationService struct {
 
 // Estimation constants - average values based on typical Google Maps data
 const (
-	AvgReviewsPerPlace        = 25
-	AvgImagesPerPlace         = 30
-	UnlimitedReviewsThreshold = 1000
+	AvgReviewsPerPlace = 25
+	AvgImagesPerPlace  = 30
 
 	// Default pricing fallbacks (used when DB has no active rules)
 	defaultPriceActorStart        = 0.007
@@ -195,9 +194,16 @@ func (s *EstimationService) EstimateJobCost(ctx context.Context, jobData *models
 		reviewsMicro = int64(estimatedReviews) * priceReview
 	}
 
-	// 6. Calculate images cost (if images are requested)
-	if jobData.Images {
+	// 6. Calculate images cost (if images are requested).
+	// images_max > 0 is the on/off signal — the legacy `images` bool was
+	// dropped in migration 000033. The estimate is bounded by ImagesMax
+	// when set, since the runner stops extracting once the per-job total
+	// budget is exhausted.
+	if jobData.ImagesMax > 0 {
 		estimatedImages := s.estimateImageCount(jobData, estimatedPlaces)
+		if estimatedImages > jobData.ImagesMax {
+			estimatedImages = jobData.ImagesMax
+		}
 		estimate.EstimatedImages = estimatedImages
 		imagesMicro = int64(estimatedImages) * priceImage
 	}
@@ -249,10 +255,14 @@ func estimatePlacesFromDepth(depth int) int {
 	return int(math.Round(11.17 * math.Pow(float64(depth), 0.7925)))
 }
 
-// estimateReviewCount determines how many reviews will likely be scraped
+// estimateReviewCount determines how many reviews will likely be scraped.
+// reviews_max is now bounded by the validator at [0, CapReviewsMax] (per
+// place), so the previous "unlimited reviews" branch is dead. The <= 0
+// fallback is unreachable today (the only caller gates on ReviewsMax > 0)
+// but kept as a defensive safety belt for future callers.
 func (s *EstimationService) estimateReviewCount(jobData *models.JobData, estimatedPlaces int) int {
 	reviewsPerPlace := jobData.ReviewsMax
-	if reviewsPerPlace <= 0 || reviewsPerPlace >= UnlimitedReviewsThreshold {
+	if reviewsPerPlace <= 0 {
 		reviewsPerPlace = AvgReviewsPerPlace
 	}
 	return estimatedPlaces * reviewsPerPlace
@@ -263,33 +273,12 @@ func (s *EstimationService) estimateImageCount(jobData *models.JobData, estimate
 	return estimatedPlaces * AvgImagesPerPlace
 }
 
-// generateEstimationNote creates a helpful note explaining the estimate
-func (s *EstimationService) generateEstimationNote(jobData *models.JobData) string {
-	var notes []string
-
-	if jobData.MaxResults == 0 {
-		notes = append(notes, fmt.Sprintf(
-			"Estimate based on search depth %d (~%d places). Set a max results cap to control costs precisely.",
-			jobData.Depth, estimatePlacesFromDepth(jobData.Depth),
-		))
-	} else {
-		notes = append(notes, "Estimate based on your specified max_results limit.")
-	}
-
-	if jobData.ReviewsMax >= UnlimitedReviewsThreshold {
-		notes = append(notes, fmt.Sprintf(
-			"Note: reviews_max (%d) treated as unlimited - using average of %d reviews per place for estimation.",
-			jobData.ReviewsMax, AvgReviewsPerPlace,
-		))
-	}
-
-	note := notes[0]
-	if len(notes) > 1 {
-		note = note + " " + notes[1]
-	}
-
-	note = note + " Set max_results and reviews_max to control costs precisely."
-	return note
+// generateEstimationNote creates a helpful note explaining the estimate.
+// max_results is now bounded by the validator at [1, CapMaxResults] and
+// reviews_max at [0, CapReviewsMax], so the previous "unlimited" branches
+// are unreachable and have been removed.
+func (s *EstimationService) generateEstimationNote(_ *models.JobData) string {
+	return "Estimate based on your specified max_results limit. Set max_results and reviews_max to control costs precisely."
 }
 
 // CheckSufficientBalance verifies if a user has enough credits for a job.

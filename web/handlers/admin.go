@@ -66,6 +66,9 @@ func (h *AdminHandlers) CreateJob(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Invalid request body"})
 		return
 	}
+	// Apply the same default-fill semantics as the public API so admin-created
+	// jobs match the conventions documented in cap_params.go.
+	webutils.ApplyJobDataDefaults(&req.JobData)
 	if err := validate.Struct(req); err != nil {
 		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: formatValidationErrors(err)})
 		return

@@ -5,22 +5,47 @@ import (
 	"time"
 )
 
-// JobData contains the configurable options for a job
+// JobData contains the configurable options for a job.
+//
+// REST best-practice posture (locked in 2026-04-09 — see Chunk 2 of the
+// API audit plan): only the genuinely-essential fields (Keywords, Lang)
+// are required. Every other field is optional with a documented default
+// applied by web/utils.ApplyJobDataDefaults at the API entry point.
+//
+// All integer caps mirror the constants in web/utils/cap_params.go. Struct
+// tags can't reference Go consts, so the literal values must be kept in
+// sync — the web/utils.ValidateJobData service-layer check uses the named
+// consts as the source of truth. There is NO "unlimited" sentinel: every
+// integer field has a strict min and max, and clients paginate or run
+// multiple jobs.
 type JobData struct {
-	Keywords   []string      `json:"keywords" validate:"required,min=1,max=5"`
-	Lang       string        `json:"lang" validate:"required,len=2"`
-	Depth      int           `json:"depth" validate:"min=1,max=20"`
-	Email      bool          `json:"email"`
-	Images     bool          `json:"images"`
-	ReviewsMax int           `json:"reviews_max" validate:"min=0,max=9999"` // Max Reviews: 0-9999 (0 = don't scrape reviews)
-	MaxResults int           `json:"max_results" validate:"min=0,max=1000"` // Max results: 0-1000 (0 = unlimited)
-	Lat        string        `json:"lat" validate:"omitempty,latitude"`
-	Lon        string        `json:"lon" validate:"omitempty,longitude"`
-	Zoom       int           `json:"zoom" validate:"omitempty,min=0,max=21"`
-	Radius     int           `json:"radius" validate:"omitempty,min=0"`
-	MaxTime    time.Duration `json:"max_time"`
-	FastMode   bool          `json:"fast_mode"`
-	Proxies    []string      `json:"proxies"`
+	Keywords []string `json:"keywords" validate:"required,min=1,max=5,dive,min=1,max=200"`
+	Lang     string   `json:"lang"     validate:"required,len=2"`
+	// Depth, MaxResults, and MaxTime are optional — ApplyJobDataDefaults
+	// fills in safe defaults (5, 50, and 30 minutes respectively) when
+	// the client omits them.
+	Depth int  `json:"depth" validate:"min=1,max=20"`
+	Email bool `json:"email"`
+	// ImagesMax is the TOTAL number of images across all places in the job
+	// — NOT per place. The literal 40000 here mirrors utils.CapImagesMaxTotal.
+	// 0 means "skip image scraping" (the billing-safe default). Any positive
+	// value enables image scraping with a per-job total budget enforced by
+	// the runner via a shared atomic counter (cross-place). The legacy
+	// `images` boolean was dropped in migration 000033.
+	ImagesMax  int    `json:"images_max"  validate:"omitempty,min=0,max=40000"`
+	ReviewsMax int    `json:"reviews_max" validate:"omitempty,min=0,max=500"`
+	MaxResults int    `json:"max_results" validate:"min=1,max=500"`
+	Lat        string `json:"lat"         validate:"omitempty,latitude"`
+	Lon        string `json:"lon"         validate:"omitempty,longitude"`
+	Zoom       int    `json:"zoom"        validate:"omitempty,min=0,max=21"`
+	Radius     int    `json:"radius"      validate:"omitempty,min=0,max=50000"`
+	// MaxTime range is enforced at the service layer in ValidateJobData
+	// (validator/v10 doesn't have a clean duration min/max). Default is
+	// 30 minutes; ceiling is 1 hour — see cap_params.go for the
+	// headless-browser reasoning.
+	MaxTime  time.Duration `json:"max_time"`
+	FastMode bool          `json:"fast_mode"`
+	Proxies  []string      `json:"proxies" validate:"omitempty,max=100,dive,max=2048"`
 }
 
 // Job represents a scraping job

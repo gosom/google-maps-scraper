@@ -608,3 +608,82 @@ paths:
               schema:
                 $ref: '#/components/schemas/ApiError'
 
+  /api/v1/billing/webhook:
+    post:
+      operationId: stripeWebhook
+      summary: Stripe webhook receiver (internal)
+      description: |
+        Internal endpoint that receives Stripe webhook events. **Not intended
+        for direct client use** — Stripe POSTs events here after they happen
+        in the Stripe Dashboard or via Stripe API operations.
+
+        Authentication is via the `Stripe-Signature` header (HMAC over the
+        raw request body using the webhook signing secret), NOT via the
+        Bearer/X-API-Key auth used by the rest of this API.
+
+        The handler is idempotent: replays of the same `event.id` are
+        deduped via the `processed_webhook_events` table inside a
+        SERIALIZABLE transaction.
+
+        Currently dispatched event types:
+        - `checkout.session.completed` — grants credits, applies deficit paydown
+        - `checkout.session.expired` — marks pending payment as canceled
+        - `checkout.session.async_payment_succeeded` — stub (non-card MVP)
+        - `checkout.session.async_payment_failed` — stub (non-card MVP)
+        - `charge.refunded` — proportional credit deduction with deficit ledger
+        - `charge.failed` — logging only, no credit changes
+        - `charge.dispute.created` — flags payment as disputed, alerts ops
+        - `refund.updated` — stub (non-card MVP, async refund failure handler)
+
+        Body size is capped at 64 KiB via the MaxBodySize middleware (Stripe
+        payloads are far smaller than this; the cap prevents OOM from
+        oversized requests). The middleware does NOT mutate the body, so
+        signature verification (which requires the exact raw bytes) succeeds.
+      tags:
+        - internal
+      security: []
+      requestBody:
+        required: true
+        description: Raw Stripe event payload (signature verified, must not be modified by any proxy)
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Stripe Event object — see https://docs.stripe.com/api/events/object
+      responses:
+        '200':
+          description: Event acknowledged. Returned for both successful processing AND idempotent replays.
+        '400':
+          description: Invalid signature, malformed payload, or unparseable event object. Stripe will NOT retry 400s.
+        '500':
+          description: Transient processing error (DB unavailable, serialization failure under SERIALIZABLE, etc.). Stripe will retry with exponential backoff.
+
+  /webhooks/stripe:
+    post:
+      operationId: stripeWebhookLegacyA
+      summary: Retired legacy webhook path (410 Gone)
+      description: |
+        This endpoint was retired before launch. Configure your Stripe
+        Dashboard webhook URL to POST to `/api/v1/billing/webhook` instead.
+        Returning `410 Gone` here surfaces misconfigured webhook URLs as
+        an obvious delivery failure rather than a silent auth error.
+      tags:
+        - internal
+      security: []
+      responses:
+        '410':
+          description: Gone — endpoint retired. Reconfigure to /api/v1/billing/webhook.
+
+  /api/stripe/webhook:
+    post:
+      operationId: stripeWebhookLegacyB
+      summary: Retired legacy webhook path (410 Gone)
+      description: |
+        This endpoint was retired before launch. See `/webhooks/stripe` above.
+      tags:
+        - internal
+      security: []
+      responses:
+        '410':
+          description: Gone — endpoint retired. Reconfigure to /api/v1/billing/webhook.
+

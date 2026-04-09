@@ -61,13 +61,15 @@ func (s *CreditService) HandleWebhook(ctx context.Context, payload []byte, signa
 
 // allowedBillingHistoryTypes is the set of transaction types the history
 // endpoint accepts as a filter. Must match the DB CHECK constraint on
-// credit_transactions.type (see migration 000012).
+// credit_transactions.type (see migrations 000012 and 000031).
 var allowedBillingHistoryTypes = map[string]struct{}{
-	"purchase":    {},
-	"consumption": {},
-	"bonus":       {},
-	"refund":      {},
-	"adjustment":  {},
+	"purchase":        {},
+	"consumption":     {},
+	"bonus":           {},
+	"refund":          {},
+	"refund_deficit":  {}, // S-C4: uncollectable refund portion
+	"deficit_paydown": {}, // S-C4: deficit paid down by next purchase
+	"adjustment":      {},
 }
 
 // IsAllowedBillingHistoryType reports whether the given type string is a

@@ -151,6 +151,14 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.Se
 		if os.Getenv("ALLOWED_ORIGINS") == "" {
 			missing = append(missing, "ALLOWED_ORIGINS")
 		}
+		// ENCRYPTION_KEY is required in production to prevent integration
+		// credentials from being stored as plaintext in the user_integrations
+		// table. web/web.go silently downgrades to plaintext storage with a
+		// WARN log if this is empty — fine for local dev, dangerous in prod.
+		// (S-C5, audit M-7)
+		if os.Getenv("ENCRYPTION_KEY") == "" {
+			missing = append(missing, "ENCRYPTION_KEY")
+		}
 		if len(missing) > 0 {
 			return web.ServerConfig{}, fmt.Errorf("production mode requires these environment variables: %s", strings.Join(missing, ", "))
 		}
@@ -279,9 +287,14 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 		return nil, err
 	}
 
-	// Initialize billing service for event charging (no Stripe required here)
+	// Initialize billing service for event charging (no Stripe required here).
+	// userRepo is required by billing.New (S-C3) so checkout-path operations
+	// can resolve users.stripe_customer_id; this background charging service
+	// does not call CreateCheckoutSession but the constructor signature is
+	// shared, so we wire a real repo rather than nil.
 	cfgSvc := config.New(db)
-	billSvc := billing.New(db, cfgSvc, "", "")
+	billUserRepo := postgres.NewUserRepository(db)
+	billSvc := billing.New(db, cfgSvc, "", "", billUserRepo)
 	if billSvc != nil {
 		slog.Info("billing_service_initialized")
 	} else {
@@ -743,13 +756,25 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		coords = job.Data.Lat + "," + job.Data.Lon
 	}
 
+	// Per-job total image budget. When ImagesMax > 0, every PlaceJob in
+	// this scrape job shares this counter; once exhausted, image extraction
+	// is skipped for the remaining places (place metadata, reviews, and
+	// contact details continue to scrape — only image extraction stops).
+	// See gmaps.PlaceJob.extractImages for the enforcement logic.
+	var imageBudget *atomic.Int64
+	if job.Data.ImagesMax > 0 {
+		imageBudget = &atomic.Int64{}
+		imageBudget.Store(int64(job.Data.ImagesMax))
+	}
+
 	seedJobs, err := runner.CreateSeedJobs(runner.SeedJobConfig{
 		FastMode:       job.Data.FastMode,
 		LangCode:       job.Data.Lang,
 		Input:          strings.NewReader(strings.Join(job.Data.Keywords, "\n")),
 		MaxDepth:       job.Data.Depth,
 		Email:          job.Data.Email,
-		Images:         job.Data.Images,
+		Images:         job.Data.ImagesMax > 0,
+		ImageBudget:    imageBudget,
 		Debug:          w.cfg.Debug,
 		ReviewsMax:     job.Data.ReviewsMax,
 		GeoCoordinates: coords,

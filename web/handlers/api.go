@@ -40,7 +40,7 @@ func internalError(w http.ResponseWriter, log *slog.Logger, err error, userMsg s
 }
 
 type apiScrapeRequest struct {
-	Name string `validate:"required"`
+	Name string `json:"name" validate:"required,min=1,max=200"`
 	models.JobData
 }
 
@@ -58,6 +58,13 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Invalid request body"})
 		return
 	}
+
+	// Fill in REST-conservative defaults for omitted optional fields BEFORE
+	// running struct-tag validation. This is the API safety net for direct
+	// callers (curl, scripts, integrations) that don't supply every field.
+	// Frontend "no cap" toggles send the hard ceiling explicitly — see
+	// cap_params.go for the design rationale.
+	webutils.ApplyJobDataDefaults(&req.JobData)
 
 	if err := validate.Struct(req); err != nil {
 		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: formatValidationErrors(err)})
@@ -83,7 +90,7 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 			slog.String("lang", req.JobData.Lang),
 			slog.Int("depth", req.JobData.Depth),
 			slog.Bool("email", req.JobData.Email),
-			slog.Bool("images", req.JobData.Images),
+			slog.Int("images_max", req.JobData.ImagesMax),
 			slog.Int("reviews_max", req.JobData.ReviewsMax),
 			slog.Int("max_results", req.JobData.MaxResults),
 			slog.String("lat", req.JobData.Lat),
@@ -618,6 +625,11 @@ func (h *APIHandlers) EstimateJobCost(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Invalid request body"})
 		return
 	}
+
+	// Same default-fill semantic as Scrape — keep estimate and create
+	// behavior aligned so a user's estimated cost matches the cost they
+	// see if they submit the same payload as a real job.
+	webutils.ApplyJobDataDefaults(&req.JobData)
 
 	if err := validate.Struct(req); err != nil {
 		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: formatValidationErrors(err)})
