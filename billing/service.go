@@ -53,6 +53,14 @@ type CheckoutResponse struct {
 // constructing a Service for non-checkout flows like background event
 // charging in webrunner. CreateCheckoutSession returns a clean error if
 // userRepo is nil rather than panicking on a nil dereference.
+//
+// Stripe API version pinning (S-L1): the stripe-go/v82 SDK pins the API
+// version at compile time via stripe.APIVersion (a `const` baked into the
+// SDK release — see github.com/stripe/stripe-go/v82/api_version.go). The
+// SDK automatically sends "Stripe-Version: <pinned>" on every request, so
+// the version cannot be overridden by Dashboard settings or by a runtime
+// reassignment in our code. To upgrade, bump the stripe-go module version
+// in go.mod — that is the deliberate, reviewable code change.
 func New(db *sql.DB, cfg *config.Service, stripeSecretKey, webhookSigningKey string, userRepo models.UserRepository) *Service {
 	// Set the Stripe API key once at startup to avoid a data race from
 	// concurrent goroutines writing the package-level global on every request.
@@ -62,12 +70,23 @@ func New(db *sql.DB, cfg *config.Service, stripeSecretKey, webhookSigningKey str
 		stripe.Key = stripeSecretKey
 	}
 
+	logger := pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "billing")
+	if stripeSecretKey != "" {
+		// Emit the SDK-pinned API version at startup so ops can confirm
+		// which Stripe API contract we're talking to without reading source.
+		// (S-L1)
+		logger.Info("billing_service_initialized",
+			slog.String("stripe_api_version", stripe.APIVersion),
+			slog.String("stripe_sdk", "stripe-go/v82"),
+		)
+	}
+
 	return &Service{
 		db:                db,
 		cfg:               cfg,
 		webhookSigningKey: webhookSigningKey,
 		userRepo:          userRepo,
-		logger:            pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "billing"),
+		logger:            logger,
 		metrics:           metrics.NewBillingMetrics(nil), // uses default Prometheus registry
 	}
 }
