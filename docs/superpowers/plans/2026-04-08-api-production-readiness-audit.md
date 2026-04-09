@@ -720,7 +720,22 @@ git commit -m "feat(scraper): replace images bool with images_max cap; backfill 
 
 ---
 
-## Chunk 3: P1 Input Validation Hardening
+## Chunk 3: P1 Input Validation Hardening — ✅ COMPLETE (2026-04-09)
+
+**Status:** All six tasks landed.
+
+- Task 3.1 — `4b73c16` `fix(api): reject unknown JSON fields and trailing data via shared decoder` — `web/handlers/decode.go` with `decodeStrict` (required body) and `decodeStrictOptional` (empty body OK), wired into every JSON decode site (api.go, billing.go, admin.go, apikey.go, webhook.go, integration.go). Sentinel `ErrInvalidJSONBody` keeps `encoding/json`'s "unknown field {attacker-controlled name}" message out of the wire response — XSS / log-injection defense.
+- Task 3.2 — `9e6eef2` `fix(api): handler-level sort allowlist and search length cap` — closed allowlist `{created_at, name, status, updated_at}` for `GetUserJobs?sort=`, 200-byte cap on `?search=`. Schema fingerprinting via sort=password is now a 400.
+- Task 3.3 — `a815044` `fix(api): unify pagination caps at 100 and add overflow guard` — `web/handlers/pagination.go` with `parsePagination` (page-based) and `parseOffsetPagination` (offset-based) sharing `parseLimitParam`. `MaxPageLimit = 100` unified across job-list, results, and user-results endpoints (was 100/1000/1000). `(page-1)*limit` overflow guard against `math.MaxInt32` BEFORE multiplication.
+- Task 3.4 — `6ae1cda` `fix(api): centralize UUID parsing in parseJobID` — `parseJobID(r)` helper used by GetJob, DeleteJob, CancelJob, GetJobResults, GetJobCosts. Closes the missing-validation gap on the latter two (previously leaked Postgres "invalid input syntax for uuid" errors back to clients, fingerprinting the database).
+- Task 3.5 — `cee69b3` `fix(api): SSRF-validate job.proxies and cap at 100 entries` — moved `checkIPBlocklist` and the full DNS+blocklist defense from `web/handlers/webhook_url.go` to a shared `web/utils/private_ip.go` (`CheckIPBlocklist`, `AssertPublicHost`). Added `ValidateProxyURL` with the closed scheme allowlist `{http, https, socks5, socks5h}`. Wired into `ValidateJobData` with a 100-element cap. **Known DNS TOCTOU limitation documented in commit + plan §3.5** — the complete fix lives at the HTTP transport layer inside scrapemate (upstream) and the recommended interim defense is a feature flag disabling `proxies` for free-tier users.
+- Task 3.6 — `fb91a08` `fix(api): tighter per-endpoint rate limit on POST /api/v1/jobs` — `PerUserRateLimit(rate.Limit(1), 3)` wraps only the POST /jobs route on top of the global chain. Burst 3 / refill 1 req/s — humans submit small batches OK, automation gets throttled.
+
+**Bonus deliverable:** the OAuth state token in `web/handlers/integration.go` was migrated to `uuid.NewV7()` per the codebase convention but then explicitly reverted to `uuid.New()` (v4) with an inline security comment — UUIDv7 embeds a sortable timestamp that would leak the OAuth flow start time, and v4's 122 bits of randomness give exactly the cryptographic property a CSRF token wants. Test fixtures in `api_ownership_test.go` were migrated to v7 (no security implications for random test IDs).
+
+**Test coverage added:** 9 unit tests for `decodeStrict`/`decodeStrictOptional`, 2 integration tests on the Scrape handler (`unknown_fields`, `trailing_data`), 4 cases for sort allowlist + search cap, 6 cases for pagination overflow + cap unification, 4 cases for UUID validation (including parseJobID round-trip + the 2 missing-validation gaps), 9 cases for proxy SSRF (per-element + per-job), 2 cases for the per-user rate limit (burst-then-deny + per-user scoping). Total: 36 new test cases.
+
+
 
 ### Task 3.1: DisallowUnknownFields on every JSON decoder
 
