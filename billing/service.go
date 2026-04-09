@@ -294,36 +294,43 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 		return 200, nil
 	}
 
-	userID := ""
-	credits := 0
-	currency := ""
-
-	// First try to get data from database
+	// Look up the user/credits/currency from the stripe_payments row inserted
+	// during CreateCheckoutSession. The DB row is the AUTHORITATIVE source.
+	//
+	// Historical note: this handler used to fall back to session.Metadata when
+	// the DB row was missing. That fallback was a foot-gun: any future code
+	// path that lets a client influence session metadata becomes a
+	// free-credits vulnerability. The DB row is server-controlled and
+	// authoritative; metadata is rendered into the Session by us, not the
+	// authoritative source. (S-M1)
+	//
+	// If the DB row is missing despite a 'paid' webhook arriving, that's a
+	// real bug worth alerting on (the row insert at CreateCheckoutSession
+	// silently failed, or the row was deleted by ops). We log at ERROR and
+	// return 200 to prevent a Stripe retry storm — the alert is the metric
+	// counter, not the webhook dispatch.
+	var (
+		userID   string
+		credits  int
+		currency string
+	)
 	const sel = `SELECT user_id, (credits_purchased)::int, currency FROM stripe_payments WHERE stripe_checkout_session_id=$1 LIMIT 1`
 	err := s.db.QueryRowContext(ctx, sel, session.ID).Scan(&userID, &credits, &currency)
-
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			s.logger.Error("checkout_completed_missing_db_row",
+				slog.String("session_id", session.ID),
+				slog.String("event_id", event.ID),
+			)
+			s.metrics.CheckoutMissingRowTotal.Inc()
+			return 200, nil // ack to prevent Stripe retry storm; rely on metric alert
+		}
 		s.logger.Error("database_query_failed", slog.Any("error", err))
 		return 500, fmt.Errorf("database query failed: %w", err)
 	}
 
-	// Fallback to metadata with proper error handling
-	if userID == "" && session.Metadata != nil {
-		userID = session.Metadata["user_id"]
-
-		// Safe conversion of credits with error handling
-		if creditsStr, exists := session.Metadata["credits"]; exists {
-			if parsedCredits, err := strconv.Atoi(creditsStr); err == nil {
-				credits = parsedCredits
-			} else {
-				s.logger.Warn("invalid_credits_in_metadata", slog.String("credits_str", creditsStr))
-			}
-		}
-
-		currency = session.Metadata["currency"]
-	}
-
-	// Validate required data
+	// The DB CHECK constraint on stripe_payments.credits_purchased > 0 means
+	// these guards should be unreachable, but kept as defense-in-depth.
 	if userID == "" {
 		s.logger.Warn("no_user_id_for_session", slog.String("session_id", session.ID))
 		return 200, nil

@@ -949,3 +949,69 @@ func TestHandleChargeDisputeCreated_NoMatchingPaymentRow(t *testing.T) {
 		t.Errorf("expected 200 (Stripe ack), got %d", code)
 	}
 }
+
+// TestHandleCheckoutSessionCompleted_MissingDBRowReturns200 verifies the
+// S-M1 fix: when the stripe_payments DB row is missing for a paid session
+// (the row insert silently failed during CreateCheckoutSession, or ops
+// deleted it), the handler logs ERROR + increments CheckoutMissingRowTotal
+// and returns 200 to prevent a Stripe retry storm. Critically, it does NOT
+// fall back to session.Metadata to grant credits — that fallback was the
+// removed foot-gun. (S-M1)
+func TestHandleCheckoutSessionCompleted_MissingDBRowReturns200(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	eventID := "evt_testmissrow" + suffix
+	sessionID := "cs_test_missing_row_" + suffix
+	paymentIntentID := "pi_testmissrow" + suffix
+	userID := "user_test_missrow_" + suffix
+
+	// Seed only the user — DELIBERATELY NO stripe_payments row.
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO users (id, email, credit_balance, refund_deficit_credits, created_at, updated_at)
+		 VALUES ($1, $2, 0, 0, NOW(), NOW())`,
+		userID, userID+"@test.invalid")
+	if err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	t.Cleanup(func() {
+		db.ExecContext(ctx, `DELETE FROM credit_transactions WHERE user_id = $1`, userID)
+		db.ExecContext(ctx, `DELETE FROM processed_webhook_events WHERE event_id = $1`, eventID)
+		db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, userID)
+	})
+
+	svc := &Service{db: db, logger: newTestLogger(), metrics: metrics.NewBillingMetrics(nil)}
+	event := makeCheckoutCompletedEventWithPI(eventID, sessionID, paymentIntentID, userID, 100)
+
+	// The metadata still contains user_id and credits=100 (because we built
+	// it via the helper). Pre-S-M1 the handler would have used the metadata
+	// to grant 100 credits. Post-S-M1 it must NOT, since there's no DB row.
+	code, err := svc.handleCheckoutSessionCompleted(ctx, event)
+	if err != nil {
+		t.Fatalf("expected nil error (200 ack), got: %v", err)
+	}
+	if code != 200 {
+		t.Errorf("expected 200, got %d", code)
+	}
+
+	// Verify the user's balance was NOT touched.
+	var balance float64
+	if err := db.QueryRowContext(ctx,
+		`SELECT credit_balance::float8 FROM users WHERE id = $1`, userID).Scan(&balance); err != nil {
+		t.Fatalf("balance query: %v", err)
+	}
+	if balance != 0 {
+		t.Errorf("expected balance=0 (no credits granted from metadata), got %f", balance)
+	}
+
+	// Verify no credit_transactions row was created (would have happened
+	// under the old fallback).
+	var txnCount int
+	db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM credit_transactions WHERE user_id = $1`, userID).Scan(&txnCount)
+	if txnCount != 0 {
+		t.Errorf("expected 0 credit_transactions rows (fallback removed), got %d", txnCount)
+	}
+}

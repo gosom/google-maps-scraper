@@ -59,6 +59,14 @@ type BillingMetrics struct {
 	// of our charges. Stripe pulls funds + a dispute fee out of our balance
 	// and gives us until evidence_details.due_by to respond. (S-H5)
 	DisputeCreatedTotal prometheus.Counter
+
+	// CheckoutMissingRowTotal counts checkout.session.completed webhook
+	// events that arrived for a session ID with no matching stripe_payments
+	// row. This is the alerting surface for a real bug: the row insert
+	// during CreateCheckoutSession silently failed, or ops manually deleted
+	// the row. Any non-zero rate must be investigated immediately because
+	// the user paid but did NOT receive credits. (S-M1)
+	CheckoutMissingRowTotal prometheus.Counter
 }
 
 // NewBillingMetrics registers and returns a BillingMetrics instance using the
@@ -92,8 +100,20 @@ func NewBillingMetrics(reg prometheus.Registerer) *BillingMetrics {
 			panic(err)
 		}
 	}
+	checkoutMissingRow := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "checkout_missing_row_total",
+		Help: "Total count of checkout.session.completed webhook events that arrived with no matching stripe_payments row. Indicates a real bug: the row insert during CreateCheckoutSession silently failed, or the row was deleted. Any non-zero rate is critical — the user paid but received no credits. (S-M1)",
+	})
+	if err := reg.Register(checkoutMissingRow); err != nil {
+		if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			checkoutMissingRow = are.ExistingCollector.(prometheus.Counter)
+		} else {
+			panic(err)
+		}
+	}
 	return &BillingMetrics{
 		RefundDeficitAppliedTotal: refundDeficit,
 		DisputeCreatedTotal:       disputeCreated,
+		CheckoutMissingRowTotal:   checkoutMissingRow,
 	}
 }
