@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gorilla/mux"
 	"github.com/gosom/google-maps-scraper/web/auth"
 )
 
@@ -139,5 +140,125 @@ func TestGetUserJobs_AcceptsShortSearch(t *testing.T) {
 	h.GetUserJobs(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Errorf("search=200a expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// ───────────────────── Task 3.3: pagination overflow + cap ─────────────────
+
+// TestGetJobResults_RejectsOverflowPage covers the integer-overflow
+// guard in parsePagination. With page=math.MaxInt32 and limit=100, the
+// product (page-1)*limit overflows int32 silently — without the guard,
+// the resulting offset is a large NEGATIVE number that produces nasty
+// SQL behavior (Postgres rejects negative OFFSET, but the error path
+// leaks DB internals to the client). The fix is a 400 BEFORE the
+// multiplication runs.
+func TestGetJobResults_RejectsOverflowPage(t *testing.T) {
+	t.Parallel()
+
+	jobID := "00000000-0000-0000-0000-000000000001"
+	h := &APIHandlers{Deps: Dependencies{Auth: &auth.AuthMiddleware{}}}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/"+jobID+"/results?page=2147483647&limit=100", nil)
+	req = mux.SetURLVars(req, map[string]string{"id": jobID})
+	req = withUserID(req, "user-1")
+	rr := httptest.NewRecorder()
+
+	h.GetJobResults(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for overflow page, got %d (body=%s)", rr.Code, rr.Body.String())
+	}
+}
+
+// TestGetJobResults_LimitCappedAt100 locks the cap unification — the
+// audit found this endpoint previously allowed limit ≤ 1000, while
+// GetUserJobs allowed only ≤ 100. The 10x divergence let an attacker
+// pull 10x more rows per request from results endpoints. Unified at 100.
+func TestGetJobResults_LimitCappedAt100(t *testing.T) {
+	t.Parallel()
+
+	jobID := "00000000-0000-0000-0000-000000000001"
+	h := &APIHandlers{Deps: Dependencies{Auth: &auth.AuthMiddleware{}}}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/"+jobID+"/results?limit=500", nil)
+	req = mux.SetURLVars(req, map[string]string{"id": jobID})
+	req = withUserID(req, "user-1")
+	rr := httptest.NewRecorder()
+
+	h.GetJobResults(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for limit=500, got %d (body=%s)", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "100") {
+		t.Errorf("expected error to mention the 100-row cap, got: %s", rr.Body.String())
+	}
+}
+
+// TestGetUserResults_LimitCappedAt100 covers the same cap on the
+// offset-based endpoint.
+func TestGetUserResults_LimitCappedAt100(t *testing.T) {
+	t.Parallel()
+
+	h := &APIHandlers{Deps: Dependencies{Auth: &auth.AuthMiddleware{}}}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/results?limit=500", nil)
+	req = withUserID(req, "user-1")
+	rr := httptest.NewRecorder()
+
+	h.GetUserResults(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for limit=500, got %d (body=%s)", rr.Code, rr.Body.String())
+	}
+}
+
+// TestGetUserResults_RejectsOffsetOverflow covers the int32 ceiling on
+// the offset parameter. Without the guard, a client passing
+// offset=9223372036854775806 silently wraps to a near-zero offset on
+// 32-bit downstream consumers, or simply overflows into negative
+// values inside the response builder.
+func TestGetUserResults_RejectsOffsetOverflow(t *testing.T) {
+	t.Parallel()
+
+	h := &APIHandlers{Deps: Dependencies{Auth: &auth.AuthMiddleware{}}}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/results?offset=9223372036854775806", nil)
+	req = withUserID(req, "user-1")
+	rr := httptest.NewRecorder()
+
+	h.GetUserResults(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for overflow offset, got %d (body=%s)", rr.Code, rr.Body.String())
+	}
+}
+
+// TestGetUserJobs_RejectsZeroPage covers the lower bound — page must
+// be a positive integer.
+func TestGetUserJobs_RejectsZeroPage(t *testing.T) {
+	t.Parallel()
+
+	h := &APIHandlers{Deps: Dependencies{App: &mockJobService{}, Auth: &auth.AuthMiddleware{}}}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/user?page=0", nil)
+	req = withUserID(req, "user-1")
+	rr := httptest.NewRecorder()
+
+	h.GetUserJobs(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for page=0, got %d (body=%s)", rr.Code, rr.Body.String())
+	}
+}
+
+// TestGetUserJobs_RejectsNegativeLimit covers the negative-limit path.
+func TestGetUserJobs_RejectsNegativeLimit(t *testing.T) {
+	t.Parallel()
+
+	h := &APIHandlers{Deps: Dependencies{App: &mockJobService{}, Auth: &auth.AuthMiddleware{}}}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/user?limit=-5", nil)
+	req = withUserID(req, "user-1")
+	rr := httptest.NewRecorder()
+
+	h.GetUserJobs(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for negative limit, got %d (body=%s)", rr.Code, rr.Body.String())
 	}
 }

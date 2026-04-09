@@ -294,21 +294,15 @@ func (h *APIHandlers) GetUserJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse pagination query parameters
+	// Parse pagination query parameters with the unified helper. The
+	// 10-row default is preserved for this endpoint (smaller than the
+	// 50-row default used for results) because the dashboard expects
+	// to show ~10 jobs per page in the UI.
 	q := r.URL.Query()
-
-	page := 1
-	if v := q.Get("page"); v != "" {
-		if p, err := strconv.Atoi(v); err == nil && p > 0 {
-			page = p
-		}
-	}
-
-	limit := 10
-	if v := q.Get("limit"); v != "" {
-		if l, err := strconv.Atoi(v); err == nil && l > 0 && l <= 100 {
-			limit = l
-		}
+	page, limit, _, err := parsePagination(r, 10)
+	if err != nil {
+		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: err.Error()})
+		return
 	}
 
 	sort := "created_at"
@@ -462,19 +456,15 @@ func (h *APIHandlers) GetJobResults(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Missing job ID"})
 		return
 	}
-	page := 1
-	limit := 50
-	if v := r.URL.Query().Get("page"); v != "" {
-		if p, err := strconv.Atoi(v); err == nil && p > 0 {
-			page = p
-		}
+	// Unified pagination — see web/handlers/pagination.go. Caps the
+	// limit at MaxPageLimit (100, was 1000) and adds an overflow guard
+	// on (page-1)*limit. Default 50 matches the prior behavior so the
+	// frontend's default page size is unchanged.
+	page, limit, offset, err := parsePagination(r, 50)
+	if err != nil {
+		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: err.Error()})
+		return
 	}
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if l, err := strconv.Atoi(v); err == nil && l > 0 && l <= 1000 {
-			limit = l
-		}
-	}
-	offset := (page - 1) * limit
 	userID, err := auth.GetUserID(r.Context())
 	if err != nil {
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
@@ -642,17 +632,13 @@ func (h *APIHandlers) GetUserResults(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
 		return
 	}
-	limit := 50
-	offset := 0
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if l, err := strconv.Atoi(v); err == nil && l > 0 && l <= 1000 {
-			limit = l
-		}
-	}
-	if v := r.URL.Query().Get("offset"); v != "" {
-		if o, err := strconv.Atoi(v); err == nil && o >= 0 {
-			offset = o
-		}
+	// Unified pagination — see web/handlers/pagination.go. Caps the
+	// limit at MaxPageLimit (100, was 1000) and rejects out-of-range
+	// offset/limit values with 400 instead of silently coercing.
+	limit, offset, err := parseOffsetPagination(r, 50)
+	if err != nil {
+		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: err.Error()})
+		return
 	}
 	results, err := h.Deps.ResultsSvc.GetUserResults(r.Context(), userID, limit, offset)
 	if err != nil {
