@@ -226,9 +226,18 @@ func New(cfg ServerConfig) (*Server, error) {
 	// a small batch of jobs without hitting the limit; the 1 req/s
 	// refill keeps any sustained automation honest.
 	jobCreateLimiter := webmiddleware.PerUserRateLimit(rate.Limit(1), 3)
+	// Idempotency middleware (Task 7.2): wraps POST /api/v1/jobs only.
+	// Implements the Stripe two-phase pattern — concurrent network
+	// retries carrying the same Idempotency-Key header are deduplicated
+	// at the storage layer (UNIQUE (user_id, key) is the lock), so a
+	// double-click or a flaky-network retry cannot double-bill the
+	// user. The middleware is opt-in per-request: requests without the
+	// header pass through unchanged. See web/middleware/idempotency.go
+	// for the design rationale and the concurrency test that pins it.
+	jobIdempotency := webmiddleware.Idempotency(postgres.NewIdempotencyRepository(ans.db), ans.logger)
 	apiRouter.HandleFunc("/jobs", hg.API.GetJobs).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/user", hg.API.GetUserJobs).Methods(http.MethodGet)
-	apiRouter.Handle("/jobs", jobCreateLimiter(http.HandlerFunc(hg.API.Scrape))).Methods(http.MethodPost)
+	apiRouter.Handle("/jobs", jobIdempotency(jobCreateLimiter(http.HandlerFunc(hg.API.Scrape)))).Methods(http.MethodPost)
 	apiRouter.HandleFunc("/jobs/{id}", hg.API.GetJob).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/{id}", hg.API.DeleteJob).Methods(http.MethodDelete)
 	apiRouter.HandleFunc("/jobs/{id}/cancel", hg.API.CancelJob).Methods(http.MethodPost)
@@ -369,6 +378,24 @@ func (s *Server) Start(ctx context.Context) error {
 
 		s.logger.Info("server_stopped")
 	}()
+
+	// Launch the idempotency-keys cleanup goroutine (Task 7.2 step 5).
+	// Sweeps every 5 minutes; reaps completed rows past the 24h TTL and
+	// 'started' rows older than 15 minutes (rows whose handler crashed
+	// or was killed before Complete fired). The goroutine exits when
+	// ctx is cancelled by the shutdown sequence above. We require a non-nil
+	// db here — without it the middleware would have no place to write
+	// reservations either, so this is the same precondition as POST /jobs
+	// itself.
+	if s.db != nil {
+		go webmiddleware.RunIdempotencyCleanup(
+			ctx,
+			postgres.NewIdempotencyRepository(s.db),
+			5*time.Minute,
+			15*time.Minute,
+			s.logger,
+		)
+	}
 
 	// Launch internal server (metrics + health) in a background goroutine.
 	if s.internalSrv != nil {
