@@ -3,7 +3,8 @@
 > **STATUS as of 2026-04-09:**
 > - ✅ **P0 chunk (Critical, 5 tasks) — COMPLETE.** All five S-C1 through S-C5 findings shipped between `9f7d928` and `237f2bd`. The refund money-loss bug is fixed end-to-end.
 > - ✅ **P1 chunk (High, 4 tasks + S-H3 covered by P0) — COMPLETE.** S-H1, S-H2, S-H4, S-H5 shipped between `35f8691` and `ebc3408`. Stripe idempotency keys, decimal-safe refund math, ClientReferenceID + PI metadata propagation, and charge.dispute.created webhook handler all live. Each task verified against current Stripe docs (docs.stripe.com).
-> - P2 / P3 chunks remain pending — see §7 below for the per-task checklist with commit references.
+> - ✅ **P2 chunk (Medium, 6 tasks) — COMPLETE.** S-M1 through S-M6 shipped between `ecbedb6` and `7b7759c`. Foot-gun metadata fallback removed; line_items expand + quantity verification on reconcile; refund.updated and async-payment-* stubs for non-card PMs; three-path user lookup in handleChargeFailed; receipt URL persistence on both webhook and reconcile paths. Each task verified against current Stripe docs.
+> - P3 chunk (Minor, code hygiene) remains pending — see §7 below.
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -2299,13 +2300,34 @@ d2720f8 feat(billing): charge.dispute.created webhook handler (S-H5)
 ebc3408 docs(billing): fix misplaced godoc comment on checkoutIdempotencyKey
 ```
 
-### P2 Medium (fix shortly after launch)
-- [ ] **S-M1** Task 3.1: Drop `session.Metadata` fallback for credit amounts
-- [ ] **S-M2** Task 3.2: Expand `line_items` + `payment_intent` in `ReconcileSession`
-- [ ] **S-M3** Task 3.3: `refund.updated` handler (stub now, expand when enabling async PMs)
-- [ ] **S-M4** Task 3.4: `checkout.session.async_payment_*` handlers (stub now)
-- [ ] **S-M5** Task 3.5: Repair `handleChargeFailed` with PaymentIntent fallback
-- [ ] **S-M6** Task 3.6: Persist `stripe_receipt_url`
+### P2 Medium (fix shortly after launch) — ✅ ALL COMPLETE (2026-04-09)
+- [x] **S-M1** Task 3.1: Drop `session.Metadata` fallback for credit amounts — commit `ecbedb6`
+- [x] **S-M2** Task 3.2: Expand `line_items` + `payment_intent` in `ReconcileSession` — commit `8c79159`
+- [x] **S-M3** Task 3.3: `refund.updated` handler (stub for non-card PMs) — commit `00d9a59`
+- [x] **S-M4** Task 3.4: `checkout.session.async_payment_*` handlers (stubs for non-card PMs) — commit `00d9a59`
+- [x] **S-M5** Task 3.5: Repair `handleChargeFailed` with three-path user lookup — commit `edbdb37`
+- [x] **S-M6** Task 3.6: Persist `stripe_receipt_url` on both webhook and reconcile paths — commits `a59273e` + `7b7759c`
+
+**P2 chunk delivery notes:**
+- Each P2 task verified against current Stripe docs via WebFetch on docs.stripe.com (Stripe MCP was unauthenticated for this chunk).
+- New `CheckoutMissingRowTotal` Prometheus metric (S-M1) — alerts on the foot-gun case where a paid session has no DB row.
+- New pure helper `verifyLineItemsQuantity` (S-M2) cross-checks Stripe quantity against the DB; mismatch bails out before any balance mutation.
+- `refund.updated` and `checkout.session.async_payment_*` are LOGGING STUBS only. The doc comments specify the full reversal/grant logic that must be added when non-card payment methods are enabled (Bacs/SEPA/ACH/Boleto/OXXO/Konbini/Multibanco). MVP is card-only USD.
+- `handleChargeFailed` now resolves the user via three paths in reliability order: PaymentIntent ID join → `charge.Metadata["brezel_user_id"]` → Customer ID join. The `user_lookup_source` slog field tells ops which path resolved.
+- `ReconcileSession` makes ONE `checkoutsession.Get` call with three nested expansions (`line_items`, `payment_intent`, `payment_intent.latest_charge`); both S-M2 verification and S-M6 receipt URL persistence consume from that one response — zero redundant API calls.
+- `handleCheckoutSessionCompleted` makes ONE extra `paymentintent.Get` call with `latest_charge` expansion to fetch the receipt URL; failure is best-effort (logged WARN, credit grant proceeds).
+- Final cross-task review found 0 Critical, 0 Important, 4 Minor (1 fixed via `7b7759c`, 3 deferred as observational/non-blocking).
+- Total billing test count after P2: ~50 tests.
+
+**Complete P2 commit history (oldest first):**
+```
+ecbedb6 fix(billing): drop session.Metadata fallback for credit amounts (S-M1)
+00d9a59 feat(billing): refund.updated + checkout.session.async_payment_* stubs (S-M3, S-M4)
+edbdb37 fix(billing): handleChargeFailed three-path user lookup (S-M5)
+8c79159 feat(billing): expand line_items + verify quantity in ReconcileSession (S-M2)
+a59273e feat(billing): persist stripe_receipt_url from PaymentIntent.LatestCharge (S-M6)
+7b7759c fix(billing): log dropped error in ReconcileSession receipt URL repair (S-M6 review)
+```
 
 ### P3 Minor (code hygiene)
 - [ ] **S-L1** Task 4.1: Pin Stripe API version
