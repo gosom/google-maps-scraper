@@ -28,12 +28,12 @@ func NewUserRepository(db *sql.DB) UserRepository {
 
 // GetByID retrieves a user by ID
 func (repo *userRepository) GetByID(ctx context.Context, id string) (User, error) {
-	const q = `SELECT id, email, role, stripe_customer_id, created_at, updated_at FROM users WHERE id = $1`
+	const q = `SELECT id, email, role, stripe_customer_id, COALESCE(refund_deficit_credits, 0)::float8, created_at, updated_at FROM users WHERE id = $1`
 
 	row := repo.db.QueryRowContext(ctx, q, id)
 
 	var user User
-	err := row.Scan(&user.ID, &user.Email, &user.Role, &user.StripeCustomerID, &user.CreatedAt, &user.UpdatedAt)
+	err := row.Scan(&user.ID, &user.Email, &user.Role, &user.StripeCustomerID, &user.RefundDeficitCredits, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return User{}, errors.New("user not found")
@@ -46,12 +46,12 @@ func (repo *userRepository) GetByID(ctx context.Context, id string) (User, error
 
 // GetByEmail retrieves a user by email
 func (repo *userRepository) GetByEmail(ctx context.Context, email string) (User, error) {
-	const q = `SELECT id, email, role, stripe_customer_id, created_at, updated_at FROM users WHERE email = $1`
+	const q = `SELECT id, email, role, stripe_customer_id, COALESCE(refund_deficit_credits, 0)::float8, created_at, updated_at FROM users WHERE email = $1`
 
 	row := repo.db.QueryRowContext(ctx, q, email)
 
 	var user User
-	err := row.Scan(&user.ID, &user.Email, &user.Role, &user.StripeCustomerID, &user.CreatedAt, &user.UpdatedAt)
+	err := row.Scan(&user.ID, &user.Email, &user.Role, &user.StripeCustomerID, &user.RefundDeficitCredits, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return User{}, errors.New("user not found")

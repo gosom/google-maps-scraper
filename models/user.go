@@ -20,9 +20,17 @@ type User struct {
 	// for this user (lazily on signup or on first checkout). Nil for legacy
 	// users until their next checkout triggers lazy creation. Excluded from
 	// JSON responses — Stripe identifiers must never leak to API clients.
-	StripeCustomerID *string   `json:"-"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	StripeCustomerID *string `json:"-"`
+	// RefundDeficitCredits is the uncollectable portion of a past Stripe
+	// refund. Set when a charge.refunded event exceeds the user's spendable
+	// balance because credits were already consumed. The next purchase pays
+	// down this deficit before crediting spendable balance. Visible to API
+	// clients so they can see what they owe (unlike StripeCustomerID). Stored
+	// as NUMERIC(18,6) in Postgres; scanned into float64 here for
+	// consistency with credit_balance read paths.
+	RefundDeficitCredits float64   `json:"refund_deficit_credits"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
 // UserRepository manages user operations

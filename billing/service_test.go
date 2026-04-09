@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/gosom/google-maps-scraper/pkg/metrics"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/stripe/stripe-go/v82"
 )
@@ -381,5 +382,322 @@ func TestHandleCheckoutSessionCompleted_BackfillIsIdempotent(t *testing.T) {
 	}
 	if !gotPI.Valid || gotPI.String != paymentIntentID {
 		t.Errorf("PI ID lost or changed on replay: %v / %q", gotPI.Valid, gotPI.String)
+	}
+}
+
+// makeChargeRefundedEvent builds a stripe.Event wrapping a Charge with the
+// given refund parameters. Used by the S-C4 refund deficit ledger tests.
+// Event IDs must match chk_event_id_format (^evt_[a-zA-Z0-9]+$ — no
+// underscores after "evt_").
+func makeChargeRefundedEvent(eventID, chargeID, paymentIntentID string, originalCents, refundedCents int64) stripe.Event {
+	chargeData := map[string]any{
+		"id":              chargeID,
+		"amount":          originalCents,
+		"amount_refunded": refundedCents,
+		"payment_intent":  paymentIntentID,
+	}
+	raw, _ := json.Marshal(chargeData)
+	return stripe.Event{
+		ID:   eventID,
+		Type: "charge.refunded",
+		Data: &stripe.EventData{Raw: json.RawMessage(raw)},
+	}
+}
+
+// seedRefundFixture inserts a user (with given balance + deficit) and a
+// matching succeeded stripe_payments row. Returns the userID. Cleanup is
+// registered via t.Cleanup so each test removes only its own rows.
+func seedRefundFixture(t *testing.T, db *sql.DB, suffix string, balance, deficit float64, paymentIntentID string, creditsPurchased int) string {
+	t.Helper()
+	ctx := context.Background()
+	userID := "user_test_refund_" + suffix
+	sessionID := "cs_test_refund_" + suffix
+
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO users (id, email, credit_balance, refund_deficit_credits, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, NOW(), NOW())
+		 ON CONFLICT (id) DO UPDATE SET credit_balance = EXCLUDED.credit_balance, refund_deficit_credits = EXCLUDED.refund_deficit_credits`,
+		userID, userID+"@test.invalid", balance, deficit)
+	if err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO stripe_payments
+		 (id, user_id, stripe_checkout_session_id, stripe_payment_intent_id, amount_cents, currency, credits_purchased, status, completed_at)
+		 VALUES ($1, $2, $3, $4, $5, 'USD', $6, 'succeeded', NOW())`,
+		uuid.Must(uuid.NewV7()).String(), userID, sessionID, paymentIntentID, creditsPurchased*100, creditsPurchased)
+	if err != nil {
+		t.Fatalf("seed stripe_payment: %v", err)
+	}
+
+	t.Cleanup(func() {
+		db.ExecContext(ctx, `DELETE FROM credit_transactions WHERE user_id = $1`, userID)
+		db.ExecContext(ctx, `DELETE FROM processed_webhook_events WHERE event_id LIKE 'evt_test%' || $1`, suffix)
+		db.ExecContext(ctx, `DELETE FROM stripe_payments WHERE user_id = $1`, userID)
+		db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, userID)
+	})
+
+	return userID
+}
+
+// TestHandleChargeRefunded_FullBalanceAvailable verifies the happy path:
+// the user has enough spendable balance to absorb the full refund without
+// creating a deficit.
+func TestHandleChargeRefunded_FullBalanceAvailable(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	paymentIntentID := "pi_testfullbal" + suffix
+	userID := seedRefundFixture(t, db, suffix, 100.0, 0.0, paymentIntentID, 100)
+
+	svc := &Service{db: db, logger: newTestLogger(), metrics: metrics.NewBillingMetrics(nil)}
+	event := makeChargeRefundedEvent("evt_testfullbal"+suffix, "ch_test_full_"+suffix, paymentIntentID, 10000, 10000)
+
+	code, err := svc.handleChargeRefunded(ctx, event)
+	if err != nil || code != 200 {
+		t.Fatalf("handleChargeRefunded: code=%d err=%v", code, err)
+	}
+
+	var balance, deficit float64
+	if err := db.QueryRowContext(ctx,
+		`SELECT credit_balance::float8, refund_deficit_credits::float8 FROM users WHERE id = $1`,
+		userID).Scan(&balance, &deficit); err != nil {
+		t.Fatalf("query users: %v", err)
+	}
+	if balance != 0 {
+		t.Errorf("expected balance=0 after full refund, got %f", balance)
+	}
+	if deficit != 0 {
+		t.Errorf("expected deficit=0 (no uncollectable), got %f", deficit)
+	}
+
+	// Exactly one 'refund' row, no 'refund_deficit' rows.
+	var refundCount, deficitCount int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM credit_transactions WHERE user_id = $1 AND type = 'refund'`,
+		userID).Scan(&refundCount); err != nil {
+		t.Fatalf("query refund count: %v", err)
+	}
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM credit_transactions WHERE user_id = $1 AND type = 'refund_deficit'`,
+		userID).Scan(&deficitCount); err != nil {
+		t.Fatalf("query deficit count: %v", err)
+	}
+	if refundCount != 1 || deficitCount != 0 {
+		t.Errorf("expected 1 refund row + 0 deficit rows, got refund=%d deficit=%d", refundCount, deficitCount)
+	}
+}
+
+// TestHandleChargeRefunded_PartialBalanceCreatesDeficit verifies the
+// money-loss fix: user spent most credits, refund creates a deficit row
+// for the uncollectable portion.
+func TestHandleChargeRefunded_PartialBalanceCreatesDeficit(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	paymentIntentID := "pi_testpartbal" + suffix
+	// User bought 100 credits, spent 95, has 5 left.
+	userID := seedRefundFixture(t, db, suffix, 5.0, 0.0, paymentIntentID, 100)
+
+	svc := &Service{db: db, logger: newTestLogger(), metrics: metrics.NewBillingMetrics(nil)}
+	// Full refund of the original 100-credit purchase.
+	event := makeChargeRefundedEvent("evt_testpartbal"+suffix, "ch_test_partial_"+suffix, paymentIntentID, 10000, 10000)
+
+	code, err := svc.handleChargeRefunded(ctx, event)
+	if err != nil || code != 200 {
+		t.Fatalf("handleChargeRefunded: code=%d err=%v", code, err)
+	}
+
+	var balance, deficit float64
+	if err := db.QueryRowContext(ctx,
+		`SELECT credit_balance::float8, refund_deficit_credits::float8 FROM users WHERE id = $1`,
+		userID).Scan(&balance, &deficit); err != nil {
+		t.Fatalf("query users: %v", err)
+	}
+	if balance != 0 {
+		t.Errorf("expected balance=0 (capped at original 5), got %f", balance)
+	}
+	if deficit != 95 {
+		t.Errorf("expected deficit=95 (100 refund - 5 balance), got %f", deficit)
+	}
+
+	// Both ledger rows present.
+	var refundCount, deficitCount int
+	db.QueryRowContext(ctx, `SELECT COUNT(*) FROM credit_transactions WHERE user_id = $1 AND type = 'refund'`, userID).Scan(&refundCount)
+	db.QueryRowContext(ctx, `SELECT COUNT(*) FROM credit_transactions WHERE user_id = $1 AND type = 'refund_deficit'`, userID).Scan(&deficitCount)
+	if refundCount != 1 || deficitCount != 1 {
+		t.Errorf("expected 1 refund + 1 deficit row, got refund=%d deficit=%d", refundCount, deficitCount)
+	}
+
+	// stripe_payments status updated to refund_deficit_applied.
+	var status string
+	db.QueryRowContext(ctx, `SELECT status FROM stripe_payments WHERE stripe_payment_intent_id = $1`, paymentIntentID).Scan(&status)
+	if status != "refund_deficit_applied" {
+		t.Errorf("expected status=refund_deficit_applied, got %q", status)
+	}
+}
+
+// TestHandleChargeRefunded_ZeroBalanceAllDeficit verifies the edge case
+// where all credits were consumed before the refund.
+func TestHandleChargeRefunded_ZeroBalanceAllDeficit(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	paymentIntentID := "pi_testzerobal" + suffix
+	userID := seedRefundFixture(t, db, suffix, 0.0, 0.0, paymentIntentID, 100)
+
+	svc := &Service{db: db, logger: newTestLogger(), metrics: metrics.NewBillingMetrics(nil)}
+	event := makeChargeRefundedEvent("evt_testzerobal"+suffix, "ch_test_zero_"+suffix, paymentIntentID, 10000, 10000)
+
+	code, err := svc.handleChargeRefunded(ctx, event)
+	if err != nil || code != 200 {
+		t.Fatalf("handleChargeRefunded: code=%d err=%v", code, err)
+	}
+
+	var balance, deficit float64
+	db.QueryRowContext(ctx,
+		`SELECT credit_balance::float8, refund_deficit_credits::float8 FROM users WHERE id = $1`,
+		userID).Scan(&balance, &deficit)
+	if balance != 0 {
+		t.Errorf("expected balance=0, got %f", balance)
+	}
+	if deficit != 100 {
+		t.Errorf("expected deficit=100 (all uncollectable), got %f", deficit)
+	}
+
+	// Zero refund rows (nothing to deduct from balance), one deficit row.
+	var refundCount, deficitCount int
+	db.QueryRowContext(ctx, `SELECT COUNT(*) FROM credit_transactions WHERE user_id = $1 AND type = 'refund'`, userID).Scan(&refundCount)
+	db.QueryRowContext(ctx, `SELECT COUNT(*) FROM credit_transactions WHERE user_id = $1 AND type = 'refund_deficit'`, userID).Scan(&deficitCount)
+	if refundCount != 0 || deficitCount != 1 {
+		t.Errorf("expected 0 refund + 1 deficit row, got refund=%d deficit=%d", refundCount, deficitCount)
+	}
+}
+
+// TestHandleCheckoutSessionCompleted_PaysDownDeficitFirst verifies that a
+// new purchase pays down an existing deficit BEFORE crediting spendable
+// balance. Purchase > deficit case: balance gets the remainder.
+func TestHandleCheckoutSessionCompleted_PaysDownDeficitFirst(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	eventID := "evt_testpaydown" + suffix
+	sessionID := "cs_test_paydown_" + suffix
+	paymentIntentID := "pi_testpaydown" + suffix
+	userID := "user_test_paydown_" + suffix
+
+	// Seed user with 0 balance and 30 credits of deficit.
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO users (id, email, credit_balance, refund_deficit_credits, created_at, updated_at)
+		 VALUES ($1, $2, 0, 30, NOW(), NOW())`,
+		userID, userID+"@test.invalid")
+	if err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO stripe_payments (id, user_id, stripe_checkout_session_id, amount_cents, currency, credits_purchased, status)
+		 VALUES ($1, $2, $3, 10000, 'USD', 100, 'pending')`,
+		uuid.Must(uuid.NewV7()).String(), userID, sessionID)
+	if err != nil {
+		t.Fatalf("seed stripe_payments: %v", err)
+	}
+	t.Cleanup(func() {
+		db.ExecContext(ctx, `DELETE FROM credit_transactions WHERE user_id = $1`, userID)
+		db.ExecContext(ctx, `DELETE FROM processed_webhook_events WHERE event_id = $1`, eventID)
+		db.ExecContext(ctx, `DELETE FROM stripe_payments WHERE user_id = $1`, userID)
+		db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, userID)
+	})
+
+	svc := &Service{db: db, logger: newTestLogger(), metrics: metrics.NewBillingMetrics(nil)}
+	event := makeCheckoutCompletedEventWithPI(eventID, sessionID, paymentIntentID, userID, 100)
+
+	code, err := svc.handleCheckoutSessionCompleted(ctx, event)
+	if err != nil || code != 200 {
+		t.Fatalf("handler: code=%d err=%v", code, err)
+	}
+
+	var balance, deficit, lifetime float64
+	db.QueryRowContext(ctx,
+		`SELECT credit_balance::float8, refund_deficit_credits::float8, total_credits_purchased::float8 FROM users WHERE id = $1`,
+		userID).Scan(&balance, &deficit, &lifetime)
+	if balance != 70 {
+		t.Errorf("expected balance=70 (100 - 30 paydown), got %f", balance)
+	}
+	if deficit != 0 {
+		t.Errorf("expected deficit=0 (fully paid), got %f", deficit)
+	}
+	if lifetime != 100 {
+		t.Errorf("expected lifetime credits=100 (full purchase tracked), got %f", lifetime)
+	}
+
+	// Both purchase and deficit_paydown rows present.
+	var purchaseCount, paydownCount int
+	db.QueryRowContext(ctx, `SELECT COUNT(*) FROM credit_transactions WHERE user_id = $1 AND type = 'purchase'`, userID).Scan(&purchaseCount)
+	db.QueryRowContext(ctx, `SELECT COUNT(*) FROM credit_transactions WHERE user_id = $1 AND type = 'deficit_paydown'`, userID).Scan(&paydownCount)
+	if purchaseCount != 1 || paydownCount != 1 {
+		t.Errorf("expected 1 purchase + 1 paydown row, got purchase=%d paydown=%d", purchaseCount, paydownCount)
+	}
+}
+
+// TestHandleCheckoutSessionCompleted_PurchaseSmallerThanDeficit verifies
+// that an undersized purchase fully goes to deficit, balance stays at 0.
+func TestHandleCheckoutSessionCompleted_PurchaseSmallerThanDeficit(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	eventID := "evt_testsmallpay" + suffix
+	sessionID := "cs_test_smallpay_" + suffix
+	paymentIntentID := "pi_testsmallpay" + suffix
+	userID := "user_test_smallpay_" + suffix
+
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO users (id, email, credit_balance, refund_deficit_credits, created_at, updated_at)
+		 VALUES ($1, $2, 0, 100, NOW(), NOW())`,
+		userID, userID+"@test.invalid")
+	if err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO stripe_payments (id, user_id, stripe_checkout_session_id, amount_cents, currency, credits_purchased, status)
+		 VALUES ($1, $2, $3, 3000, 'USD', 30, 'pending')`,
+		uuid.Must(uuid.NewV7()).String(), userID, sessionID)
+	if err != nil {
+		t.Fatalf("seed stripe_payments: %v", err)
+	}
+	t.Cleanup(func() {
+		db.ExecContext(ctx, `DELETE FROM credit_transactions WHERE user_id = $1`, userID)
+		db.ExecContext(ctx, `DELETE FROM processed_webhook_events WHERE event_id = $1`, eventID)
+		db.ExecContext(ctx, `DELETE FROM stripe_payments WHERE user_id = $1`, userID)
+		db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, userID)
+	})
+
+	svc := &Service{db: db, logger: newTestLogger(), metrics: metrics.NewBillingMetrics(nil)}
+	event := makeCheckoutCompletedEventWithPI(eventID, sessionID, paymentIntentID, userID, 30)
+
+	code, err := svc.handleCheckoutSessionCompleted(ctx, event)
+	if err != nil || code != 200 {
+		t.Fatalf("handler: code=%d err=%v", code, err)
+	}
+
+	var balance, deficit float64
+	db.QueryRowContext(ctx,
+		`SELECT credit_balance::float8, refund_deficit_credits::float8 FROM users WHERE id = $1`,
+		userID).Scan(&balance, &deficit)
+	if balance != 0 {
+		t.Errorf("expected balance=0 (all 30 went to deficit), got %f", balance)
+	}
+	if deficit != 70 {
+		t.Errorf("expected deficit=70 (100 - 30), got %f", deficit)
 	}
 }

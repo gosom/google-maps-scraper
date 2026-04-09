@@ -322,25 +322,63 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 		)
 	}
 
-	// Get current balance before update for accurate transaction records
+	// Read the user's current balance AND refund deficit in a single
+	// SELECT FOR UPDATE. The same row-level lock protects both fields — we
+	// need the deficit value because the refund deficit ledger (S-C4) pays
+	// down any outstanding deficit from the incoming purchase BEFORE crediting
+	// new spendable balance. credit_balance is scanned as float64 (via
+	// ::float8) while refund_deficit_credits is scanned as text and then
+	// parsed into int64 micro-credits to avoid IEEE 754 rounding errors in
+	// the split arithmetic below.
 	var currentBalance float64
-	err = tx.QueryRowContext(ctx, "SELECT COALESCE(credit_balance, 0) FROM users WHERE id = $1 FOR UPDATE", userID).Scan(&currentBalance)
+	var deficitStr string
+	err = tx.QueryRowContext(ctx,
+		`SELECT COALESCE(credit_balance, 0)::float8, COALESCE(refund_deficit_credits, 0)::text
+		 FROM users WHERE id = $1 FOR UPDATE`, userID).Scan(&currentBalance, &deficitStr)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			s.logger.Warn("user_not_found", slog.String("user_id", userID))
 			return 400, fmt.Errorf("user not found: %s", userID)
 		}
-		s.logger.Error("failed_to_get_user_balance", slog.Any("error", err))
-		return 500, fmt.Errorf("failed to get user balance: %w", err)
+		s.logger.Error("failed_to_get_user_balance_and_deficit", slog.Any("error", err))
+		return 500, fmt.Errorf("failed to get user balance and deficit: %w", err)
 	}
+	deficitFloat, _ := strconv.ParseFloat(deficitStr, 64)
+	deficitMicro := int64(math.Round(deficitFloat * models.MicroUnit))
 
-	// Update user credit balance
+	// Apply the incoming credits to the refund deficit first. Any remainder
+	// goes to spendable balance. This is what makes the refund deficit ledger
+	// self-correcting: users who owe us credits from a past refund pay it back
+	// through their next purchase before any new spendable balance accrues.
+	//
+	// We do the split in integer micro-credit arithmetic to avoid float drift.
+	purchaseMicro := int64(credits) * models.MicroUnit
+	appliedToDeficitMicro := int64(0)
+	appliedToBalanceMicro := purchaseMicro
+	if deficitMicro > 0 {
+		if purchaseMicro >= deficitMicro {
+			appliedToDeficitMicro = deficitMicro
+			appliedToBalanceMicro = purchaseMicro - deficitMicro
+		} else {
+			appliedToDeficitMicro = purchaseMicro
+			appliedToBalanceMicro = 0
+		}
+	}
+	appliedToDeficitFloat := float64(appliedToDeficitMicro) / models.MicroUnit
+	appliedToBalanceFloat := float64(appliedToBalanceMicro) / models.MicroUnit
+
+	// Update user credit balance. The deficit paydown is applied via
+	// GREATEST(0, ...) so a concurrent write cannot drive it negative — the
+	// CHECK constraint on the column would reject the row even if we tried.
+	// total_credits_purchased tracks lifetime purchases regardless of how
+	// much of this purchase hit the balance vs deficit.
+	// updated_at is intentionally NOT set here — the table trigger handles it.
 	const updUser = `UPDATE users SET
 		credit_balance = COALESCE(credit_balance, 0) + $1::numeric,
-		total_credits_purchased = COALESCE(total_credits_purchased, 0) + $1::numeric,
-		updated_at=NOW()
-		WHERE id=$2`
-	result, err := tx.ExecContext(ctx, updUser, credits, userID)
+		total_credits_purchased = COALESCE(total_credits_purchased, 0) + $2::numeric,
+		refund_deficit_credits = GREATEST(0, refund_deficit_credits - $3::numeric)
+		WHERE id = $4`
+	result, err := tx.ExecContext(ctx, updUser, appliedToBalanceFloat, credits, appliedToDeficitFloat, userID)
 	if err != nil {
 		s.logger.Error("failed_to_update_user_credits", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to update user credits: %w", err)
@@ -357,10 +395,36 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 		return 400, fmt.Errorf("user not found: %s", userID)
 	}
 
-	// Insert credit transaction with accurate balances
+	// If any portion of the purchase paid down a deficit, record a
+	// deficit_paydown ledger row for audit. amount=0 because the deficit
+	// lives outside the spendable balance ledger; balance_before and
+	// balance_after are identical (currentBalance) so the
+	// balance_calculation_check constraint is satisfied.
+	if appliedToDeficitMicro > 0 {
+		const insTxnPaydown = `INSERT INTO credit_transactions
+			(id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
+			VALUES ($1, $2, 'deficit_paydown', 0, $3, $3, $4, $5, 'payment')`
+		desc := fmt.Sprintf("Deficit paydown from Stripe purchase %s: %.6f credits", session.ID, appliedToDeficitFloat)
+		if _, err := tx.ExecContext(ctx, insTxnPaydown,
+			uuid.Must(uuid.NewV7()).String(), userID, currentBalance, desc, session.ID); err != nil {
+			s.logger.Error("failed_to_insert_deficit_paydown_transaction", slog.Any("error", err))
+			return 500, fmt.Errorf("failed to insert deficit paydown transaction: %w", err)
+		}
+	}
+
+	// Insert the purchase ledger row. The amount, balance_before, and
+	// balance_after triple must satisfy balance_after = balance_before + amount
+	// per the balance_calculation_check constraint. We use
+	// appliedToBalanceFloat (not the full purchase amount) because only that
+	// portion actually hit the spendable balance — the deficit paydown is a
+	// separate entry above.
 	const insTxn = `INSERT INTO credit_transactions (id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
 					VALUES ($1, $2, 'purchase', $3, $4, $5, $6, $7, 'payment')`
-	_, err = tx.ExecContext(ctx, insTxn, uuid.Must(uuid.NewV7()).String(), userID, credits, currentBalance, currentBalance+float64(credits), "Stripe purchase", session.ID)
+	_, err = tx.ExecContext(ctx, insTxn, uuid.Must(uuid.NewV7()).String(), userID,
+		appliedToBalanceFloat,
+		currentBalance,
+		currentBalance+appliedToBalanceFloat,
+		"Stripe purchase", session.ID)
 	if err != nil {
 		s.logger.Error("failed_to_insert_credit_transaction", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to insert credit transaction: %w", err)
@@ -931,78 +995,117 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 		balanceMicro := int64(math.Round(balanceFloat * models.MicroUnit))
 		deductMicro := int64(math.Round(creditsToDeduct * models.MicroUnit))
 
-		// Cap deduction at current balance to prevent negative balances.
+		// Split the refund deduction across (balance, deficit):
+		//   - deductFromBalance = min(deductMicro, balanceMicro)
+		//   - deductFromDeficit = deductMicro - deductFromBalance (>= 0)
 		//
-		// Trade-off: credits may have been consumed between purchase and refund.
-		// For example, a user buys 100 credits, spends 95, then refunds $50 (= 50 credits).
-		// Their remaining balance is only 5 — so we deduct 5 instead of 50. The remaining
-		// 45 credits were already consumed and cannot be reclaimed here.
+		// The deficit portion represents credits that were already consumed
+		// before this refund arrived. Instead of failing the refund or silently
+		// losing integrity, we write the remainder to users.refund_deficit_credits
+		// so the next purchase pays it down before crediting new spendable balance.
 		//
-		// This is financially safe (no negative balances) but creates an invisible discrepancy:
-		// Stripe refunds cash, but we can only recover credits proportional to what's left.
-		// The difference is tracked via the refund_partial_cap payment status and the warning
-		// log below. Ops should monitor refund_cap_applied frequency to detect abuse patterns.
+		// This preserves the CHECK (credit_balance >= 0) financial-safety
+		// invariant while making the refund pipeline financially correct
+		// end-to-end. Matches the pre-paid credit refund pattern used by
+		// Vercel, Anthropic (Claude API), OpenAI, and Stripe Billing's own
+		// credit grants.
 		//
-		// Edge case: if the user has 0 credits (fully consumed), actualDeductMicro = 0.
-		// This is acceptable — document it as expected and monitor via the warn log.
+		// Idempotency: the markEventProcessed gate (processed_webhook_events)
+		// at the top of this transaction prevents double-deductions on Stripe
+		// webhook retries. The metric increment below is therefore also
+		// idempotency-safe — it is only reached once per Stripe event.
 		//
-		// Idempotency: the markEventProcessed gate (processed_webhook_events) at the top of
-		// this transaction prevents double-deductions on Stripe webhook retries. The counter
-		// below is therefore also idempotency-safe — it is only reached once per Stripe event.
-		//
-		// Alerting: the refund_cap_applied_total Prometheus counter is incremented below.
-		// A Grafana alert fires when this counter exceeds the REFUND_CAP_ALERT_THRESHOLD
-		// (default 5 events in 24 h). See pkg/metrics/billing.go for the runbook.
-		actualDeductMicro := deductMicro
-		capApplied := false
-		if actualDeductMicro > balanceMicro {
-			s.metrics.RefundCapAppliedTotal.Inc()
-			s.logger.Warn("refund_cap_applied",
-				slog.String("user_id", userID),
-				slog.String("charge_id", charge.ID),
-				slog.Float64("expected_deduction", creditsToDeduct),
-				slog.Float64("actual_deduction", float64(balanceMicro)/models.MicroUnit),
-				slog.Float64("balance", balanceFloat),
-			)
-			actualDeductMicro = balanceMicro
-			capApplied = true
+		// Alerting: the refund_deficit_applied_total Prometheus counter is
+		// incremented when any deficit is created. Any non-zero rate indicates
+		// users buying, consuming, then refunding — possibly benign churn or
+		// possibly fraud. See pkg/metrics/billing.go for the ops runbook.
+		deductFromBalanceMicro := deductMicro
+		deductFromDeficitMicro := int64(0)
+		if deductFromBalanceMicro > balanceMicro {
+			deductFromBalanceMicro = balanceMicro
+			deductFromDeficitMicro = deductMicro - balanceMicro
 		}
 
-		newBalanceMicro := balanceMicro - actualDeductMicro
-
-		// Convert back to float for DB storage and transaction logging.
-		actualDeductFloat := float64(actualDeductMicro) / models.MicroUnit
+		newBalanceMicro := balanceMicro - deductFromBalanceMicro
+		actualDeductFloat := float64(deductFromBalanceMicro) / models.MicroUnit
 		newBalanceFloat := float64(newBalanceMicro) / models.MicroUnit
+		deficitIncreaseFloat := float64(deductFromDeficitMicro) / models.MicroUnit
 
-		// Deduct credits from user balance.
-		const updUser = `UPDATE users SET credit_balance = $1::numeric, updated_at = NOW() WHERE id = $2`
-		if _, err := tx.ExecContext(ctx, updUser, newBalanceFloat, userID); err != nil {
+		// Update both columns in one UPDATE — same row, single lock acquisition.
+		// updated_at is intentionally NOT touched; the trigger handles it.
+		const updBalance = `UPDATE users
+			SET credit_balance = $1::numeric,
+			    refund_deficit_credits = refund_deficit_credits + $2::numeric
+			WHERE id = $3`
+		if _, err := tx.ExecContext(ctx, updBalance, newBalanceFloat, deficitIncreaseFloat, userID); err != nil {
 			s.logger.Error("failed_to_deduct_credits_for_refund", slog.Any("error", err))
 			return 500, fmt.Errorf("failed to deduct credits: %w", err)
 		}
 
-		// Record the refund transaction.
-		const insTxn = `INSERT INTO credit_transactions (id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
-		                VALUES ($1, $2, 'refund', $3, $4, $5, $6, $7, 'payment')`
-		desc := fmt.Sprintf("Stripe refund for charge %s", charge.ID)
-		if _, err := tx.ExecContext(ctx, insTxn, uuid.Must(uuid.NewV7()).String(), userID, -actualDeductFloat, balanceFloat, newBalanceFloat, desc, charge.ID); err != nil {
-			s.logger.Error("failed_to_insert_refund_transaction", slog.Any("error", err))
-			return 500, fmt.Errorf("failed to insert refund transaction: %w", err)
+		// Record the balance-side deduction as a 'refund' ledger row, only if
+		// any portion actually hit the spendable balance. The amount,
+		// balance_before, and balance_after triple satisfies the
+		// balance_calculation_check constraint (balance_after = balance_before + amount).
+		if deductFromBalanceMicro > 0 {
+			const insTxnRefund = `INSERT INTO credit_transactions
+				(id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
+				VALUES ($1, $2, 'refund', $3, $4, $5, $6, $7, 'payment')`
+			desc := fmt.Sprintf("Stripe refund for charge %s", charge.ID)
+			if _, err := tx.ExecContext(ctx, insTxnRefund,
+				uuid.Must(uuid.NewV7()).String(), userID, -actualDeductFloat,
+				balanceFloat, newBalanceFloat, desc, charge.ID); err != nil {
+				s.logger.Error("failed_to_insert_refund_transaction", slog.Any("error", err))
+				return 500, fmt.Errorf("failed to insert refund transaction: %w", err)
+			}
+		}
+
+		// Record the deficit-side portion as a separate 'refund_deficit' row.
+		// amount=0 because the deficit lives outside the spendable balance
+		// ledger; balance_before and balance_after are identical (newBalanceFloat)
+		// so the balance_calculation_check constraint is satisfied. The
+		// deficit amount is captured in metadata for audit queries.
+		if deductFromDeficitMicro > 0 {
+			const insTxnDeficit = `INSERT INTO credit_transactions
+				(id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type, metadata)
+				VALUES ($1, $2, 'refund_deficit', 0, $3, $3, $4, $5, 'payment', $6::jsonb)`
+			desc := fmt.Sprintf("Stripe refund deficit for charge %s: %.6f credits uncollectable", charge.ID, deficitIncreaseFloat)
+			metadata := fmt.Sprintf(`{"deficit_amount":"%s","charge_id":"%s"}`,
+				strconv.FormatFloat(deficitIncreaseFloat, 'f', 6, 64), charge.ID)
+			if _, err := tx.ExecContext(ctx, insTxnDeficit,
+				uuid.Must(uuid.NewV7()).String(), userID, newBalanceFloat, desc, charge.ID, metadata); err != nil {
+				s.logger.Error("failed_to_insert_refund_deficit_transaction", slog.Any("error", err))
+				return 500, fmt.Errorf("failed to insert refund deficit transaction: %w", err)
+			}
+
+			// Emit metric + ERROR log so ops sees every deficit event. ERROR
+			// (not WARN) because this is the signal that a user bought,
+			// consumed, then refunded — worth a Grafana alert.
+			s.metrics.RefundDeficitAppliedTotal.Inc()
+			s.logger.Error("refund_deficit_applied",
+				slog.String("user_id", userID),
+				slog.String("charge_id", charge.ID),
+				slog.Float64("deficit_credits", deficitIncreaseFloat),
+				slog.Float64("actual_balance_deduction", actualDeductFloat),
+				slog.Float64("original_balance", balanceFloat),
+			)
 		}
 
 		// Update stripe_payments record if we have a payment intent ID.
-		// If the cap was applied and the uncollectable credit gap is > 20 credits
-		// (20_000_000 micro-credits), flag the payment for manual ops review.
+		// Status precedence:
+		//   - refund_deficit_applied (any deficit was created — ops review)
+		//   - partial_refund (Stripe refunded less than the original charge)
+		//   - refunded (full refund, no deficit)
+		// updated_at is intentionally NOT touched; trigger handles it.
 		if paymentIntentID != "" {
 			paymentStatus := "refunded"
-			const capThresholdMicro int64 = 20 * models.MicroUnit
-			if capApplied && (deductMicro-actualDeductMicro) > capThresholdMicro {
-				// Significant cap: user retained >20 credits they effectively got for free.
-				// Flag for manual ops review queue.
-				paymentStatus = "refund_partial_cap"
+			if charge.AmountRefunded < charge.Amount {
+				paymentStatus = "partial_refund"
+			}
+			if deductFromDeficitMicro > 0 {
+				paymentStatus = "refund_deficit_applied"
 			}
 			if _, err := tx.ExecContext(ctx,
-				`UPDATE stripe_payments SET status = $1, refunded_amount_cents = $2, updated_at = NOW() WHERE stripe_payment_intent_id = $3`,
+				`UPDATE stripe_payments SET status = $1, refunded_amount_cents = $2 WHERE stripe_payment_intent_id = $3`,
 				paymentStatus, charge.AmountRefunded, paymentIntentID); err != nil {
 				s.logger.Error("failed_to_update_stripe_payment_status",
 					slog.String("payment_intent_id", paymentIntentID),
