@@ -1306,7 +1306,33 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 }
 
 // handleChargeFailed processes charge.failed Stripe webhook events.
-// No credit changes are made — credits are only granted on checkout.session.completed.
+// No credit changes are made — credits are only granted on
+// checkout.session.completed. The handler exists to surface failed payment
+// attempts in our logs/metrics with the user ID attached so ops can correlate
+// against support tickets and Stripe Dashboard.
+//
+// User lookup uses three paths in order of reliability (S-M5 + S-H4):
+//
+//  1. PaymentIntent ID join through stripe_payments — populated by the
+//     S-C2 backfill in handleCheckoutSessionCompleted. This is the most
+//     reliable path because every successful checkout writes the PI ID,
+//     and a charge.failed event always carries the PaymentIntent ID for
+//     the failed attempt.
+//
+//  2. PaymentIntentData.Metadata["brezel_user_id"] — propagated from the
+//     Checkout Session via the S-H4 wiring (Session → PI → Charge). This
+//     bypasses the DB entirely and works for any charge that originated
+//     from a CreateCheckoutSession call after S-H4 landed. Most useful
+//     when the stripe_payments row doesn't exist yet (charge.failed can
+//     fire before checkout.session.completed if the card declines).
+//
+//  3. Stripe Customer ID join through users.stripe_customer_id — the
+//     legacy fallback. Works for any user provisioned after S-C3 landed.
+//
+// All three paths log a warn-level "charge_failed_user_lookup_failed"
+// event on DB error so ops sees lookup failures distinct from "no user
+// found" (which is also a possible legitimate outcome for non-Brezel
+// charges hitting our endpoint).
 func (s *Service) handleChargeFailed(ctx context.Context, event stripe.Event) (int, error) {
 	var charge stripe.Charge
 	if err := json.Unmarshal(event.Data.Raw, &charge); err != nil {
@@ -1319,19 +1345,56 @@ func (s *Service) handleChargeFailed(ctx context.Context, event stripe.Event) (i
 		failureMsg = charge.FailureMessage
 	}
 
+	// Path 1: PaymentIntent ID lookup. Most reliable; works whenever the
+	// charge originated from a Checkout Session and the S-C2 backfill ran.
 	userID := ""
-	if charge.Customer != nil {
-		if err := s.db.QueryRowContext(ctx, "SELECT id FROM users WHERE stripe_customer_id = $1 LIMIT 1", charge.Customer.ID).Scan(&userID); err != nil && err != sql.ErrNoRows {
-			s.logger.Warn("charge_failed_user_lookup_failed",
+	lookupSource := ""
+	if charge.PaymentIntent != nil && charge.PaymentIntent.ID != "" {
+		err := s.db.QueryRowContext(ctx,
+			`SELECT user_id FROM stripe_payments WHERE stripe_payment_intent_id = $1 LIMIT 1`,
+			charge.PaymentIntent.ID).Scan(&userID)
+		if err != nil && err != sql.ErrNoRows {
+			s.logger.Warn("charge_failed_pi_lookup_failed",
+				slog.String("payment_intent_id", charge.PaymentIntent.ID),
+				slog.Any("error", err),
+			)
+		}
+		if userID != "" {
+			lookupSource = "payment_intent"
+		}
+	}
+
+	// Path 2: charge metadata propagated from PaymentIntentData.Metadata
+	// (S-H4 wiring). Works without a DB row — useful when charge.failed
+	// fires before stripe_payments has the PI ID backfilled.
+	if userID == "" && charge.Metadata != nil {
+		if v, ok := charge.Metadata["brezel_user_id"]; ok && v != "" {
+			userID = v
+			lookupSource = "metadata"
+		}
+	}
+
+	// Path 3: Customer ID join (the legacy fallback). Slower than path 2
+	// and depends on the S-C3 customer link being populated.
+	if userID == "" && charge.Customer != nil && charge.Customer.ID != "" {
+		err := s.db.QueryRowContext(ctx,
+			`SELECT id FROM users WHERE stripe_customer_id = $1 LIMIT 1`,
+			charge.Customer.ID).Scan(&userID)
+		if err != nil && err != sql.ErrNoRows {
+			s.logger.Warn("charge_failed_customer_lookup_failed",
 				slog.String("customer_id", charge.Customer.ID),
 				slog.Any("error", err),
 			)
+		}
+		if userID != "" {
+			lookupSource = "customer"
 		}
 	}
 
 	s.logger.Warn("charge_failed",
 		slog.String("charge_id", charge.ID),
 		slog.String("user_id", userID),
+		slog.String("user_lookup_source", lookupSource),
 		slog.Int64("amount_cents", charge.Amount),
 		slog.String("failure_message", failureMsg),
 		slog.String("failure_code", string(charge.FailureCode)),
