@@ -97,7 +97,7 @@ func TestSupport_MessageTooShort(t *testing.T) {
 	sender := &mockSender{}
 	h := newSupportTestHandler(sender)
 
-	body := `{"category":"bug","message":"short"}`
+	body := `{"category":"bug","message":"ab"}`
 	req, rr := postSupport(t, body, "user_123")
 
 	h.SubmitSupportRequest(rr, req)
