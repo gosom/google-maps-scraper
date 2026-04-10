@@ -208,6 +208,7 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.Se
 	slog.Info("startup_config_summary",
 		slog.Bool("stripe_enabled", stripeAPIKey != ""),
 		slog.Bool("production_mode", isProduction),
+		slog.Bool("resend_enabled", serverCfg.ResendAPIKey != ""),
 	)
 
 	return serverCfg, nil
