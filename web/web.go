@@ -20,6 +20,7 @@ import (
 	"github.com/gosom/google-maps-scraper/pkg/encryption"
 	"github.com/gosom/google-maps-scraper/pkg/googlesheets"
 	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
+	"github.com/gosom/google-maps-scraper/pkg/notify"
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/web/auth"
 	webhandlers "github.com/gosom/google-maps-scraper/web/handlers"
@@ -64,6 +65,7 @@ type ServerConfig struct {
 	// avoid exposing Prometheus metrics to unauthenticated clients (CWE-200).
 	// Example: ":9090". If empty, no internal listener is created.
 	InternalAddr string
+	ResendAPIKey string // Optional; if empty, support requests are logged instead of emailed
 }
 
 func New(cfg ServerConfig) (*Server, error) {
@@ -142,6 +144,20 @@ func New(cfg ServerConfig) (*Server, error) {
 	if ans.db != nil {
 		deps.ConcurrentLimitSvc = webservices.NewConcurrentLimitService(ans.db)
 	}
+
+	// Support email sender: Resend if configured, log fallback otherwise
+	var supportSender notify.Sender
+	if cfg.ResendAPIKey != "" {
+		supportSender = notify.NewResendSender(
+			cfg.ResendAPIKey,
+			"BrezelScraper Support <noreply@brezel.ai>",
+			"support@brezel.ai",
+		)
+	} else {
+		supportSender = &notify.LogSender{Logger: ans.logger}
+	}
+	deps.Sender = supportSender
+
 	hg := webhandlers.NewHandlerGroup(deps)
 
 	// Health check endpoint (no authentication needed)
@@ -282,6 +298,13 @@ func New(cfg ServerConfig) (*Server, error) {
 		apiRouter.HandleFunc("/credits/checkout-session", hg.Billing.CreateCheckoutSession).Methods(http.MethodPost)
 		apiRouter.HandleFunc("/credits/reconcile", hg.Billing.Reconcile).Methods(http.MethodPost)
 	}
+
+	// Support endpoint: per-user rate limit of 1 req/min, burst 2.
+	// Prevents support-form spam while allowing a quick retry after a typo fix.
+	supportLimiter := webmiddleware.PerUserRateLimit(rate.Limit(1.0/60.0), 2)
+	apiRouter.Handle("/support",
+		supportLimiter(http.HandlerFunc(hg.Support.SubmitSupportRequest)),
+	).Methods(http.MethodPost)
 
 	// ─── Admin routes ────────────────────────────────────────────────────
 	// Admin routes are isolated in their own namespace and protected by

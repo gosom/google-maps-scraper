@@ -197,6 +197,7 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.Se
 		StripeWebhookSecret: stripeWebhookSecret,
 		Version:             cfg.Version,
 		InternalAddr:        internalAddr,
+		ResendAPIKey:        os.Getenv("RESEND_API_KEY"),
 	}
 
 	slog.Info("auth_enabled", slog.String("provider", "clerk"))
@@ -929,6 +930,11 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 				slog.String("detail", "exit monitor detected completion, 30s grace elapsed, forcing shutdown"),
 			)
 			mateErr, leaked := w.shutdownMate(job.ID, cancel, closeMate, resultCh)
+			w.logger.Info("shutdown_mate_result",
+				slog.String("job_id", job.ID),
+				slog.Bool("leaked", leaked),
+				slog.Any("error", mateErr),
+			)
 			if leaked {
 				var resultCount int
 				if w.db != nil {
@@ -937,6 +943,13 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 						w.logger.Error("result_count_after_leak_failed", slog.String("job_id", job.ID), slog.Any("error", dbErr))
 					}
 					countCancel()
+					w.logger.Info("result_count_after_leak_check",
+						slog.String("job_id", job.ID),
+						slog.Int("result_count", resultCount),
+						slog.Bool("will_treat_as_success", resultCount > 0),
+					)
+				} else {
+					w.logger.Warn("db_nil_cannot_check_results", slog.String("job_id", job.ID))
 				}
 				if resultCount > 0 {
 					w.logger.Info("goroutine_leaked_but_results_exist",
