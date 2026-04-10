@@ -20,15 +20,17 @@ func formatValidationErrors(err error) string {
 			case "required":
 				msgs = append(msgs, field+" is required")
 			case "min":
-				msgs = append(msgs, field+" must be at least "+fe.Param())
+				msgs = append(msgs, field+" must be at least "+fe.Param()+" characters")
 			case "max":
-				msgs = append(msgs, field+" must be at most "+fe.Param())
+				msgs = append(msgs, field+" must be at most "+fe.Param()+" characters")
 			case "len":
 				msgs = append(msgs, field+" must be exactly "+fe.Param()+" characters")
 			case "latitude":
 				msgs = append(msgs, field+" must be a valid latitude")
 			case "longitude":
 				msgs = append(msgs, field+" must be a valid longitude")
+			case "oneof":
+				msgs = append(msgs, field+" must be one of: "+fe.Param())
 			default:
 				msgs = append(msgs, field+" is invalid")
 			}

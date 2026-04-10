@@ -23,7 +23,7 @@ type SupportHandlers struct {
 type supportRequest struct {
 	Category string `json:"category" validate:"required,oneof=bug feature billing account other"`
 	Subject  string `json:"subject"  validate:"max=200"`
-	Message  string `json:"message"  validate:"required,min=3,max=5000"`
+	Message  string `json:"message"  validate:"required,min=10,max=5000"`
 }
 
 // sanitizeSubject strips control characters that could cause log injection
