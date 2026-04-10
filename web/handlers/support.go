@@ -49,7 +49,7 @@ func (h *SupportHandlers) SubmitSupportRequest(w http.ResponseWriter, r *http.Re
 		}
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{
 			Code:    http.StatusUnprocessableEntity,
-			Message: "Invalid request body",
+			Message: "We couldn't process your message. Please check your input and try again.",
 		})
 		return
 	}
@@ -68,7 +68,7 @@ func (h *SupportHandlers) SubmitSupportRequest(w http.ResponseWriter, r *http.Re
 	if err != nil || userID == "" {
 		renderJSON(w, http.StatusUnauthorized, models.APIError{
 			Code:    http.StatusUnauthorized,
-			Message: "Authentication required",
+			Message: "Please sign in to send a support request, or email support@brezel.ai directly.",
 		})
 		return
 	}
@@ -116,7 +116,7 @@ func (h *SupportHandlers) SubmitSupportRequest(w http.ResponseWriter, r *http.Re
 
 	// 7. Send via configured sender (Resend or log fallback)
 	if err := h.Sender.Send(r.Context(), supportReq); err != nil {
-		internalError(w, h.Deps.Logger, err, "Failed to send support request",
+		internalError(w, h.Deps.Logger, err, "Something went wrong on our end. Please email support@brezel.ai directly and we'll help you right away.",
 			slog.String("user_id", userID),
 			slog.String("category", req.Category),
 		)
