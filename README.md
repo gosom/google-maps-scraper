@@ -69,6 +69,14 @@ Extract business leads, emails, addresses, phones, reviews and more. [**Get 1,00
 
 ---
 
+### [RapidProxy](https://www.rapidproxy.io/?ref=gosom) - High-Performance Proxy Solution
+
+[![RapidProxy](./img/rapidproxy-banner.png)](https://www.rapidproxy.io/?ref=gosom)
+
+Unlock global access with consistent, high-speed connections from $0.65/GB, 90M+ real residential IPs worldwide, and traffic that never expires. [**Try it free →**](https://www.rapidproxy.io/?ref=gosom)
+
+---
+
 ### [LeadsDB](https://getleadsdb.com/) - Your Central Database for Business Leads
 
 [![LeadsDB](./img/leadsdb-banner.png)](https://getleadsdb.com/)
@@ -710,6 +718,16 @@ A huge thank you to the sponsors who make this project possible!
 **The most affordable premium proxies across 195 countries & 80+ million IPs, plus a FREE plan for new users.** [Learn more](webshare.md)
 
 [**Start free →**](https://www.webshare.io/?referral_code=0q3l81eet8mp)
+
+---
+
+#### [RapidProxy](https://www.rapidproxy.io/?ref=gosom)
+
+[![RapidProxy](./img/rapidproxy-banner.png)](https://www.rapidproxy.io/?ref=gosom)
+
+**High-performance proxy solution with consistent, high-speed connections, 90M+ real residential IPs worldwide, and traffic that never expires.**
+
+[**Try it free →**](https://www.rapidproxy.io/?ref=gosom)
 
 ---
 
