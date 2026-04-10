@@ -130,6 +130,7 @@ func New(cfg ServerConfig) (*Server, error) {
 		Templates:           ans.tmpl,
 		Auth:                ans.authMiddleware,
 		App:                 ans.svc,
+		UserRepo:            ans.userRepo,
 		APIKeyRepo:          cfg.APIKeyRepo,
 		WebhookConfigRepo:   cfg.WebhookConfigRepo,
 		WebhookDeliveryRepo: cfg.WebhookDeliveryRepo,
