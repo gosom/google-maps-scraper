@@ -29,7 +29,7 @@ const (
 
 	// Default pricing fallbacks (used when DB has no active rules)
 	defaultPriceActorStart        = 0.007
-	defaultPricePlaceScraped      = 0.004
+	defaultPricePlaceScraped      = 0.003
 	defaultPriceFiltersApplied    = 0.001
 	defaultPriceAdditionalDetails = 0.002
 	defaultPriceContactDetails    = 0.002

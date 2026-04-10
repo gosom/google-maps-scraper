@@ -69,7 +69,7 @@ WHERE NOT EXISTS (
 );
 
 INSERT INTO pricing_rules (event_type_code, ab_test_group, valid_from, price_credits)
-SELECT 'place_scraped', NULL, NOW(), 0.004000
+SELECT 'place_scraped', NULL, NOW(), 0.003000
 WHERE NOT EXISTS (
   SELECT 1 FROM pricing_rules
   WHERE event_type_code = 'place_scraped' AND ab_group_coalesced = '<DEFAULT_AB_GROUP>' AND valid_to IS NULL
