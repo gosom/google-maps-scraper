@@ -23,6 +23,12 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+const (
+	maxDeliveriesPerUserPerHour = 100
+	maxDeliveriesPerIPPerHour   = 50
+	rateLimitRetryDelay         = 1 * time.Hour
+)
+
 // WebhookDeliveryWorker polls for pending webhook deliveries and sends them.
 type WebhookDeliveryWorker struct {
 	deliveryRepo models.JobWebhookDeliveryRepository
@@ -131,6 +137,42 @@ func (w *WebhookDeliveryWorker) deliverOne(ctx context.Context, delivery *models
 		)
 		w.markFailed(ctx, delivery, log)
 		return
+	}
+
+	// Rate limit: per-user
+	since := time.Now().UTC().Add(-1 * time.Hour)
+	userCount, err := w.deliveryRepo.CountRecentByUserID(ctx, config.UserID, since)
+	if err != nil {
+		log.Error("webhook_rate_limit_check_failed", slog.Any("error", err))
+		// On error, proceed with delivery (fail open for rate limit checks)
+	} else if userCount >= maxDeliveriesPerUserPerHour {
+		log.Warn("webhook_rate_limit_user_exceeded",
+			slog.String("user_id", config.UserID),
+			slog.Int("count", userCount),
+		)
+		retryAt := time.Now().UTC().Add(rateLimitRetryDelay)
+		if err := w.deliveryRepo.SetNextRetry(ctx, delivery.JobID, delivery.WebhookConfigID, retryAt); err != nil {
+			log.Error("webhook_rate_limit_retry_failed", slog.Any("error", err))
+		}
+		return
+	}
+
+	// Rate limit: per-destination-IP
+	if config.ResolvedIP != nil {
+		ipCount, err := w.deliveryRepo.CountRecentByIP(ctx, config.ResolvedIP.String(), since)
+		if err != nil {
+			log.Error("webhook_rate_limit_ip_check_failed", slog.Any("error", err))
+		} else if ipCount >= maxDeliveriesPerIPPerHour {
+			log.Warn("webhook_rate_limit_ip_exceeded",
+				slog.String("resolved_ip", config.ResolvedIP.String()),
+				slog.Int("count", ipCount),
+			)
+			retryAt := time.Now().UTC().Add(rateLimitRetryDelay)
+			if err := w.deliveryRepo.SetNextRetry(ctx, delivery.JobID, delivery.WebhookConfigID, retryAt); err != nil {
+				log.Error("webhook_rate_limit_retry_failed", slog.Any("error", err))
+			}
+			return
+		}
 	}
 
 	// 4. Decrypt signing secret (stored as hex-encoded AES-GCM ciphertext).

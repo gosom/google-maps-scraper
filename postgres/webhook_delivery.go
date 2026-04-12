@@ -203,6 +203,28 @@ func (r *jobWebhookDeliveryRepository) CreateBatch(ctx context.Context, deliveri
 	return err
 }
 
+func (r *jobWebhookDeliveryRepository) CountRecentByUserID(ctx context.Context, userID string, since time.Time) (int, error) {
+	const q = `
+		SELECT COUNT(*) FROM job_webhook_deliveries jwd
+		JOIN webhook_configs wc ON jwd.webhook_config_id = wc.id
+		WHERE wc.user_id = $1 AND jwd.last_attempt_at > $2`
+
+	var count int
+	err := r.db.QueryRowContext(ctx, q, userID, since).Scan(&count)
+	return count, err
+}
+
+func (r *jobWebhookDeliveryRepository) CountRecentByIP(ctx context.Context, resolvedIP string, since time.Time) (int, error) {
+	const q = `
+		SELECT COUNT(*) FROM job_webhook_deliveries jwd
+		JOIN webhook_configs wc ON jwd.webhook_config_id = wc.id
+		WHERE wc.resolved_ip = $1 AND jwd.last_attempt_at > $2`
+
+	var count int
+	err := r.db.QueryRowContext(ctx, q, resolvedIP, since).Scan(&count)
+	return count, err
+}
+
 // ---- scan helpers ----
 
 func (r *jobWebhookDeliveryRepository) scanMany(rows *sql.Rows, queryErr error) ([]*models.JobWebhookDelivery, error) {

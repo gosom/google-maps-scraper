@@ -104,4 +104,10 @@ type JobWebhookDeliveryRepository interface {
 
 	// SetNextRetry resets a delivery to pending with a scheduled retry time.
 	SetNextRetry(ctx context.Context, jobID, webhookConfigID string, nextRetryAt time.Time) error
+
+	// CountRecentByUserID returns the number of delivery attempts for a user in the given window.
+	CountRecentByUserID(ctx context.Context, userID string, since time.Time) (int, error)
+
+	// CountRecentByIP returns the number of delivery attempts to a resolved IP in the given window.
+	CountRecentByIP(ctx context.Context, resolvedIP string, since time.Time) (int, error)
 }
