@@ -46,17 +46,21 @@ type Server struct {
 }
 
 type ServerConfig struct {
-	Service             *Service
-	Addr                string
-	PgDB                *sql.DB // Optional PostgreSQL connection
-	UserRepo            postgres.UserRepository
-	APIKeyRepo          models.APIKeyRepository             // Optional; enables API key auth when set
-	WebhookConfigRepo   models.WebhookConfigRepository      // Optional; enables webhook config management
-	WebhookDeliveryRepo models.JobWebhookDeliveryRepository // Optional; enables webhook delivery tracking
-	ServerSecret        []byte                              // HMAC secret for API key HMAC (from API_KEY_SERVER_SECRET env)
-	ClerkSecretKey      string                              // Clerk server-side secret key for authentication
-	StripeAPIKey        string                              // Optional Stripe API key for subscriptions
-	StripeWebhookSecret string                              // Optional Stripe webhook secret
+	Service              *Service
+	Addr                 string
+	PgDB                 *sql.DB // Optional PostgreSQL connection
+	UserRepo             postgres.UserRepository
+	APIKeyRepo           models.APIKeyRepository             // Optional; enables API key auth when set
+	WebhookConfigRepo    models.WebhookConfigRepository      // Optional; enables webhook config management
+	WebhookDeliveryRepo  models.JobWebhookDeliveryRepository // Optional; enables webhook delivery tracking
+	ServerSecret         []byte                              // HMAC secret for API key HMAC (from API_KEY_SERVER_SECRET env)
+	ClerkSecretKey       string                              // Clerk server-side secret key for authentication
+	StripeAPIKey         string                              // Optional Stripe API key for subscriptions
+	StripeWebhookSecrets []string                            // Active first, then previous webhook secrets during rotation
+	// StripeWebhookAllowedCIDRs is an optional defense-in-depth allowlist for
+	// the Stripe webhook receiver. This should complement, not replace, edge
+	// firewall allowlisting because reverse proxies may mask the original peer IP.
+	StripeWebhookAllowedCIDRs []string
 	// Version is the Git SHA injected at build time via ldflags.
 	// It is returned by the /health endpoint as the "version" field.
 	Version string
@@ -92,7 +96,7 @@ func New(cfg ServerConfig) (*Server, error) {
 	// Stripe Customer creation (the next checkout will lazy-create).
 	if cfg.StripeAPIKey != "" && cfg.PgDB != nil {
 		cfgSvc := config.New(cfg.PgDB)
-		ans.billingSvc = billing.New(cfg.PgDB, cfgSvc, cfg.StripeAPIKey, cfg.StripeWebhookSecret, cfg.UserRepo)
+		ans.billingSvc = billing.New(cfg.PgDB, cfgSvc, cfg.StripeAPIKey, cfg.StripeWebhookSecrets, cfg.UserRepo)
 	}
 
 	// Initialize authentication middleware if Clerk secret key is provided
@@ -318,28 +322,36 @@ func New(cfg ServerConfig) (*Server, error) {
 	adminRouter.HandleFunc("/jobs", hg.Admin.GetJobs).Methods(http.MethodGet)
 	adminRouter.HandleFunc("/jobs/{id}/cancel", hg.Admin.CancelJob).Methods(http.MethodPost)
 
-	// Webhook endpoints (public access, no authentication)
-	// Apply a 64 KB body limit — Stripe payloads are small; this prevents OOM from
-	// oversized requests (CWE-400).
-	webhookHandler := webmiddleware.MaxBodySize(64 << 10)(http.HandlerFunc(hg.Billing.HandleStripeWebhook))
-	// goneHandler is returned on retired legacy webhook paths to surface any
-	// Stripe dashboard misconfiguration quickly.
+	// Webhook endpoints are public provider callbacks, not customer API routes.
+	// Keep them out of the /api/v1 customer namespace and give them a dedicated
+	// middleware chain rather than inheriting generic public API rate limits.
+	webhookMws := []func(http.Handler) http.Handler{
+		webmiddleware.RequestID,
+		webmiddleware.InjectLogger(ans.logger),
+		webmiddleware.RequestLogger(ans.logger),
+		webmiddleware.MaxBodySize(64 << 10), // Stripe payloads are small; cap memory use.
+	}
+	if len(cfg.StripeWebhookAllowedCIDRs) > 0 {
+		cidrMW, err := webmiddleware.AllowCIDRs(cfg.StripeWebhookAllowedCIDRs)
+		if err != nil {
+			return nil, fmt.Errorf("invalid Stripe webhook CIDR allowlist: %w", err)
+		}
+		webhookMws = append(webhookMws, cidrMW)
+	}
+	webhookHandler := webmiddleware.Chain(http.HandlerFunc(hg.Billing.HandleStripeWebhook), webhookMws...)
+	// goneHandler is returned on retired paths to surface Stripe dashboard
+	// misconfiguration quickly.
 	goneHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "This endpoint has been retired. Configure your Stripe dashboard to POST to /api/v1/billing/webhook", http.StatusGone)
+		http.Error(w, "This endpoint has been retired. Configure your Stripe dashboard to POST to /webhooks/stripe", http.StatusGone)
 	})
 	if ans.billingSvc != nil {
-		// Canonical webhook path — configure this URL in the Stripe dashboard.
-		// Stripe does not mandate a specific path; they simply require a single,
-		// consistent HTTPS endpoint that responds 2xx quickly. Our versioned API
-		// namespace (/api/v1/billing/webhook) keeps the route consistent with the
-		// rest of the billing surface and makes WAF/firewall rules easier to manage.
-		publicAPIRouter.Handle("/billing/webhook", webhookHandler).Methods(http.MethodPost)
+		// Canonical Stripe callback path. This route is intentionally separate
+		// from the documented customer API surface.
+		router.Handle("/webhooks/stripe", webhookHandler).Methods(http.MethodPost)
 
-		// Retired legacy paths — respond 410 Gone so any misconfigured Stripe
-		// dashboard endpoint surfaces as an obvious delivery failure rather than
-		// a silent auth error. Update the Stripe dashboard webhook URL before
-		// deploying this change or webhook delivery will fail on these paths.
-		router.Handle("/webhooks/stripe", goneHandler).Methods(http.MethodPost)
+		// Retired paths — respond 410 Gone so any stale provider configuration
+		// surfaces as an obvious delivery failure instead of silently drifting.
+		router.Handle("/api/v1/billing/webhook", goneHandler).Methods(http.MethodPost)
 		router.Handle("/api/stripe/webhook", goneHandler).Methods(http.MethodPost)
 	}
 

@@ -139,7 +139,7 @@ func (h *WebhookHandlers) CreateWebhook(w http.ResponseWriter, r *http.Request) 
 				slog.String("reason", err.Error()),
 			)
 		}
-		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: "Invalid webhook URL"})
+		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: err.Error()})
 		return
 	}
 
@@ -272,7 +272,7 @@ func (h *WebhookHandlers) UpdateWebhook(w http.ResponseWriter, r *http.Request) 
 					slog.String("reason", err.Error()),
 				)
 			}
-			renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: "Invalid webhook URL"})
+			renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: err.Error()})
 			return
 		}
 		existing.URL = req.URL

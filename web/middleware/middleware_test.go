@@ -159,6 +159,46 @@ func TestRecovery_NoPanicPassesThrough(t *testing.T) {
 	}
 }
 
+func TestAllowCIDRs_AllowsMatchingIP(t *testing.T) {
+	mw, err := AllowCIDRs([]string{"3.18.12.63/32", "3.130.192.231/32"})
+	if err != nil {
+		t.Fatalf("AllowCIDRs returned error: %v", err)
+	}
+
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/stripe", nil)
+	req.RemoteAddr = "3.18.12.63:443"
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+}
+
+func TestAllowCIDRs_RejectsNonMatchingIP(t *testing.T) {
+	mw, err := AllowCIDRs([]string{"3.18.12.63/32"})
+	if err != nil {
+		t.Fatalf("AllowCIDRs returned error: %v", err)
+	}
+
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/stripe", nil)
+	req.RemoteAddr = "8.8.8.8:443"
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rr.Code)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // PerIPRateLimit tests
 // ---------------------------------------------------------------------------

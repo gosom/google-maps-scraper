@@ -23,7 +23,7 @@ import (
 // config.Service hits the env-override path and never touches the nil DB.
 func newBillingHandlersForTest() *BillingHandlers {
 	cfgSvc := config.New(nil)
-	billingSvc := billing.New(nil, cfgSvc, "", "", nil)
+	billingSvc := billing.New(nil, cfgSvc, "", nil, nil)
 	return &BillingHandlers{
 		Deps: Dependencies{
 			BillingSvc: billingSvc,

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"runtime/debug"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -240,6 +241,59 @@ func MaxBodySize(maxBytes int64) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// AllowCIDRs restricts access to requests whose source IP falls within one of
+// the configured CIDR ranges. This is intended for provider callback endpoints
+// such as Stripe webhooks. Parsing is done once at startup so each request only
+// pays a small linear scan over the prevalidated networks.
+func AllowCIDRs(cidrs []string) (func(http.Handler) http.Handler, error) {
+	networks := make([]*net.IPNet, 0, len(cidrs))
+	for _, raw := range cidrs {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		_, network, err := net.ParseCIDR(raw)
+		if err != nil {
+			return nil, fmt.Errorf("parse CIDR %q: %w", raw, err)
+		}
+		networks = append(networks, network)
+	}
+	if len(networks) == 0 {
+		return nil, fmt.Errorf("empty CIDR allowlist")
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			host := r.RemoteAddr
+			if parsedHost, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+				host = parsedHost
+			}
+			ip := net.ParseIP(strings.TrimSpace(host))
+			if ip == nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"code":    http.StatusForbidden,
+					"message": "forbidden",
+				})
+				return
+			}
+			for _, network := range networks {
+				if network.Contains(ip) {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    http.StatusForbidden,
+				"message": "forbidden",
+			})
+		})
+	}, nil
 }
 
 // ---------------------------------------------------------------------------

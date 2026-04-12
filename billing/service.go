@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,9 +26,13 @@ import (
 )
 
 type Service struct {
-	db                *sql.DB
-	cfg               *config.Service
-	webhookSigningKey string
+	db  *sql.DB
+	cfg *config.Service
+	// webhookSigningKeys stores the active signing secret first, followed by any
+	// still-valid previous secrets during rotation. This is intentionally a
+	// compact slice rather than a map because the cardinality is tiny and
+	// verification must preserve a deterministic preference order.
+	webhookSigningKeys []string
 	// userRepo is required by CreateCheckoutSession to look up the user's
 	// stripe_customer_id (and lazy-create it via EnsureStripeCustomer if
 	// missing). nil-safe: tests that don't exercise the checkout path can
@@ -48,6 +53,8 @@ type CheckoutResponse struct {
 	URL       string `json:"url"`
 }
 
+const webhookSignatureTolerance = 5 * time.Minute
+
 // New constructs a billing.Service. userRepo is required for the checkout
 // path (it powers the stripe_customer_id lookup); pass nil only when
 // constructing a Service for non-checkout flows like background event
@@ -61,7 +68,7 @@ type CheckoutResponse struct {
 // the version cannot be overridden by Dashboard settings or by a runtime
 // reassignment in our code. To upgrade, bump the stripe-go module version
 // in go.mod — that is the deliberate, reviewable code change.
-func New(db *sql.DB, cfg *config.Service, stripeSecretKey, webhookSigningKey string, userRepo models.UserRepository) *Service {
+func New(db *sql.DB, cfg *config.Service, stripeSecretKey string, webhookSigningKeys []string, userRepo models.UserRepository) *Service {
 	// Set the Stripe API key once at startup to avoid a data race from
 	// concurrent goroutines writing the package-level global on every request.
 	// Guard: only set when non-empty so a second billing.New("") used for
@@ -82,13 +89,57 @@ func New(db *sql.DB, cfg *config.Service, stripeSecretKey, webhookSigningKey str
 	}
 
 	return &Service{
-		db:                db,
-		cfg:               cfg,
-		webhookSigningKey: webhookSigningKey,
-		userRepo:          userRepo,
-		logger:            logger,
-		metrics:           metrics.NewBillingMetrics(nil), // uses default Prometheus registry
+		db:                 db,
+		cfg:                cfg,
+		webhookSigningKeys: compactWebhookSecrets(webhookSigningKeys),
+		userRepo:           userRepo,
+		logger:             logger,
+		metrics:            metrics.NewBillingMetrics(nil), // uses default Prometheus registry
 	}
+}
+
+// compactWebhookSecrets removes blanks and duplicates while preserving order.
+// A short ordered slice is the right structure here: the active secret should
+// be tried first, and the expected cardinality during rotation is 1-2 entries.
+func compactWebhookSecrets(secrets []string) []string {
+	cleaned := make([]string, 0, len(secrets))
+	for _, secret := range secrets {
+		secret = strings.TrimSpace(secret)
+		if secret == "" {
+			continue
+		}
+		duplicate := false
+		for _, existing := range cleaned {
+			if existing == secret {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			cleaned = append(cleaned, secret)
+		}
+	}
+	return cleaned
+}
+
+func (s *Service) constructWebhookEvent(payload []byte, signatureHeader string) (stripe.Event, error) {
+	if len(s.webhookSigningKeys) == 0 {
+		return stripe.Event{}, errors.New("webhook signing key not configured")
+	}
+
+	var lastErr error
+	for _, secret := range s.webhookSigningKeys {
+		event, err := webhook.ConstructEventWithTolerance(payload, signatureHeader, secret, webhookSignatureTolerance)
+		if err == nil {
+			return event, nil
+		}
+		lastErr = err
+	}
+
+	if lastErr == nil {
+		lastErr = errors.New("invalid webhook signature")
+	}
+	return stripe.Event{}, lastErr
 }
 
 // buildCheckoutSessionParams constructs the *stripe.CheckoutSessionParams for
@@ -252,12 +303,12 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, req CheckoutRequest
 }
 
 func (s *Service) HandleWebhook(ctx context.Context, payload []byte, signatureHeader string) (int, error) {
-	if s.webhookSigningKey == "" {
+	if len(s.webhookSigningKeys) == 0 {
 		s.logger.Error("webhook_signing_key_not_configured")
 		return 400, errors.New("webhook signing key not configured")
 	}
 
-	event, err := webhook.ConstructEvent(payload, signatureHeader, s.webhookSigningKey)
+	event, err := s.constructWebhookEvent(payload, signatureHeader)
 	if err != nil {
 		s.logger.Error("invalid_webhook_signature", slog.Any("error", err))
 		return 400, fmt.Errorf("invalid signature: %w", err)

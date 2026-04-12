@@ -74,3 +74,19 @@ func TestBuildServerConfig_DoesNotFailInDevelopmentWhenSecretsMissing(t *testing
 		t.Errorf("development environment should NOT trigger the production fail-fast guard, got: %v", err)
 	}
 }
+
+func TestStripeWebhookSecretsFromEnv_IncludesPreviousSecret(t *testing.T) {
+	t.Setenv("STRIPE_WEBHOOK_SECRET", "whsec_current")
+	t.Setenv("STRIPE_WEBHOOK_SECRET_PREVIOUS", "whsec_previous")
+
+	got := stripeWebhookSecretsFromEnv()
+	if len(got) != 2 {
+		t.Fatalf("expected 2 webhook secrets, got %d (%v)", len(got), got)
+	}
+	if got[0] != "whsec_current" {
+		t.Fatalf("expected current secret first, got %q", got[0])
+	}
+	if got[1] != "whsec_previous" {
+		t.Fatalf("expected previous secret second, got %q", got[1])
+	}
+}

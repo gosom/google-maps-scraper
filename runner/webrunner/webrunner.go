@@ -57,6 +57,40 @@ type leakTracker struct {
 	count atomic.Int64
 }
 
+func parseCSVEnv(raw string) []string {
+	parts := strings.Split(raw, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			values = append(values, part)
+		}
+	}
+	return values
+}
+
+func stripeWebhookSecretsFromEnv() []string {
+	// A small ordered slice is intentional here: we want deterministic
+	// verification order (active secret first, previous secret second) and the
+	// expected rotation cardinality is tiny.
+	secrets := make([]string, 0, 2)
+	appendIfMissing := func(secret string) {
+		secret = strings.TrimSpace(secret)
+		if secret == "" {
+			return
+		}
+		for _, existing := range secrets {
+			if existing == secret {
+				return
+			}
+		}
+		secrets = append(secrets, secret)
+	}
+	appendIfMissing(os.Getenv("STRIPE_WEBHOOK_SECRET"))
+	appendIfMissing(os.Getenv("STRIPE_WEBHOOK_SECRET_PREVIOUS"))
+	return secrets
+}
+
 // track registers the result channel of an abandoned mate.Start goroutine.
 func (lt *leakTracker) track(resultCh <-chan mateResult, jobID string, logger *slog.Logger) {
 	lt.mu.Lock()
@@ -131,7 +165,8 @@ type webrunner struct {
 func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.ServerConfig, error) {
 	clerkSecretKey := os.Getenv("CLERK_SECRET_KEY")
 	stripeAPIKey := os.Getenv("STRIPE_SECRET_KEY")
-	stripeWebhookSecret := os.Getenv("STRIPE_WEBHOOK_SECRET")
+	stripeWebhookSecrets := stripeWebhookSecretsFromEnv()
+	stripeWebhookAllowedCIDRs := parseCSVEnv(os.Getenv("STRIPE_WEBHOOK_ALLOWED_CIDRS"))
 
 	if clerkSecretKey == "" {
 		slog.Error("clerk_secret_key_missing", slog.String("detail", "CLERK_SECRET_KEY is required but missing"))
@@ -145,7 +180,7 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.Se
 		if stripeAPIKey == "" {
 			missing = append(missing, "STRIPE_SECRET_KEY")
 		}
-		if stripeWebhookSecret == "" {
+		if len(stripeWebhookSecrets) == 0 {
 			missing = append(missing, "STRIPE_WEBHOOK_SECRET")
 		}
 		if os.Getenv("ALLOWED_ORIGINS") == "" {
@@ -184,29 +219,36 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.Se
 	}
 
 	serverCfg := web.ServerConfig{
-		Service:             svc,
-		Addr:                cfg.Addr,
-		PgDB:                db,
-		UserRepo:            userRepo,
-		APIKeyRepo:          apiKeyRepo,
-		WebhookConfigRepo:   webhookConfigRepo,
-		WebhookDeliveryRepo: webhookDeliveryRepo,
-		ServerSecret:        apiKeyServerSecret,
-		ClerkSecretKey:      clerkSecretKey,
-		StripeAPIKey:        stripeAPIKey,
-		StripeWebhookSecret: stripeWebhookSecret,
-		Version:             cfg.Version,
-		InternalAddr:        internalAddr,
-		ResendAPIKey:        os.Getenv("RESEND_API_KEY"),
+		Service:                   svc,
+		Addr:                      cfg.Addr,
+		PgDB:                      db,
+		UserRepo:                  userRepo,
+		APIKeyRepo:                apiKeyRepo,
+		WebhookConfigRepo:         webhookConfigRepo,
+		WebhookDeliveryRepo:       webhookDeliveryRepo,
+		ServerSecret:              apiKeyServerSecret,
+		ClerkSecretKey:            clerkSecretKey,
+		StripeAPIKey:              stripeAPIKey,
+		StripeWebhookSecrets:      stripeWebhookSecrets,
+		StripeWebhookAllowedCIDRs: stripeWebhookAllowedCIDRs,
+		Version:                   cfg.Version,
+		InternalAddr:              internalAddr,
+		ResendAPIKey:              os.Getenv("RESEND_API_KEY"),
 	}
 
 	slog.Info("auth_enabled", slog.String("provider", "clerk"))
 	if stripeAPIKey != "" {
 		slog.Info("payment_enabled", slog.String("provider", "stripe"))
 	}
+	if stripeAPIKey != "" && len(stripeWebhookAllowedCIDRs) == 0 {
+		slog.Warn("stripe_webhook_ip_allowlist_not_configured",
+			slog.String("detail", "Configure STRIPE_WEBHOOK_ALLOWED_CIDRS and enforce the same Stripe CIDRs at the edge for defense in depth"),
+		)
+	}
 
 	slog.Info("startup_config_summary",
 		slog.Bool("stripe_enabled", stripeAPIKey != ""),
+		slog.Bool("stripe_webhook_ip_allowlist_configured", len(stripeWebhookAllowedCIDRs) > 0),
 		slog.Bool("production_mode", isProduction),
 		slog.Bool("resend_enabled", serverCfg.ResendAPIKey != ""),
 	)
@@ -296,7 +338,7 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 	// shared, so we wire a real repo rather than nil.
 	cfgSvc := config.New(db)
 	billUserRepo := postgres.NewUserRepository(db)
-	billSvc := billing.New(db, cfgSvc, "", "", billUserRepo)
+	billSvc := billing.New(db, cfgSvc, "", nil, billUserRepo)
 	if billSvc != nil {
 		slog.Info("billing_service_initialized")
 	} else {
