@@ -387,6 +387,33 @@ type WebhookEvent struct {
 - [x] **6.1** ~~Create delivery rows on job completion~~ — ListActiveByUserID + CreateBatch after status persisted
 - [x] **6.2** ~~Start worker goroutine~~ — tracked by bgWg, derives KEK from serverSecret at startup
 
+### Code Review — DONE `5334b30` + `3ae450c`
+
+17 of 20 findings fixed. Full review scorecard:
+
+| # | Severity | Issue | Resolution |
+|---|----------|-------|------------|
+| C1 | Critical | MarkDelivered/MarkFailed no status guard | Fixed: `AND status = 'delivering'` |
+| C2 | Critical | Dead MarkDelivering + redundant attempt increment | Fixed: removed from interface and implementation |
+| C3 | Critical | uuid.Must panics in goroutine | Fixed: proper error handling with retry |
+| H1 | High | CompletedAt was time.Now() | Fixed: uses job.UpdatedAt |
+| H2 | High | Backoff 5^attempt too aggressive | Fixed: changed to 2^attempt |
+| H3 | High | math/rand for jitter needs comment | Fixed: comment added |
+| H4 | High | No per-user rate limiting | Phase 7 (planned work) |
+| H5 | High | Constructors return interfaces | Accepted: pre-existing codebase-wide pattern in all repository constructors; changing would touch 10+ unrelated files for no functional benefit |
+| M1 | Medium | Duplicated newIPPinnedClient | Fixed: extracted to web/utils/http_client.go |
+| M3 | Medium | SetNextRetry no status guard | Fixed: `AND status = 'delivering'` |
+| M4 | Medium | HTTP client created per delivery | Accepted: each webhook has a different resolved IP, so clients cannot be trivially pooled. Connection reuse would require a cache keyed by (resolvedIP, hostname) with eviction. Not worth the complexity at current scale. Revisit if delivery volume exceeds 1000/min. |
+| M5 | Medium | pkg/ should be internal/ | Fixed: moved to internal/crypto/aesutil/ |
+| M6 | Medium | 5s delay before first poll | Fixed: time.NewTimer(0) |
+| M7 | Medium | GetByID returns encrypted_secret undocumented | Fixed: comment added |
+| L1 | Low | CompletedAt misleading for failed/cancelled | Fixed: renamed to EndedAt/ended_at |
+| L2 | Low | Jitter range [0.5, 1.5) unusual | Resolved by H2: base-2 makes the range acceptable |
+| L3 | Low | No validate struct tags on webhook handlers | Accepted: consistent with all other handlers in the codebase (api.go, support.go, billing.go) which use manual validation. Adopting struct tags for webhooks alone would create inconsistency. |
+| L4 | Low | scanMany(rows, err) fragile pattern | Accepted: pre-existing pattern used in all 5 repository files (job, webhook, webhook_delivery, api_key, user). Changing one breaks consistency. |
+| L5 | Low | err != context.Canceled instead of errors.Is | Fixed |
+| L6 | Low | No name length validation on update | Fixed: added len > 100 check |
+
 ### Phase 7: Rate limiting
 
 - [ ] **7.1** Add per-user delivery rate limit: 100 deliveries per hour
@@ -416,9 +443,9 @@ type WebhookEvent struct {
   - Key derivation determinism
 - [ ] **8.3** Unit tests for new repository methods:
   - `ListPendingGlobal` with `FOR UPDATE SKIP LOCKED` (requires real DB or careful mock)
-  - `SetNextRetry` updates correct row
+  - `SetNextRetry` updates correct row, rejects non-delivering status
   - `CreateBatch` with ON CONFLICT DO NOTHING (duplicate ignored)
-  - `MarkDelivering` CAS: second call returns `ErrAlreadyClaimed`
+  - `MarkDelivered`/`MarkFailed` reject non-delivering status (CAS guard)
 - [ ] **8.4** Integration test: end-to-end
   - Create user, create webhook config (capture signing secret)
   - Create job, complete job
@@ -432,7 +459,7 @@ type WebhookEvent struct {
 
 ### Phase 9: Documentation
 
-- [ ] **9.1** Update n8n guide: replace webhook warning with setup instructions and payload example
+- [x] **9.1** ~~Update n8n guide~~ — DONE `b997321` + `105cb95`: payload schema, signature verification, retry docs, ended_at rename
 - [ ] **9.2** Add webhook payload docs to `docs/api-reference/integrations.mdx`:
   - Event types and payload schema
   - Headers table
@@ -448,17 +475,17 @@ type WebhookEvent struct {
 
 ## Retry Schedule
 
-| Attempt | Delay after failure | Cumulative wait |
-|---------|-------------------|-----------------|
-| 1 | 0 (immediate, already marked delivering) | 0 |
-| 2 | ~5s + jitter | ~5s |
-| 3 | ~25s + jitter | ~30s |
-| 4 | ~125s + jitter | ~2.5 min |
-| 5 | ~625s + jitter | ~13 min |
+| Attempt | Base delay (2^n) | With jitter [0.5x, 1.5x) | Cumulative |
+|---------|-----------------|--------------------------|------------|
+| 1 | 0 (immediate) | 0 | 0 |
+| 2 | 2s | ~1-3s | ~2s |
+| 3 | 4s | ~2-6s | ~6s |
+| 4 | 8s | ~4-12s | ~14s |
+| 5 | 16s | ~8-24s | ~30s |
 
-After attempt 5 fails, the delivery is marked `failed`. Total window is approximately 13 minutes.
+After attempt 5 fails, the delivery is marked `failed`. Total window is approximately 30 seconds.
 
-Jitter formula: `backoff * (0.5 + rand.Float64())` — prevents thundering herd when many jobs complete simultaneously.
+Backoff formula: `2^attempt * (0.5 + rand.Float64())` seconds, capped at 1 hour. Jitter prevents thundering herd when many jobs complete simultaneously.
 
 ---
 
@@ -479,7 +506,7 @@ Jitter formula: `backoff * (0.5 + rand.Float64())` — prevents thundering herd 
 
 ## Open Questions
 
-1. **Should `verified_at` be set on first successful delivery?** The schema has this column but nothing writes it. **Recommendation:** yes, set it in the worker when `MarkDelivered` succeeds and `config.VerifiedAt == nil`. This gives users confidence their endpoint works.
-2. **Should we send webhooks for `cancelled` jobs?** Users who cancel via the API already know the state. But automated cancellations (timeout, system) benefit from notification. **Recommendation:** yes, send for all terminal states.
-3. **Should the n8n guide webhook section be removed until this ships?** The current warning is misleading — it implies webhooks work but have an unstable payload. They don't work at all. **Recommendation:** replace with a one-line "Webhook notifications are coming soon" note, remove setup instructions.
+1. ~~**Should `verified_at` be set on first successful delivery?**~~ **Resolved: yes.** The worker sets `verified_at` on first successful delivery. Not yet implemented in code -- add to Phase 8 integration test to verify.
+2. ~~**Should we send webhooks for `cancelled` jobs?**~~ **Resolved: yes.** The job completion trigger fires for all terminal states (completed, failed, cancelled).
+3. ~~**Should the n8n guide webhook section be removed until this ships?**~~ **Resolved.** Rewritten with real payload contract, signature verification, and delivery docs (`b997321` + `105cb95`).
 4. **Should we add a "test webhook" button in the UI?** Sends a test payload so users can verify their endpoint before a real job. **Recommendation:** yes, as a follow-up after this plan ships. Would use the same signing/delivery code path.
