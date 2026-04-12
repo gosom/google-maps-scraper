@@ -15,17 +15,17 @@ var (
 
 // WebhookConfig represents a user-level webhook endpoint configuration.
 type WebhookConfig struct {
-	ID         string
-	UserID     string
-	Name       string
-	URL        string
-	SecretHash string // HMAC-SHA256 hash; plaintext never stored
+	ID         string `json:"id"`
+	UserID     string `json:"user_id"`
+	Name       string `json:"name"`
+	URL        string `json:"url"`
+	SecretHash string `json:"secret_hash"` // HMAC-SHA256 hash; plaintext never stored
 	// SECURITY: delivery must connect to resolved_ip, not re-resolve DNS (TOCTOU/DNS rebinding prevention)
-	ResolvedIP *net.IP
-	VerifiedAt *time.Time
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-	RevokedAt  *time.Time // Soft delete
+	ResolvedIP *net.IP    `json:"resolved_ip,omitempty"`
+	VerifiedAt *time.Time `json:"verified_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"` // Soft delete
 }
 
 // IsActive returns true if the webhook config has not been revoked.
@@ -35,14 +35,14 @@ func (w *WebhookConfig) IsActive() bool {
 
 // JobWebhookDelivery tracks the delivery state of a webhook for a specific job.
 type JobWebhookDelivery struct {
-	JobID           string
-	WebhookConfigID string
-	Attempts        int
-	MaxAttempts     int
-	LastAttemptAt   *time.Time
-	NextRetryAt     *time.Time
-	DeliveredAt     *time.Time
-	Status          string // pending | delivering | delivered | failed
+	JobID           string     `json:"job_id"`
+	WebhookConfigID string     `json:"webhook_config_id"`
+	Attempts        int        `json:"attempts"`
+	MaxAttempts     int        `json:"max_attempts"`
+	LastAttemptAt   *time.Time `json:"last_attempt_at,omitempty"`
+	NextRetryAt     *time.Time `json:"next_retry_at,omitempty"`
+	DeliveredAt     *time.Time `json:"delivered_at,omitempty"`
+	Status          string     `json:"status"` // pending | delivering | delivered | failed
 }
 
 // Delivery status constants.
