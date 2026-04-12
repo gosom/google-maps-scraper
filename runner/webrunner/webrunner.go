@@ -22,6 +22,7 @@ import (
 	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/google-maps-scraper/gmaps"
 	"github.com/gosom/google-maps-scraper/models"
+	"github.com/gosom/google-maps-scraper/pkg/crypto/aesutil"
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/proxy"
 	"github.com/gosom/google-maps-scraper/runner"
@@ -29,6 +30,7 @@ import (
 	"github.com/gosom/google-maps-scraper/s3uploader"
 	"github.com/gosom/google-maps-scraper/tlmt"
 	"github.com/gosom/google-maps-scraper/web"
+	webservices "github.com/gosom/google-maps-scraper/web/services"
 	"github.com/gosom/scrapemate"
 	"github.com/gosom/scrapemate/adapters/writers/csvwriter"
 	"github.com/gosom/scrapemate/scrapemateapp"
@@ -144,16 +146,19 @@ type lifecycle struct {
 }
 
 type webrunner struct {
-	srv         *web.Server
-	svc         *web.Service
-	cfg         *runner.Config
-	db          *sql.DB
-	billingSvc  *billing.Service
-	proxyPool   *proxy.Pool
-	s3Uploader  *s3uploader.Uploader
-	s3Bucket    string
-	jobFileRepo models.JobFileRepository
-	logger      *slog.Logger
+	srv                 *web.Server
+	svc                 *web.Service
+	cfg                 *runner.Config
+	db                  *sql.DB
+	billingSvc          *billing.Service
+	proxyPool           *proxy.Pool
+	s3Uploader          *s3uploader.Uploader
+	s3Bucket            string
+	jobFileRepo         models.JobFileRepository
+	webhookConfigRepo   models.WebhookConfigRepository
+	webhookDeliveryRepo models.JobWebhookDeliveryRepository
+	serverSecret        []byte // for deriving webhook KEK
+	logger              *slog.Logger
 
 	leaks leakTracker
 	lc    lifecycle
@@ -426,16 +431,19 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 	}
 
 	ans := webrunner{
-		srv:         srv,
-		svc:         svc,
-		cfg:         cfg,
-		db:          db,
-		billingSvc:  billSvc,
-		proxyPool:   proxyPool,
-		s3Uploader:  s3Upload,
-		s3Bucket:    s3BucketName,
-		jobFileRepo: jobFileRepo,
-		logger:      logger,
+		srv:                 srv,
+		svc:                 svc,
+		cfg:                 cfg,
+		db:                  db,
+		billingSvc:          billSvc,
+		proxyPool:           proxyPool,
+		s3Uploader:          s3Upload,
+		s3Bucket:            s3BucketName,
+		jobFileRepo:         jobFileRepo,
+		webhookConfigRepo:   serverCfg.WebhookConfigRepo,
+		webhookDeliveryRepo: serverCfg.WebhookDeliveryRepo,
+		serverSecret:        serverCfg.ServerSecret,
+		logger:              logger,
 	}
 
 	return &ans, nil
@@ -455,6 +463,31 @@ func (w *webrunner) Run(ctx context.Context) error {
 		defer w.lc.bgWg.Done()
 		postgres.RunStuckJobReaper(ctx, w.db, w.logger, checkInterval, stuckTimeoutHours)
 	}()
+
+	// Start webhook delivery worker goroutine: polls for pending webhook
+	// deliveries and sends HTTP callbacks to user-registered endpoints.
+	if w.webhookDeliveryRepo != nil && w.webhookConfigRepo != nil {
+		jobRepo, repoErr := postgres.NewRepository(w.db)
+		if repoErr != nil {
+			w.logger.Error("webhook_worker_repo_init_failed", slog.Any("error", repoErr))
+		} else {
+			webhookKEK := aesutil.DeriveKey(w.serverSecret, "webhook-signing-key-encryption")
+			w.lc.bgWg.Add(1)
+			go func() {
+				defer w.lc.bgWg.Done()
+				worker := webservices.NewWebhookDeliveryWorker(
+					w.webhookDeliveryRepo,
+					w.webhookConfigRepo,
+					jobRepo,
+					webhookKEK,
+					w.logger,
+				)
+				if err := worker.Run(ctx); err != nil && err != context.Canceled {
+					w.logger.Error("webhook_delivery_worker_failed", slog.Any("error", err))
+				}
+			}()
+		}
+	}
 
 	// Webhook event cleanup goroutine: removes processed_webhook_events older than
 	// WEBHOOK_EVENT_RETENTION_DAYS (default 90) in daily batches.
@@ -644,6 +677,30 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			return
 		}
 		w.logger.Debug("job_status_persisted", slog.String("job_id", job.ID), slog.String("status", string(job.Status)))
+
+		// Create webhook delivery rows for all active webhooks when job reaches a terminal status
+		if job.Status == web.StatusCompleted || job.Status == web.StatusFailed || job.Status == web.StatusCancelled {
+			if w.webhookConfigRepo != nil && w.webhookDeliveryRepo != nil {
+				configs, whErr := w.webhookConfigRepo.ListActiveByUserID(deferCtx, job.UserID)
+				if whErr != nil {
+					w.logger.Error("webhook_list_configs_failed", slog.String("job_id", job.ID), slog.Any("error", whErr))
+				} else if len(configs) > 0 {
+					deliveries := make([]*models.JobWebhookDelivery, 0, len(configs))
+					for _, cfg := range configs {
+						deliveries = append(deliveries, &models.JobWebhookDelivery{
+							JobID:           job.ID,
+							WebhookConfigID: cfg.ID,
+							Status:          models.DeliveryStatusPending,
+						})
+					}
+					if whErr := w.webhookDeliveryRepo.CreateBatch(deferCtx, deliveries); whErr != nil {
+						w.logger.Error("webhook_create_deliveries_failed", slog.String("job_id", job.ID), slog.Any("error", whErr))
+					} else {
+						w.logger.Info("webhook_deliveries_created", slog.String("job_id", job.ID), slog.Int("count", len(deliveries)))
+					}
+				}
+			}
+		}
 	}()
 
 	// Reset review circuit breaker for each new job
