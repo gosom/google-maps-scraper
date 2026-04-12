@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS billing_event_types (
 
 -- Insert the 7 required event types
 INSERT INTO billing_event_types (code, name, description) VALUES
-    ('actor_start', 'Actor Start', 'Flat fee per scraping run initiation'),
+    ('job_start', 'Job Start', 'Flat fee per scraping job'),
     ('place_scraped', 'Place Scraped', 'Per successfully scraped place'),
     ('filters_applied', 'Filters Applied', 'Per filter per place'),
     ('additional_place_details', 'Additional Place Details', 'Extra data per place'),
@@ -62,10 +62,10 @@ CREATE INDEX IF NOT EXISTS idx_pricing_active_lookup ON pricing_rules(
 
 -- Seed initial pricing (idempotent - removed ON CONFLICT as per Solution 1)
 INSERT INTO pricing_rules (event_type_code, ab_test_group, valid_from, price_credits)
-SELECT 'actor_start', NULL, NOW(), 0.007000
+SELECT 'job_start', NULL, NOW(), 0.007000
 WHERE NOT EXISTS (
   SELECT 1 FROM pricing_rules
-  WHERE event_type_code = 'actor_start' AND ab_group_coalesced = '<DEFAULT_AB_GROUP>' AND valid_to IS NULL
+  WHERE event_type_code = 'job_start' AND ab_group_coalesced = '<DEFAULT_AB_GROUP>' AND valid_to IS NULL
 );
 
 INSERT INTO pricing_rules (event_type_code, ab_test_group, valid_from, price_credits)

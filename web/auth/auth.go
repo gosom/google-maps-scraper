@@ -20,8 +20,8 @@ import (
 	"github.com/gosom/google-maps-scraper/postgres"
 )
 
-// SignupBonusAmount is the credit amount granted to new users on signup ($1.00).
-const SignupBonusAmount = 1.0
+// SignupBonusAmount is the credit amount granted to new users on signup ($2.00).
+const SignupBonusAmount = 2.0
 
 // AuthMiddleware handles Clerk authentication and adds user info to the request context.
 type AuthMiddleware struct {

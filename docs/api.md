@@ -269,7 +269,7 @@ Returns the cost breakdown for a job.
 {
   "job_id": "d8d8a24e-...",
   "items": [
-    { "event_type": "actor_start", "quantity": 1, "cost_credits": "0.010000" },
+    { "event_type": "job_start", "quantity": 1, "cost_credits": "0.010000" },
     { "event_type": "place_scraped", "quantity": 20, "cost_credits": "0.200000" }
   ],
   "total_credits": "0.210000",

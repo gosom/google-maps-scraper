@@ -41,7 +41,7 @@ components:
       properties:
         event_type:
           type: string
-          example: "actor_start"
+          example: "job_start"
         quantity:
           type: integer
           example: 1

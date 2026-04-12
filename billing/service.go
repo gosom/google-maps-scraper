@@ -975,9 +975,9 @@ func (s *Service) ChargeEvent(ctx context.Context, userID, jobID, eventType stri
 	return tx.Commit()
 }
 
-// ChargeActorStart charges a flat actor_start event (quantity=1) for a job.
-func (s *Service) ChargeActorStart(ctx context.Context, userID, jobID string) error {
-	return s.ChargeEvent(ctx, userID, jobID, "actor_start", 1, "job:"+jobID+":actor_start", map[string]any{})
+// ChargeJobStart charges a flat job_start event (quantity=1) for a job.
+func (s *Service) ChargeJobStart(ctx context.Context, userID, jobID string) error {
+	return s.ChargeEvent(ctx, userID, jobID, "job_start", 1, "job:"+jobID+":job_start", map[string]any{})
 }
 
 // ChargePlaces charges place_scraped for N places for a job.

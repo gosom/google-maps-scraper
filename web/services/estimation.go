@@ -28,7 +28,7 @@ const (
 	AvgImagesPerPlace  = 30
 
 	// Default pricing fallbacks (used when DB has no active rules)
-	defaultPriceActorStart        = 0.007
+	defaultPriceJobStart          = 0.007
 	defaultPricePlaceScraped      = 0.003
 	defaultPriceFiltersApplied    = 0.001
 	defaultPriceAdditionalDetails = 0.002
@@ -51,7 +51,7 @@ var (
 
 // defaultPricesMicro stores default prices as micro-credits (int64).
 var defaultPricesMicro = map[string]int64{
-	"actor_start":              creditsToMicro(defaultPriceActorStart),
+	"job_start":                creditsToMicro(defaultPriceJobStart),
 	"place_scraped":            creditsToMicro(defaultPricePlaceScraped),
 	"filters_applied":          creditsToMicro(defaultPriceFiltersApplied),
 	"additional_place_details": creditsToMicro(defaultPriceAdditionalDetails),
@@ -73,7 +73,7 @@ func microToCredits(micro int64) float64 {
 
 // CostEstimate represents the estimated cost breakdown for a job
 type CostEstimate struct {
-	ActorStartCost      float64 `json:"actor_start_cost"`
+	JobStartCost        float64 `json:"job_start_cost"`
 	PlacesCost          float64 `json:"places_cost"`
 	ContactDetailsCost  float64 `json:"contact_details_cost"`
 	ReviewsCost         float64 `json:"reviews_cost"`
@@ -162,17 +162,17 @@ func (s *EstimationService) loadPrices(ctx context.Context) map[string]int64 {
 func (s *EstimationService) EstimateJobCost(ctx context.Context, jobData *models.JobData) (*CostEstimate, error) {
 	estimate := &CostEstimate{}
 
-	priceActorStart := s.getPriceMicro(ctx, "actor_start")
+	priceJobStart := s.getPriceMicro(ctx, "job_start")
 	pricePlaceScraped := s.getPriceMicro(ctx, "place_scraped")
 	priceContactDetails := s.getPriceMicro(ctx, "contact_details")
 	priceReview := s.getPriceMicro(ctx, "review")
 	priceImage := s.getPriceMicro(ctx, "image")
 
 	// All intermediate values are int64 micro-credits.
-	var actorStartMicro, placesMicro, contactMicro, reviewsMicro, imagesMicro int64
+	var jobStartMicro, placesMicro, contactMicro, reviewsMicro, imagesMicro int64
 
-	// 1. Actor start cost (flat fee per job)
-	actorStartMicro = priceActorStart
+	// 1. Job start cost (flat fee per job)
+	jobStartMicro = priceJobStart
 
 	// 2. Determine estimated number of places
 	estimatedPlaces := s.estimatePlaceCount(jobData)
@@ -209,10 +209,10 @@ func (s *EstimationService) EstimateJobCost(ctx context.Context, jobData *models
 	}
 
 	// 7. Calculate total in micro-credits (exact integer arithmetic)
-	totalMicro := actorStartMicro + placesMicro + contactMicro + reviewsMicro + imagesMicro
+	totalMicro := jobStartMicro + placesMicro + contactMicro + reviewsMicro + imagesMicro
 
 	// 8. Convert micro-credits to float64 for JSON-compatible struct fields
-	estimate.ActorStartCost = microToCredits(actorStartMicro)
+	estimate.JobStartCost = microToCredits(jobStartMicro)
 	estimate.PlacesCost = microToCredits(placesMicro)
 	estimate.ContactDetailsCost = microToCredits(contactMicro)
 	estimate.ReviewsCost = microToCredits(reviewsMicro)

@@ -235,7 +235,7 @@ The fix is correct, minimal, and uses the idiomatic comma-ok pattern to guard ag
 
 1. **Micro-credit conversion is type-safe**: All conversions from float64 to int64 micro-credits use `int64(math.Round(x * 1_000_000))`, which correctly rounds before truncating to int64. The `creditsToMicro()` helper in `estimation.go` centralises this for the estimation service. The `microToCredits()` reverse conversion divides by `microUnit` (1,000,000) as a float64 constant, which is exact.
 
-2. **CostEstimate struct preserves JSON backward compatibility**: All public fields (`ActorStartCost`, `PlacesCost`, `ContactDetailsCost`, `ReviewsCost`, `ImagesCost`, `TotalEstimatedCost`) remain `float64` with `json:"..."` tags. The new `totalMicro` field is unexported (lowercase) and has no JSON tag, so it is never serialised. Existing API consumers see no change in the response shape.
+2. **CostEstimate struct preserves JSON backward compatibility**: All public fields (`JobStartCost`, `PlacesCost`, `ContactDetailsCost`, `ReviewsCost`, `ImagesCost`, `TotalEstimatedCost`) remain `float64` with `json:"..."` tags. The new `totalMicro` field is unexported (lowercase) and has no JSON tag, so it is never serialised. Existing API consumers see no change in the response shape.
 
 3. **`TotalMicro()` method exists and is used correctly**: Defined at `estimation.go:100` as a pointer receiver method on `*CostEstimate`. It is called in two places:
    - `estimation.go:310` — `CheckSufficientBalance` compares `balanceMicro < estimate.TotalMicro()` (int64 vs int64, correct).
