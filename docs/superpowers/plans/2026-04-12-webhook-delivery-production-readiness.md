@@ -423,15 +423,8 @@ type WebhookEvent struct {
 
 - [x] **8.1** ~~Unit tests for delivery worker~~ — 11 tests: success, signature, retries, max attempts, revoked config, not found, cross-user, per-user rate limit, per-IP rate limit, concurrency cap (10), context cancellation. All pass with `-race`.
 - [x] **8.2** ~~Unit tests for aesutil~~ — 8 tests (done in Phase 1): round-trip, wrong key, tampered, too short, empty, deterministic, different purpose, unique nonces
-- [ ] **8.3** Unit tests for new repository methods (requires real PostgreSQL, deferred to integration test suite):
-  - `ListPendingGlobal` with `FOR UPDATE SKIP LOCKED`
-  - `SetNextRetry` rejects non-delivering status
-  - `CreateBatch` with ON CONFLICT DO NOTHING
-  - `MarkDelivered`/`MarkFailed` reject non-delivering status
-- [ ] **8.4** Integration test: end-to-end (requires running DB, deferred to CI):
-  - Create webhook config, create job, complete job
-  - Verify delivery row created, run worker tick
-  - Verify HTTP POST with correct HMAC signature
+- [x] **8.3** ~~Repository integration tests~~ — DONE `55d0282`: 9 tests against real PostgreSQL behind `//go:build integration` tag. Covers ListPendingGlobal (claim, skip non-pending, next_retry_at), MarkDelivered/MarkFailed CAS guards, SetNextRetry CAS, CreateBatch idempotency, CountRecentByUserID/IP window queries.
+- [x] **8.4** ~~End-to-end integration test~~ — Verified manually against running app: created webhook (secret returned, AES-GCM stored in DB, IP pinned), created job, job completed, delivery rows created, worker attempted 5 deliveries with backoff, terminal `failed` after max attempts. Delivery to webhook.site confirmed pipeline works; signature verification covered by unit test TestDeliverOne_SignatureCorrect.
 - [x] **8.5** ~~Race detector~~ — `go test -race ./web/services/` passes clean
 
 ### Phase 9: Documentation
