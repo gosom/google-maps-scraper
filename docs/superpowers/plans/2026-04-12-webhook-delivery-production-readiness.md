@@ -427,19 +427,13 @@ type WebhookEvent struct {
 - [x] **8.4** ~~End-to-end integration test~~ — Verified manually against running app: created webhook (secret returned, AES-GCM stored in DB, IP pinned), created job, job completed, delivery rows created, worker attempted 5 deliveries with backoff, terminal `failed` after max attempts. Delivery to webhook.site confirmed pipeline works; signature verification covered by unit test TestDeliverOne_SignatureCorrect.
 - [x] **8.5** ~~Race detector~~ — `go test -race ./web/services/` passes clean
 
-### Phase 9: Documentation
+### Phase 9: Documentation — DONE
 
-- [x] **9.1** ~~Update n8n guide~~ — DONE `b997321` + `105cb95`: payload schema, signature verification, retry docs, ended_at rename
-- [ ] **9.2** Add webhook payload docs to `docs/api-reference/integrations.mdx`:
-  - Event types and payload schema
-  - Headers table
-  - Retry schedule
-  - Delivery guarantees (at-least-once, 5 attempts over ~13 min)
-- [ ] **9.3** Add signature verification examples:
-  - Node.js: `crypto.createHmac('sha256', secret).update(body).digest('hex')` + `crypto.timingSafeEqual`
-  - Python: `hmac.compare_digest(hmac.new(secret, body, hashlib.sha256).hexdigest(), signature)`
-  - Go: `hmac.New(sha256.New, secret)` + `subtle.ConstantTimeCompare`
-- [ ] **9.4** Document replay protection: instruct users to reject `X-Webhook-Timestamp` older than 5 minutes
+- [x] **9.1** ~~Update n8n guide~~ — `b997321` + `105cb95`: payload, signature verification, retry docs, ended_at rename
+- [x] **9.2** ~~Webhook API reference~~ — `c483351` (docs): full rewrite of `api-reference/webhooks.mdx` with event types, payload schema, headers table, retry schedule, rate limits, requirements table, CRUD endpoints, best practices
+- [x] **9.3** ~~Signature verification examples~~ — `c483351` (docs): Node.js, Python, Go with constant-time comparison
+- [x] **9.4** ~~Replay protection~~ — `c483351` (docs): X-Webhook-Timestamp with 5-minute window, code example
+- [x] **9.5** ~~Update integrations page~~ — `c483351` (docs): removed "not published" warning, fixed `ok` to `completed`, updated webhook description
 
 ---
 
