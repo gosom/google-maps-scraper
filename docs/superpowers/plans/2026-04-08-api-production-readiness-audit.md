@@ -621,14 +621,14 @@ SET data = jsonb_set(
     to_jsonb(1000),
     true  -- create the key if missing
 )
-WHERE status IN ('pending', 'working')
+WHERE status IN ('pending', 'running')
   AND COALESCE((data->>'images')::bool, false) = true
   AND data->>'images_max' IS NULL;
 
 -- Drop the now-unused `images` key from all in-flight rows.
 UPDATE jobs
 SET data = data - 'images'
-WHERE status IN ('pending', 'working')
+WHERE status IN ('pending', 'running')
   AND data ? 'images';
 ```
 
@@ -638,7 +638,7 @@ WHERE status IN ('pending', 'working')
 -- Best-effort revert: restore `images: true` where images_max > 0. Not lossless.
 UPDATE jobs
 SET data = jsonb_set(data, '{images}', 'true'::jsonb, true)
-WHERE status IN ('pending', 'working')
+WHERE status IN ('pending', 'running')
   AND COALESCE((data->>'images_max')::int, 0) > 0;
 ```
 
@@ -1321,7 +1321,7 @@ Behavior test, no spy. Assert that a cross-tenant `Delete` returns `ErrNotFound`
 ```go
 func TestService_Delete_RejectsCrossTenantAccess(t *testing.T) {
     svc, repo := newTestService(t)
-    repo.seed(Job{ID: "job-A", UserID: "user-A", Status: StatusWorking})
+    repo.seed(Job{ID: "job-A", UserID: "user-A", Status: StatusRunning})
 
     // user-B tries to delete user-A's job
     err := svc.Delete(context.Background(), "job-A", "user-B")
@@ -1331,7 +1331,7 @@ func TestService_Delete_RejectsCrossTenantAccess(t *testing.T) {
     job, err := repo.Get(context.Background(), "job-A", "user-A")
     require.NoError(t, err)
     require.Equal(t, "job-A", job.ID)
-    require.Equal(t, StatusWorking, job.Status)
+    require.Equal(t, StatusRunning, job.Status)
 }
 ```
 
@@ -1353,7 +1353,7 @@ func (s *Service) Delete(ctx context.Context, id string, userID string) error {
     if err != nil {
         return err
     }
-    if job.Status == StatusWorking || job.Status == StatusPending {
+    if job.Status == StatusRunning || job.Status == StatusPending {
         if cancelErr := s.repo.Cancel(ctx, id, userID); cancelErr != nil {
             log.Warn("cancel_before_delete_failed",
                 slog.String("job_id", id), slog.Any("error", cancelErr))

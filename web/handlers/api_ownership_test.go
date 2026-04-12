@@ -71,7 +71,7 @@ func TestGetJob_OwnerCanAccess(t *testing.T) {
 	svc := &mockJobService{
 		getFunc: func(_ context.Context, id string, userID string) (models.Job, error) {
 			if id == jobID && userID == ownerID {
-				return models.Job{ID: jobID, UserID: ownerID, Status: models.StatusOK}, nil
+				return models.Job{ID: jobID, UserID: ownerID, Status: models.StatusCompleted}, nil
 			}
 			return models.Job{}, errors.New("not found")
 		},
@@ -103,7 +103,7 @@ func TestGetJob_NonOwnerGets404(t *testing.T) {
 	svc := &mockJobService{
 		getFunc: func(_ context.Context, id string, userID string) (models.Job, error) {
 			if id == jobID && userID == ownerID {
-				return models.Job{ID: jobID, UserID: ownerID, Status: models.StatusOK}, nil
+				return models.Job{ID: jobID, UserID: ownerID, Status: models.StatusCompleted}, nil
 			}
 			// Non-owner gets sql.ErrNoRows equivalent
 			return models.Job{}, errors.New("job not found")

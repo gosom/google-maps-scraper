@@ -5,11 +5,11 @@ CREATE INDEX IF NOT EXISTS idx_jobs_user_status
     ON jobs(user_id, status)
     WHERE deleted_at IS NULL;
 
--- Jobs table: stuck job detection — find 'working' jobs ordered by updated_at
+-- Jobs table: stuck job detection — find 'running' jobs ordered by updated_at
 -- Allows quick identification of stale jobs without scanning the full table.
 CREATE INDEX IF NOT EXISTS idx_jobs_status_updated
     ON jobs(updated_at)
-    WHERE status = 'working';
+    WHERE status = 'running';
 
 -- Jobs table: ordering by creation date (descending) used by SELECT … ORDER BY created_at DESC
 -- The existing idx_jobs_status covers (status, created_at) ASC; this index supports

@@ -12,5 +12,5 @@ WHERE status = 'cancelled';
 
 -- Revert aborting jobs back to working (if they're still in the system)
 UPDATE jobs 
-SET status = 'working', updated_at = NOW() 
+SET status = 'running', updated_at = NOW() 
 WHERE status = 'aborting';

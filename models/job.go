@@ -105,8 +105,8 @@ type JobRepository interface {
 // Common status constants
 const (
 	StatusPending   = "pending"
-	StatusWorking   = "working"
-	StatusOK        = "ok"
+	StatusRunning   = "running"
+	StatusCompleted = "completed"
 	StatusFailed    = "failed"
 	StatusCancelled = "cancelled"
 	StatusAborting  = "aborting"

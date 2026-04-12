@@ -715,7 +715,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 
 				// Stop monitoring if job has completed (any final status)
 				if currentJob.Status == web.StatusAborting || currentJob.Status == web.StatusCancelled ||
-					currentJob.Status == web.StatusOK || currentJob.Status == web.StatusFailed {
+					currentJob.Status == web.StatusCompleted || currentJob.Status == web.StatusFailed {
 					w.logger.Debug("job_final_status_detected", slog.String("job_id", job.ID), slog.String("status", string(currentJob.Status)))
 
 					// Only cancel execution for user-initiated cancellation
@@ -732,7 +732,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		}
 	}()
 
-	job.Status = web.StatusWorking
+	job.Status = web.StatusRunning
 
 	err := w.svc.Update(jobCtx, job)
 	if err != nil {
@@ -1214,7 +1214,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		w.logger.Debug("keeping_cancelled_status", slog.String("job_id", job.ID))
 		// Keep the cancelled status
 	} else if jobSuccess {
-		job.Status = web.StatusOK
+		job.Status = web.StatusCompleted
 		w.logger.Debug("status_set_ok", slog.String("job_id", job.ID))
 
 		// Upload CSV to S3 and save metadata if S3 is configured

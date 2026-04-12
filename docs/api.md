@@ -186,7 +186,7 @@ Returns all jobs for the authenticated user, newest first.
   {
     "ID": "d8d8a24e-...",
     "Name": "Cafes in Berlin Wedding",
-    "Status": "ok",
+    "Status": "completed",
     "source": "api",
     "created_at": "2026-03-23T07:14:57Z",
     "updated_at": "2026-03-23T07:16:02Z",
@@ -386,8 +386,8 @@ Creates a Stripe checkout session to purchase credits.
 | Status | Description |
 |--------|-------------|
 | `pending` | Queued, waiting to start |
-| `working` | Currently scraping |
-| `ok` | Completed successfully |
+| `running` | Currently scraping |
+| `completed` | Completed successfully |
 | `failed` | Failed (check `failure_reason`) |
 | `aborting` | Cancellation in progress |
 | `cancelled` | Cancelled by user |

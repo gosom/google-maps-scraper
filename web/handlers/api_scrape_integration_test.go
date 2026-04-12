@@ -324,7 +324,7 @@ func TestAPIJobs_ScrapeParameterMatrix(t *testing.T) {
 			}
 
 			finalStatus := extractJobStatus(finalJob)
-			if finalStatus != models.StatusOK {
+			if finalStatus != models.StatusCompleted {
 				t.Fatalf("expected final status ok, got %q", finalStatus)
 			}
 
@@ -652,7 +652,7 @@ func (c *apiE2EClient) waitForSuccessfulCompletion(jobID string, maxResults int)
 		}
 
 		switch status {
-		case models.StatusOK:
+		case models.StatusCompleted:
 			return job, resultsCount, nil
 		case models.StatusPending:
 			if pendingStartedAt.IsZero() {
@@ -665,7 +665,7 @@ func (c *apiE2EClient) waitForSuccessfulCompletion(jobID string, maxResults int)
 					c.cfg.pendingTimeout,
 				)
 			}
-		case models.StatusWorking:
+		case models.StatusRunning:
 			if workingStartedAt.IsZero() {
 				workingStartedAt = now
 			}

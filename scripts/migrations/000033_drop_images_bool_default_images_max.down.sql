@@ -8,5 +8,5 @@
 
 UPDATE jobs
 SET data = jsonb_set(data, '{images}', 'true'::jsonb, true)
-WHERE status IN ('pending', 'working')
+WHERE status IN ('pending', 'running')
   AND COALESCE((data->>'images_max')::int, 0) > 0;

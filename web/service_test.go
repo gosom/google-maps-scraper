@@ -83,7 +83,7 @@ func TestService_Delete_RejectsCrossTenantAccess(t *testing.T) {
 				return models.Job{
 					ID:     jobID,
 					UserID: ownerID,
-					Status: models.StatusWorking, // ensures Cancel WOULD fire if not gated
+					Status: models.StatusRunning, // ensures Cancel WOULD fire if not gated
 				}, nil
 			}
 			return models.Job{}, notFoundErr
@@ -124,7 +124,7 @@ func TestService_Delete_OwnerHappyPath(t *testing.T) {
 	repo := &fakeJobRepo{
 		getFn: func(_ context.Context, id, userID string) (models.Job, error) {
 			if id == jobID && userID == ownerID {
-				return models.Job{ID: jobID, UserID: ownerID, Status: models.StatusWorking}, nil
+				return models.Job{ID: jobID, UserID: ownerID, Status: models.StatusRunning}, nil
 			}
 			return models.Job{}, errors.New("not found")
 		},

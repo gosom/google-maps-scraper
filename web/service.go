@@ -74,7 +74,7 @@ func (s *Service) Delete(ctx context.Context, id string, userID string) error {
 	// If job is still running, cancel it first. The Cancel call is also
 	// scoped by userID — belt-and-suspenders, since we already proved
 	// ownership above, but it keeps the repo call uniform.
-	if job.Status == StatusWorking || job.Status == StatusPending {
+	if job.Status == StatusRunning || job.Status == StatusPending {
 		if cancelErr := s.repo.Cancel(ctx, id, userID); cancelErr != nil {
 			// Log the error but continue with deletion — a failed cancel
 			// doesn't block the delete (the worker will see the deleted

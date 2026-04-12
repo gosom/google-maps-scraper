@@ -808,7 +808,7 @@ job, err := h.Deps.App.Get(r.Context(), id, userID)
 - **File**: `postgres/repository.go:174-209`
 - **Category**: Race condition
 - **Description**: `Cancel()` performs a SELECT to check status, then a separate UPDATE. Two concurrent cancel requests can both pass the status check.
-- **Fix**: Use a single atomic `UPDATE ... WHERE status NOT IN ('ok','failed','cancelled') RETURNING status`.
+- **Fix**: Use a single atomic `UPDATE ... WHERE status NOT IN ('completed','failed','cancelled') RETURNING status`.
 
 #### DB-C2: `context.Background()` ignores cancellation and server shutdown
 - **File**: `postgres/fallback_resultwriter.go:39,97`
