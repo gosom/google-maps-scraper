@@ -216,8 +216,8 @@ func (j *PlaceJob) getRaw(ctx context.Context, page scrapemate.BrowserPage) (any
 				continue
 			}
 
-			// Check for valid non-null result
-			// go-rod may return nil for JS null, or empty string
+			// Check for valid non-null result.
+			// JS null may arrive as nil, and empty strings are not useful here.
 			if raw == nil {
 				<-time.After(time.Millisecond * 200)
 				continue

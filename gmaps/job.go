@@ -337,7 +337,7 @@ func scroll(ctx context.Context,
 			return cnt, err
 		}
 
-		// Handle both int and float64 (go-rod returns float64 for numbers)
+		// Handle both int and float64 because browser-evaluated numbers may arrive as either type.
 		var height int
 		switch v := scrollHeight.(type) {
 		case int:

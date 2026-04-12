@@ -188,8 +188,6 @@ touch results.csv && docker run \
   -exit-on-inactivity 3m
 ```
 
-> **Tip:** Use `gosom/google-maps-scraper:latest-rod` for the Rod version with faster container startup.
-
 **Want emails?** Add the `-email` flag.
 
 **Want all reviews (up to ~300)?** Add `--extra-reviews` and use `-json` output.
@@ -246,19 +244,10 @@ Requires Docker installed and running. See the [skill definition](skills/google-
 
 ### Using Docker (Recommended)
 
-Two Docker image variants are available:
-
-| Image | Tag | Browser Engine | Best For |
-|-------|-----|----------------|----------|
-| Playwright (default) | `latest`, `vX.X.X` | Playwright | Most users, better stability |
-| Rod | `latest-rod`, `vX.X.X-rod` | Rod/Chromium | Lightweight, faster startup |
+The published Docker image uses Playwright:
 
 ```bash
-# Playwright version (default)
 docker pull gosom/google-maps-scraper
-
-# Rod version (alternative)
-docker pull gosom/google-maps-scraper:latest-rod
 ```
 
 ### Build from Source
@@ -270,16 +259,11 @@ git clone https://github.com/gosom/google-maps-scraper.git
 cd google-maps-scraper
 go mod download
 
-# Playwright version (default)
 go build
-./google-maps-scraper -input example-queries.txt -results results.csv -exit-on-inactivity 3m
-
-# Rod version (alternative)
-go build -tags rod
 ./google-maps-scraper -input example-queries.txt -results results.csv -exit-on-inactivity 3m
 ```
 
-> First run downloads required browser libraries (Playwright or Chromium depending on version).
+> First run downloads required browser libraries for Playwright.
 
 ---
 
