@@ -50,12 +50,12 @@ type JobData struct {
 
 // Job represents a scraping job
 type Job struct {
-	ID            string
-	UserID        string
-	Name          string
-	Status        string
-	Data          JobData
-	Date          time.Time
+	ID            string     `json:"id"`
+	UserID        string     `json:"user_id"`
+	Name          string     `json:"name"`
+	Status        string     `json:"status"`
+	Data          JobData    `json:"data"`
+	Date          time.Time  `json:"date"`
 	CreatedAt     *time.Time `json:"created_at,omitempty"`
 	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
 	FailureReason string     `json:"failure_reason,omitempty"`

@@ -83,7 +83,7 @@ curl -X POST https://api.brezel.ai/api/v1/jobs \
   -H "Authorization: Bearer bscraper_YOUR_KEY" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: 5a2c6b7e-3f9d-4f4f-9e1e-1d3b0a8c1c2e" \
-  -d '{ "Name": "Cafes Berlin", ... }'
+  -d '{ "name": "Cafes Berlin", ... }'
 ```
 
 Behavior:
@@ -101,7 +101,7 @@ The header is **opt-in**: requests without it work exactly as before, with no id
 
 ```json
 {
-  "Name": "Coffee shops Berlin",
+  "name": "Coffee shops Berlin",
   "keywords": ["coffee shops Berlin Mitte"],
   "lang": "en",
   "depth": 5,
@@ -115,7 +115,7 @@ The header is **opt-in**: requests without it work exactly as before, with no id
 
 | Field | Type | Required | Min | Max | Default | Description |
 |-------|------|----------|-----|-----|---------|-------------|
-| `Name` | string | yes | 1 | 200 | — | Human-readable job name |
+| `name` | string | yes | 1 | 200 | — | Human-readable job name |
 | `keywords` | string[] | yes | 1 item | 5 items | — | Search terms (each ≤200 bytes) |
 | `lang` | string | yes | 2 | 2 | — | Language code (ISO 639-1, see allowlist below) |
 | `depth` | int | no | 1 | **20** | 5 | Search scroll depth (per-job) |
@@ -161,7 +161,7 @@ curl -X POST https://api.brezel.ai/api/v1/jobs \
   -H "Authorization: Bearer bscraper_YOUR_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "Name": "Cafes in Berlin Wedding",
+    "name": "Cafes in Berlin Wedding",
     "keywords": ["Cafe Berlin Wedding"],
     "lang": "en",
     "depth": 5,
@@ -184,13 +184,13 @@ Returns all jobs for the authenticated user, newest first.
 ```json
 [
   {
-    "ID": "d8d8a24e-...",
-    "Name": "Cafes in Berlin Wedding",
-    "Status": "completed",
+    "id": "d8d8a24e-...",
+    "name": "Cafes in Berlin Wedding",
+    "status": "completed",
     "source": "api",
     "created_at": "2026-03-23T07:14:57Z",
     "updated_at": "2026-03-23T07:16:02Z",
-    "Data": { ... }
+    "data": { ... }
   }
 ]
 ```
