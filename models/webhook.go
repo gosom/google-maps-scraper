@@ -19,7 +19,7 @@ type WebhookConfig struct {
 	UserID          string `json:"user_id"`
 	Name            string `json:"name"`
 	URL             string `json:"url"`
-	EncryptedSecret string `json:"encrypted_secret"` // AES-GCM encrypted signing secret
+	EncryptedSecret string `json:"-"` // AES-GCM encrypted; never exposed in API responses
 	// SECURITY: delivery must connect to resolved_ip, not re-resolve DNS (TOCTOU/DNS rebinding prevention)
 	ResolvedIP *net.IP    `json:"-"` // Internal; never exposed in API responses
 	VerifiedAt *time.Time `json:"verified_at,omitempty"`
