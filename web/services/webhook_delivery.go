@@ -5,22 +5,21 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"math"
 	"math/rand/v2"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/gosom/google-maps-scraper/internal/crypto/aesutil"
 	"github.com/gosom/google-maps-scraper/models"
-	"github.com/gosom/google-maps-scraper/pkg/crypto/aesutil"
+	webutils "github.com/gosom/google-maps-scraper/web/utils"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -57,7 +56,7 @@ func (w *WebhookDeliveryWorker) Run(ctx context.Context) error {
 	w.logger.Info("webhook_delivery_worker_started")
 	defer w.logger.Info("webhook_delivery_worker_stopped")
 
-	timer := time.NewTimer(w.pollInterval)
+	timer := time.NewTimer(0)
 	defer timer.Stop()
 
 	for {
@@ -156,7 +155,12 @@ func (w *WebhookDeliveryWorker) deliverOne(ctx context.Context, delivery *models
 		Status:      job.Status,
 		ResultCount: job.ResultCount,
 		CreatedAt:   job.Date,
-		CompletedAt: time.Now().UTC(),
+		CompletedAt: func() time.Time {
+			if job.UpdatedAt != nil {
+				return *job.UpdatedAt
+			}
+			return time.Now().UTC()
+		}(),
 	}
 
 	body, err := json.Marshal(event)
@@ -172,7 +176,13 @@ func (w *WebhookDeliveryWorker) deliverOne(ctx context.Context, delivery *models
 	signature := "sha256=" + hex.EncodeToString(mac.Sum(nil))
 
 	// 7. Generate delivery ID and timestamp.
-	deliveryID := uuid.Must(uuid.NewV7()).String()
+	deliveryUUID, err := uuid.NewV7()
+	if err != nil {
+		log.Error("webhook_delivery_uuid_failed", slog.Any("error", err))
+		w.handleRetry(ctx, delivery, 0, log)
+		return
+	}
+	deliveryID := deliveryUUID.String()
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 
 	// 8. Ensure resolved IP is available (DNS rebinding prevention).
@@ -203,8 +213,8 @@ func (w *WebhookDeliveryWorker) deliverOne(ctx context.Context, delivery *models
 	req.Header.Set("X-Webhook-ID", deliveryID)
 	req.Header.Set("X-Webhook-Timestamp", timestamp)
 
-	// 11. Create IP-pinned HTTP client (inline to avoid import cycle with handlers).
-	client := newIPPinnedClient(config.ResolvedIP.String(), parsedURL.Hostname())
+	// 11. Create IP-pinned HTTP client.
+	client := webutils.NewIPPinnedClient(config.ResolvedIP.String(), parsedURL.Hostname())
 
 	sendCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -298,40 +308,5 @@ func eventTypeFromStatus(status string) string {
 		return models.EventTypeJobCancelled
 	default:
 		return "job." + status
-	}
-}
-
-// newIPPinnedClient returns an *http.Client that forces all connections to the
-// given resolvedIP while preserving the original Host header for TLS/SNI.
-// This prevents DNS rebinding attacks by ensuring the HTTP client connects only
-// to the IP that was validated at registration time.
-// Redirects are blocked to prevent SSRF via 3xx to internal IPs.
-//
-// This mirrors handlers.NewWebhookHTTPClient but lives here to avoid an import
-// cycle between web/services and web/handlers.
-func newIPPinnedClient(resolvedIP string, originalHost string) *http.Client {
-	dialer := &net.Dialer{
-		Timeout: 10 * time.Second,
-	}
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			_, port, err := net.SplitHostPort(addr)
-			if err != nil {
-				port = "443"
-			}
-			pinnedAddr := net.JoinHostPort(resolvedIP, port)
-			return dialer.DialContext(ctx, network, pinnedAddr)
-		},
-		TLSHandshakeTimeout: 10 * time.Second,
-		TLSClientConfig: &tls.Config{
-			ServerName: originalHost,
-		},
-	}
-	return &http.Client{
-		Transport: transport,
-		Timeout:   30 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
 	}
 }

@@ -96,9 +96,6 @@ type JobWebhookDeliveryRepository interface {
 	// by setting their status to delivering within a transaction.
 	ListPendingGlobal(ctx context.Context, limit int) ([]*JobWebhookDelivery, error)
 
-	// MarkDelivering sets status to delivering and increments attempt count.
-	MarkDelivering(ctx context.Context, jobID, webhookConfigID string) error
-
 	// MarkDelivered sets delivered_at and status to delivered.
 	MarkDelivered(ctx context.Context, jobID, webhookConfigID string) error
 

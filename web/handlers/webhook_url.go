@@ -1,14 +1,11 @@
 package handlers
 
 import (
-	"context"
-	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	webutils "github.com/gosom/google-maps-scraper/web/utils"
 )
@@ -49,28 +46,5 @@ func ValidateWebhookURL(rawURL string) (net.IP, error) {
 // to the IP that was validated at registration time.
 // Redirects are blocked to prevent SSRF via 3xx to internal IPs.
 func NewWebhookHTTPClient(resolvedIP string, originalHost string) *http.Client {
-	dialer := &net.Dialer{
-		Timeout: 10 * time.Second,
-	}
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			_, port, err := net.SplitHostPort(addr)
-			if err != nil {
-				port = "443"
-			}
-			pinnedAddr := net.JoinHostPort(resolvedIP, port)
-			return dialer.DialContext(ctx, network, pinnedAddr)
-		},
-		TLSHandshakeTimeout: 10 * time.Second,
-		TLSClientConfig: &tls.Config{
-			ServerName: originalHost,
-		},
-	}
-	return &http.Client{
-		Transport: transport,
-		Timeout:   30 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	return webutils.NewIPPinnedClient(resolvedIP, originalHost)
 }

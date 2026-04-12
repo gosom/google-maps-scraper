@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	"github.com/gosom/google-maps-scraper/internal/crypto/aesutil"
 	"github.com/gosom/google-maps-scraper/models"
-	"github.com/gosom/google-maps-scraper/pkg/crypto/aesutil"
 	"github.com/gosom/google-maps-scraper/web/auth"
 )
 

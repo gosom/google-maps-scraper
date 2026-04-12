@@ -21,8 +21,8 @@ import (
 	"github.com/gosom/google-maps-scraper/deduper"
 	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/google-maps-scraper/gmaps"
+	"github.com/gosom/google-maps-scraper/internal/crypto/aesutil"
 	"github.com/gosom/google-maps-scraper/models"
-	"github.com/gosom/google-maps-scraper/pkg/crypto/aesutil"
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/proxy"
 	"github.com/gosom/google-maps-scraper/runner"
@@ -482,7 +482,7 @@ func (w *webrunner) Run(ctx context.Context) error {
 					webhookKEK,
 					w.logger,
 				)
-				if err := worker.Run(ctx); err != nil && err != context.Canceled {
+				if err := worker.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 					w.logger.Error("webhook_delivery_worker_failed", slog.Any("error", err))
 				}
 			}()
