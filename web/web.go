@@ -17,6 +17,7 @@ import (
 	"github.com/gosom/google-maps-scraper/billing"
 	"github.com/gosom/google-maps-scraper/config"
 	"github.com/gosom/google-maps-scraper/models"
+	"github.com/gosom/google-maps-scraper/pkg/crypto/aesutil"
 	"github.com/gosom/google-maps-scraper/pkg/encryption"
 	"github.com/gosom/google-maps-scraper/pkg/googlesheets"
 	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
@@ -139,6 +140,7 @@ func New(cfg ServerConfig) (*Server, error) {
 		WebhookConfigRepo:   cfg.WebhookConfigRepo,
 		WebhookDeliveryRepo: cfg.WebhookDeliveryRepo,
 		ServerSecret:        cfg.ServerSecret,
+		WebhookKEK:          aesutil.DeriveKey(cfg.ServerSecret, "webhook-signing-key-encryption"),
 		PricingRuleRepo:     postgres.NewPricingRuleRepository(ans.db),
 		ResultsSvc:          webservices.NewResultsService(ans.db),
 		Encryptor:           enc,

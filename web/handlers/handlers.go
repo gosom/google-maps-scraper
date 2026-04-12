@@ -31,6 +31,7 @@ type Dependencies struct {
 	WebhookDeliveryRepo models.JobWebhookDeliveryRepository // nil if webhook delivery not configured
 	PricingRuleRepo     models.PricingRuleRepository        // nil-safe; estimation falls back to defaults
 	ServerSecret        []byte                              // HMAC secret for GenerateAPIKey
+	WebhookKEK          [32]byte                            // AES-GCM key-encryption-key for webhook signing secrets
 	ResultsSvc          ResultsService
 	Encryptor           *encryption.Encryptor // nil means encryption disabled
 	IntegrationRepo     models.IntegrationRepository

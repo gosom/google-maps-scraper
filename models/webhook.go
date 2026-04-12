@@ -15,13 +15,13 @@ var (
 
 // WebhookConfig represents a user-level webhook endpoint configuration.
 type WebhookConfig struct {
-	ID         string `json:"id"`
-	UserID     string `json:"user_id"`
-	Name       string `json:"name"`
-	URL        string `json:"url"`
-	SecretHash string `json:"secret_hash"` // HMAC-SHA256 hash; plaintext never stored
+	ID              string `json:"id"`
+	UserID          string `json:"user_id"`
+	Name            string `json:"name"`
+	URL             string `json:"url"`
+	EncryptedSecret string `json:"encrypted_secret"` // AES-GCM encrypted signing secret
 	// SECURITY: delivery must connect to resolved_ip, not re-resolve DNS (TOCTOU/DNS rebinding prevention)
-	ResolvedIP *net.IP    `json:"resolved_ip,omitempty"`
+	ResolvedIP *net.IP    `json:"-"` // Internal; never exposed in API responses
 	VerifiedAt *time.Time `json:"verified_at,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
 	UpdatedAt  time.Time  `json:"updated_at"`

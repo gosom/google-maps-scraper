@@ -45,9 +45,9 @@ func (r *jobWebhookDeliveryRepository) ListPendingByJobID(ctx context.Context, j
 	const q = `
 		SELECT job_id, webhook_config_id, attempts, max_attempts, last_attempt_at, next_retry_at, delivered_at, status
 		FROM job_webhook_deliveries
-		WHERE job_id = $1 AND delivered_at IS NULL AND status != $2`
+		WHERE job_id = $1 AND status = $2`
 
-	rows, err := r.db.QueryContext(ctx, q, jobID, models.DeliveryStatusFailed)
+	rows, err := r.db.QueryContext(ctx, q, jobID, models.DeliveryStatusPending)
 	return r.scanMany(rows, err)
 }
 
@@ -55,7 +55,7 @@ func (r *jobWebhookDeliveryRepository) MarkDelivering(ctx context.Context, jobID
 	const q = `
 		UPDATE job_webhook_deliveries
 		SET status = $1, attempts = attempts + 1, last_attempt_at = $2
-		WHERE job_id = $3 AND webhook_config_id = $4`
+		WHERE job_id = $3 AND webhook_config_id = $4 AND status = 'pending'`
 
 	res, err := r.db.ExecContext(ctx, q, models.DeliveryStatusDelivering, time.Now().UTC(), jobID, webhookConfigID)
 	if err != nil {

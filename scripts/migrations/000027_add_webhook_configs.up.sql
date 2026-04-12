@@ -11,8 +11,8 @@ CREATE TABLE IF NOT EXISTS webhook_configs (
   -- Target URL (HTTPS enforced at application layer)
   url TEXT NOT NULL,
 
-  -- HMAC-SHA256 hash of the signing secret (plaintext shown once at creation)
-  secret_hash TEXT NOT NULL,
+  -- AES-GCM encrypted signing secret (plaintext shown once at creation)
+  encrypted_secret TEXT NOT NULL,
 
   -- SECURITY: delivery must connect to resolved_ip, not re-resolve DNS (TOCTOU/DNS rebinding prevention)
   resolved_ip INET,

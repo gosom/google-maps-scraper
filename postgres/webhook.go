@@ -23,7 +23,7 @@ func NewWebhookConfigRepository(db *sql.DB) models.WebhookConfigRepository {
 func (r *webhookConfigRepository) Create(ctx context.Context, cfg *models.WebhookConfig) error {
 	const q = `
 		INSERT INTO webhook_configs (
-			id, user_id, name, url, secret_hash, resolved_ip,
+			id, user_id, name, url, encrypted_secret, resolved_ip,
 			verified_at, created_at, updated_at, revoked_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
 
@@ -42,7 +42,7 @@ func (r *webhookConfigRepository) Create(ctx context.Context, cfg *models.Webhoo
 	}
 
 	_, err := r.db.ExecContext(ctx, q,
-		cfg.ID, cfg.UserID, cfg.Name, cfg.URL, cfg.SecretHash,
+		cfg.ID, cfg.UserID, cfg.Name, cfg.URL, cfg.EncryptedSecret,
 		resolvedIP, cfg.VerifiedAt, cfg.CreatedAt, cfg.UpdatedAt, cfg.RevokedAt,
 	)
 	return err
@@ -50,7 +50,7 @@ func (r *webhookConfigRepository) Create(ctx context.Context, cfg *models.Webhoo
 
 func (r *webhookConfigRepository) GetByID(ctx context.Context, id string) (*models.WebhookConfig, error) {
 	const q = `
-		SELECT id, user_id, name, url, secret_hash, resolved_ip,
+		SELECT id, user_id, name, url, encrypted_secret, resolved_ip,
 		       verified_at, created_at, updated_at, revoked_at
 		FROM webhook_configs
 		WHERE id = $1`
@@ -134,7 +134,7 @@ func (r *webhookConfigRepository) scanOne(row *sql.Row) (*models.WebhookConfig, 
 	var revokedAt sql.NullTime
 
 	err := row.Scan(
-		&cfg.ID, &cfg.UserID, &cfg.Name, &cfg.URL, &cfg.SecretHash,
+		&cfg.ID, &cfg.UserID, &cfg.Name, &cfg.URL, &cfg.EncryptedSecret,
 		&resolvedIP, &verifiedAt, &cfg.CreatedAt, &cfg.UpdatedAt, &revokedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -147,7 +147,7 @@ func (r *webhookConfigRepository) scanOne(row *sql.Row) (*models.WebhookConfig, 
 	return &cfg, nil
 }
 
-// scanManyList scans rows without secret_hash (defense in depth for list queries).
+// scanManyList scans rows without the encrypted secret (defense in depth for list queries).
 func (r *webhookConfigRepository) scanManyList(rows *sql.Rows, queryErr error) ([]*models.WebhookConfig, error) {
 	if queryErr != nil {
 		return nil, queryErr

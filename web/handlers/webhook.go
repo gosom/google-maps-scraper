@@ -1,9 +1,7 @@
 package handlers
 
 import (
-	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"log/slog"
@@ -12,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/gosom/google-maps-scraper/models"
+	"github.com/gosom/google-maps-scraper/pkg/crypto/aesutil"
 	"github.com/gosom/google-maps-scraper/web/auth"
 )
 
@@ -173,17 +172,21 @@ func (h *WebhookHandlers) CreateWebhook(w http.ResponseWriter, r *http.Request) 
 	}
 	plaintextSecret := hex.EncodeToString(secretBytes)
 
-	mac := hmac.New(sha256.New, h.Deps.ServerSecret)
-	mac.Write([]byte(plaintextSecret))
-	secretHash := hex.EncodeToString(mac.Sum(nil))
+	encrypted, err := aesutil.Encrypt(h.Deps.WebhookKEK, []byte(plaintextSecret))
+	if err != nil {
+		internalError(w, h.Deps.Logger, err, "failed to encrypt signing secret",
+			slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
+		return
+	}
+	encryptedHex := hex.EncodeToString(encrypted)
 
 	cfg := &models.WebhookConfig{
-		ID:         id,
-		UserID:     userID,
-		Name:       req.Name,
-		URL:        req.URL,
-		SecretHash: secretHash,
-		ResolvedIP: &resolvedIP,
+		ID:              id,
+		UserID:          userID,
+		Name:            req.Name,
+		URL:             req.URL,
+		EncryptedSecret: encryptedHex,
+		ResolvedIP:      &resolvedIP,
 	}
 
 	if err := h.Deps.WebhookConfigRepo.Create(r.Context(), cfg); err != nil {
