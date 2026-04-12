@@ -82,6 +82,10 @@ func (m *mockWebhookConfigRepo) ListActiveByUserID(_ context.Context, userID str
 	return result, nil
 }
 
+func (m *mockWebhookConfigRepo) ListActiveWithSecretByUserID(_ context.Context, userID string) ([]*models.WebhookConfig, error) {
+	return m.ListActiveByUserID(context.Background(), userID)
+}
+
 func (m *mockWebhookConfigRepo) Update(_ context.Context, cfg *models.WebhookConfig) error {
 	return m.updateErr
 }

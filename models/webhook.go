@@ -72,6 +72,9 @@ type WebhookConfigRepository interface {
 
 	// Revoke soft-deletes a webhook config owned by the given user.
 	Revoke(ctx context.Context, id string, ownerUserID string) error
+
+	// ListActiveWithSecretByUserID retrieves active configs including the encrypted secret.
+	ListActiveWithSecretByUserID(ctx context.Context, userID string) ([]*WebhookConfig, error)
 }
 
 // JobWebhookDeliveryRepository manages webhook delivery tracking.
@@ -79,11 +82,19 @@ type JobWebhookDeliveryRepository interface {
 	// Create inserts a new delivery record (typically at job creation).
 	Create(ctx context.Context, delivery *JobWebhookDelivery) error
 
+	// CreateBatch inserts multiple delivery records in a single query.
+	// Uses ON CONFLICT DO NOTHING for idempotency.
+	CreateBatch(ctx context.Context, deliveries []*JobWebhookDelivery) error
+
 	// ListByJobID retrieves all deliveries for a job.
 	ListByJobID(ctx context.Context, jobID string) ([]*JobWebhookDelivery, error)
 
 	// ListPendingByJobID retrieves undelivered entries for a job.
 	ListPendingByJobID(ctx context.Context, jobID string) ([]*JobWebhookDelivery, error)
+
+	// ListPendingGlobal atomically claims up to limit pending deliveries
+	// by setting their status to delivering within a transaction.
+	ListPendingGlobal(ctx context.Context, limit int) ([]*JobWebhookDelivery, error)
 
 	// MarkDelivering sets status to delivering and increments attempt count.
 	MarkDelivering(ctx context.Context, jobID, webhookConfigID string) error
@@ -93,4 +104,7 @@ type JobWebhookDeliveryRepository interface {
 
 	// MarkFailed sets status to failed after exhausting retries.
 	MarkFailed(ctx context.Context, jobID, webhookConfigID string) error
+
+	// SetNextRetry resets a delivery to pending with a scheduled retry time.
+	SetNextRetry(ctx context.Context, jobID, webhookConfigID string, nextRetryAt time.Time) error
 }
