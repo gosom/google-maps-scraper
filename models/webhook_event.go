@@ -18,5 +18,5 @@ type WebhookEvent struct {
 	Status      string    `json:"status"`
 	ResultCount int       `json:"result_count"`
 	CreatedAt   time.Time `json:"created_at"`
-	CompletedAt time.Time `json:"completed_at"`
+	EndedAt     time.Time `json:"ended_at"`
 }

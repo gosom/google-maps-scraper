@@ -155,7 +155,7 @@ func (w *WebhookDeliveryWorker) deliverOne(ctx context.Context, delivery *models
 		Status:      job.Status,
 		ResultCount: job.ResultCount,
 		CreatedAt:   job.Date,
-		CompletedAt: func() time.Time {
+		EndedAt: func() time.Time {
 			if job.UpdatedAt != nil {
 				return *job.UpdatedAt
 			}
@@ -266,8 +266,9 @@ func (w *WebhookDeliveryWorker) handleRetry(ctx context.Context, delivery *model
 		return
 	}
 
-	// Exponential backoff: 5^attempt seconds with jitter [0.5, 1.5).
-	backoff := time.Duration(math.Pow(5, float64(delivery.Attempts))) * time.Second
+	// Exponential backoff: 2^attempt seconds with jitter [0.5, 1.5).
+	// math/rand is fine here — jitter is not security-sensitive.
+	backoff := time.Duration(math.Pow(2, float64(delivery.Attempts))) * time.Second
 	jitter := 0.5 + rand.Float64()
 	backoff = time.Duration(float64(backoff) * jitter)
 

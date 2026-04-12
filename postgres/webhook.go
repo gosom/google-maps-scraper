@@ -48,6 +48,8 @@ func (r *webhookConfigRepository) Create(ctx context.Context, cfg *models.Webhoo
 	return err
 }
 
+// GetByID returns a webhook config including its encrypted_secret.
+// Only call after verifying ownership (the delivery worker needs the secret to sign payloads).
 func (r *webhookConfigRepository) GetByID(ctx context.Context, id string) (*models.WebhookConfig, error) {
 	const q = `
 		SELECT id, user_id, name, url, encrypted_secret, resolved_ip,

@@ -258,6 +258,10 @@ func (h *WebhookHandlers) UpdateWebhook(w http.ResponseWriter, r *http.Request) 
 
 	urlChanged := false
 	if req.Name != "" {
+		if len(req.Name) > 100 {
+			renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: "name must be 100 characters or fewer"})
+			return
+		}
 		existing.Name = req.Name
 	}
 	if req.URL != "" {
