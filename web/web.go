@@ -258,8 +258,7 @@ func New(cfg ServerConfig) (*Server, error) {
 	// header pass through unchanged. See web/middleware/idempotency.go
 	// for the design rationale and the concurrency test that pins it.
 	jobIdempotency := webmiddleware.Idempotency(postgres.NewIdempotencyRepository(ans.db), ans.logger)
-	apiRouter.HandleFunc("/jobs", hg.API.GetJobs).Methods(http.MethodGet)
-	apiRouter.HandleFunc("/jobs/user", hg.API.GetUserJobs).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/jobs", hg.API.ListJobs).Methods(http.MethodGet)
 	apiRouter.Handle("/jobs", jobIdempotency(jobCreateLimiter(http.HandlerFunc(hg.API.Scrape)))).Methods(http.MethodPost)
 	apiRouter.HandleFunc("/jobs/{id}", hg.API.GetJob).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/{id}", hg.API.DeleteJob).Methods(http.MethodDelete)

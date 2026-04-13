@@ -232,28 +232,6 @@ func (h *APIHandlers) createJob(ctx context.Context, job *models.Job, w http.Res
 	return nil
 }
 
-func (h *APIHandlers) GetJobs(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
-	}
-	if h.Deps.Auth == nil {
-		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "Authentication not configured"})
-		return
-	}
-	userID, err := auth.GetUserID(r.Context())
-	if err != nil {
-		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
-		return
-	}
-	jobs, err := h.Deps.App.All(r.Context(), userID)
-	if err != nil {
-		internalError(w, h.Deps.Logger, err, "internal server error",
-			slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
-		return
-	}
-	renderJSON(w, http.StatusOK, jobs)
-}
-
 // parseJobID extracts and validates the {id} path variable from a
 // gorilla/mux request. Returns the canonical lowercase UUID string on
 // success or an error suitable for rendering as a 422 response.
@@ -286,7 +264,7 @@ func parseJobID(r *http.Request) (string, error) {
 	return id.String(), nil
 }
 
-// allowedJobSorts is the closed allowlist of columns the GetUserJobs
+// allowedJobSorts is the closed allowlist of columns the ListJobs
 // endpoint will sort by. Anything outside this set is rejected with 400
 // — this prevents an attacker from sniffing column names by passing
 // `?sort=password` and observing whether the request succeeds.
@@ -311,7 +289,7 @@ var allowedJobSorts = map[string]struct{}{
 // almost certainly an attack or a buggy client.
 const maxJobSearchLen = 200
 
-func (h *APIHandlers) GetUserJobs(w http.ResponseWriter, r *http.Request) {
+func (h *APIHandlers) ListJobs(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
 		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
 	}

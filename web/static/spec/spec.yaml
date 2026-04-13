@@ -152,6 +152,34 @@ components:
           description: Unique job identifier
           example: "6f0c1af8-3c4e-4742-84bb-590938ae8930"
 
+    PaginatedJobsResponse:
+      type: object
+      properties:
+        jobs:
+          type: array
+          items:
+            $ref: '#/components/schemas/Job'
+        total:
+          type: integer
+          description: Total number of jobs matching the query
+          example: 42
+        page:
+          type: integer
+          description: Current page number
+          example: 1
+        limit:
+          type: integer
+          description: Number of items per page
+          example: 10
+        has_next:
+          type: boolean
+          description: Whether a next page exists
+          example: true
+        has_prev:
+          type: boolean
+          description: Whether a previous page exists
+          example: false
+
     Job:
       type: object
       properties:
@@ -320,70 +348,74 @@ paths:
                 $ref: '#/components/schemas/ApiError'
 
     get:
-      summary: List all jobs
+      summary: List jobs
       description: |
-        Get a list of all scraping jobs. When authentication is enabled, only returns jobs for the authenticated user.
-        
-        **Authentication**: Optional but recommended for user-specific results.
+        Get a paginated list of scraping jobs for the authenticated user.
+
+        **Authentication Required**: This endpoint requires authentication.
       security:
         - BearerAuth: []
       x-code-samples:
         - lang: curl
           source: |
-            curl -X GET "http://localhost:8080/api/v1/jobs" \
+            curl -X GET "http://localhost:8080/api/v1/jobs?page=1&limit=10&sort=created_at&order=desc" \
               -H "Authorization: Bearer YOUR_JWT_TOKEN"
         - lang: JavaScript
           source: |
-            const response = await fetch('http://localhost:8080/api/v1/jobs', {
+            const response = await fetch('http://localhost:8080/api/v1/jobs?page=1&limit=10', {
               headers: {
                 'Authorization': 'Bearer YOUR_JWT_TOKEN'
               }
             });
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number (1-based)
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+          description: Number of jobs per page
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [created_at, name, status, updated_at]
+            default: created_at
+          description: Field to sort by
+        - name: order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+          description: Sort order
+        - name: search
+          in: query
+          schema:
+            type: string
+            maxLength: 200
+          description: Search filter (max 200 bytes)
       responses:
         '200':
-          description: List of jobs retrieved successfully
+          description: Paginated list of jobs
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Job'
-        '401':
-          description: Unauthorized - invalid token
+                $ref: '#/components/schemas/PaginatedJobsResponse'
+        '400':
+          description: Bad request - invalid pagination or sort parameters
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-        '500':
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-
-  /api/v1/jobs/user:
-    get:
-      summary: List user's jobs
-      description: |
-        Get a list of jobs for the authenticated user only.
-        
-        **Authentication Required**: This endpoint always requires authentication.
-      security:
-        - BearerAuth: []
-      x-code-samples:
-        - lang: curl
-          source: |
-            curl -X GET "http://localhost:8080/api/v1/jobs/user" \
-              -H "Authorization: Bearer YOUR_JWT_TOKEN"
-      responses:
-        '200':
-          description: User's jobs retrieved successfully
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Job'
         '401':
           description: Unauthorized - invalid or missing token
           content:

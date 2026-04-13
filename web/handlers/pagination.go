@@ -25,7 +25,7 @@ const (
 )
 
 // parsePagination decodes ?page= and ?limit= for page-based endpoints
-// (GetUserJobs, GetJobResults). Returns (page, limit, offset, error).
+// (ListJobs, GetJobResults). Returns (page, limit, offset, error).
 //
 // Security guarantees:
 //   - Negative or non-integer page/limit return 400.

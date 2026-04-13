@@ -62,19 +62,19 @@ func TestScrape_RejectsTrailingData(t *testing.T) {
 
 // ───────────────────── Task 3.2: sort allowlist + search cap ─────────────
 
-// TestGetUserJobs_RejectsInvalidSort verifies that the GetUserJobs
+// TestListJobs_RejectsInvalidSort verifies that the ListJobs
 // allowlist rejects unknown sort values with 400. This blocks an
 // attacker from sniffing column names by passing `?sort=password` and
 // observing whether the request succeeds.
-func TestGetUserJobs_RejectsInvalidSort(t *testing.T) {
+func TestListJobs_RejectsInvalidSort(t *testing.T) {
 	t.Parallel()
 
 	h := &APIHandlers{Deps: Dependencies{Auth: &auth.AuthMiddleware{}}}
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/user?sort=password", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs?sort=password", nil)
 	req = withUserID(req, "user-1")
 	rr := httptest.NewRecorder()
 
-	h.GetUserJobs(rr, req)
+	h.ListJobs(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for invalid sort, got %d (body=%s)", rr.Code, rr.Body.String())
@@ -87,38 +87,38 @@ func TestGetUserJobs_RejectsInvalidSort(t *testing.T) {
 	}
 }
 
-// TestGetUserJobs_AcceptsKnownSorts walks every entry in the allowlist
+// TestListJobs_AcceptsKnownSorts walks every entry in the allowlist
 // to make sure the explicit set passes validation. The mockJobService
 // returns an empty page so the handler reaches the 200 OK path; what
 // we're really asserting is "no 400 from the sort allowlist for any
 // known column."
-func TestGetUserJobs_AcceptsKnownSorts(t *testing.T) {
+func TestListJobs_AcceptsKnownSorts(t *testing.T) {
 	t.Parallel()
 
 	h := &APIHandlers{Deps: Dependencies{App: &mockJobService{}, Auth: &auth.AuthMiddleware{}}}
 	for _, sortValue := range []string{"created_at", "name", "status", "updated_at"} {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/user?sort="+sortValue, nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs?sort="+sortValue, nil)
 		req = withUserID(req, "user-1")
 		rr := httptest.NewRecorder()
-		h.GetUserJobs(rr, req)
+		h.ListJobs(rr, req)
 		if rr.Code != http.StatusOK {
 			t.Errorf("sort=%q got %d, want 200: %s", sortValue, rr.Code, rr.Body.String())
 		}
 	}
 }
 
-// TestGetUserJobs_RejectsLongSearch locks the 200-byte search cap.
+// TestListJobs_RejectsLongSearch locks the 200-byte search cap.
 // Without this, a client can DoS the jobs list endpoint by sending a
 // massive search string that forces a full table scan in postgres.
-func TestGetUserJobs_RejectsLongSearch(t *testing.T) {
+func TestListJobs_RejectsLongSearch(t *testing.T) {
 	t.Parallel()
 
 	h := &APIHandlers{Deps: Dependencies{Auth: &auth.AuthMiddleware{}}}
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/user?search="+strings.Repeat("a", 300), nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs?search="+strings.Repeat("a", 300), nil)
 	req = withUserID(req, "user-1")
 	rr := httptest.NewRecorder()
 
-	h.GetUserJobs(rr, req)
+	h.ListJobs(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for over-cap search, got %d (body=%s)", rr.Code, rr.Body.String())
@@ -128,16 +128,16 @@ func TestGetUserJobs_RejectsLongSearch(t *testing.T) {
 	}
 }
 
-// TestGetUserJobs_AcceptsShortSearch verifies the boundary at 200 bytes
+// TestListJobs_AcceptsShortSearch verifies the boundary at 200 bytes
 // (inclusive) — exactly 200 must pass, 201 must fail.
-func TestGetUserJobs_AcceptsShortSearch(t *testing.T) {
+func TestListJobs_AcceptsShortSearch(t *testing.T) {
 	t.Parallel()
 
 	h := &APIHandlers{Deps: Dependencies{App: &mockJobService{}, Auth: &auth.AuthMiddleware{}}}
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/user?search="+strings.Repeat("a", 200), nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs?search="+strings.Repeat("a", 200), nil)
 	req = withUserID(req, "user-1")
 	rr := httptest.NewRecorder()
-	h.GetUserJobs(rr, req)
+	h.ListJobs(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Errorf("search=200a expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
@@ -171,7 +171,7 @@ func TestGetJobResults_RejectsOverflowPage(t *testing.T) {
 
 // TestGetJobResults_LimitCappedAt100 locks the cap unification — the
 // audit found this endpoint previously allowed limit ≤ 1000, while
-// GetUserJobs allowed only ≤ 100. The 10x divergence let an attacker
+// ListJobs allowed only ≤ 100. The 10x divergence let an attacker
 // pull 10x more rows per request from results endpoints. Unified at 100.
 func TestGetJobResults_LimitCappedAt100(t *testing.T) {
 	t.Parallel()
@@ -230,33 +230,33 @@ func TestGetUserResults_RejectsOffsetOverflow(t *testing.T) {
 	}
 }
 
-// TestGetUserJobs_RejectsZeroPage covers the lower bound — page must
+// TestListJobs_RejectsZeroPage covers the lower bound — page must
 // be a positive integer.
-func TestGetUserJobs_RejectsZeroPage(t *testing.T) {
+func TestListJobs_RejectsZeroPage(t *testing.T) {
 	t.Parallel()
 
 	h := &APIHandlers{Deps: Dependencies{App: &mockJobService{}, Auth: &auth.AuthMiddleware{}}}
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/user?page=0", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs?page=0", nil)
 	req = withUserID(req, "user-1")
 	rr := httptest.NewRecorder()
 
-	h.GetUserJobs(rr, req)
+	h.ListJobs(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for page=0, got %d (body=%s)", rr.Code, rr.Body.String())
 	}
 }
 
-// TestGetUserJobs_RejectsNegativeLimit covers the negative-limit path.
-func TestGetUserJobs_RejectsNegativeLimit(t *testing.T) {
+// TestListJobs_RejectsNegativeLimit covers the negative-limit path.
+func TestListJobs_RejectsNegativeLimit(t *testing.T) {
 	t.Parallel()
 
 	h := &APIHandlers{Deps: Dependencies{App: &mockJobService{}, Auth: &auth.AuthMiddleware{}}}
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/user?limit=-5", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs?limit=-5", nil)
 	req = withUserID(req, "user-1")
 	rr := httptest.NewRecorder()
 
-	h.GetUserJobs(rr, req)
+	h.ListJobs(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for negative limit, got %d (body=%s)", rr.Code, rr.Body.String())
