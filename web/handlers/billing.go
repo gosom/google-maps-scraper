@@ -122,7 +122,7 @@ func (h *BillingHandlers) Reconcile(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: "session not found or does not belong to user"})
 		return
 	}
-	renderJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *BillingHandlers) HandleStripeWebhook(w http.ResponseWriter, r *http.Request) {

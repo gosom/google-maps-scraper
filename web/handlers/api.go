@@ -44,6 +44,13 @@ type apiScrapeRequest struct {
 	models.JobData
 }
 
+// jobEstimateResponse is the typed response for EstimateJobCost.
+type jobEstimateResponse struct {
+	Estimate             *webservices.CostEstimate `json:"estimate"`
+	CurrentCreditBalance float64                   `json:"current_credit_balance"`
+	SufficientBalance    bool                      `json:"sufficient_balance"`
+}
+
 // apiScrape mirrors Server.apiScrape behavior
 func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
@@ -183,13 +190,6 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 	renderJSON(w, http.StatusCreated, models.ApiScrapeResponse{ID: newJob.ID})
 }
 
-// concurrentLimitResponse is the 429 body when a user has hit their job cap.
-type concurrentLimitResponse struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Limit   int    `json:"limit"`
-}
-
 // createJob inserts a job, enforcing the concurrent job limit and credit
 // balance check when the DB is available. The balance check inside the
 // transaction (via opts) is the authoritative check that prevents TOCTOU races.
@@ -202,10 +202,9 @@ func (h *APIHandlers) createJob(ctx context.Context, job *models.Job, w http.Res
 			var limitErr webservices.ErrConcurrentJobLimitReached
 			if errors.As(err, &limitErr) {
 				w.Header().Set("Retry-After", "60")
-				renderJSON(w, http.StatusTooManyRequests, concurrentLimitResponse{
+				renderJSON(w, http.StatusTooManyRequests, models.APIError{
 					Code:    http.StatusTooManyRequests,
-					Message: "concurrent job limit reached",
-					Limit:   limitErr.Limit,
+					Message: fmt.Sprintf("concurrent job limit reached (%d active jobs)", limitErr.Limit),
 				})
 				return err
 			}
@@ -437,7 +436,7 @@ func (h *APIHandlers) CancelJob(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: http.StatusText(http.StatusNotFound)})
 		return
 	}
-	renderJSON(w, http.StatusOK, map[string]any{"message": "Job cancellation initiated", "job_id": jobID})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *APIHandlers) GetJobResults(w http.ResponseWriter, r *http.Request) {
@@ -721,10 +720,10 @@ func (h *APIHandlers) EstimateJobCost(w http.ResponseWriter, r *http.Request) {
 	balanceMicro := int64(math.Round(balanceFloat * models.MicroUnit))
 
 	// Build response with estimate and balance info
-	response := map[string]interface{}{
-		"estimate":               estimate,
-		"current_credit_balance": balanceFloat,
-		"sufficient_balance":     balanceMicro >= estimate.TotalMicro(),
+	response := jobEstimateResponse{
+		Estimate:             estimate,
+		CurrentCreditBalance: balanceFloat,
+		SufficientBalance:    balanceMicro >= estimate.TotalMicro(),
 	}
 
 	renderJSON(w, http.StatusOK, response)

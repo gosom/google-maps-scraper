@@ -404,8 +404,7 @@ func concurrentLimitJSON(w http.ResponseWriter, limit int) {
 	w.WriteHeader(http.StatusTooManyRequests)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"code":    429,
-		"message": "concurrent job limit reached",
-		"limit":   limit,
+		"message": fmt.Sprintf("concurrent job limit reached (%d active jobs)", limit),
 	})
 }
 
