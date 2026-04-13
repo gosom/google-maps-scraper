@@ -98,6 +98,8 @@ func SecurityHeaders(next http.Handler) http.Handler {
 				"img-src 'self' data: cdn.redoc.ly; "+
 				"font-src 'self' fonts.gstatic.com; "+
 				"connect-src 'self'")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		next.ServeHTTP(w, r)
 	})
 }
