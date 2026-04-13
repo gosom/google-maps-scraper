@@ -120,6 +120,10 @@ func (w *SynchronizedDualWriter) Run(ctx context.Context, in <-chan scrapemate.R
 				return nil
 			}
 
+			slog.Debug("synchronized_dual_writer_processing_result",
+				slog.String("title", entry.Title),
+			)
+
 			// Write to BOTH destinations atomically
 			inserted, err := w.writeToPostgreSQL(ctx, entry)
 			if err != nil {
@@ -131,6 +135,9 @@ func (w *SynchronizedDualWriter) Run(ctx context.Context, in <-chan scrapemate.R
 			}
 
 			if !inserted {
+				slog.Debug("synchronized_dual_writer_duplicate_skipped",
+					slog.String("title", entry.Title),
+				)
 				continue
 			}
 
@@ -143,6 +150,9 @@ func (w *SynchronizedDualWriter) Run(ctx context.Context, in <-chan scrapemate.R
 			}
 
 			// Both writes succeeded, increment counter
+			slog.Debug("synchronized_dual_writer_result_written",
+				slog.Int("result_number", resultCount+1),
+			)
 			resultCount++
 
 			// Notify exit monitor

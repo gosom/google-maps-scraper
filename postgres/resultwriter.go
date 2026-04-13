@@ -215,6 +215,11 @@ func (r *enhancedResultWriterWithExiter) Run(ctx context.Context, in <-chan scra
 			)
 		}
 
+		slog.Debug("postgres_result_writer_valid_result_received",
+			slog.String("title", entry.Title),
+			slog.String("job_id", r.jobID),
+		)
+
 		buff = append(buff, entry)
 
 		// Process immediately for precise control (batch size = 1)
@@ -222,6 +227,13 @@ func (r *enhancedResultWriterWithExiter) Run(ctx context.Context, in <-chan scra
 			insertedCount, err := r.batchSaveEnhancedWithCount(ctx, buff)
 			if err != nil {
 				return err
+			}
+
+			if insertedCount > 0 {
+				slog.Debug("postgres_result_writer_batch_inserted",
+					slog.Int("inserted", insertedCount),
+					slog.String("job_id", r.jobID),
+				)
 			}
 
 			// Track actually inserted rows in memory and notify exiter
@@ -411,6 +423,11 @@ func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []
 		}
 	}()
 
+	slog.Debug("postgres_enhanced_writer_insert_attempt",
+		slog.Int("count", len(entries)),
+		slog.String("job_id", r.jobID),
+	)
+
 	result, err := tx.ExecContext(dbCtx, q, args...)
 	if err != nil {
 		queryPreview := q
@@ -441,6 +458,11 @@ func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []
 		slog.Error("postgres_enhanced_writer_commit_failed", slog.Any("error", err), slog.String("job_id", r.jobID))
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
+
+	slog.Debug("postgres_enhanced_writer_insert_success",
+		slog.Int("rows_affected", int(rowsAffected)),
+		slog.String("job_id", r.jobID),
+	)
 
 	return nil
 }
@@ -568,6 +590,11 @@ func (r *enhancedResultWriterWithExiter) batchSaveEnhancedWithCount(ctx context.
 		}
 	}()
 
+	slog.Debug("postgres_exiter_writer_insert_attempt",
+		slog.Int("count", len(entries)),
+		slog.String("job_id", r.jobID),
+	)
+
 	result, err := tx.ExecContext(dbCtx, q, args...)
 	if err != nil {
 		slog.Error("postgres_exiter_writer_insert_exec_failed", slog.Any("error", err), slog.String("job_id", r.jobID))
@@ -594,6 +621,11 @@ func (r *enhancedResultWriterWithExiter) batchSaveEnhancedWithCount(ctx context.
 		slog.Error("postgres_exiter_writer_commit_failed", slog.Any("error", err), slog.String("job_id", r.jobID))
 		return 0, fmt.Errorf("failed to commit transaction: %w", err)
 	}
+
+	slog.Debug("postgres_exiter_writer_insert_success",
+		slog.Int("rows_affected", insertedCount),
+		slog.String("job_id", r.jobID),
+	)
 
 	return insertedCount, nil
 }
