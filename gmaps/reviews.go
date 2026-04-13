@@ -198,6 +198,7 @@ const hexMatchPattern = `0x[0-9a-fA-F]+:0x[0-9a-fA-F]+` // Hex format place ID
 // extractPlaceID extracts the place ID from various Google Maps URL formats
 func extractPlaceID(mapURL string) (string, error) {
 	patternsOnce.Do(func() {
+		patterns = make(map[string]*regexp.Regexp)
 		// Try multiple patterns for extracting place ID
 		avail := []string{
 			`!1s([^!]+)`,                             // Standard format: !1s0x...
