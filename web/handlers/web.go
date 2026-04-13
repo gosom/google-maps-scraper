@@ -51,10 +51,6 @@ func (f formData) KeywordsString() string { return strings.Join(f.Keywords, "\n"
 // The DB probe runs SELECT 1 with a 3-second timeout rather than a bare Ping()
 // so it validates that the connection can actually execute a round-trip query.
 func (h *WebHandlers) HealthCheck(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
-	}
-
 	if h.Deps.DB == nil {
 		renderJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"status": "unhealthy",
@@ -69,7 +65,7 @@ func (h *WebHandlers) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	var one int
 	if err := h.Deps.DB.QueryRowContext(ctx, "SELECT 1").Scan(&one); err != nil {
 		if h.Deps.Logger != nil {
-			h.Deps.Logger.Error("health_db_probe_failed", slog.Any("error", err))
+			h.Deps.Logger.Warn("health_db_probe_failed", slog.Any("error", err))
 		}
 		renderJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"status": "unhealthy",

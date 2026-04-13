@@ -179,7 +179,12 @@ func RequestLogger(log *slog.Logger) func(http.Handler) http.Handler {
 func InjectLogger(log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			child := log.With(slog.String("request_id", GetRequestID(r.Context())))
+			attrs := []any{slog.String("request_id", GetRequestID(r.Context()))}
+			// Add user_id if authenticated (may be empty for public endpoints).
+			if userID, err := auth.GetUserID(r.Context()); err == nil && userID != "" {
+				attrs = append(attrs, slog.String("user_id", userID))
+			}
+			child := log.With(attrs...)
 			ctx := pkglogger.WithContext(r.Context(), child)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})

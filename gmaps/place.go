@@ -109,8 +109,8 @@ func WithPlaceJobImageBudget(budget *atomic.Int64) PlaceJobOptions {
 }
 
 // processExtractedImages converts and integrates extracted image data into the entry
-func (j *PlaceJob) processExtractedImages(entry *Entry, resp *scrapemate.Response) {
-	log := scrapemate.GetLoggerFromContext(context.Background())
+func (j *PlaceJob) processExtractedImages(ctx context.Context, entry *Entry, resp *scrapemate.Response) {
+	log := scrapemate.GetLoggerFromContext(ctx)
 
 	originalImageCount := len(entry.Images)
 	log.Info(fmt.Sprintf("Processing images for %s - original JSON images: %d", entry.Title, originalImageCount))
@@ -203,8 +203,8 @@ func (j *PlaceJob) processExtractedImages(entry *Entry, resp *scrapemate.Respons
 	}
 }
 
-func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, []scrapemate.IJob, error) {
-	log := scrapemate.GetLoggerFromContext(context.Background())
+func (j *PlaceJob) Process(ctx context.Context, resp *scrapemate.Response) (any, []scrapemate.IJob, error) {
+	log := scrapemate.GetLoggerFromContext(ctx)
 
 	defer func() {
 		resp.Document = nil
@@ -256,7 +256,7 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 	entry = parsedEntry
 
 	// Integrate enhanced image data if available
-	j.processExtractedImages(&entry, resp)
+	j.processExtractedImages(ctx, &entry, resp)
 
 	entry.ID = j.ParentID
 
