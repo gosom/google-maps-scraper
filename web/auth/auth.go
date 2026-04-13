@@ -153,7 +153,7 @@ func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
 
 			newUser := postgres.User{ID: userID, Email: email}
 			if err := m.userRepo.Create(r.Context(), &newUser); err != nil {
-				slog.Error("failed to create user record",
+				slog.Error("user_record_creation_failed",
 					slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
 				http.Error(w, "Failed to create user record", http.StatusInternalServerError)
 				return
@@ -214,6 +214,7 @@ func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
 				m.logger.Warn("api_key_auth_rejected",
 					slog.String("reason", err.Error()),
 					slog.String("path", r.URL.Path),
+					slog.String("source_ip", r.RemoteAddr),
 				)
 				writeUnauthorized(w, "invalid or revoked API key")
 				return

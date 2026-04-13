@@ -98,6 +98,17 @@ func New(db *sql.DB, cfg *config.Service, stripeSecretKey string, webhookSigning
 	}
 }
 
+// log returns a context-aware logger. When a request-scoped logger is stored in
+// ctx (via middleware), it is returned so that log lines carry request_id and
+// other per-request attributes. Falls back to the component-level logger for
+// background workers and non-HTTP callers.
+func (s *Service) log(ctx context.Context) *slog.Logger {
+	if l := pkglogger.FromContext(ctx); l != nil {
+		return l
+	}
+	return s.logger
+}
+
 // compactWebhookSecrets removes blanks and duplicates while preserving order.
 // A short ordered slice is the right structure here: the active secret should
 // be tried first, and the expected cardinality during rotation is 1-2 entries.
@@ -357,17 +368,18 @@ func (s *Service) markEventProcessed(ctx context.Context, tx *sql.Tx, eventID, e
 }
 
 func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stripe.Event) (int, error) {
+	log := s.log(ctx)
 	var session stripe.CheckoutSession
 	if err := json.Unmarshal(event.Data.Raw, &session); err != nil {
-		s.logger.Error("failed_to_parse_checkout_session", slog.Any("error", err))
+		log.Error("failed_to_parse_checkout_session", slog.Any("error", err))
 		return 400, fmt.Errorf("failed to parse session: %w", err)
 	}
 
-	s.logger.Info("processing_checkout_session_completed", slog.String("session_id", session.ID))
+	log.Info("processing_checkout_session_completed", slog.String("session_id", session.ID))
 
 	// Verify payment status before processing
 	if session.PaymentStatus != "paid" {
-		s.logger.Info("session_completed_not_paid", slog.String("session_id", session.ID), slog.String("payment_status", string(session.PaymentStatus)))
+		log.Info("session_completed_not_paid", slog.String("session_id", session.ID), slog.String("payment_status", string(session.PaymentStatus)))
 		return 200, nil
 	}
 
@@ -395,29 +407,29 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 	err := s.db.QueryRowContext(ctx, sel, session.ID).Scan(&userID, &credits, &currency)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			s.logger.Error("checkout_completed_missing_db_row",
+			log.Error("checkout_completed_missing_db_row",
 				slog.String("session_id", session.ID),
 				slog.String("event_id", event.ID),
 			)
 			s.metrics.CheckoutMissingRowTotal.Inc()
 			return 200, nil // ack to prevent Stripe retry storm; rely on metric alert
 		}
-		s.logger.Error("database_query_failed", slog.Any("error", err))
+		log.Error("database_query_failed", slog.Any("error", err))
 		return 500, fmt.Errorf("database query failed: %w", err)
 	}
 
 	// The DB CHECK constraint on stripe_payments.credits_purchased > 0 means
 	// these guards should be unreachable, but kept as defense-in-depth.
 	if userID == "" {
-		s.logger.Warn("no_user_id_for_session", slog.String("session_id", session.ID))
+		log.Warn("no_user_id_for_session", slog.String("session_id", session.ID))
 		return 200, nil
 	}
 	if credits <= 0 {
-		s.logger.Warn("invalid_credits_amount", slog.Int("credits", credits), slog.String("session_id", session.ID))
+		log.Warn("invalid_credits_amount", slog.Int("credits", credits), slog.String("session_id", session.ID))
 		return 200, nil
 	}
 	if currency != "USD" {
-		s.logger.Warn("unsupported_currency", slog.String("currency", currency), slog.String("session_id", session.ID))
+		log.Warn("unsupported_currency", slog.String("currency", currency), slog.String("session_id", session.ID))
 		return 200, nil
 	}
 
@@ -426,12 +438,12 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 		Isolation: sql.LevelSerializable,
 	})
 	if err != nil {
-		s.logger.Error("failed_to_begin_transaction", slog.Any("error", err))
+		log.Error("failed_to_begin_transaction", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer func() {
 		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-			s.logger.Warn("tx_rollback_failed", slog.Any("error", rbErr))
+			log.Warn("tx_rollback_failed", slog.Any("error", rbErr))
 		}
 	}()
 
@@ -440,11 +452,11 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 	// This is the sole idempotency gate — no pre-check outside the transaction.
 	isDuplicate, err := s.markEventProcessed(ctx, tx, event.ID, string(event.Type))
 	if err != nil {
-		s.logger.Error("failed_to_mark_event_processed", slog.Any("error", err))
+		log.Error("failed_to_mark_event_processed", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to mark event as processed: %w", err)
 	}
 	if isDuplicate {
-		s.logger.Debug("event_already_processed", slog.String("event_id", event.ID))
+		log.Debug("event_already_processed", slog.String("event_id", event.ID))
 		return 200, nil // tx deferred Rollback handles cleanup
 	}
 
@@ -465,7 +477,7 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 			WHERE stripe_checkout_session_id = $2
 			  AND (stripe_payment_intent_id IS NULL OR stripe_payment_intent_id = $1)`
 		if _, err := tx.ExecContext(ctx, updPI, paymentIntentID, session.ID); err != nil {
-			s.logger.Error("failed_to_backfill_payment_intent_id",
+			log.Error("failed_to_backfill_payment_intent_id",
 				slog.String("session_id", session.ID),
 				slog.String("payment_intent_id", paymentIntentID),
 				slog.Any("error", err),
@@ -493,14 +505,14 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 					SET stripe_receipt_url = $1
 					WHERE stripe_checkout_session_id = $2 AND stripe_receipt_url IS NULL`
 				if _, err := tx.ExecContext(ctx, updReceipt, pi.LatestCharge.ReceiptURL, session.ID); err != nil {
-					s.logger.Warn("failed_to_persist_receipt_url",
+					log.Warn("failed_to_persist_receipt_url",
 						slog.String("session_id", session.ID),
 						slog.Any("error", err),
 					)
 				}
 			}
 		} else {
-			s.logger.Warn("failed_to_fetch_payment_intent_for_receipt",
+			log.Warn("failed_to_fetch_payment_intent_for_receipt",
 				slog.String("payment_intent_id", paymentIntentID),
 				slog.Any("error", piErr),
 			)
@@ -508,7 +520,7 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 	} else {
 		// Missing PI on a payment-mode session should not happen, but we log
 		// rather than fail because balance credit is more important than the link.
-		s.logger.Warn("checkout_completed_missing_payment_intent",
+		log.Warn("checkout_completed_missing_payment_intent",
 			slog.String("session_id", session.ID),
 			slog.String("event_id", event.ID),
 		)
@@ -529,10 +541,10 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 		 FROM users WHERE id = $1 FOR UPDATE`, userID).Scan(&currentBalance, &deficitStr)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			s.logger.Warn("user_not_found", slog.String("user_id", userID))
+			log.Warn("user_not_found", slog.String("user_id", userID))
 			return 400, fmt.Errorf("user not found: %s", userID)
 		}
-		s.logger.Error("failed_to_get_user_balance_and_deficit", slog.Any("error", err))
+		log.Error("failed_to_get_user_balance_and_deficit", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to get user balance and deficit: %w", err)
 	}
 	deficitFloat, _ := strconv.ParseFloat(deficitStr, 64)
@@ -572,18 +584,18 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 		WHERE id = $4`
 	result, err := tx.ExecContext(ctx, updUser, appliedToBalanceFloat, credits, appliedToDeficitFloat, userID)
 	if err != nil {
-		s.logger.Error("failed_to_update_user_credits", slog.Any("error", err))
+		log.Error("failed_to_update_user_credits", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to update user credits: %w", err)
 	}
 
 	// Check if user exists
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		s.logger.Error("failed_to_get_rows_affected", slog.Any("error", err))
+		log.Error("failed_to_get_rows_affected", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to get rows affected: %w", err)
 	}
 	if rowsAffected == 0 {
-		s.logger.Warn("no_user_found", slog.String("user_id", userID))
+		log.Warn("no_user_found", slog.String("user_id", userID))
 		return 400, fmt.Errorf("user not found: %s", userID)
 	}
 
@@ -599,7 +611,7 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 		desc := fmt.Sprintf("Deficit paydown from Stripe purchase %s: %.6f credits", session.ID, appliedToDeficitFloat)
 		if _, err := tx.ExecContext(ctx, insTxnPaydown,
 			uuid.Must(uuid.NewV7()).String(), userID, currentBalance, desc, session.ID); err != nil {
-			s.logger.Error("failed_to_insert_deficit_paydown_transaction", slog.Any("error", err))
+			log.Error("failed_to_insert_deficit_paydown_transaction", slog.Any("error", err))
 			return 500, fmt.Errorf("failed to insert deficit paydown transaction: %w", err)
 		}
 	}
@@ -618,7 +630,7 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 		currentBalance+appliedToBalanceFloat,
 		"Stripe purchase", session.ID)
 	if err != nil {
-		s.logger.Error("failed_to_insert_credit_transaction", slog.Any("error", err))
+		log.Error("failed_to_insert_credit_transaction", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to insert credit transaction: %w", err)
 	}
 
@@ -626,17 +638,17 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 	const updPay = `UPDATE stripe_payments SET status='succeeded', completed_at=NOW() WHERE stripe_checkout_session_id=$1`
 	_, err = tx.ExecContext(ctx, updPay, session.ID)
 	if err != nil {
-		s.logger.Error("failed_to_update_payment_status", slog.Any("error", err))
+		log.Error("failed_to_update_payment_status", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to update payment status: %w", err)
 	}
 
 	// Commit transaction
 	if err := tx.Commit(); err != nil {
-		s.logger.Error("failed_to_commit_transaction", slog.Any("error", err))
+		log.Error("failed_to_commit_transaction", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	s.logger.Info("checkout_session_completed", slog.String("user_id", userID), slog.Int("credits", credits), slog.String("session_id", session.ID))
+	log.Info("checkout_session_completed", slog.String("user_id", userID), slog.Int("credits", credits), slog.String("session_id", session.ID))
 	return 200, nil
 }
 
@@ -695,6 +707,7 @@ func (s *Service) handleCheckoutSessionExpired(ctx context.Context, event stripe
 // This can be used as a fallback mechanism if webhooks fail.
 // callerUserID must be the authenticated user — ownership is enforced against stripe_payments.
 func (s *Service) ReconcileSession(ctx context.Context, sessionID, callerUserID string) error {
+	log := s.log(ctx)
 	if sessionID == "" {
 		return fmt.Errorf("missing session id")
 	}
@@ -747,7 +760,7 @@ func (s *Service) ReconcileSession(ctx context.Context, sessionID, callerUserID 
 	// the wrong quantity to one of the two systems. Bail out before crediting
 	// any balance — let an operator investigate. (S-M2)
 	if mismatchErr := verifyLineItemsQuantity(sess.LineItems, credits); mismatchErr != nil {
-		s.logger.Error("reconcile_line_item_mismatch",
+		log.Error("reconcile_line_item_mismatch",
 			slog.String("session_id", sessionID),
 			slog.String("user_id", userID),
 			slog.Int("db_credits_purchased", credits),
@@ -764,7 +777,7 @@ func (s *Service) ReconcileSession(ctx context.Context, sessionID, callerUserID 
 	}
 	defer func() {
 		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-			s.logger.Warn("tx_rollback_failed", slog.Any("error", rbErr))
+			log.Warn("tx_rollback_failed", slog.Any("error", rbErr))
 		}
 	}()
 
@@ -792,7 +805,7 @@ func (s *Service) ReconcileSession(ctx context.Context, sessionID, callerUserID 
 				`UPDATE stripe_payments SET stripe_receipt_url = $1
 				 WHERE stripe_checkout_session_id = $2 AND stripe_receipt_url IS NULL`,
 				sess.PaymentIntent.LatestCharge.ReceiptURL, sessionID); err != nil {
-				s.logger.Warn("reconcile_receipt_url_repair_failed",
+				log.Warn("reconcile_receipt_url_repair_failed",
 					slog.String("session_id", sessionID),
 					slog.Any("error", err),
 				)
@@ -898,6 +911,7 @@ func (s *Service) ReconcileSession(ctx context.Context, sessionID, callerUserID 
 // ChargeEvent inserts a billing event and atomically deducts credits based on resolved pricing.
 // It enforces non-negative balances and uses idempotency via metadata.idempotency_key.
 func (s *Service) ChargeEvent(ctx context.Context, userID, jobID, eventType string, quantity int, idempotencyKey string, metadata map[string]any) error {
+	log := s.log(ctx)
 	if s.db == nil {
 		return fmt.Errorf("db not configured")
 	}
@@ -925,7 +939,7 @@ func (s *Service) ChargeEvent(ctx context.Context, userID, jobID, eventType stri
 	}
 	defer func() {
 		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-			s.logger.Warn("tx_rollback_failed", slog.Any("error", rbErr))
+			log.Warn("tx_rollback_failed", slog.Any("error", rbErr))
 		}
 	}()
 
@@ -957,6 +971,14 @@ func (s *Service) ChargeEvent(ctx context.Context, userID, jobID, eventType stri
 			return fmt.Errorf("insufficient credits")
 		}
 		return fmt.Errorf("failed to update balance: %w", err)
+	}
+
+	// Low-water-mark alert: warn when balance drops below $1 after a charge.
+	if balVal, parseErr := strconv.ParseFloat(newBalance, 64); parseErr == nil && balVal < 1.0 {
+		log.Warn("credit_balance_low",
+			slog.String("user_id", userID),
+			slog.Float64("balance", balVal),
+		)
 	}
 
 	// Insert credit transaction (consumption), linking to billing event via metadata reference_id
@@ -1191,20 +1213,21 @@ func (s *Service) ChargeAllJobEvents(ctx context.Context, userID, jobID string, 
 // It deducts credits proportional to the refunded amount and records the
 // transaction, using the same idempotency pattern as other webhook handlers.
 func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) (int, error) {
+	log := s.log(ctx)
 	var charge stripe.Charge
 	if err := json.Unmarshal(event.Data.Raw, &charge); err != nil {
-		s.logger.Error("failed_to_parse_charge_refunded", slog.Any("error", err))
+		log.Error("failed_to_parse_charge_refunded", slog.Any("error", err))
 		return 400, fmt.Errorf("failed to parse charge: %w", err)
 	}
 
-	s.logger.Info("processing_charge_refunded",
+	log.Info("processing_charge_refunded",
 		slog.String("charge_id", charge.ID),
 		slog.Int64("amount_refunded_cents", charge.AmountRefunded),
 		slog.Int64("original_amount_cents", charge.Amount),
 	)
 
 	if charge.Amount <= 0 || charge.AmountRefunded <= 0 {
-		s.logger.Warn("charge_refunded_no_refund_amount", slog.String("charge_id", charge.ID))
+		log.Warn("charge_refunded_no_refund_amount", slog.String("charge_id", charge.ID))
 		return 200, nil
 	}
 
@@ -1226,7 +1249,7 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 		const sel = `SELECT user_id, credits_purchased::text, amount_cents FROM stripe_payments WHERE stripe_payment_intent_id = $1 LIMIT 1`
 		err := s.db.QueryRowContext(ctx, sel, paymentIntentID).Scan(&userID, &creditsGrantedStr, &amountCents)
 		if err != nil && err != sql.ErrNoRows {
-			s.logger.Error("failed_to_lookup_payment_for_charge", slog.Any("error", err))
+			log.Error("failed_to_lookup_payment_for_charge", slog.Any("error", err))
 			return 500, fmt.Errorf("failed to lookup payment: %w", err)
 		}
 	}
@@ -1235,7 +1258,7 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 	if userID == "" && charge.Customer != nil && charge.Customer.ID != "" {
 		const sel = `SELECT id FROM users WHERE stripe_customer_id = $1 LIMIT 1`
 		if err := s.db.QueryRowContext(ctx, sel, charge.Customer.ID).Scan(&userID); err != nil && err != sql.ErrNoRows {
-			s.logger.Warn("fallback_user_lookup_failed",
+			log.Warn("fallback_user_lookup_failed",
 				slog.String("customer_id", charge.Customer.ID),
 				slog.Any("error", err),
 			)
@@ -1243,7 +1266,7 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 	}
 
 	if userID == "" {
-		s.logger.Warn("charge_refunded_no_user_found",
+		log.Warn("charge_refunded_no_user_found",
 			slog.String("charge_id", charge.ID),
 			slog.String("payment_intent_id", paymentIntentID),
 		)
@@ -1260,7 +1283,7 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 		var parseErr error
 		creditsGranted, parseErr = decimal.NewFromString(creditsGrantedStr)
 		if parseErr != nil {
-			s.logger.Error("failed_to_parse_credits_granted",
+			log.Error("failed_to_parse_credits_granted",
 				slog.String("credits_granted_str", creditsGrantedStr),
 				slog.Any("error", parseErr),
 			)
@@ -1286,22 +1309,22 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 	// Begin transaction for idempotency and credit deduction.
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
-		s.logger.Error("failed_to_begin_transaction_charge_refunded", slog.Any("error", err))
+		log.Error("failed_to_begin_transaction_charge_refunded", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer func() {
 		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-			s.logger.Warn("tx_rollback_failed", slog.Any("error", rbErr))
+			log.Warn("tx_rollback_failed", slog.Any("error", rbErr))
 		}
 	}()
 
 	isDuplicate, err := s.markEventProcessed(ctx, tx, event.ID, string(event.Type))
 	if err != nil {
-		s.logger.Error("failed_to_mark_charge_refunded_processed", slog.Any("error", err))
+		log.Error("failed_to_mark_charge_refunded_processed", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to mark event as processed: %w", err)
 	}
 	if isDuplicate {
-		s.logger.Debug("event_already_processed", slog.String("event_id", event.ID))
+		log.Debug("event_already_processed", slog.String("event_id", event.ID))
 		return 200, nil
 	}
 
@@ -1313,12 +1336,12 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 		err = tx.QueryRowContext(ctx,
 			"SELECT COALESCE(credit_balance, 0)::text FROM users WHERE id = $1 FOR UPDATE", userID).Scan(&balanceStr)
 		if err != nil {
-			s.logger.Error("failed_to_get_user_balance_for_refund", slog.Any("error", err))
+			log.Error("failed_to_get_user_balance_for_refund", slog.Any("error", err))
 			return 500, fmt.Errorf("failed to get user balance: %w", err)
 		}
 		balance, parseErr := decimal.NewFromString(balanceStr)
 		if parseErr != nil {
-			s.logger.Error("failed_to_parse_user_balance_for_refund", slog.Any("error", parseErr))
+			log.Error("failed_to_parse_user_balance_for_refund", slog.Any("error", parseErr))
 			return 500, fmt.Errorf("failed to parse user balance: %w", parseErr)
 		}
 
@@ -1368,7 +1391,7 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 			newBalanceDec.StringFixed(6),
 			deductFromDeficitDec.StringFixed(6),
 			userID); err != nil {
-			s.logger.Error("failed_to_deduct_credits_for_refund", slog.Any("error", err))
+			log.Error("failed_to_deduct_credits_for_refund", slog.Any("error", err))
 			return 500, fmt.Errorf("failed to deduct credits: %w", err)
 		}
 
@@ -1384,7 +1407,7 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 			if _, err := tx.ExecContext(ctx, insTxnRefund,
 				uuid.Must(uuid.NewV7()).String(), userID, -actualDeductFloat,
 				balanceFloat, newBalanceFloat, desc, charge.ID); err != nil {
-				s.logger.Error("failed_to_insert_refund_transaction", slog.Any("error", err))
+				log.Error("failed_to_insert_refund_transaction", slog.Any("error", err))
 				return 500, fmt.Errorf("failed to insert refund transaction: %w", err)
 			}
 		}
@@ -1407,12 +1430,12 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 				"charge_id":      charge.ID,
 			})
 			if err != nil {
-				s.logger.Error("failed_to_marshal_refund_deficit_metadata", slog.Any("error", err))
+				log.Error("failed_to_marshal_refund_deficit_metadata", slog.Any("error", err))
 				return 500, fmt.Errorf("failed to marshal refund deficit metadata: %w", err)
 			}
 			if _, err := tx.ExecContext(ctx, insTxnDeficit,
 				uuid.Must(uuid.NewV7()).String(), userID, newBalanceFloat, desc, charge.ID, string(metadataBytes)); err != nil {
-				s.logger.Error("failed_to_insert_refund_deficit_transaction", slog.Any("error", err))
+				log.Error("failed_to_insert_refund_deficit_transaction", slog.Any("error", err))
 				return 500, fmt.Errorf("failed to insert refund deficit transaction: %w", err)
 			}
 
@@ -1420,7 +1443,7 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 			// (not WARN) because this is the signal that a user bought,
 			// consumed, then refunded — worth a Grafana alert.
 			s.metrics.RefundDeficitAppliedTotal.Inc()
-			s.logger.Error("refund_deficit_applied",
+			log.Error("refund_deficit_applied",
 				slog.String("user_id", userID),
 				slog.String("charge_id", charge.ID),
 				slog.Float64("deficit_credits", deficitIncreaseFloat),
@@ -1446,7 +1469,7 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE stripe_payments SET status = $1, refunded_amount_cents = $2 WHERE stripe_payment_intent_id = $3`,
 				paymentStatus, charge.AmountRefunded, paymentIntentID); err != nil {
-				s.logger.Error("failed_to_update_stripe_payment_status",
+				log.Error("failed_to_update_stripe_payment_status",
 					slog.String("payment_intent_id", paymentIntentID),
 					slog.String("status", paymentStatus),
 					slog.Any("error", err),
@@ -1457,12 +1480,12 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 	}
 
 	if err := tx.Commit(); err != nil {
-		s.logger.Error("failed_to_commit_charge_refunded", slog.Any("error", err))
+		log.Error("failed_to_commit_charge_refunded", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	creditsToDeductFloat, _ := creditsToDeductDec.Float64()
-	s.logger.Info("charge_refunded_processed",
+	log.Info("charge_refunded_processed",
 		slog.String("user_id", userID),
 		slog.String("charge_id", charge.ID),
 		slog.Float64("credits_deducted", creditsToDeductFloat),

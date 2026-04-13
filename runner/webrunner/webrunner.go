@@ -500,6 +500,29 @@ func (w *webrunner) Run(ctx context.Context) error {
 		}()
 	}
 
+	// Log DB connection pool stats every 60s for monitoring.
+	w.lc.bgWg.Add(1)
+	go func() {
+		defer w.lc.bgWg.Done()
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				stats := w.db.Stats()
+				w.logger.Info("db_pool_stats",
+					slog.Int("open_connections", stats.OpenConnections),
+					slog.Int("in_use", stats.InUse),
+					slog.Int("idle", stats.Idle),
+					slog.Int64("wait_count", stats.WaitCount),
+					slog.Duration("wait_duration", stats.WaitDuration),
+				)
+			}
+		}
+	}()
+
 	egroup.Go(func() error {
 		return w.work(ctx)
 	})
@@ -782,8 +805,6 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 					w.logger.Debug("job_status_check_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 					continue
 				}
-
-				w.logger.Debug("job_status_check", slog.String("job_id", job.ID), slog.String("status", string(currentJob.Status)))
 
 				// Stop monitoring if job has completed (any final status)
 				if currentJob.Status == web.StatusAborting || currentJob.Status == web.StatusCancelled ||
@@ -1472,7 +1493,7 @@ func (w *webrunner) uploadToS3AndSaveMetadata(ctx context.Context, job *web.Job,
 	}
 
 	// Capture ETag from S3 response
-	w.logger.Info("s3_upload_successful", slog.String("job_id", job.ID), slog.String("bucket", w.s3Bucket), slog.String("key", objectKey), slog.Int64("size_bytes", fileSize), slog.String("etag", result.ETag))
+	w.logger.Info("s3_upload_successful", slog.String("job_id", job.ID), slog.String("bucket", w.s3Bucket), slog.String("key", objectKey), slog.Int64("size_bytes", fileSize))
 
 	// Only NOW create database record after confirmed S3 upload success
 	// This prevents orphaned "uploading" records if upload fails
@@ -1495,11 +1516,11 @@ func (w *webrunner) uploadToS3AndSaveMetadata(ctx context.Context, job *web.Job,
 	// Save record to database with "available" status
 	if err := w.jobFileRepo.Create(ctx, jobFile); err != nil {
 		w.logger.Error("s3_db_record_creation_failed", slog.String("job_id", job.ID), slog.Any("error", err), slog.String("detail", "S3 upload succeeded but database record creation failed"))
-		w.logger.Error("s3_orphaned_file", slog.String("job_id", job.ID), slog.String("s3_path", fmt.Sprintf("s3://%s/%s", w.s3Bucket, objectKey)), slog.String("etag", result.ETag))
+		w.logger.Error("s3_orphaned_file", slog.String("job_id", job.ID), slog.String("s3_path", fmt.Sprintf("s3://%s/%s", w.s3Bucket, objectKey)))
 		return fmt.Errorf("failed to create job file record after successful S3 upload: %w", err)
 	}
 
-	w.logger.Debug("job_file_record_created", slog.String("job_id", job.ID), slog.String("etag", result.ETag))
+	w.logger.Debug("job_file_record_created", slog.String("job_id", job.ID))
 
 	// Delete local CSV file after successful upload and database save
 	if err := os.Remove(csvFilePath); err != nil {

@@ -142,7 +142,7 @@ func (s *EstimationService) loadPrices(ctx context.Context) map[string]int64 {
 
 	prices, err := s.priceRepo.GetActiveDefaultPrices(ctx)
 	if err != nil {
-		s.log.Warn("failed to load pricing rules from DB, using defaults", slog.String("error", err.Error()))
+		s.log.Warn("pricing_rules_load_failed", slog.Any("error", err))
 		return defaultPricesMicro
 	}
 	if len(prices) == 0 {
