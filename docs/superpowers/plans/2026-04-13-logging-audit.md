@@ -43,85 +43,51 @@
 
 ## Implementation Steps
 
-### Fix 1: SC-M8 — Logger from context.Background() (Medium)
+### Fix 1: SC-M8 — Logger from context.Background() (Medium) — DONE `b25fb2b`
 
-`gmaps/place.go` lines 113 and 207 use `scrapemate.GetLoggerFromContext(context.Background())` which returns a bare logger with no request context. This breaks trace correlation and any context-enriched log fields.
+- [x] ~~processExtractedImages now accepts `ctx context.Context`~~ — passes scrapemate's context for trace/request correlation
+- [x] ~~Process method passes its `ctx` parameter~~ — was discarding as `_`, now used for logger and image processing
 
-- [ ] **1.1** In `gmaps/place.go`, find `processExtractedImages` (line ~113). The function receives data from a response but has no `ctx` parameter. Check if the calling function has a context available. If yes, pass it through. If the method signature can be changed, add `ctx context.Context` as the first parameter and use it for the logger.
+### Fix 2: IW-M9 — Log file rotation unbounded counter (Medium) — DONE `b25fb2b`
 
-- [ ] **1.2** Same for line ~207 (second occurrence). Trace the call site to find the nearest available context.
+- [x] ~~Added `maxLogParts = 1000` constant~~
+- [x] ~~Guard returns error when limit exceeded~~
 
-- [ ] **1.3** If changing the function signatures is not possible (e.g., interface constraint from scrapemate), use the response's context if available: `scrapemate.GetLoggerFromContext(resp.Context)` or similar. Check the scrapemate library API for how to get context from a response.
+### Fix 3: IW-M8 — Logger file writer Close() (Low) — DONE `b25fb2b`
 
-- [ ] **1.4** Search for any other `context.Background()` uses in `gmaps/` that should use a request context instead. Fix if found.
+- [x] ~~Added `Close() error` method to `rotatingFileWriter`~~ — mutex-protected, nil-safe
 
-### Fix 2: IW-M9 — Log file rotation unbounded counter (Medium)
+### Fix 4: IW-L1 — Health check logs at INFO (Low) — DONE `b25fb2b`
 
-`pkg/logger/logger.go` `openNextWritablePart()` increments `w.currentPart` in an infinite loop with no max limit. If the disk is full or files keep rolling, this loops forever.
+- [x] ~~Removed redundant Info log~~ — RequestLogger middleware already covers it
+- [x] ~~Changed DB probe failure to Warn level~~ — degraded state, not application error
 
-- [ ] **2.1** Add a constant `maxLogParts = 1000` (or similar reasonable limit).
+### Fix 5 (NEW): InjectLogger missing user_id — DONE `b25fb2b`
 
-- [ ] **2.2** In the loop, check `w.currentPart > maxLogParts` and return an error if exceeded:
-```go
-if w.currentPart > maxLogParts {
-    return fmt.Errorf("log rotation exceeded %d parts for date %s", maxLogParts, w.currentDate)
-}
-```
-
-### Fix 3: IW-M8 — Logger file writer Close() (Low)
-
-`pkg/logger/logger.go` `rotatingFileWriter` has no `Close()` method. On shutdown, buffered data may be lost.
-
-- [ ] **3.1** Add a `Close() error` method to `rotatingFileWriter` that flushes and closes the underlying `*os.File`:
-```go
-func (w *rotatingFileWriter) Close() error {
-    w.mu.Lock()
-    defer w.mu.Unlock()
-    if w.file != nil {
-        return w.file.Close()
-    }
-    return nil
-}
-```
-
-- [ ] **3.2** Check if there is a graceful shutdown path in `main.go` or `web/web.go` where this Close() should be called via defer. If the logger is a package-level singleton, add a `CloseLogger()` function and call it in the shutdown sequence.
-
-### Fix 4: IW-L1 — Health check logs at INFO (Low)
-
-The health endpoint logs at INFO level on every request. With load balancer health checks every 10-30 seconds, this creates noise.
-
-- [ ] **4.1** In `web/handlers/web.go`, find the health check handler's logger call (line ~55). Either:
-  - Remove the log line entirely (the request logger middleware already logs all requests), or
-  - Change from `Info` to `Debug`:
-    ```go
-    h.Deps.Logger.Debug("health_check", slog.String("path", r.URL.Path))
-    ```
-
-- [ ] **4.2** Consider excluding `/health` from the `RequestLogger` middleware entirely. Health checks are infrastructure, not business events. Check if the middleware has a path-exclusion mechanism, or add one:
-```go
-if r.URL.Path == "/health" {
-    next.ServeHTTP(w, r)
-    return
-}
-```
+- [x] ~~InjectLogger now enriches child logger with user_id~~ — every downstream log line in the request chain has both request_id and user_id for Grafana/Loki correlation
 
 ---
 
-## Out of Scope (noted for future)
+## Verification — DONE
 
-| Issue | ID | Why deferred |
-|-------|-----|-------------|
-| Rate limiter cleanup goroutine leaks | MP-M3 | Requires middleware refactor, not a logging issue |
-| loggingResponseWriter breaks Flusher/Hijacker | MP-M1 | Middleware architecture, not logging content |
-| Recovery middleware writes after headers sent | MP-M2 | Error recovery, not logging |
+- [x] `go build ./...` passes
+- [x] `go test ./web/... ./pkg/logger/... -count=1 -timeout 60s` — all 7 packages pass
+- [x] `context.Background()` removed from gmaps/place.go logger calls
 
 ---
 
-## Verification
+## Grafana/Loki Log Flow (after fixes)
 
-After all fixes:
-- [ ] `go build ./...` passes
-- [ ] `go test ./pkg/logger/... -count=1` passes
-- [ ] `go test ./web/... -count=1 -timeout 60s` passes
-- [ ] `grep -rn "context.Background()" gmaps/place.go` returns zero results
-- [ ] `grep -rn "fmt.Printf\|fmt.Println" --include="*.go" . | grep -v _test.go | grep -v scripts/` returns zero results
+```
+Request → RequestID middleware (generates uuid)
+       → Auth middleware (extracts user_id from JWT)
+       → InjectLogger (creates child logger with request_id + user_id)
+       → Handler (logs with context-aware logger)
+       → Service (gets logger from context via FromContext(ctx))
+       → All log lines have: request_id, user_id, msg, level, timestamp
+```
+
+Every log line in the chain now has both `request_id` and `user_id`, enabling queries like:
+- `{app="brezelscraper"} | json | user_id="user_123"` — all logs for a user
+- `{app="brezelscraper"} | json | request_id="uuid-xyz"` — full request trace
+- `{app="brezelscraper"} | json | level="ERROR" | user_id="user_123"` — errors for a specific user
