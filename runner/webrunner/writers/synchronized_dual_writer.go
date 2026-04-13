@@ -115,18 +115,6 @@ func (w *SynchronizedDualWriter) Run(ctx context.Context, in <-chan scrapemate.R
 				slog.Debug("synchronized_dual_writer_csv_headers_written")
 			}
 
-			// Log what we're processing
-			if entry.Title != "" {
-				slog.Debug("synchronized_dual_writer_processing_result",
-					slog.Int("result_number", resultCount+1),
-					slog.String("title", entry.Title),
-				)
-			} else {
-				slog.Debug("synchronized_dual_writer_processing_result_empty_title",
-					slog.Int("result_number", resultCount+1),
-				)
-			}
-
 			// Guard: skip write if cancellation already triggered (max results reached)
 			if w.exitMonitor != nil && w.exitMonitor.IsCancellationTriggered() {
 				return nil
@@ -143,10 +131,6 @@ func (w *SynchronizedDualWriter) Run(ctx context.Context, in <-chan scrapemate.R
 			}
 
 			if !inserted {
-				slog.Debug("synchronized_dual_writer_duplicate_skipped",
-					slog.String("cid", entry.Cid),
-					slog.String("title", entry.Title),
-				)
 				continue
 			}
 
@@ -164,9 +148,6 @@ func (w *SynchronizedDualWriter) Run(ctx context.Context, in <-chan scrapemate.R
 			// Notify exit monitor
 			if w.exitMonitor != nil {
 				w.exitMonitor.IncrResultsWritten(1)
-				slog.Debug("synchronized_dual_writer_result_written",
-					slog.Int("result_number", resultCount),
-				)
 			}
 
 			// Note: per-row flushing happens inside writeToCSV to protect against

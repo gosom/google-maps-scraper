@@ -74,7 +74,7 @@ func (r *fallbackResultWriter) batchSaveFallback(ctx context.Context, entries []
 		return nil
 	}
 
-	slog.Info("fallback_writer_inserting", slog.Int("count", len(entries)), slog.String("user_id", r.userID), slog.String("job_id", r.jobID))
+	slog.Debug("fallback_writer_inserting", slog.Int("count", len(entries)), slog.String("user_id", r.userID), slog.String("job_id", r.jobID))
 
 	// Insert entries one by one to handle duplicates gracefully
 	successCount := 0
@@ -88,7 +88,7 @@ func (r *fallbackResultWriter) batchSaveFallback(ctx context.Context, entries []
 		}
 	}
 
-	slog.Info("fallback_writer_insert_complete", slog.Int("success_count", successCount), slog.Int("total_count", len(entries)), slog.String("user_id", r.userID), slog.String("job_id", r.jobID))
+	slog.Debug("fallback_writer_insert_complete", slog.Int("success_count", successCount), slog.Int("total_count", len(entries)), slog.String("user_id", r.userID), slog.String("job_id", r.jobID))
 	return nil
 }
 

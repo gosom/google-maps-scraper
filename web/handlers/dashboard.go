@@ -11,9 +11,6 @@ import (
 )
 
 func (h *APIHandlers) GetDashboard(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
-	}
 	if h.Deps.Auth == nil {
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "Authentication not configured"})
 		return

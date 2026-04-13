@@ -354,7 +354,6 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 	var proxyPool *proxy.Pool
 	if len(cfg.Proxy.Proxies) > 0 {
 		slog.Debug("creating_proxy_pool", slog.Int("proxy_count", len(cfg.Proxy.Proxies)))
-		slog.Debug("proxy_list", slog.Any("proxies", cfg.Proxy.Proxies))
 
 		// Create proxy pool with port range 8888-9998 (1000 ports)
 		proxyPool, err = proxy.NewPool(cfg.Proxy.Proxies, 8888, 9998, slog.Default())
@@ -660,7 +659,7 @@ func (w *webrunner) work(ctx context.Context) error {
 					}(jobs[i]) // Pass by value to avoid race condition
 				default:
 					// Semaphore full, skip this job for now (will be picked up in next tick)
-					w.logger.Info("job_skipped_max_concurrent", slog.String("job_id", jobs[i].ID), slog.Int("max_concurrent_jobs", maxConcurrentJobs))
+					w.logger.Debug("job_skipped_max_concurrent", slog.String("job_id", jobs[i].ID), slog.Int("max_concurrent_jobs", maxConcurrentJobs))
 				}
 			}
 		}
@@ -714,7 +713,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			slog.String("user_id", job.UserID),
 		)
 	} else if w.billingSvc != nil {
-		w.logger.Info("job_start_charge_attempting", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
+		w.logger.Debug("job_start_charge_attempting", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
 		jobStartCtx, jobStartCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		err := w.billingSvc.ChargeJobStart(jobStartCtx, job.UserID, job.ID)
 		jobStartCancel() // release resources immediately
@@ -1197,7 +1196,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 				// Charge ALL events in a single atomic transaction
 				// This includes: places, reviews, images, and contact details
 				// If any charge fails, ALL charges are rolled back (all-or-nothing)
-				w.logger.Info("billing_charge_attempting", slog.String("job_id", job.ID), slog.Int("result_count", resultCount), slog.String("user_id", job.UserID))
+				w.logger.Debug("billing_charge_attempting", slog.String("job_id", job.ID), slog.Int("result_count", resultCount), slog.String("user_id", job.UserID))
 
 				chargeAllCtx, chargeAllCancel := context.WithTimeout(context.Background(), 30*time.Second)
 				err := w.billingSvc.ChargeAllJobEvents(chargeAllCtx, job.UserID, job.ID, resultCount)
@@ -1312,7 +1311,7 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 		}
 	}
 
-	w.logger.Info("job_concurrency_configured", slog.String("job_id", job.ID), slog.Int("per_job_concurrency", perJobConcurrency), slog.Int("total_concurrency", w.cfg.Concurrency), slog.Int("max_concurrent_jobs", maxConcurrentJobs))
+	w.logger.Debug("job_concurrency_configured", slog.String("job_id", job.ID), slog.Int("per_job_concurrency", perJobConcurrency), slog.Int("total_concurrency", w.cfg.Concurrency), slog.Int("max_concurrent_jobs", maxConcurrentJobs))
 
 	opts := []func(*scrapemateapp.Config) error{
 		scrapemateapp.WithConcurrency(perJobConcurrency), // Use calculated per-job concurrency
@@ -1360,7 +1359,7 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 			defer w.proxyPool.ReturnServer(job.ID)
 			localProxyURL := proxySrv.GetLocalURL()
 			currentProxy := proxySrv.GetCurrentProxy()
-			w.logger.Info("proxy_assigned", slog.String("job_id", job.ID), slog.String("address", currentProxy.Address), slog.String("port", currentProxy.Port), slog.String("local_url", localProxyURL))
+			w.logger.Debug("proxy_assigned", slog.String("job_id", job.ID), slog.String("address", currentProxy.Address), slog.String("port", currentProxy.Port), slog.String("local_url", localProxyURL))
 			opts = append(opts, scrapemateapp.WithProxies([]string{localProxyURL}))
 			w.logger.Debug("proxy_server_attached", slog.String("job_id", job.ID))
 		}
@@ -1396,7 +1395,7 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 		syncWriter := writers.NewSynchronizedDualWriter(w.db, csvWriterInstance, job.UserID, job.ID, exitMonitor)
 
 		writersList = []scrapemate.ResultWriter{syncWriter}
-		w.logger.Info("sync_dual_writer_added", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
+		w.logger.Debug("sync_dual_writer_added", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
 	} else {
 		// No database, use plain CSV writer
 		csvWriter := csvwriter.NewCsvWriter(csv.NewWriter(writer))
@@ -1423,7 +1422,7 @@ func (w *webrunner) uploadToS3AndSaveMetadata(ctx context.Context, job *web.Job,
 		return nil
 	}
 
-	w.logger.Info("s3_upload_starting", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
+	w.logger.Debug("s3_upload_starting", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
 
 	// Open the CSV file
 	file, err := os.Open(csvFilePath)
@@ -1478,14 +1477,14 @@ func (w *webrunner) uploadToS3AndSaveMetadata(ctx context.Context, job *web.Job,
 		return fmt.Errorf("failed to create job file record after successful S3 upload: %w", err)
 	}
 
-	w.logger.Info("job_file_record_created", slog.String("job_id", job.ID), slog.String("etag", result.ETag))
+	w.logger.Debug("job_file_record_created", slog.String("job_id", job.ID), slog.String("etag", result.ETag))
 
 	// Delete local CSV file after successful upload and database save
 	if err := os.Remove(csvFilePath); err != nil {
 		w.logger.Warn("local_csv_delete_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 		// Don't return error - upload and database save were successful, cleanup is not critical
 	} else {
-		w.logger.Info("local_csv_deleted", slog.String("job_id", job.ID))
+		w.logger.Debug("local_csv_deleted", slog.String("job_id", job.ID))
 	}
 
 	return nil

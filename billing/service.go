@@ -334,7 +334,7 @@ func (s *Service) HandleWebhook(ctx context.Context, payload []byte, signatureHe
 	case "checkout.session.async_payment_failed":
 		return s.handleCheckoutAsyncPaymentFailed(ctx, event)
 	default:
-		s.logger.Info("unhandled_event_type", slog.String("event_type", string(event.Type)))
+		s.logger.Debug("unhandled_event_type", slog.String("event_type", string(event.Type)))
 		return 200, nil
 	}
 }
@@ -444,7 +444,7 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 		return 500, fmt.Errorf("failed to mark event as processed: %w", err)
 	}
 	if isDuplicate {
-		s.logger.Info("event_already_processed", slog.String("event_id", event.ID))
+		s.logger.Debug("event_already_processed", slog.String("event_id", event.ID))
 		return 200, nil // tx deferred Rollback handles cleanup
 	}
 
@@ -670,7 +670,7 @@ func (s *Service) handleCheckoutSessionExpired(ctx context.Context, event stripe
 		return 500, fmt.Errorf("failed to mark event as processed: %w", err)
 	}
 	if isDuplicate {
-		s.logger.Info("event_already_processed", slog.String("event_id", event.ID))
+		s.logger.Debug("event_already_processed", slog.String("event_id", event.ID))
 		return 200, nil
 	}
 
@@ -1301,7 +1301,7 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 		return 500, fmt.Errorf("failed to mark event as processed: %w", err)
 	}
 	if isDuplicate {
-		s.logger.Info("event_already_processed", slog.String("event_id", event.ID))
+		s.logger.Debug("event_already_processed", slog.String("event_id", event.ID))
 		return 200, nil
 	}
 
@@ -1652,7 +1652,7 @@ func (s *Service) handleChargeDisputeCreated(ctx context.Context, event stripe.E
 		return 500, fmt.Errorf("failed to mark event as processed: %w", err)
 	}
 	if isDuplicate {
-		s.logger.Info("event_already_processed", slog.String("event_id", event.ID))
+		s.logger.Debug("event_already_processed", slog.String("event_id", event.ID))
 		return 200, nil
 	}
 

@@ -67,7 +67,7 @@ func (j *EmailExtractJob) Process(ctx context.Context, resp *scrapemate.Response
 
 	log := scrapemate.GetLoggerFromContext(ctx)
 
-	log.Info("Processing email job", "url", j.URL)
+	log.Debug("Processing email job", "url", j.URL)
 
 	// if html fetch failed just return
 	if resp.Error != nil {

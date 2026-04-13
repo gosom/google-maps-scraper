@@ -87,9 +87,6 @@ func (h *WebHandlers) HealthCheck(w http.ResponseWriter, r *http.Request) {
 
 // Redoc serves the API documentation page.
 func (h *WebHandlers) Redoc(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
-	}
 	if h.Deps.Templates == nil {
 		http.Error(w, "missing tpl", http.StatusInternalServerError)
 		return
@@ -111,9 +108,6 @@ func renderJSON(w http.ResponseWriter, code int, data any) {
 
 // Index mirrors Server.index
 func (h *WebHandlers) Index(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
-	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -129,9 +123,6 @@ func (h *WebHandlers) Index(w http.ResponseWriter, r *http.Request) {
 
 // Download mirrors Server.download with S3 support
 func (h *WebHandlers) Download(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
-	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -204,6 +195,6 @@ func (h *WebHandlers) Download(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("csv_served", slog.String("file_name", fileName), slog.String("job_id", id))
+		h.Deps.Logger.Debug("csv_served", slog.String("file_name", fileName), slog.String("job_id", id))
 	}
 }

@@ -53,10 +53,6 @@ type jobEstimateResponse struct {
 
 // apiScrape mirrors Server.apiScrape behavior
 func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "POST"), slog.String("path", r.URL.Path))
-	}
-
 	var req apiScrapeRequest
 	if err := decodeStrict(r, &req); err != nil {
 		if h.Deps.Logger != nil {
@@ -289,9 +285,6 @@ var allowedJobSorts = map[string]struct{}{
 const maxJobSearchLen = 200
 
 func (h *APIHandlers) ListJobs(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
-	}
 	if h.Deps.Auth == nil {
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "Authentication not configured"})
 		return
@@ -376,9 +369,6 @@ func (h *APIHandlers) ListJobs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *APIHandlers) GetJob(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
-	}
 	jobID, err := parseJobID(r)
 	if err != nil {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: err.Error()})
@@ -398,9 +388,6 @@ func (h *APIHandlers) GetJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *APIHandlers) DeleteJob(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "DELETE"), slog.String("path", r.URL.Path))
-	}
 	jobID, err := parseJobID(r)
 	if err != nil {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: err.Error()})
@@ -419,9 +406,6 @@ func (h *APIHandlers) DeleteJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *APIHandlers) CancelJob(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "POST"), slog.String("path", r.URL.Path))
-	}
 	jobID, err := parseJobID(r)
 	if err != nil {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: err.Error()})
@@ -440,9 +424,6 @@ func (h *APIHandlers) CancelJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *APIHandlers) GetJobResults(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
-	}
 	jobID, err := parseJobID(r)
 	if err != nil {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: err.Error()})
@@ -489,9 +470,6 @@ func (h *APIHandlers) GetJobResults(w http.ResponseWriter, r *http.Request) {
 
 // GetJobCosts returns the cost breakdown and totals for a job
 func (h *APIHandlers) GetJobCosts(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
-	}
 	// Require auth
 	if h.Deps.Auth == nil {
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "Authentication not configured"})
@@ -534,9 +512,6 @@ func (h *APIHandlers) GetJobCosts(w http.ResponseWriter, r *http.Request) {
 // GetBatchJobCosts returns cost breakdowns and totals for multiple jobs in a
 // single request, eliminating N+1 individual cost fetches.
 func (h *APIHandlers) GetBatchJobCosts(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "POST"), slog.String("path", r.URL.Path))
-	}
 	if h.Deps.Auth == nil {
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "Authentication not configured"})
 		return
@@ -616,9 +591,6 @@ func (h *APIHandlers) GetBatchJobCosts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *APIHandlers) GetUserResults(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
-	}
 	userID, err := auth.GetUserID(r.Context())
 	if err != nil {
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
@@ -643,10 +615,6 @@ func (h *APIHandlers) GetUserResults(w http.ResponseWriter, r *http.Request) {
 
 // EstimateJobCost returns the estimated cost for a job without creating it
 func (h *APIHandlers) EstimateJobCost(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "POST"), slog.String("path", r.URL.Path))
-	}
-
 	var req apiScrapeRequest
 	if err := decodeStrict(r, &req); err != nil {
 		if h.Deps.Logger != nil {
