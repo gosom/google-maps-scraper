@@ -110,8 +110,7 @@ type PaginatedJobsResponse struct {
 	Total   int   `json:"total"`
 	Page    int   `json:"page"`
 	Limit   int   `json:"limit"`
-	HasNext bool  `json:"has_next"`
-	HasPrev bool  `json:"has_prev"`
+	HasMore bool  `json:"has_more"`
 }
 
 // JobRepository defines the interface for job storage

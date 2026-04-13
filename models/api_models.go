@@ -103,14 +103,11 @@ type EnhancedResult struct {
 
 // a paginated response for job results
 type PaginatedResultsResponse struct {
-	Results    []EnhancedResult `json:"results"`
-	TotalCount int              `json:"total_count"`
-	Page       int              `json:"page"`
-	Limit      int              `json:"limit"`
-	Offset     int              `json:"offset"`
-	TotalPages int              `json:"total_pages"`
-	HasNext    bool             `json:"has_next"`
-	HasPrev    bool             `json:"has_prev"`
+	Results []EnhancedResult `json:"results"`
+	Total   int              `json:"total"`
+	Page    int              `json:"page"`
+	Limit   int              `json:"limit"`
+	HasMore bool             `json:"has_more"`
 }
 
 // CreditTransaction represents a single credit transaction for billing history.
@@ -130,8 +127,8 @@ type CreditTransaction struct {
 type BillingHistoryResponse struct {
 	Transactions []CreditTransaction `json:"transactions"`
 	Total        int                 `json:"total"`
+	Page         int                 `json:"page"`
 	Limit        int                 `json:"limit"`
-	Offset       int                 `json:"offset"`
 	HasMore      bool                `json:"has_more"`
 }
 

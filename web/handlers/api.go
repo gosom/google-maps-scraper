@@ -370,8 +370,7 @@ func (h *APIHandlers) ListJobs(w http.ResponseWriter, r *http.Request) {
 		Total:   total,
 		Page:    page,
 		Limit:   limit,
-		HasNext: page*limit < total,
-		HasPrev: page > 1,
+		HasMore: page*limit < total,
 	}
 
 	renderJSON(w, http.StatusOK, resp)
@@ -485,7 +484,7 @@ func (h *APIHandlers) GetJobResults(w http.ResponseWriter, r *http.Request) {
 			slog.String("user_id", userID), slog.String("job_id", jobID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
 		return
 	}
-	resp := models.PaginatedResultsResponse{Results: results, TotalCount: total, Page: page, Limit: limit, Offset: offset, TotalPages: (total + limit - 1) / limit, HasNext: offset+limit < total, HasPrev: page > 1}
+	resp := models.PaginatedResultsResponse{Results: results, Total: total, Page: page, Limit: limit, HasMore: page*limit < total}
 	renderJSON(w, http.StatusOK, resp)
 }
 

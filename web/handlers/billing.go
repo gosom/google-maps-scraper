@@ -4,7 +4,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"strconv"
 
 	"github.com/gosom/google-maps-scraper/billing"
 	"github.com/gosom/google-maps-scraper/models"
@@ -168,18 +167,11 @@ func (h *BillingHandlers) GetBillingHistory(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Parse pagination params
-	limit := 50
-	offset := 0
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 && parsed <= 100 {
-			limit = parsed
-		}
-	}
-	if v := r.URL.Query().Get("offset"); v != "" {
-		if parsed, err := strconv.Atoi(v); err == nil && parsed >= 0 {
-			offset = parsed
-		}
+	// Parse pagination params (page-based, unified across all endpoints).
+	page, limit, offset, err := parsePagination(r, 50)
+	if err != nil {
+		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: err.Error()})
+		return
 	}
 
 	// Optional transaction type filter. Empty string means "no filter".
@@ -195,7 +187,7 @@ func (h *BillingHandlers) GetBillingHistory(w http.ResponseWriter, r *http.Reque
 	}
 
 	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc)
-	resp, err := cs.GetBillingHistory(r.Context(), userID, limit, offset, typeFilter)
+	resp, err := cs.GetBillingHistory(r.Context(), userID, page, limit, offset, typeFilter)
 	if err != nil {
 		if h.Deps.Logger != nil {
 			h.Deps.Logger.Error("billing_history_fetch_failed",

@@ -87,10 +87,10 @@ func IsAllowedBillingHistoryType(t string) bool {
 // If typeFilter is non-empty it must be one of the values accepted by
 // IsAllowedBillingHistoryType; the caller is expected to validate before
 // calling this function.
-func (s *CreditService) GetBillingHistory(ctx context.Context, userID string, limit, offset int, typeFilter string) (models.BillingHistoryResponse, error) {
+func (s *CreditService) GetBillingHistory(ctx context.Context, userID string, page, limit, offset int, typeFilter string) (models.BillingHistoryResponse, error) {
 	var resp models.BillingHistoryResponse
+	resp.Page = page
 	resp.Limit = limit
-	resp.Offset = offset
 
 	if s.db == nil {
 		return resp, sql.ErrConnDone
