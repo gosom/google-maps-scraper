@@ -23,6 +23,7 @@ import (
 	"github.com/gosom/google-maps-scraper/gmaps"
 	"github.com/gosom/google-maps-scraper/internal/crypto/aesutil"
 	"github.com/gosom/google-maps-scraper/models"
+	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/proxy"
 	"github.com/gosom/google-maps-scraper/runner"
@@ -936,6 +937,12 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		w.logger.Info("job_running", slog.String("job_id", job.ID), slog.Int("seed_jobs", len(seedJobs)), slog.Int("allowed_seconds", allowedSeconds), slog.Int("max_results", job.Data.MaxResults))
 
 		mateCtx, cancel := context.WithTimeout(jobCtx, time.Duration(allowedSeconds)*time.Second)
+
+		// Inject our structured slog logger into scrapemate's context so all
+		// scraper-level logs (page loads, retries, browser events) flow through
+		// our slog pipeline with job_id correlation for Grafana/Loki.
+		jobLogger := w.logger.With(slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
+		mateCtx = scrapemate.ContextWithLogger(mateCtx, pkglogger.NewSlogAdapter(jobLogger))
 		defer cancel()
 
 		// Set up exit monitor with max results tracking
