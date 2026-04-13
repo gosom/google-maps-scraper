@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"math"
@@ -121,8 +122,8 @@ func (w *WebhookDeliveryWorker) deliverOne(ctx context.Context, delivery *models
 		return
 	}
 
-	// 2. Fetch job (empty userID = admin/internal fetch).
-	job, err := w.jobRepo.Get(ctx, delivery.JobID, "")
+	// 2. Fetch job scoped to the webhook config owner.
+	job, err := w.jobRepo.Get(ctx, delivery.JobID, config.UserID)
 	if err != nil {
 		log.Error("webhook_job_fetch_failed", slog.Any("error", err))
 		w.markFailed(ctx, delivery, log)
@@ -212,12 +213,7 @@ func (w *WebhookDeliveryWorker) deliverOne(ctx context.Context, delivery *models
 		return
 	}
 
-	// 6. Compute HMAC-SHA256 signature.
-	mac := hmac.New(sha256.New, signingSecret)
-	mac.Write(body)
-	signature := "sha256=" + hex.EncodeToString(mac.Sum(nil))
-
-	// 7. Generate delivery ID and timestamp.
+	// 6. Generate delivery ID and timestamp.
 	deliveryUUID, err := uuid.NewV7()
 	if err != nil {
 		log.Error("webhook_delivery_uuid_failed", slog.Any("error", err))
@@ -226,6 +222,13 @@ func (w *WebhookDeliveryWorker) deliverOne(ctx context.Context, delivery *models
 	}
 	deliveryID := deliveryUUID.String()
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+
+	// 7. Compute HMAC-SHA256 signature (signs timestamp.body for replay protection).
+	mac := hmac.New(sha256.New, signingSecret)
+	mac.Write([]byte(timestamp))
+	mac.Write([]byte("."))
+	mac.Write(body)
+	signature := fmt.Sprintf("t=%s,sha256=%s", timestamp, hex.EncodeToString(mac.Sum(nil)))
 
 	// 8. Ensure resolved IP is available (DNS rebinding prevention).
 	if config.ResolvedIP == nil {
@@ -253,7 +256,6 @@ func (w *WebhookDeliveryWorker) deliverOne(ctx context.Context, delivery *models
 	req.Header.Set("User-Agent", "BrezelScraper-Webhook/1.0")
 	req.Header.Set("X-Webhook-Signature", signature)
 	req.Header.Set("X-Webhook-ID", deliveryID)
-	req.Header.Set("X-Webhook-Timestamp", timestamp)
 
 	// 11. Create IP-pinned HTTP client.
 	client := webutils.NewIPPinnedClient(config.ResolvedIP.String(), parsedURL.Hostname())

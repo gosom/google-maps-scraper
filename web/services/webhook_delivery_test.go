@@ -6,11 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -377,7 +379,8 @@ func TestDeliverOne_Success(t *testing.T) {
 	assert.Equal(t, "BrezelScraper-Webhook/1.0", receivedReq.Header.Get("User-Agent"))
 	assert.NotEmpty(t, receivedReq.Header.Get("X-Webhook-Signature"))
 	assert.NotEmpty(t, receivedReq.Header.Get("X-Webhook-ID"))
-	assert.NotEmpty(t, receivedReq.Header.Get("X-Webhook-Timestamp"))
+	// Timestamp is now embedded in the signature header (t=<ts>,sha256=<hex>).
+	assert.Contains(t, receivedReq.Header.Get("X-Webhook-Signature"), "t=")
 
 	// Assert the body is a valid WebhookEvent.
 	var event models.WebhookEvent
@@ -421,12 +424,24 @@ func TestDeliverOne_SignatureCorrect(t *testing.T) {
 	require.NotEmpty(t, capturedSig, "signature header must be present")
 	require.NotEmpty(t, capturedBody, "body must be present")
 
-	// Independently compute HMAC-SHA256.
-	mac := hmac.New(sha256.New, []byte(testSigningSecret))
-	mac.Write(capturedBody)
-	expectedSig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	// Parse t=<timestamp>,sha256=<hex> format.
+	require.True(t, strings.HasPrefix(capturedSig, "t="), "signature must start with t=")
+	parts := strings.SplitN(capturedSig, ",", 2)
+	require.Len(t, parts, 2, "signature must have t= and sha256= parts")
+	timestamp := strings.TrimPrefix(parts[0], "t=")
+	require.NotEmpty(t, timestamp, "timestamp must not be empty")
+	hexSig := strings.TrimPrefix(parts[1], "sha256=")
 
+	// Independently compute HMAC-SHA256 over timestamp.body.
+	mac := hmac.New(sha256.New, []byte(testSigningSecret))
+	mac.Write([]byte(timestamp))
+	mac.Write([]byte("."))
+	mac.Write(capturedBody)
+	expectedHex := hex.EncodeToString(mac.Sum(nil))
+
+	expectedSig := fmt.Sprintf("t=%s,sha256=%s", timestamp, expectedHex)
 	assert.Equal(t, expectedSig, capturedSig, "HMAC signature must match independently computed value")
+	assert.Equal(t, expectedHex, hexSig, "hex portion must match")
 }
 
 func TestDeliverOne_Non2xx_Retries(t *testing.T) {

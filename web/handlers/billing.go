@@ -86,7 +86,7 @@ func (h *BillingHandlers) CreateCheckoutSession(w http.ResponseWriter, r *http.R
 		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: "Failed to create checkout session"})
 		return
 	}
-	renderJSON(w, http.StatusOK, out)
+	renderJSON(w, http.StatusCreated, out)
 }
 
 func (h *BillingHandlers) Reconcile(w http.ResponseWriter, r *http.Request) {
