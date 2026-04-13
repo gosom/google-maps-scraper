@@ -82,7 +82,7 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 
 	// Log request parameters for job creation (no secrets involved)
 	if h.Deps.Logger != nil {
-		// Note: MaxTime is in seconds for JSON API; multiplied to Duration below
+		// Note: MaxTime auto-converts between seconds (JSON) and Duration (internal) via DurationSec
 		h.Deps.Logger.Info("create_job_request",
 			slog.String("user_id", userID),
 			slog.String("name", req.Name),
@@ -97,7 +97,7 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 			slog.String("lon", req.JobData.Lon),
 			slog.Int("zoom", req.JobData.Zoom),
 			slog.Int("radius", req.JobData.Radius),
-			slog.Int64("max_time", int64(req.JobData.MaxTime)),
+			slog.Int64("max_time_seconds", int64(req.JobData.MaxTime.Duration().Seconds())),
 			slog.Bool("fast_mode", req.JobData.FastMode),
 			slog.Int("proxies", len(req.JobData.Proxies)),
 		)
@@ -109,7 +109,6 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 	} else {
 		newJob.Source = models.SourceWeb
 	}
-	newJob.Data.MaxTime *= time.Second
 	if err := webutils.ValidateJob(&newJob); err != nil {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: err.Error()})
 		return
@@ -440,7 +439,7 @@ func (h *APIHandlers) DeleteJob(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: http.StatusText(http.StatusNotFound)})
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *APIHandlers) CancelJob(w http.ResponseWriter, r *http.Request) {

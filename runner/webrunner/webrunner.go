@@ -919,7 +919,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		}
 
 		if job.Data.MaxTime > 0 {
-			userMaxTime := int(job.Data.MaxTime.Seconds())
+			userMaxTime := int(job.Data.MaxTime.Duration().Seconds())
 			if userMaxTime < 180 {
 				userMaxTime = 180
 			}

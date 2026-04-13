@@ -557,7 +557,7 @@ func (c *apiE2EClient) createJob(name string, jobData map[string]any) (string, e
 
 func (c *apiE2EClient) deleteJob(jobID string) error {
 	path := fmt.Sprintf("/api/v1/jobs/%s", url.PathEscape(jobID))
-	return c.doJSON(http.MethodDelete, path, nil, http.StatusOK, nil)
+	return c.doJSON(http.MethodDelete, path, nil, http.StatusNoContent, nil)
 }
 
 func (c *apiE2EClient) getJob(jobID string) (map[string]any, error) {

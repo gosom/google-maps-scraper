@@ -86,8 +86,6 @@ func (h *AdminHandlers) CreateJob(w http.ResponseWriter, r *http.Request) {
 		Data:   req.JobData,
 		Source: models.SourceAdmin,
 	}
-	newJob.Data.MaxTime *= time.Second
-
 	if err := webutils.ValidateJob(&newJob); err != nil {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: err.Error()})
 		return

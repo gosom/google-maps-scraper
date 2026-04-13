@@ -8,6 +8,9 @@ import (
 	"github.com/gosom/google-maps-scraper/models"
 )
 
+// durSec is a test helper that constructs a DurationSec from a time.Duration.
+func durSec(d time.Duration) models.DurationSec { return models.DurationSec(d) }
+
 // newValidJobData returns a JobData that satisfies every cap. Each test
 // mutates a single field to assert the corresponding rejection branch.
 func newValidJobData() *models.JobData {
@@ -18,7 +21,7 @@ func newValidJobData() *models.JobData {
 		MaxResults: 10,
 		ReviewsMax: 0,
 		ImagesMax:  0,
-		MaxTime:    60 * time.Second,
+		MaxTime:    durSec(60 * time.Second),
 	}
 }
 
@@ -66,8 +69,9 @@ func TestApplyJobDataDefaults_FillsZeroFields(t *testing.T) {
 	if d.Depth != DefaultDepth {
 		t.Errorf("Depth: got %d, want %d", d.Depth, DefaultDepth)
 	}
-	if d.MaxTime != time.Duration(DefaultMaxTimeSeconds) {
-		t.Errorf("MaxTime: got %d, want %d", d.MaxTime, DefaultMaxTimeSeconds)
+	wantMaxTime := models.DurationSec(DefaultMaxTimeSeconds * time.Second)
+	if d.MaxTime != wantMaxTime {
+		t.Errorf("MaxTime: got %v, want %v", d.MaxTime, wantMaxTime)
 	}
 	// Toggle-off enrichments stay at zero — that IS the default.
 	if d.ReviewsMax != 0 {
@@ -88,12 +92,12 @@ func TestApplyJobDataDefaults_PreservesNonZeroFields(t *testing.T) {
 		Lang:       "en",
 		Depth:      12,
 		MaxResults: 250,
-		MaxTime:    time.Duration(900),
+		MaxTime:    durSec(900 * time.Second),
 		ReviewsMax: 30,
 		ImagesMax:  5000,
 	}
 	ApplyJobDataDefaults(d)
-	if d.Depth != 12 || d.MaxResults != 250 || d.MaxTime != 900 || d.ReviewsMax != 30 || d.ImagesMax != 5000 {
+	if d.Depth != 12 || d.MaxResults != 250 || d.MaxTime != durSec(900*time.Second) || d.ReviewsMax != 30 || d.ImagesMax != 5000 {
 		t.Errorf("ApplyJobDataDefaults overwrote a non-zero field: %+v", d)
 	}
 }
@@ -116,7 +120,7 @@ func TestApplyJobDataDefaults_NilSafe(t *testing.T) {
 func TestValidateJobData_RejectsMaxTimeAboveCap_OneHour(t *testing.T) {
 	t.Parallel()
 	d := newValidJobData()
-	d.MaxTime = 2 * time.Hour
+	d.MaxTime = durSec(2 * time.Hour)
 	err := ValidateJobData(d)
 	if err == nil {
 		t.Fatal("expected error for max_time=2h, got nil")
@@ -131,7 +135,7 @@ func TestValidateJobData_RejectsMaxTimeAboveCap_OneHour(t *testing.T) {
 func TestValidateJobData_AcceptsMaxTimeAtCap_OneHour(t *testing.T) {
 	t.Parallel()
 	d := newValidJobData()
-	d.MaxTime = 1 * time.Hour
+	d.MaxTime = durSec(1 * time.Hour)
 	if err := ValidateJobData(d); err != nil {
 		t.Errorf("expected max_time=1h to pass at the cap boundary, got: %v", err)
 	}
@@ -295,7 +299,7 @@ func TestValidateJobData_RejectsZeroMaxTime(t *testing.T) {
 func TestValidateJobData_RejectsMaxTimeAboveCap(t *testing.T) {
 	t.Parallel()
 	d := newValidJobData()
-	d.MaxTime = 90 * time.Minute
+	d.MaxTime = durSec(90 * time.Minute)
 	err := ValidateJobData(d)
 	if err == nil {
 		t.Fatal("expected error for max_time=90m, got nil")

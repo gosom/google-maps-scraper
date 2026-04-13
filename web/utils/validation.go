@@ -117,11 +117,9 @@ func ValidateProxyURL(raw string) error {
 // user picks the corresponding UX toggles. See cap_params.go for the
 // full design rationale.
 //
-// MaxTime convention: this function treats MaxTime as a "seconds value"
-// stored in time.Duration (i.e., a Duration of 1800 means "1800 seconds"
-// even though numerically that's 1800 nanoseconds). The HTTP handler
-// multiplies by time.Second AFTER calling this helper, converting the
-// seconds value to a real Duration. This matches the JSON wire format.
+// MaxTime uses the DurationSec custom type which auto-converts between
+// seconds (JSON wire format) and nanoseconds (internal time.Duration).
+// No manual multiplication is needed in the HTTP handler.
 //
 // Idempotent: applying defaults to an already-populated struct is a no-op.
 func ApplyJobDataDefaults(d *models.JobData) {
@@ -135,8 +133,7 @@ func ApplyJobDataDefaults(d *models.JobData) {
 		d.Depth = DefaultDepth
 	}
 	if d.MaxTime == 0 {
-		// Stored as a "seconds value" — see function comment.
-		d.MaxTime = time.Duration(DefaultMaxTimeSeconds)
+		d.MaxTime = models.DurationSec(DefaultMaxTimeSeconds * time.Second)
 	}
 	// ReviewsMax, ImagesMax, Radius default to 0 (toggle-off / no
 	// constraint), so a zero value is the intended default — no fill.
@@ -206,10 +203,10 @@ func ValidateJobData(d *models.JobData) error {
 	if d.MaxTime == 0 {
 		return errors.New("missing max_time")
 	}
-	if d.MaxTime < minMaxTime {
+	if d.MaxTime.Duration() < minMaxTime {
 		return fmt.Errorf("max_time must be >= %s", minMaxTime)
 	}
-	if d.MaxTime > maxMaxTime {
+	if d.MaxTime.Duration() > maxMaxTime {
 		return fmt.Errorf("max_time exceeds maximum of %s", maxMaxTime)
 	}
 
