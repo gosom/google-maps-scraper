@@ -134,7 +134,6 @@ func (h *WebhookHandlers) CreateWebhook(w http.ResponseWriter, r *http.Request) 
 		if h.Deps.Logger != nil {
 			h.Deps.Logger.Warn("webhook_url_rejected",
 				slog.String("user_id", userID),
-				slog.String("attempted_url", req.URL),
 				slog.String("reason", err.Error()),
 			)
 		}
@@ -275,7 +274,6 @@ func (h *WebhookHandlers) UpdateWebhook(w http.ResponseWriter, r *http.Request) 
 				h.Deps.Logger.Warn("webhook_url_rejected",
 					slog.String("user_id", userID),
 					slog.String("webhook_id", webhookID),
-					slog.String("attempted_url", req.URL),
 					slog.String("reason", err.Error()),
 				)
 			}

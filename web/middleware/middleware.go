@@ -212,7 +212,10 @@ func Recovery(log *slog.Logger) func(http.Handler) http.Handler {
 					}
 
 					stack := debug.Stack()
-					log.Error("panic recovered",
+					// Prefer the request-scoped logger (carries request_id, user_id)
+					// over the root logger passed to Recovery().
+					reqLog := pkglogger.FromContext(r.Context())
+					reqLog.Error("panic recovered",
 						slog.String("panic", fmt.Sprintf("%v", rec)),
 						slog.String("stack", string(stack)),
 						slog.String("method", r.Method),
@@ -428,6 +431,11 @@ func PerIPRateLimit(r rate.Limit, b int) func(http.Handler) http.Handler {
 				ip = r.RemoteAddr
 			}
 			if !krl.get(ip).Allow() {
+				slog.Warn("rate_limit_exceeded",
+					slog.String("key", ip),
+					slog.String("path", r.URL.Path),
+					slog.String("method", r.Method),
+				)
 				rateLimitJSON(w)
 				return
 			}
@@ -453,6 +461,11 @@ func PerUserRateLimit(r rate.Limit, b int) func(http.Handler) http.Handler {
 				key = "ip:" + ip
 			}
 			if !krl.get(key).Allow() {
+				slog.Warn("rate_limit_exceeded",
+					slog.String("key", key),
+					slog.String("path", req.URL.Path),
+					slog.String("method", req.Method),
+				)
 				rateLimitJSON(w)
 				return
 			}
@@ -496,6 +509,11 @@ func PerAPIKeyRateLimit(
 					allowed = freeKRL.get(apiKeyID).Allow()
 				}
 				if !allowed {
+					slog.Warn("rate_limit_exceeded",
+						slog.String("key", apiKeyID),
+						slog.String("path", req.URL.Path),
+						slog.String("method", req.Method),
+					)
 					rateLimitJSON(w)
 					return
 				}
@@ -513,6 +531,11 @@ func PerAPIKeyRateLimit(
 				key = "ip:" + ip
 			}
 			if !fallbackKRL.get(key).Allow() {
+				slog.Warn("rate_limit_exceeded",
+					slog.String("key", key),
+					slog.String("path", req.URL.Path),
+					slog.String("method", req.Method),
+				)
 				rateLimitJSON(w)
 				return
 			}

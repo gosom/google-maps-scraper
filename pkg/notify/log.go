@@ -16,7 +16,7 @@ func (s *LogSender) Send(_ context.Context, req SupportRequest) error {
 		slog.String("category", req.Category),
 		slog.String("subject", req.Subject),
 		slog.String("user_id", req.UserID),
-		slog.String("user_email", req.UserEmail),
+		// security: user_email removed — PII; user_id is sufficient for lookup.
 		// security: NEVER log req.Message — may contain PII, passwords, API keys
 		slog.Int("message_length", len(req.Message)),
 	)

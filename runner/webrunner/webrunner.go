@@ -635,27 +635,42 @@ func (w *webrunner) work(ctx context.Context) error {
 							}
 						}()
 
+						w.logger.Info("job_picked_up", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
+
 						t0 := time.Now().UTC()
 						if err := w.scrapeJob(ctx, &job); err != nil {
+							duration := time.Since(t0)
 							params := map[string]any{
 								"job_count": len(job.Data.Keywords),
-								"duration":  time.Now().UTC().Sub(t0).String(),
+								"duration":  duration.String(),
 								"error":     err.Error(),
 							}
 
 							evt := tlmt.NewEvent("web_runner", params)
 							_ = runner.Telemetry().Send(ctx, evt)
 
-							w.logger.Error("job_scrape_failed", slog.String("job_id", job.ID), slog.Any("error", err))
+							w.logger.Error("job_scrape_failed",
+								slog.String("job_id", job.ID),
+								slog.String("user_id", job.UserID),
+								slog.Int("result_count", job.ResultCount),
+								slog.Duration("duration", duration),
+								slog.Any("error", err),
+							)
 						} else {
+							duration := time.Since(t0)
 							params := map[string]any{
 								"job_count": len(job.Data.Keywords),
-								"duration":  time.Now().UTC().Sub(t0).String(),
+								"duration":  duration.String(),
 							}
 
 							_ = runner.Telemetry().Send(ctx, tlmt.NewEvent("web_runner", params))
 
-							w.logger.Info("job_scrape_succeeded", slog.String("job_id", job.ID))
+							w.logger.Info("job_scrape_succeeded",
+								slog.String("job_id", job.ID),
+								slog.String("user_id", job.UserID),
+								slog.Int("result_count", job.ResultCount),
+								slog.Duration("duration", duration),
+							)
 						}
 					}(jobs[i]) // Pass by value to avoid race condition
 				default:
@@ -1172,7 +1187,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			jobSuccess = false
 		}
 		if resultsWritten == 0 {
-			w.logger.Debug("zero_results_written", slog.String("job_id", job.ID))
+			w.logger.Warn("zero_results_written", slog.String("job_id", job.ID))
 			if job.FailureReason == "" {
 				job.FailureReason = "0 results written"
 			}

@@ -116,6 +116,8 @@ func (w *WebhookDeliveryWorker) deliverOne(ctx context.Context, delivery *models
 		w.markFailed(ctx, delivery, log)
 		return
 	}
+	// Enrich the child logger with user_id now that we have the config.
+	log = log.With(slog.String("user_id", config.UserID))
 	if !config.IsActive() {
 		log.Warn("webhook_config_revoked")
 		w.markFailed(ctx, delivery, log)
