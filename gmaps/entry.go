@@ -525,16 +525,15 @@ func parseReviews(reviewsI []any) []Review {
 			continue
 		}
 
-		// Try multiple paths for images
-		optsI := getNthElementAndCast[[]any](el, 2, 2, 0, 1, 21, 7)
-		if len(optsI) == 0 {
-			optsI = getNthElementAndCast[[]any](el, 2, 2, 0, 1, 7)
-		}
-
-		for j := range optsI {
-			val := getNthElementAndCast[string](optsI, j)
-			if val != "" && len(val) > 2 {
-				review.Images = append(review.Images, val[2:])
+		// Extract user-contributed photo URLs for this review.
+		// Structure: el[2][2] is the image list; each image's direct lh3 URL lives at [1][6][0].
+		// The previous paths (e.g. [2][2][0][1][21][7]) landed on the imagery/report
+		// "report this photo" URL, not the actual hosted image. See issue #240.
+		imgs := getNthElementAndCast[[]any](el, 2, 2)
+		for j := range imgs {
+			url := getNthElementAndCast[string](imgs, j, 1, 6, 0)
+			if url != "" {
+				review.Images = append(review.Images, url)
 			}
 		}
 
