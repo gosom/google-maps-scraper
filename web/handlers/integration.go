@@ -55,7 +55,15 @@ func (h *IntegrationHandler) googleConfig() *oauth2.Config {
 }
 
 func (h *IntegrationHandler) HandleGoogleAuth(w http.ResponseWriter, r *http.Request) {
-	// Generate a state token to prevent CSRF
+	// Generate a state token to prevent CSRF.
+	//
+	// Security: this is INTENTIONALLY uuid.New() (v4), NOT uuid.NewV7().
+	// UUIDv7 embeds a sortable Unix-millisecond timestamp in its high
+	// bits, which would leak the OAuth flow start time to anyone who
+	// observes the state value. For an opaque CSRF token, the 122 bits
+	// of UUIDv4 randomness give exactly the cryptographic property we
+	// want — unguessable and timing-free. The codebase migrated row IDs
+	// to v7 for index locality; security tokens stay on v4.
 	state := uuid.New().String()
 
 	// Store state in a secure cookie.
@@ -251,12 +259,19 @@ func (h *IntegrationHandler) HandleExportJob(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Parse request body for optional filename
+	// Parse request body for optional filename. decodeStrictOptional
+	// treats an empty body as success (so the existing "no body =
+	// default filename" behavior is preserved), but unknown fields and
+	// trailing data on a non-empty body are now rejected.
 	var req struct {
 		Name string `json:"name"`
 	}
-	// Ignore error here as body is optional
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := decodeStrictOptional(r, &req); err != nil {
+		h.log.Warn("google_sheets_decode_failed",
+			slog.String("user_id", userID), slog.String("job_id", jobID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+		http.Error(w, "Invalid request body", http.StatusUnprocessableEntity)
+		return
+	}
 
 	// Upload to Google Sheets
 	if filename == "" {

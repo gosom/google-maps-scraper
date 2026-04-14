@@ -66,12 +66,12 @@ func newRequestWithJobID(method, jobID string) *http.Request {
 
 func TestGetJob_OwnerCanAccess(t *testing.T) {
 	ownerID := "user-abc"
-	jobID := uuid.New().String()
+	jobID := uuid.Must(uuid.NewV7()).String()
 
 	svc := &mockJobService{
 		getFunc: func(_ context.Context, id string, userID string) (models.Job, error) {
 			if id == jobID && userID == ownerID {
-				return models.Job{ID: jobID, UserID: ownerID, Status: models.StatusOK}, nil
+				return models.Job{ID: jobID, UserID: ownerID, Status: models.StatusCompleted}, nil
 			}
 			return models.Job{}, errors.New("not found")
 		},
@@ -97,13 +97,13 @@ func TestGetJob_OwnerCanAccess(t *testing.T) {
 func TestGetJob_NonOwnerGets404(t *testing.T) {
 	ownerID := "user-abc"
 	nonOwnerID := "user-xyz"
-	jobID := uuid.New().String()
+	jobID := uuid.Must(uuid.NewV7()).String()
 
 	// Simulate DB returning no rows when the non-owner queries (ownership enforced in DB)
 	svc := &mockJobService{
 		getFunc: func(_ context.Context, id string, userID string) (models.Job, error) {
 			if id == jobID && userID == ownerID {
-				return models.Job{ID: jobID, UserID: ownerID, Status: models.StatusOK}, nil
+				return models.Job{ID: jobID, UserID: ownerID, Status: models.StatusCompleted}, nil
 			}
 			// Non-owner gets sql.ErrNoRows equivalent
 			return models.Job{}, errors.New("job not found")
@@ -129,7 +129,7 @@ func TestGetJob_NonOwnerGets404(t *testing.T) {
 }
 
 func TestGetJob_UnauthenticatedGets401(t *testing.T) {
-	jobID := uuid.New().String()
+	jobID := uuid.Must(uuid.NewV7()).String()
 
 	svc := &mockJobService{}
 	deps := Dependencies{

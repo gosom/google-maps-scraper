@@ -1,11 +1,9 @@
 package handlers
 
 import (
-	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
-	"strconv"
 
 	"github.com/gosom/google-maps-scraper/billing"
 	"github.com/gosom/google-maps-scraper/models"
@@ -64,13 +62,17 @@ func (h *BillingHandlers) CreateCheckoutSession(w http.ResponseWriter, r *http.R
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
 		return
 	}
-	// DisallowUnknownFields rejects requests with extra JSON fields. This
-	// prevents request-smuggling and confusion-attack vectors where a client
-	// sends fields the server silently ignores. (S-L2)
+	// Strict JSON decoding via the shared helper. The S-L2 guard
+	// (DisallowUnknownFields) is now centralized in decodeStrict, which
+	// also rejects trailing data — closing the parser-divergence gap the
+	// original S-L2 patch left open. See web/handlers/decode.go for the
+	// full security rationale.
 	var req checkoutSessionRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
+	if err := decodeStrict(r, &req); err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Warn("checkout_decode_failed",
+				slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+		}
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "invalid payload"})
 		return
 	}
@@ -84,7 +86,7 @@ func (h *BillingHandlers) CreateCheckoutSession(w http.ResponseWriter, r *http.R
 		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: "Failed to create checkout session"})
 		return
 	}
-	renderJSON(w, http.StatusOK, out)
+	renderJSON(w, http.StatusCreated, out)
 }
 
 func (h *BillingHandlers) Reconcile(w http.ResponseWriter, r *http.Request) {
@@ -101,46 +103,59 @@ func (h *BillingHandlers) Reconcile(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
 		return
 	}
-	// DisallowUnknownFields rejects requests with extra JSON fields. (S-L2)
+	// Strict JSON decoding via the shared helper — see decode.go.
 	var req reconcileRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil || req.SessionID == "" {
+	if err := decodeStrict(r, &req); err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Warn("reconcile_decode_failed",
+				slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+		}
+		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "invalid payload"})
+		return
+	}
+	if req.SessionID == "" {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "invalid payload"})
 		return
 	}
 	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc)
 	if err := cs.Reconcile(r.Context(), req.SessionID, userID); err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Error("reconcile_failed",
+				slog.String("session_id", req.SessionID),
+				slog.String("user_id", userID),
+				slog.Any("error", err),
+			)
+		}
 		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: "session not found or does not belong to user"})
 		return
 	}
-	renderJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *BillingHandlers) HandleStripeWebhook(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.BillingSvc == nil {
-		slog.Error("billing_svc_nil_in_webhook_handler",
+		h.Deps.Logger.Error("billing_svc_nil_in_webhook_handler",
 			slog.String("path", r.URL.Path), slog.String("method", r.Method))
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 	payload, err := io.ReadAll(r.Body)
 	if err != nil {
-		slog.Error("webhook_payload_read_failed",
+		h.Deps.Logger.Error("webhook_payload_read_failed",
 			slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	sig := r.Header.Get("Stripe-Signature")
-	slog.Debug("webhook_received", slog.Int("payload_length", len(payload)), slog.Bool("signature_present", sig != ""))
+	h.Deps.Logger.Debug("webhook_received", slog.Int("payload_length", len(payload)), slog.Bool("signature_present", sig != ""))
 
 	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc)
 	code, err := cs.HandleWebhook(r.Context(), payload, sig)
 	if err != nil {
-		slog.Error("webhook_processing_failed",
+		h.Deps.Logger.Error("webhook_processing_failed",
 			slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
 	}
-	slog.Debug("webhook_response", slog.Int("code", code))
+	h.Deps.Logger.Debug("webhook_response", slog.Int("code", code))
 	w.WriteHeader(code)
 }
 
@@ -159,18 +174,11 @@ func (h *BillingHandlers) GetBillingHistory(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Parse pagination params
-	limit := 50
-	offset := 0
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 && parsed <= 100 {
-			limit = parsed
-		}
-	}
-	if v := r.URL.Query().Get("offset"); v != "" {
-		if parsed, err := strconv.Atoi(v); err == nil && parsed >= 0 {
-			offset = parsed
-		}
+	// Parse pagination params (page-based, unified across all endpoints).
+	page, limit, offset, err := parsePagination(r, 50)
+	if err != nil {
+		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: err.Error()})
+		return
 	}
 
 	// Optional transaction type filter. Empty string means "no filter".
@@ -186,7 +194,7 @@ func (h *BillingHandlers) GetBillingHistory(w http.ResponseWriter, r *http.Reque
 	}
 
 	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc)
-	resp, err := cs.GetBillingHistory(r.Context(), userID, limit, offset, typeFilter)
+	resp, err := cs.GetBillingHistory(r.Context(), userID, page, limit, offset, typeFilter)
 	if err != nil {
 		if h.Deps.Logger != nil {
 			h.Deps.Logger.Error("billing_history_fetch_failed",

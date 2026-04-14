@@ -262,7 +262,7 @@ if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "le
 - [ ] **Step 1: Run a job with depth=20, reviews_max=9999, all enrichments**
 - [ ] **Step 2: Check logs: `grep parent_job_id=<id>` shows full review context**
 - [ ] **Step 3: Verify `user_reviews_extended` has data in results table**
-- [ ] **Step 4: Verify job completes as "ok" even if goroutine leaks**
+- [ ] **Step 4: Verify job completes as "completed" even if goroutine leaks**
 - [ ] **Step 5: If job does fail, verify message says "timed out" not "runtime error"**
 
 ---

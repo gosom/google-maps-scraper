@@ -102,7 +102,7 @@ func TestPostgresRepository(t *testing.T) {
 	// Test Update
 	t.Run("Update", func(t *testing.T) {
 		// Update job status
-		job.Status = models.StatusWorking
+		job.Status = models.StatusRunning
 		job.Name = "Updated Test Job"
 
 		err := repo.Update(ctx, &job)
@@ -116,8 +116,8 @@ func TestPostgresRepository(t *testing.T) {
 			t.Fatalf("Failed to get updated job: %v", err)
 		}
 
-		if updatedJob.Status != models.StatusWorking {
-			t.Errorf("Expected job status %s, got %s", models.StatusWorking, updatedJob.Status)
+		if updatedJob.Status != models.StatusRunning {
+			t.Errorf("Expected job status %s, got %s", models.StatusRunning, updatedJob.Status)
 		}
 
 		if updatedJob.Name != "Updated Test Job" {
@@ -159,7 +159,7 @@ func createTestJob(t *testing.T) models.Job {
 			FastMode:   true,
 			Depth:      1,
 			MaxResults: 10,
-			MaxTime:    time.Minute * 5,
+			MaxTime:    models.DurationSec(time.Minute * 5),
 		},
 	}
 }

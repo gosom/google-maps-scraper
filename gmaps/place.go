@@ -109,19 +109,19 @@ func WithPlaceJobImageBudget(budget *atomic.Int64) PlaceJobOptions {
 }
 
 // processExtractedImages converts and integrates extracted image data into the entry
-func (j *PlaceJob) processExtractedImages(entry *Entry, resp *scrapemate.Response) {
-	log := scrapemate.GetLoggerFromContext(context.Background())
+func (j *PlaceJob) processExtractedImages(ctx context.Context, entry *Entry, resp *scrapemate.Response) {
+	log := scrapemate.GetLoggerFromContext(ctx)
 
 	originalImageCount := len(entry.Images)
-	log.Info(fmt.Sprintf("Processing images for %s - original JSON images: %d", entry.Title, originalImageCount))
+	log.Info("processing_images", "title", entry.Title, "json_image_count", originalImageCount)
 
 	imageResult, imgOk := resp.Meta["images_data"].([]images.BusinessImage)
 	if !imgOk || len(imageResult) == 0 {
-		log.Info(fmt.Sprintf("No enhanced images found for %s - keeping JSON images (%d)", entry.Title, originalImageCount))
+		log.Info("no_enhanced_images", "title", entry.Title, "json_image_count", originalImageCount)
 		return
 	}
 
-	log.Info(fmt.Sprintf("Enhanced extraction found %d images for %s", len(imageResult), entry.Title))
+	log.Info("enhanced_images_found", "title", entry.Title, "image_count", len(imageResult))
 
 	// Convert images package types to gmaps package types
 	enhancedImages := make([]BusinessImage, len(imageResult))
@@ -149,7 +149,7 @@ func (j *PlaceJob) processExtractedImages(entry *Entry, resp *scrapemate.Respons
 			LoadTime:      imageMetadata.LoadTime,
 			ScrollActions: imageMetadata.ScrollActions,
 		}
-		log.Info(fmt.Sprintf("Enhanced metadata - load time: %dms, scroll actions: %d", imageMetadata.LoadTime, imageMetadata.ScrollActions))
+		log.Info("enhanced_metadata", "load_time_ms", imageMetadata.LoadTime, "scroll_actions", imageMetadata.ScrollActions)
 	}
 
 	// Merge enhanced images with JSON images instead of overwriting
@@ -177,7 +177,7 @@ func (j *PlaceJob) processExtractedImages(entry *Entry, resp *scrapemate.Respons
 	}
 
 	if skippedCount > 0 {
-		log.Info(fmt.Sprintf("Skipped %d duplicate images during merge", skippedCount))
+		log.Info("duplicate_images_skipped", "skipped_count", skippedCount)
 	}
 
 	// Convert back to slice
@@ -187,7 +187,7 @@ func (j *PlaceJob) processExtractedImages(entry *Entry, resp *scrapemate.Respons
 	}
 	entry.Images = mergedImages
 
-	log.Info(fmt.Sprintf("Image merge complete - total images: %d (added %d from enhanced extraction)", len(entry.Images), addedCount))
+	log.Info("image_merge_complete", "total_images", len(entry.Images), "added_from_enhanced", addedCount)
 
 	// Organize images by category for the ImageCategories field
 	categoryMap := make(map[string][]BusinessImage)
@@ -203,8 +203,8 @@ func (j *PlaceJob) processExtractedImages(entry *Entry, resp *scrapemate.Respons
 	}
 }
 
-func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, []scrapemate.IJob, error) {
-	log := scrapemate.GetLoggerFromContext(context.Background())
+func (j *PlaceJob) Process(ctx context.Context, resp *scrapemate.Response) (any, []scrapemate.IJob, error) {
+	log := scrapemate.GetLoggerFromContext(ctx)
 
 	defer func() {
 		resp.Document = nil
@@ -219,7 +219,7 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 	raw, ok := resp.Meta["json"].([]byte)
 	if !ok {
 		// JSON extraction failed - create minimal fallback entry
-		log.Warn(fmt.Sprintf("FALLBACK: PlaceJob %s - JSON extraction failed, creating minimal entry with URL only", j.ID))
+		log.Warn("json_extraction_fallback", "job_id", j.ID, "reason", "creating minimal entry with URL only")
 		entry = Entry{
 			ID:          j.ParentID,
 			Link:        j.GetURL(),
@@ -237,7 +237,7 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 	parsedEntry, err := EntryFromJSON(raw)
 	if err != nil {
 		// JSON parsing failed - create minimal fallback entry
-		log.Warn(fmt.Sprintf("FALLBACK: PlaceJob %s - JSON parsing failed (%v), creating minimal entry with URL only", j.ID, err))
+		log.Warn("json_parsing_fallback", "job_id", j.ID, "error", err, "reason", "creating minimal entry with URL only")
 		entry = Entry{
 			ID:          j.ParentID,
 			Link:        j.GetURL(),
@@ -256,7 +256,7 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 	entry = parsedEntry
 
 	// Integrate enhanced image data if available
-	j.processExtractedImages(&entry, resp)
+	j.processExtractedImages(ctx, &entry, resp)
 
 	entry.ID = j.ParentID
 
@@ -285,7 +285,7 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 	// CRITICAL FIX: Always write the place entry to database FIRST, even if we're going to extract emails
 	// This ensures we don't lose place data if email extraction fails
 	if j.ExtractEmail && entry.IsWebsiteValidForEmail() {
-		log.Info(fmt.Sprintf("PlaceJob %s - Will extract emails from %s but writing place data first", j.ID, entry.WebSite))
+		log.Info("email_extraction_queued", "job_id", j.ID, "website", entry.WebSite)
 
 		// Count this place as completed since we have the data
 		if j.ExitMonitor != nil {
@@ -337,11 +337,11 @@ func (j *PlaceJob) extractImages(ctx context.Context, page playwright.Page, resp
 
 	// Cross-place per-job total budget check (Task 2.3).
 	if j.ImageBudget != nil && j.ImageBudget.Load() <= 0 {
-		log.Info(fmt.Sprintf("Image budget exhausted — skipping image extraction for job %s", j.ID))
+		log.Info("image_budget_exhausted", "job_id", j.ID)
 		return
 	}
 
-	log.Info(fmt.Sprintf("Starting multi-image extraction for job %s", j.ID))
+	log.Info("image_extraction_started", "job_id", j.ID)
 
 	// Create a separate context for image extraction with optimized timeout
 	imageCtx, imageCancel := context.WithTimeout(ctx, 30*time.Second) // Fast extraction should complete quickly
@@ -351,7 +351,7 @@ func (j *PlaceJob) extractImages(ctx context.Context, page playwright.Page, resp
 	imageResult, err := imageExtractor.ExtractAllImages(imageCtx)
 	if err != nil {
 		// Log error but don't fail the entire operation
-		log.Warn(fmt.Sprintf("Image extraction failed for job %s: %v", j.ID, err))
+		log.Warn("image_extraction_failed", "job_id", j.ID, "error", err)
 		return
 	}
 
@@ -365,7 +365,7 @@ func (j *PlaceJob) extractImages(ctx context.Context, page playwright.Page, resp
 	// Store images data and metadata for processing in Process method
 	resp.Meta["images_data"] = imageResult
 	resp.Meta["images_metadata"] = imageExtractor.GetMetadata()
-	log.Info(fmt.Sprintf("Image extraction completed for job %s - extracted %d images", j.ID, len(imageResult)))
+	log.Info("image_extraction_completed", "job_id", j.ID, "image_count", len(imageResult))
 }
 
 func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scrapemate.Response {

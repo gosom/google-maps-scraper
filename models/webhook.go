@@ -15,17 +15,17 @@ var (
 
 // WebhookConfig represents a user-level webhook endpoint configuration.
 type WebhookConfig struct {
-	ID         string
-	UserID     string
-	Name       string
-	URL        string
-	SecretHash string // HMAC-SHA256 hash; plaintext never stored
+	ID              string `json:"id"`
+	UserID          string `json:"user_id"`
+	Name            string `json:"name"`
+	URL             string `json:"url"`
+	EncryptedSecret string `json:"-"` // AES-GCM encrypted; never exposed in API responses
 	// SECURITY: delivery must connect to resolved_ip, not re-resolve DNS (TOCTOU/DNS rebinding prevention)
-	ResolvedIP *net.IP
-	VerifiedAt *time.Time
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-	RevokedAt  *time.Time // Soft delete
+	ResolvedIP *net.IP    `json:"-"` // Internal; never exposed in API responses
+	VerifiedAt *time.Time `json:"verified_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"` // Soft delete
 }
 
 // IsActive returns true if the webhook config has not been revoked.
@@ -35,14 +35,14 @@ func (w *WebhookConfig) IsActive() bool {
 
 // JobWebhookDelivery tracks the delivery state of a webhook for a specific job.
 type JobWebhookDelivery struct {
-	JobID           string
-	WebhookConfigID string
-	Attempts        int
-	MaxAttempts     int
-	LastAttemptAt   *time.Time
-	NextRetryAt     *time.Time
-	DeliveredAt     *time.Time
-	Status          string // pending | delivering | delivered | failed
+	JobID           string     `json:"job_id"`
+	WebhookConfigID string     `json:"webhook_config_id"`
+	Attempts        int        `json:"attempts"`
+	MaxAttempts     int        `json:"max_attempts"`
+	LastAttemptAt   *time.Time `json:"last_attempt_at,omitempty"`
+	NextRetryAt     *time.Time `json:"next_retry_at,omitempty"`
+	DeliveredAt     *time.Time `json:"delivered_at,omitempty"`
+	Status          string     `json:"status"` // pending | delivering | delivered | failed
 }
 
 // Delivery status constants.
@@ -72,6 +72,9 @@ type WebhookConfigRepository interface {
 
 	// Revoke soft-deletes a webhook config owned by the given user.
 	Revoke(ctx context.Context, id string, ownerUserID string) error
+
+	// ListActiveWithSecretByUserID retrieves active configs including the encrypted secret.
+	ListActiveWithSecretByUserID(ctx context.Context, userID string) ([]*WebhookConfig, error)
 }
 
 // JobWebhookDeliveryRepository manages webhook delivery tracking.
@@ -79,18 +82,32 @@ type JobWebhookDeliveryRepository interface {
 	// Create inserts a new delivery record (typically at job creation).
 	Create(ctx context.Context, delivery *JobWebhookDelivery) error
 
+	// CreateBatch inserts multiple delivery records in a single query.
+	// Uses ON CONFLICT DO NOTHING for idempotency.
+	CreateBatch(ctx context.Context, deliveries []*JobWebhookDelivery) error
+
 	// ListByJobID retrieves all deliveries for a job.
 	ListByJobID(ctx context.Context, jobID string) ([]*JobWebhookDelivery, error)
 
 	// ListPendingByJobID retrieves undelivered entries for a job.
 	ListPendingByJobID(ctx context.Context, jobID string) ([]*JobWebhookDelivery, error)
 
-	// MarkDelivering sets status to delivering and increments attempt count.
-	MarkDelivering(ctx context.Context, jobID, webhookConfigID string) error
+	// ListPendingGlobal atomically claims up to limit pending deliveries
+	// by setting their status to delivering within a transaction.
+	ListPendingGlobal(ctx context.Context, limit int) ([]*JobWebhookDelivery, error)
 
 	// MarkDelivered sets delivered_at and status to delivered.
 	MarkDelivered(ctx context.Context, jobID, webhookConfigID string) error
 
 	// MarkFailed sets status to failed after exhausting retries.
 	MarkFailed(ctx context.Context, jobID, webhookConfigID string) error
+
+	// SetNextRetry resets a delivery to pending with a scheduled retry time.
+	SetNextRetry(ctx context.Context, jobID, webhookConfigID string, nextRetryAt time.Time) error
+
+	// CountRecentByUserID returns the number of delivery attempts for a user in the given window.
+	CountRecentByUserID(ctx context.Context, userID string, since time.Time) (int, error)
+
+	// CountRecentByIP returns the number of delivery attempts to a resolved IP in the given window.
+	CountRecentByIP(ctx context.Context, resolvedIP string, since time.Time) (int, error)
 }

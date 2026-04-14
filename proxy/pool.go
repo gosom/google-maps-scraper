@@ -94,7 +94,7 @@ func (p *Pool) GetServerForJob(jobID string) (*Server, error) {
 	p.activeServers[jobID] = server
 	p.activeMu.Unlock()
 
-	p.logger.Info("job_proxy_assigned", slog.String("job_id", jobID), slog.String("host", availableProxy.Address), slog.String("port", availableProxy.Port), slog.Int("local_port", port))
+	p.logger.Debug("job_proxy_assigned", slog.String("job_id", jobID), slog.String("host", availableProxy.Address), slog.String("port", availableProxy.Port), slog.Int("local_port", port))
 
 	return server, nil
 }
@@ -113,7 +113,7 @@ func (p *Pool) ReturnServer(jobID string) {
 		port := server.localPort
 		server.Stop()
 		p.portPool <- port
-		p.logger.Info("job_proxy_returned", slog.String("job_id", jobID))
+		p.logger.Debug("job_proxy_returned", slog.String("job_id", jobID))
 	}
 }
 

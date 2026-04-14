@@ -213,13 +213,12 @@ func (r *enhancedResultWriterWithExiter) Run(ctx context.Context, in <-chan scra
 			slog.Debug("postgres_result_writer_skipping_invalid_result",
 				slog.String("title", entry.Title),
 			)
-		} else {
-			slog.Debug("postgres_result_writer_valid_result_received",
-				slog.String("title", entry.Title),
-				slog.String("link", entry.Link),
-				slog.String("cid", entry.Cid),
-			)
 		}
+
+		slog.Debug("postgres_result_writer_valid_result_received",
+			slog.String("title", entry.Title),
+			slog.String("job_id", r.jobID),
+		)
 
 		buff = append(buff, entry)
 
@@ -230,13 +229,16 @@ func (r *enhancedResultWriterWithExiter) Run(ctx context.Context, in <-chan scra
 				return err
 			}
 
+			if insertedCount > 0 {
+				slog.Debug("postgres_result_writer_batch_inserted",
+					slog.Int("inserted", insertedCount),
+					slog.String("job_id", r.jobID),
+				)
+			}
+
 			// Track actually inserted rows in memory and notify exiter
 			if r.exitMonitor != nil && insertedCount > 0 {
 				totalWritten += insertedCount
-				slog.Debug("postgres_result_writer_batch_inserted",
-					slog.Int("inserted_count", insertedCount),
-					slog.Int("total_written", totalWritten),
-				)
 				r.exitMonitor.IncrResultsWritten(insertedCount)
 			}
 
@@ -410,12 +412,6 @@ func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []
 	q += strings.Join(elements, ", ")
 	q += " ON CONFLICT (cid, job_id) DO NOTHING"
 
-	slog.Debug("postgres_enhanced_writer_insert_attempt",
-		slog.Int("entry_count", len(entries)),
-		slog.String("user_id", r.userID),
-		slog.String("job_id", r.jobID),
-	)
-
 	tx, err := r.db.BeginTx(dbCtx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -426,6 +422,11 @@ func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []
 			slog.Warn("tx_rollback_failed", slog.Any("error", rbErr))
 		}
 	}()
+
+	slog.Debug("postgres_enhanced_writer_insert_attempt",
+		slog.Int("count", len(entries)),
+		slog.String("job_id", r.jobID),
+	)
 
 	result, err := tx.ExecContext(dbCtx, q, args...)
 	if err != nil {
@@ -459,10 +460,10 @@ func (r *enhancedResultWriter) batchSaveEnhanced(ctx context.Context, entries []
 	}
 
 	slog.Debug("postgres_enhanced_writer_insert_success",
-		slog.Int("entry_count", len(entries)),
-		slog.String("user_id", r.userID),
+		slog.Int("rows_affected", int(rowsAffected)),
 		slog.String("job_id", r.jobID),
 	)
+
 	return nil
 }
 
@@ -578,12 +579,6 @@ func (r *enhancedResultWriterWithExiter) batchSaveEnhancedWithCount(ctx context.
 	q += strings.Join(elements, ", ")
 	q += " ON CONFLICT (cid, job_id) DO NOTHING"
 
-	slog.Debug("postgres_exiter_writer_insert_attempt",
-		slog.Int("entry_count", len(entries)),
-		slog.String("user_id", r.userID),
-		slog.String("job_id", r.jobID),
-	)
-
 	tx, err := r.db.BeginTx(dbCtx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("failed to begin transaction: %w", err)
@@ -594,6 +589,11 @@ func (r *enhancedResultWriterWithExiter) batchSaveEnhancedWithCount(ctx context.
 			slog.Warn("tx_rollback_failed", slog.Any("error", rbErr))
 		}
 	}()
+
+	slog.Debug("postgres_exiter_writer_insert_attempt",
+		slog.Int("count", len(entries)),
+		slog.String("job_id", r.jobID),
+	)
 
 	result, err := tx.ExecContext(dbCtx, q, args...)
 	if err != nil {
@@ -623,8 +623,7 @@ func (r *enhancedResultWriterWithExiter) batchSaveEnhancedWithCount(ctx context.
 	}
 
 	slog.Debug("postgres_exiter_writer_insert_success",
-		slog.Int("inserted_count", insertedCount),
-		slog.String("user_id", r.userID),
+		slog.Int("rows_affected", insertedCount),
 		slog.String("job_id", r.jobID),
 	)
 

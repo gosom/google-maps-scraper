@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -35,10 +36,12 @@ func (s *CreditService) GetBalance(ctx context.Context, userID string) (models.C
 	}
 	const q = `SELECT id, credit_balance::text, total_credits_purchased::text FROM users WHERE id=$1`
 	if err := s.db.QueryRowContext(ctx, q, userID).Scan(&resp.UserID, &resp.CreditBalance, &resp.TotalCreditsPurchased); err != nil {
-		// If no row, return zero balance for authenticated user
-		s.log.Debug("credit_balance_not_found", slog.String("user_id", userID))
-		resp = models.CreditBalanceResponse{UserID: userID, CreditBalance: "0", TotalCreditsPurchased: "0"}
-		return resp, nil
+		if errors.Is(err, sql.ErrNoRows) {
+			s.log.Debug("credit_balance_not_found", slog.String("user_id", userID))
+			resp = models.CreditBalanceResponse{UserID: userID, CreditBalance: "0", TotalCreditsPurchased: "0"}
+			return resp, nil
+		}
+		return resp, fmt.Errorf("credit balance query failed: %w", err)
 	}
 	s.log.Debug("credit_balance_retrieved", slog.String("user_id", userID), slog.String("balance", resp.CreditBalance))
 	return resp, nil
@@ -87,10 +90,10 @@ func IsAllowedBillingHistoryType(t string) bool {
 // If typeFilter is non-empty it must be one of the values accepted by
 // IsAllowedBillingHistoryType; the caller is expected to validate before
 // calling this function.
-func (s *CreditService) GetBillingHistory(ctx context.Context, userID string, limit, offset int, typeFilter string) (models.BillingHistoryResponse, error) {
+func (s *CreditService) GetBillingHistory(ctx context.Context, userID string, page, limit, offset int, typeFilter string) (models.BillingHistoryResponse, error) {
 	var resp models.BillingHistoryResponse
+	resp.Page = page
 	resp.Limit = limit
-	resp.Offset = offset
 
 	if s.db == nil {
 		return resp, sql.ErrConnDone

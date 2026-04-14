@@ -23,7 +23,7 @@ func NewWebhookConfigRepository(db *sql.DB) models.WebhookConfigRepository {
 func (r *webhookConfigRepository) Create(ctx context.Context, cfg *models.WebhookConfig) error {
 	const q = `
 		INSERT INTO webhook_configs (
-			id, user_id, name, url, secret_hash, resolved_ip,
+			id, user_id, name, url, encrypted_secret, resolved_ip,
 			verified_at, created_at, updated_at, revoked_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
 
@@ -42,15 +42,17 @@ func (r *webhookConfigRepository) Create(ctx context.Context, cfg *models.Webhoo
 	}
 
 	_, err := r.db.ExecContext(ctx, q,
-		cfg.ID, cfg.UserID, cfg.Name, cfg.URL, cfg.SecretHash,
+		cfg.ID, cfg.UserID, cfg.Name, cfg.URL, cfg.EncryptedSecret,
 		resolvedIP, cfg.VerifiedAt, cfg.CreatedAt, cfg.UpdatedAt, cfg.RevokedAt,
 	)
 	return err
 }
 
+// GetByID returns a webhook config including its encrypted_secret.
+// Only call after verifying ownership (the delivery worker needs the secret to sign payloads).
 func (r *webhookConfigRepository) GetByID(ctx context.Context, id string) (*models.WebhookConfig, error) {
 	const q = `
-		SELECT id, user_id, name, url, secret_hash, resolved_ip,
+		SELECT id, user_id, name, url, encrypted_secret, resolved_ip,
 		       verified_at, created_at, updated_at, revoked_at
 		FROM webhook_configs
 		WHERE id = $1`
@@ -125,6 +127,18 @@ func (r *webhookConfigRepository) Revoke(ctx context.Context, id string, ownerUs
 	return nil
 }
 
+func (r *webhookConfigRepository) ListActiveWithSecretByUserID(ctx context.Context, userID string) ([]*models.WebhookConfig, error) {
+	const q = `
+		SELECT id, user_id, name, url, encrypted_secret, resolved_ip,
+		       verified_at, created_at, updated_at, revoked_at
+		FROM webhook_configs
+		WHERE user_id = $1 AND revoked_at IS NULL
+		ORDER BY created_at DESC`
+
+	rows, err := r.db.QueryContext(ctx, q, userID)
+	return r.scanManyWithSecret(rows, err)
+}
+
 // ---- scan helpers ----
 
 func (r *webhookConfigRepository) scanOne(row *sql.Row) (*models.WebhookConfig, error) {
@@ -134,7 +148,7 @@ func (r *webhookConfigRepository) scanOne(row *sql.Row) (*models.WebhookConfig, 
 	var revokedAt sql.NullTime
 
 	err := row.Scan(
-		&cfg.ID, &cfg.UserID, &cfg.Name, &cfg.URL, &cfg.SecretHash,
+		&cfg.ID, &cfg.UserID, &cfg.Name, &cfg.URL, &cfg.EncryptedSecret,
 		&resolvedIP, &verifiedAt, &cfg.CreatedAt, &cfg.UpdatedAt, &revokedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -147,7 +161,7 @@ func (r *webhookConfigRepository) scanOne(row *sql.Row) (*models.WebhookConfig, 
 	return &cfg, nil
 }
 
-// scanManyList scans rows without secret_hash (defense in depth for list queries).
+// scanManyList scans rows without the encrypted secret (defense in depth for list queries).
 func (r *webhookConfigRepository) scanManyList(rows *sql.Rows, queryErr error) ([]*models.WebhookConfig, error) {
 	if queryErr != nil {
 		return nil, queryErr
@@ -163,6 +177,32 @@ func (r *webhookConfigRepository) scanManyList(rows *sql.Rows, queryErr error) (
 
 		if err := rows.Scan(
 			&cfg.ID, &cfg.UserID, &cfg.Name, &cfg.URL,
+			&resolvedIP, &verifiedAt, &cfg.CreatedAt, &cfg.UpdatedAt, &revokedAt,
+		); err != nil {
+			return nil, err
+		}
+		webhookApplyNullable(&cfg, resolvedIP, verifiedAt, revokedAt)
+		configs = append(configs, &cfg)
+	}
+	return configs, rows.Err()
+}
+
+// scanManyWithSecret scans rows including the encrypted_secret column.
+func (r *webhookConfigRepository) scanManyWithSecret(rows *sql.Rows, queryErr error) ([]*models.WebhookConfig, error) {
+	if queryErr != nil {
+		return nil, queryErr
+	}
+	defer rows.Close()
+
+	var configs []*models.WebhookConfig
+	for rows.Next() {
+		var cfg models.WebhookConfig
+		var resolvedIP sql.NullString
+		var verifiedAt sql.NullTime
+		var revokedAt sql.NullTime
+
+		if err := rows.Scan(
+			&cfg.ID, &cfg.UserID, &cfg.Name, &cfg.URL, &cfg.EncryptedSecret,
 			&resolvedIP, &verifiedAt, &cfg.CreatedAt, &cfg.UpdatedAt, &revokedAt,
 		); err != nil {
 			return nil, err

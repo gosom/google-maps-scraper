@@ -35,8 +35,9 @@ func (r *fallbackResultWriter) Run(ctx context.Context, in <-chan scrapemate.Res
 	buff := make([]*gmaps.Entry, 0, 50)
 	lastSave := time.Now().UTC()
 
-	// Use background context for database operations to avoid cancellation issues
-	dbCtx := context.Background()
+	// Detach from parent cancellation so in-flight DB writes complete,
+	// but preserve context values (tracing, logging, etc.).
+	dbCtx := context.WithoutCancel(ctx)
 
 	for result := range in {
 		entry, ok := result.Data.(*gmaps.Entry)
@@ -74,7 +75,7 @@ func (r *fallbackResultWriter) batchSaveFallback(ctx context.Context, entries []
 		return nil
 	}
 
-	slog.Info("fallback_writer_inserting", slog.Int("count", len(entries)), slog.String("user_id", r.userID), slog.String("job_id", r.jobID))
+	slog.Debug("fallback_writer_inserting", slog.Int("count", len(entries)), slog.String("user_id", r.userID), slog.String("job_id", r.jobID))
 
 	// Insert entries one by one to handle duplicates gracefully
 	successCount := 0
@@ -88,13 +89,15 @@ func (r *fallbackResultWriter) batchSaveFallback(ctx context.Context, entries []
 		}
 	}
 
-	slog.Info("fallback_writer_insert_complete", slog.Int("success_count", successCount), slog.Int("total_count", len(entries)), slog.String("user_id", r.userID), slog.String("job_id", r.jobID))
+	slog.Debug("fallback_writer_insert_complete", slog.Int("success_count", successCount), slog.Int("total_count", len(entries)), slog.String("user_id", r.userID), slog.String("job_id", r.jobID))
 	return nil
 }
 
 func (r *fallbackResultWriter) insertSingleEntry(ctx context.Context, entry *gmaps.Entry) error {
-	// Use a timeout context to prevent hanging but avoid immediate cancellation
-	dbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Use a timeout context to prevent hanging but avoid immediate cancellation.
+	// Detach from parent cancellation so the write completes even if the
+	// scrape context is cancelled, while preserving context values.
+	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 
 	// Serialize JSON fields

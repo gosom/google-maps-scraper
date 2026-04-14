@@ -293,7 +293,7 @@ func (repo *repository) Cancel(ctx context.Context, id string, userID string) er
 	}
 
 	// Check if job can be cancelled
-	if currentStatus == models.StatusOK || currentStatus == models.StatusFailed || currentStatus == models.StatusCancelled {
+	if currentStatus == models.StatusCompleted || currentStatus == models.StatusFailed || currentStatus == models.StatusCancelled {
 		repo.log.Warn("job_cancel_invalid_status", slog.String("job_id", id), slog.String("user_id", userID), slog.String("status", currentStatus))
 		return fmt.Errorf("job with status '%s' cannot be cancelled", currentStatus)
 	}

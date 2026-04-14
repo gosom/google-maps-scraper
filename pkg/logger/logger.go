@@ -269,8 +269,14 @@ func (w *rotatingFileWriter) rolloverPart() error {
 	return w.openNextWritablePart()
 }
 
+const maxLogParts = 1000
+
 func (w *rotatingFileWriter) openNextWritablePart() error {
 	for {
+		if w.currentPart >= maxLogParts {
+			return fmt.Errorf("log rotation: exceeded %d parts for %s", maxLogParts, w.currentDate)
+		}
+
 		path := filepath.Join(w.dir, w.filename(w.currentDate, w.currentPart))
 		fd, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 		if err != nil {
@@ -294,6 +300,18 @@ func (w *rotatingFileWriter) openNextWritablePart() error {
 		w.currentSize = size
 		return nil
 	}
+}
+
+// Close releases the underlying log file. Safe to call multiple times.
+func (w *rotatingFileWriter) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.file != nil {
+		err := w.file.Close()
+		w.file = nil
+		return err
+	}
+	return nil
 }
 
 func (w *rotatingFileWriter) filename(date string, part int) string {

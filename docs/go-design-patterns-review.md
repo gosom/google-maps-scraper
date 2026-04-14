@@ -59,7 +59,7 @@ However, **critical concurrency bugs, missing database indexes, and Docker/K8s g
 
 #### ~~3. Missing Database Indexes (Database)~~ DONE
 **File:** `scripts/migrations/000029_add_performance_indexes.up.sql`
-**Fixed:** Added 3 indexes: `idx_jobs_user_status(user_id, status) WHERE deleted_at IS NULL`, `idx_jobs_status_updated(updated_at) WHERE status = 'working'`, `idx_jobs_created_at(created_at DESC) WHERE deleted_at IS NULL`. Results indexes already existed (migration 000009).
+**Fixed:** Added 3 indexes: `idx_jobs_user_status(user_id, status) WHERE deleted_at IS NULL`, `idx_jobs_status_updated(updated_at) WHERE status = 'running'`, `idx_jobs_created_at(created_at DESC) WHERE deleted_at IS NULL`. Results indexes already existed (migration 000009).
 
 #### ~~4. Database Migration Race in K8s (Operations)~~ DONE
 **File:** `postgres/migration.go`
@@ -231,7 +231,7 @@ Stuck job reaper issues N UPDATE queries for N stuck jobs (no batching). 3 remai
 **Batch UPDATE fix:** Replace per-job loop with single query:
 ```sql
 UPDATE jobs SET status='failed', failure_reason=$1, updated_at=NOW()
-WHERE id = ANY($2) AND status='working' AND deleted_at IS NULL
+WHERE id = ANY($2) AND status='running' AND deleted_at IS NULL
 RETURNING id
 ```
 `pgx/v5/stdlib` natively converts `[]string` to PostgreSQL `text[]`. No `pq.Array` needed.

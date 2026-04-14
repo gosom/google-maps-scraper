@@ -1,17 +1,15 @@
 package handlers
 
 import (
-	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	"github.com/gosom/google-maps-scraper/internal/crypto/aesutil"
 	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/web/auth"
 )
@@ -99,10 +97,17 @@ func (h *WebhookHandlers) CreateWebhook(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Limit request body size (defense in depth — middleware also enforces 1MB).
+	// The MaxBytesReader wrap is preserved through decodeStrict — that
+	// helper does NOT install its own MaxBytesReader, so the tighter
+	// per-route 64 KB cap stays in effect.
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<16) // 64 KB
 
 	var req createWebhookRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeStrict(r, &req); err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Warn("create_webhook_decode_failed",
+				slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+		}
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "invalid request body"})
 		return
 	}
@@ -129,11 +134,10 @@ func (h *WebhookHandlers) CreateWebhook(w http.ResponseWriter, r *http.Request) 
 		if h.Deps.Logger != nil {
 			h.Deps.Logger.Warn("webhook_url_rejected",
 				slog.String("user_id", userID),
-				slog.String("attempted_url", req.URL),
 				slog.String("reason", err.Error()),
 			)
 		}
-		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: "Invalid webhook URL"})
+		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: err.Error()})
 		return
 	}
 
@@ -167,17 +171,21 @@ func (h *WebhookHandlers) CreateWebhook(w http.ResponseWriter, r *http.Request) 
 	}
 	plaintextSecret := hex.EncodeToString(secretBytes)
 
-	mac := hmac.New(sha256.New, h.Deps.ServerSecret)
-	mac.Write([]byte(plaintextSecret))
-	secretHash := hex.EncodeToString(mac.Sum(nil))
+	encrypted, err := aesutil.Encrypt(h.Deps.WebhookKEK, []byte(plaintextSecret))
+	if err != nil {
+		internalError(w, h.Deps.Logger, err, "failed to encrypt signing secret",
+			slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
+		return
+	}
+	encryptedHex := hex.EncodeToString(encrypted)
 
 	cfg := &models.WebhookConfig{
-		ID:         id,
-		UserID:     userID,
-		Name:       req.Name,
-		URL:        req.URL,
-		SecretHash: secretHash,
-		ResolvedIP: &resolvedIP,
+		ID:              id,
+		UserID:          userID,
+		Name:            req.Name,
+		URL:             req.URL,
+		EncryptedSecret: encryptedHex,
+		ResolvedIP:      &resolvedIP,
 	}
 
 	if err := h.Deps.WebhookConfigRepo.Create(r.Context(), cfg); err != nil {
@@ -218,10 +226,15 @@ func (h *WebhookHandlers) UpdateWebhook(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Limit request body size (defense in depth — middleware also enforces 1MB).
+	// MaxBytesReader wrap is preserved through decodeStrict.
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<16) // 64 KB
 
 	var req updateWebhookRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeStrict(r, &req); err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Warn("update_webhook_decode_failed",
+				slog.String("user_id", userID), slog.String("webhook_id", webhookID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+		}
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "invalid request body"})
 		return
 	}
@@ -244,6 +257,10 @@ func (h *WebhookHandlers) UpdateWebhook(w http.ResponseWriter, r *http.Request) 
 
 	urlChanged := false
 	if req.Name != "" {
+		if len(req.Name) > 100 {
+			renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: "name must be 100 characters or fewer"})
+			return
+		}
 		existing.Name = req.Name
 	}
 	if req.URL != "" {
@@ -257,11 +274,10 @@ func (h *WebhookHandlers) UpdateWebhook(w http.ResponseWriter, r *http.Request) 
 				h.Deps.Logger.Warn("webhook_url_rejected",
 					slog.String("user_id", userID),
 					slog.String("webhook_id", webhookID),
-					slog.String("attempted_url", req.URL),
 					slog.String("reason", err.Error()),
 				)
 			}
-			renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: "Invalid webhook URL"})
+			renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: err.Error()})
 			return
 		}
 		existing.URL = req.URL

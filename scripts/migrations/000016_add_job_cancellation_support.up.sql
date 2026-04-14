@@ -16,7 +16,7 @@ UPDATE jobs
 SET status = 'cancelled', updated_at = NOW() 
 WHERE status = 'pending' AND deleted_at IS NOT NULL;
 
--- Update any existing 'working' jobs that have been deleted to 'aborting' status  
+-- Update any existing 'running' jobs that have been deleted to 'aborting' status  
 UPDATE jobs 
 SET status = 'aborting', updated_at = NOW() 
-WHERE status = 'working' AND deleted_at IS NOT NULL;
+WHERE status = 'running' AND deleted_at IS NOT NULL;

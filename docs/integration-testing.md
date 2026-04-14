@@ -8,7 +8,7 @@ This project has **live end-to-end integration tests** that validate the *real* 
 - verify the downloaded CSV exists, parses, and contains rows
 - verify CSV row count matches API `total_count`
 
-The goal is to catch real failure modes that a naive "status == ok" check misses (for example: `ok` but empty output, stuck jobs, progress stalls, or malformed CSV output).
+The goal is to catch real failure modes that a naive "status == completed" check misses (for example: `completed` but empty output, stuck jobs, progress stalls, or malformed CSV output).
 
 ## Where The Tests Live
 
@@ -27,10 +27,10 @@ The integration suite **fails** if any of the following happens:
 
 - Job becomes terminal with a non-success status (`failed`, `cancelled`, `aborting`)
 - Job gets stuck in `pending` past a timeout
-- Job gets stuck in `working` with **0 results** past a timeout
+- Job gets stuck in `running` with **0 results** past a timeout
 - Job's results stop increasing for too long (progress stall)
 - Job reaches `max_results` but stays non-terminal for too long
-- Job is `ok` but:
+- Job is `completed` but:
   - Results API has `total_count == 0`
   - Results contain no record with non-empty `title` and `link`
   - When images/reviews are requested: Results API has no record with non-empty `images` / `user_reviews_extended`

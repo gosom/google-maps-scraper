@@ -21,7 +21,9 @@ import (
 	"github.com/gosom/google-maps-scraper/deduper"
 	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/google-maps-scraper/gmaps"
+	"github.com/gosom/google-maps-scraper/internal/crypto/aesutil"
 	"github.com/gosom/google-maps-scraper/models"
+	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/proxy"
 	"github.com/gosom/google-maps-scraper/runner"
@@ -29,6 +31,7 @@ import (
 	"github.com/gosom/google-maps-scraper/s3uploader"
 	"github.com/gosom/google-maps-scraper/tlmt"
 	"github.com/gosom/google-maps-scraper/web"
+	webservices "github.com/gosom/google-maps-scraper/web/services"
 	"github.com/gosom/scrapemate"
 	"github.com/gosom/scrapemate/adapters/writers/csvwriter"
 	"github.com/gosom/scrapemate/scrapemateapp"
@@ -55,6 +58,40 @@ type leakTracker struct {
 	// count tracks the total number of leaked mate goroutines for observability.
 	// Incremented atomically each time a mate.Start goroutine cannot be joined.
 	count atomic.Int64
+}
+
+func parseCSVEnv(raw string) []string {
+	parts := strings.Split(raw, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			values = append(values, part)
+		}
+	}
+	return values
+}
+
+func stripeWebhookSecretsFromEnv() []string {
+	// A small ordered slice is intentional here: we want deterministic
+	// verification order (active secret first, previous secret second) and the
+	// expected rotation cardinality is tiny.
+	secrets := make([]string, 0, 2)
+	appendIfMissing := func(secret string) {
+		secret = strings.TrimSpace(secret)
+		if secret == "" {
+			return
+		}
+		for _, existing := range secrets {
+			if existing == secret {
+				return
+			}
+		}
+		secrets = append(secrets, secret)
+	}
+	appendIfMissing(os.Getenv("STRIPE_WEBHOOK_SECRET"))
+	appendIfMissing(os.Getenv("STRIPE_WEBHOOK_SECRET_PREVIOUS"))
+	return secrets
 }
 
 // track registers the result channel of an abandoned mate.Start goroutine.
@@ -110,16 +147,19 @@ type lifecycle struct {
 }
 
 type webrunner struct {
-	srv         *web.Server
-	svc         *web.Service
-	cfg         *runner.Config
-	db          *sql.DB
-	billingSvc  *billing.Service
-	proxyPool   *proxy.Pool
-	s3Uploader  *s3uploader.Uploader
-	s3Bucket    string
-	jobFileRepo models.JobFileRepository
-	logger      *slog.Logger
+	srv                 *web.Server
+	svc                 *web.Service
+	cfg                 *runner.Config
+	db                  *sql.DB
+	billingSvc          *billing.Service
+	proxyPool           *proxy.Pool
+	s3Uploader          *s3uploader.Uploader
+	s3Bucket            string
+	jobFileRepo         models.JobFileRepository
+	webhookConfigRepo   models.WebhookConfigRepository
+	webhookDeliveryRepo models.JobWebhookDeliveryRepository
+	serverSecret        []byte // for deriving webhook KEK
+	logger              *slog.Logger
 
 	leaks leakTracker
 	lc    lifecycle
@@ -131,7 +171,8 @@ type webrunner struct {
 func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.ServerConfig, error) {
 	clerkSecretKey := os.Getenv("CLERK_SECRET_KEY")
 	stripeAPIKey := os.Getenv("STRIPE_SECRET_KEY")
-	stripeWebhookSecret := os.Getenv("STRIPE_WEBHOOK_SECRET")
+	stripeWebhookSecrets := stripeWebhookSecretsFromEnv()
+	stripeWebhookAllowedCIDRs := parseCSVEnv(os.Getenv("STRIPE_WEBHOOK_ALLOWED_CIDRS"))
 
 	if clerkSecretKey == "" {
 		slog.Error("clerk_secret_key_missing", slog.String("detail", "CLERK_SECRET_KEY is required but missing"))
@@ -145,7 +186,7 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.Se
 		if stripeAPIKey == "" {
 			missing = append(missing, "STRIPE_SECRET_KEY")
 		}
-		if stripeWebhookSecret == "" {
+		if len(stripeWebhookSecrets) == 0 {
 			missing = append(missing, "STRIPE_WEBHOOK_SECRET")
 		}
 		if os.Getenv("ALLOWED_ORIGINS") == "" {
@@ -184,29 +225,38 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.Se
 	}
 
 	serverCfg := web.ServerConfig{
-		Service:             svc,
-		Addr:                cfg.Addr,
-		PgDB:                db,
-		UserRepo:            userRepo,
-		APIKeyRepo:          apiKeyRepo,
-		WebhookConfigRepo:   webhookConfigRepo,
-		WebhookDeliveryRepo: webhookDeliveryRepo,
-		ServerSecret:        apiKeyServerSecret,
-		ClerkSecretKey:      clerkSecretKey,
-		StripeAPIKey:        stripeAPIKey,
-		StripeWebhookSecret: stripeWebhookSecret,
-		Version:             cfg.Version,
-		InternalAddr:        internalAddr,
+		Service:                   svc,
+		Addr:                      cfg.Addr,
+		PgDB:                      db,
+		UserRepo:                  userRepo,
+		APIKeyRepo:                apiKeyRepo,
+		WebhookConfigRepo:         webhookConfigRepo,
+		WebhookDeliveryRepo:       webhookDeliveryRepo,
+		ServerSecret:              apiKeyServerSecret,
+		ClerkSecretKey:            clerkSecretKey,
+		StripeAPIKey:              stripeAPIKey,
+		StripeWebhookSecrets:      stripeWebhookSecrets,
+		StripeWebhookAllowedCIDRs: stripeWebhookAllowedCIDRs,
+		Version:                   cfg.Version,
+		InternalAddr:              internalAddr,
+		ResendAPIKey:              os.Getenv("RESEND_API_KEY"),
 	}
 
 	slog.Info("auth_enabled", slog.String("provider", "clerk"))
 	if stripeAPIKey != "" {
 		slog.Info("payment_enabled", slog.String("provider", "stripe"))
 	}
+	if stripeAPIKey != "" && len(stripeWebhookAllowedCIDRs) == 0 {
+		slog.Warn("stripe_webhook_ip_allowlist_not_configured",
+			slog.String("detail", "Configure STRIPE_WEBHOOK_ALLOWED_CIDRS and enforce the same Stripe CIDRs at the edge for defense in depth"),
+		)
+	}
 
 	slog.Info("startup_config_summary",
 		slog.Bool("stripe_enabled", stripeAPIKey != ""),
+		slog.Bool("stripe_webhook_ip_allowlist_configured", len(stripeWebhookAllowedCIDRs) > 0),
 		slog.Bool("production_mode", isProduction),
+		slog.Bool("resend_enabled", serverCfg.ResendAPIKey != ""),
 	)
 
 	return serverCfg, nil
@@ -234,8 +284,7 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 	// connection pool settings — configurable via env vars
 	maxOpen := envInt("DB_MAX_OPEN_CONNS", 25)
 	if maxOpen == 0 {
-		slog.Error("db_pool_misconfigured", "msg", "DB_MAX_OPEN_CONNS=0 creates unbounded pool — refusing to start")
-		os.Exit(1)
+		return nil, fmt.Errorf("DB_MAX_OPEN_CONNS=0 creates unbounded pool — refusing to start")
 	}
 	maxIdle := envInt("DB_MAX_IDLE_CONNS", 10)
 	connMaxLifetime := envDuration("DB_CONN_MAX_LIFETIME", 5*time.Minute)
@@ -251,11 +300,7 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 		pingCtx, pingCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer pingCancel()
 		if err := db.PingContext(pingCtx); err != nil {
-			slog.Error("startup_db_ping_failed",
-				slog.Any("error", err),
-				slog.String("detail", "cannot reach PostgreSQL within 10s; aborting startup"),
-			)
-			os.Exit(1)
+			return nil, fmt.Errorf("startup DB ping failed (cannot reach PostgreSQL within 10s): %w", err)
 		}
 	}
 
@@ -294,7 +339,7 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 	// shared, so we wire a real repo rather than nil.
 	cfgSvc := config.New(db)
 	billUserRepo := postgres.NewUserRepository(db)
-	billSvc := billing.New(db, cfgSvc, "", "", billUserRepo)
+	billSvc := billing.New(db, cfgSvc, "", nil, billUserRepo)
 	if billSvc != nil {
 		slog.Info("billing_service_initialized")
 	} else {
@@ -305,7 +350,6 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 	var proxyPool *proxy.Pool
 	if len(cfg.Proxy.Proxies) > 0 {
 		slog.Debug("creating_proxy_pool", slog.Int("proxy_count", len(cfg.Proxy.Proxies)))
-		slog.Debug("proxy_list", slog.Any("proxies", cfg.Proxy.Proxies))
 
 		// Create proxy pool with port range 8888-9998 (1000 ports)
 		proxyPool, err = proxy.NewPool(cfg.Proxy.Proxies, 8888, 9998, slog.Default())
@@ -382,16 +426,19 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 	}
 
 	ans := webrunner{
-		srv:         srv,
-		svc:         svc,
-		cfg:         cfg,
-		db:          db,
-		billingSvc:  billSvc,
-		proxyPool:   proxyPool,
-		s3Uploader:  s3Upload,
-		s3Bucket:    s3BucketName,
-		jobFileRepo: jobFileRepo,
-		logger:      logger,
+		srv:                 srv,
+		svc:                 svc,
+		cfg:                 cfg,
+		db:                  db,
+		billingSvc:          billSvc,
+		proxyPool:           proxyPool,
+		s3Uploader:          s3Upload,
+		s3Bucket:            s3BucketName,
+		jobFileRepo:         jobFileRepo,
+		webhookConfigRepo:   serverCfg.WebhookConfigRepo,
+		webhookDeliveryRepo: serverCfg.WebhookDeliveryRepo,
+		serverSecret:        serverCfg.ServerSecret,
+		logger:              logger,
 	}
 
 	return &ans, nil
@@ -412,6 +459,31 @@ func (w *webrunner) Run(ctx context.Context) error {
 		postgres.RunStuckJobReaper(ctx, w.db, w.logger, checkInterval, stuckTimeoutHours)
 	}()
 
+	// Start webhook delivery worker goroutine: polls for pending webhook
+	// deliveries and sends HTTP callbacks to user-registered endpoints.
+	if w.webhookDeliveryRepo != nil && w.webhookConfigRepo != nil {
+		jobRepo, repoErr := postgres.NewRepository(w.db)
+		if repoErr != nil {
+			w.logger.Error("webhook_worker_repo_init_failed", slog.Any("error", repoErr))
+		} else {
+			webhookKEK := aesutil.DeriveKey(w.serverSecret, "webhook-signing-key-encryption")
+			w.lc.bgWg.Add(1)
+			go func() {
+				defer w.lc.bgWg.Done()
+				worker := webservices.NewWebhookDeliveryWorker(
+					w.webhookDeliveryRepo,
+					w.webhookConfigRepo,
+					jobRepo,
+					webhookKEK,
+					w.logger,
+				)
+				if err := worker.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+					w.logger.Error("webhook_delivery_worker_failed", slog.Any("error", err))
+				}
+			}()
+		}
+	}
+
 	// Webhook event cleanup goroutine: removes processed_webhook_events older than
 	// WEBHOOK_EVENT_RETENTION_DAYS (default 90) in daily batches.
 	if w.billingSvc != nil {
@@ -422,6 +494,29 @@ func (w *webrunner) Run(ctx context.Context) error {
 			w.billingSvc.StartWebhookEventCleanup(ctx, retentionDays)
 		}()
 	}
+
+	// Log DB connection pool stats every 60s for monitoring.
+	w.lc.bgWg.Add(1)
+	go func() {
+		defer w.lc.bgWg.Done()
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				stats := w.db.Stats()
+				w.logger.Info("db_pool_stats",
+					slog.Int("open_connections", stats.OpenConnections),
+					slog.Int("in_use", stats.InUse),
+					slog.Int("idle", stats.Idle),
+					slog.Int64("wait_count", stats.WaitCount),
+					slog.Duration("wait_duration", stats.WaitDuration),
+				)
+			}
+		}
+	}()
 
 	egroup.Go(func() error {
 		return w.work(ctx)
@@ -558,32 +653,47 @@ func (w *webrunner) work(ctx context.Context) error {
 							}
 						}()
 
+						w.logger.Info("job_picked_up", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
+
 						t0 := time.Now().UTC()
 						if err := w.scrapeJob(ctx, &job); err != nil {
+							duration := time.Since(t0)
 							params := map[string]any{
 								"job_count": len(job.Data.Keywords),
-								"duration":  time.Now().UTC().Sub(t0).String(),
+								"duration":  duration.String(),
 								"error":     err.Error(),
 							}
 
 							evt := tlmt.NewEvent("web_runner", params)
 							_ = runner.Telemetry().Send(ctx, evt)
 
-							w.logger.Error("job_scrape_failed", slog.String("job_id", job.ID), slog.Any("error", err))
+							w.logger.Error("job_scrape_failed",
+								slog.String("job_id", job.ID),
+								slog.String("user_id", job.UserID),
+								slog.Int("result_count", job.ResultCount),
+								slog.Duration("duration", duration),
+								slog.Any("error", err),
+							)
 						} else {
+							duration := time.Since(t0)
 							params := map[string]any{
 								"job_count": len(job.Data.Keywords),
-								"duration":  time.Now().UTC().Sub(t0).String(),
+								"duration":  duration.String(),
 							}
 
 							_ = runner.Telemetry().Send(ctx, tlmt.NewEvent("web_runner", params))
 
-							w.logger.Info("job_scrape_succeeded", slog.String("job_id", job.ID))
+							w.logger.Info("job_scrape_succeeded",
+								slog.String("job_id", job.ID),
+								slog.String("user_id", job.UserID),
+								slog.Int("result_count", job.ResultCount),
+								slog.Duration("duration", duration),
+							)
 						}
 					}(jobs[i]) // Pass by value to avoid race condition
 				default:
 					// Semaphore full, skip this job for now (will be picked up in next tick)
-					w.logger.Info("job_skipped_max_concurrent", slog.String("job_id", jobs[i].ID), slog.Int("max_concurrent_jobs", maxConcurrentJobs))
+					w.logger.Debug("job_skipped_max_concurrent", slog.String("job_id", jobs[i].ID), slog.Int("max_concurrent_jobs", maxConcurrentJobs))
 				}
 			}
 		}
@@ -600,27 +710,51 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			return
 		}
 		w.logger.Debug("job_status_persisted", slog.String("job_id", job.ID), slog.String("status", string(job.Status)))
+
+		// Create webhook delivery rows for all active webhooks when job reaches a terminal status
+		if job.Status == web.StatusCompleted || job.Status == web.StatusFailed || job.Status == web.StatusCancelled {
+			if w.webhookConfigRepo != nil && w.webhookDeliveryRepo != nil {
+				configs, whErr := w.webhookConfigRepo.ListActiveByUserID(deferCtx, job.UserID)
+				if whErr != nil {
+					w.logger.Error("webhook_list_configs_failed", slog.String("job_id", job.ID), slog.Any("error", whErr))
+				} else if len(configs) > 0 {
+					deliveries := make([]*models.JobWebhookDelivery, 0, len(configs))
+					for _, cfg := range configs {
+						deliveries = append(deliveries, &models.JobWebhookDelivery{
+							JobID:           job.ID,
+							WebhookConfigID: cfg.ID,
+							Status:          models.DeliveryStatusPending,
+						})
+					}
+					if whErr := w.webhookDeliveryRepo.CreateBatch(deferCtx, deliveries); whErr != nil {
+						w.logger.Error("webhook_create_deliveries_failed", slog.String("job_id", job.ID), slog.Any("error", whErr))
+					} else {
+						w.logger.Info("webhook_deliveries_created", slog.String("job_id", job.ID), slog.Int("count", len(deliveries)))
+					}
+				}
+			}
+		}
 	}()
 
 	// Reset review circuit breaker for each new job
 	gmaps.ResetReviewCircuitBreaker()
 
-	// Charge actor_start at job start (requires sufficient balance).
+	// Charge job_start at job start (requires sufficient balance).
 	// Admin jobs bypass billing entirely — they are internal operations.
 	if job.Source == models.SourceAdmin {
-		w.logger.Info("actor_start_charge_skipped_admin_job",
+		w.logger.Info("job_start_charge_skipped_admin_job",
 			slog.String("job_id", job.ID),
 			slog.String("user_id", job.UserID),
 		)
 	} else if w.billingSvc != nil {
-		w.logger.Info("actor_start_charge_attempting", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
-		actorStartCtx, actorStartCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		err := w.billingSvc.ChargeActorStart(actorStartCtx, job.UserID, job.ID)
-		actorStartCancel() // release resources immediately
+		w.logger.Debug("job_start_charge_attempting", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
+		jobStartCtx, jobStartCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		err := w.billingSvc.ChargeJobStart(jobStartCtx, job.UserID, job.ID)
+		jobStartCancel() // release resources immediately
 		if err != nil {
 			job.Status = web.StatusFailed
 			job.FailureReason = "insufficient credit balance to start job"
-			w.logger.Error("actor_start_charge_failed",
+			w.logger.Error("job_start_charge_failed",
 				slog.String("job_id", job.ID),
 				slog.String("user_id", job.UserID),
 				slog.String("job_name", job.Name),
@@ -629,9 +763,9 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			)
 			return err
 		}
-		w.logger.Info("actor_start_charge_succeeded", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
+		w.logger.Info("job_start_charge_succeeded", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
 	} else {
-		w.logger.Warn("billing_service_nil", slog.String("job_id", job.ID), slog.String("detail", "skipping actor_start charge"))
+		w.logger.Warn("billing_service_nil", slog.String("job_id", job.ID), slog.String("detail", "skipping job_start charge"))
 	}
 
 	// Check if job has been cancelled before starting
@@ -667,11 +801,9 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 					continue
 				}
 
-				w.logger.Debug("job_status_check", slog.String("job_id", job.ID), slog.String("status", string(currentJob.Status)))
-
 				// Stop monitoring if job has completed (any final status)
 				if currentJob.Status == web.StatusAborting || currentJob.Status == web.StatusCancelled ||
-					currentJob.Status == web.StatusOK || currentJob.Status == web.StatusFailed {
+					currentJob.Status == web.StatusCompleted || currentJob.Status == web.StatusFailed {
 					w.logger.Debug("job_final_status_detected", slog.String("job_id", job.ID), slog.String("status", string(currentJob.Status)))
 
 					// Only cancel execution for user-initiated cancellation
@@ -688,7 +820,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		}
 	}()
 
-	job.Status = web.StatusWorking
+	job.Status = web.StatusRunning
 
 	err := w.svc.Update(jobCtx, job)
 	if err != nil {
@@ -818,7 +950,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		}
 
 		if job.Data.MaxTime > 0 {
-			userMaxTime := int(job.Data.MaxTime.Seconds())
+			userMaxTime := int(job.Data.MaxTime.Duration().Seconds())
 			if userMaxTime < 180 {
 				userMaxTime = 180
 			}
@@ -836,6 +968,12 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		w.logger.Info("job_running", slog.String("job_id", job.ID), slog.Int("seed_jobs", len(seedJobs)), slog.Int("allowed_seconds", allowedSeconds), slog.Int("max_results", job.Data.MaxResults))
 
 		mateCtx, cancel := context.WithTimeout(jobCtx, time.Duration(allowedSeconds)*time.Second)
+
+		// Inject our structured slog logger into scrapemate's context so all
+		// scraper-level logs (page loads, retries, browser events) flow through
+		// our slog pipeline with job_id correlation for Grafana/Loki.
+		jobLogger := w.logger.With(slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
+		mateCtx = scrapemate.ContextWithLogger(mateCtx, pkglogger.NewSlogAdapter(jobLogger))
 		defer cancel()
 
 		// Set up exit monitor with max results tracking
@@ -929,6 +1067,11 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 				slog.String("detail", "exit monitor detected completion, 30s grace elapsed, forcing shutdown"),
 			)
 			mateErr, leaked := w.shutdownMate(job.ID, cancel, closeMate, resultCh)
+			w.logger.Info("shutdown_mate_result",
+				slog.String("job_id", job.ID),
+				slog.Bool("leaked", leaked),
+				slog.Any("error", mateErr),
+			)
 			if leaked {
 				var resultCount int
 				if w.db != nil {
@@ -937,6 +1080,13 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 						w.logger.Error("result_count_after_leak_failed", slog.String("job_id", job.ID), slog.Any("error", dbErr))
 					}
 					countCancel()
+					w.logger.Info("result_count_after_leak_check",
+						slog.String("job_id", job.ID),
+						slog.Int("result_count", resultCount),
+						slog.Bool("will_treat_as_success", resultCount > 0),
+					)
+				} else {
+					w.logger.Warn("db_nil_cannot_check_results", slog.String("job_id", job.ID))
 				}
 				if resultCount > 0 {
 					w.logger.Info("goroutine_leaked_but_results_exist",
@@ -1053,7 +1203,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			jobSuccess = false
 		}
 		if resultsWritten == 0 {
-			w.logger.Debug("zero_results_written", slog.String("job_id", job.ID))
+			w.logger.Warn("zero_results_written", slog.String("job_id", job.ID))
 			if job.FailureReason == "" {
 				job.FailureReason = "0 results written"
 			}
@@ -1084,7 +1234,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 				// Charge ALL events in a single atomic transaction
 				// This includes: places, reviews, images, and contact details
 				// If any charge fails, ALL charges are rolled back (all-or-nothing)
-				w.logger.Info("billing_charge_attempting", slog.String("job_id", job.ID), slog.Int("result_count", resultCount), slog.String("user_id", job.UserID))
+				w.logger.Debug("billing_charge_attempting", slog.String("job_id", job.ID), slog.Int("result_count", resultCount), slog.String("user_id", job.UserID))
 
 				chargeAllCtx, chargeAllCancel := context.WithTimeout(context.Background(), 30*time.Second)
 				err := w.billingSvc.ChargeAllJobEvents(chargeAllCtx, job.UserID, job.ID, resultCount)
@@ -1158,7 +1308,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		w.logger.Debug("keeping_cancelled_status", slog.String("job_id", job.ID))
 		// Keep the cancelled status
 	} else if jobSuccess {
-		job.Status = web.StatusOK
+		job.Status = web.StatusCompleted
 		w.logger.Debug("status_set_ok", slog.String("job_id", job.ID))
 
 		// Upload CSV to S3 and save metadata if S3 is configured
@@ -1199,7 +1349,7 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 		}
 	}
 
-	w.logger.Info("job_concurrency_configured", slog.String("job_id", job.ID), slog.Int("per_job_concurrency", perJobConcurrency), slog.Int("total_concurrency", w.cfg.Concurrency), slog.Int("max_concurrent_jobs", maxConcurrentJobs))
+	w.logger.Debug("job_concurrency_configured", slog.String("job_id", job.ID), slog.Int("per_job_concurrency", perJobConcurrency), slog.Int("total_concurrency", w.cfg.Concurrency), slog.Int("max_concurrent_jobs", maxConcurrentJobs))
 
 	opts := []func(*scrapemateapp.Config) error{
 		scrapemateapp.WithConcurrency(perJobConcurrency), // Use calculated per-job concurrency
@@ -1247,7 +1397,7 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 			defer w.proxyPool.ReturnServer(job.ID)
 			localProxyURL := proxySrv.GetLocalURL()
 			currentProxy := proxySrv.GetCurrentProxy()
-			w.logger.Info("proxy_assigned", slog.String("job_id", job.ID), slog.String("address", currentProxy.Address), slog.String("port", currentProxy.Port), slog.String("local_url", localProxyURL))
+			w.logger.Debug("proxy_assigned", slog.String("job_id", job.ID), slog.String("address", currentProxy.Address), slog.String("port", currentProxy.Port), slog.String("local_url", localProxyURL))
 			opts = append(opts, scrapemateapp.WithProxies([]string{localProxyURL}))
 			w.logger.Debug("proxy_server_attached", slog.String("job_id", job.ID))
 		}
@@ -1283,7 +1433,7 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 		syncWriter := writers.NewSynchronizedDualWriter(w.db, csvWriterInstance, job.UserID, job.ID, exitMonitor)
 
 		writersList = []scrapemate.ResultWriter{syncWriter}
-		w.logger.Info("sync_dual_writer_added", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
+		w.logger.Debug("sync_dual_writer_added", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
 	} else {
 		// No database, use plain CSV writer
 		csvWriter := csvwriter.NewCsvWriter(csv.NewWriter(writer))
@@ -1310,7 +1460,7 @@ func (w *webrunner) uploadToS3AndSaveMetadata(ctx context.Context, job *web.Job,
 		return nil
 	}
 
-	w.logger.Info("s3_upload_starting", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
+	w.logger.Debug("s3_upload_starting", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
 
 	// Open the CSV file
 	file, err := os.Open(csvFilePath)
@@ -1338,7 +1488,7 @@ func (w *webrunner) uploadToS3AndSaveMetadata(ctx context.Context, job *web.Job,
 	}
 
 	// Capture ETag from S3 response
-	w.logger.Info("s3_upload_successful", slog.String("job_id", job.ID), slog.String("bucket", w.s3Bucket), slog.String("key", objectKey), slog.Int64("size_bytes", fileSize), slog.String("etag", result.ETag))
+	w.logger.Info("s3_upload_successful", slog.String("job_id", job.ID), slog.String("bucket", w.s3Bucket), slog.String("key", objectKey), slog.Int64("size_bytes", fileSize))
 
 	// Only NOW create database record after confirmed S3 upload success
 	// This prevents orphaned "uploading" records if upload fails
@@ -1361,18 +1511,18 @@ func (w *webrunner) uploadToS3AndSaveMetadata(ctx context.Context, job *web.Job,
 	// Save record to database with "available" status
 	if err := w.jobFileRepo.Create(ctx, jobFile); err != nil {
 		w.logger.Error("s3_db_record_creation_failed", slog.String("job_id", job.ID), slog.Any("error", err), slog.String("detail", "S3 upload succeeded but database record creation failed"))
-		w.logger.Error("s3_orphaned_file", slog.String("job_id", job.ID), slog.String("s3_path", fmt.Sprintf("s3://%s/%s", w.s3Bucket, objectKey)), slog.String("etag", result.ETag))
+		w.logger.Error("s3_orphaned_file", slog.String("job_id", job.ID), slog.String("s3_path", fmt.Sprintf("s3://%s/%s", w.s3Bucket, objectKey)))
 		return fmt.Errorf("failed to create job file record after successful S3 upload: %w", err)
 	}
 
-	w.logger.Info("job_file_record_created", slog.String("job_id", job.ID), slog.String("etag", result.ETag))
+	w.logger.Debug("job_file_record_created", slog.String("job_id", job.ID))
 
 	// Delete local CSV file after successful upload and database save
 	if err := os.Remove(csvFilePath); err != nil {
 		w.logger.Warn("local_csv_delete_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 		// Don't return error - upload and database save were successful, cleanup is not critical
 	} else {
-		w.logger.Info("local_csv_deleted", slog.String("job_id", job.ID))
+		w.logger.Debug("local_csv_deleted", slog.String("job_id", job.ID))
 	}
 
 	return nil

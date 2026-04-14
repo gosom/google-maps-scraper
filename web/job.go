@@ -12,8 +12,8 @@ var jobs []models.Job
 // Use the status constants from models package
 const (
 	StatusPending   = models.StatusPending
-	StatusWorking   = models.StatusWorking
-	StatusOK        = models.StatusOK
+	StatusRunning   = models.StatusRunning
+	StatusCompleted = models.StatusCompleted
 	StatusFailed    = models.StatusFailed
 	StatusCancelled = models.StatusCancelled
 	StatusAborting  = models.StatusAborting

@@ -719,28 +719,28 @@ git commit -m "feat: register admin routes at /api/v1/admin/* with RequireRole m
 ### Task 6: Skip ALL billing for admin-sourced jobs
 
 **Files:**
-- Modify: `runner/webrunner/webrunner.go:593-606` (ChargeActorStart at job start)
+- Modify: `runner/webrunner/webrunner.go:593-606` (ChargeJobStart at job start)
 - Modify: `runner/webrunner/webrunner.go:988-1015` (ChargeAllJobEvents at job completion)
 
 **Context:** There are TWO billing charge points in the webrunner:
-1. **`ChargeActorStart`** (~line 593) — charges a flat fee when a job begins execution. If the user has zero credits, the job **fails immediately** with "insufficient credit balance to start job". This MUST be skipped for admin jobs or they will never run.
+1. **`ChargeJobStart`** (~line 593) — charges a flat fee when a job begins execution. If the user has zero credits, the job **fails immediately** with "insufficient credit balance to start job". This MUST be skipped for admin jobs or they will never run.
 2. **`ChargeAllJobEvents`** (~line 990) — charges for places, reviews, images, and contacts after job completion.
 
 Both must be bypassed for admin-sourced jobs.
 
-- [ ] **Step 1a: Skip `ChargeActorStart` for admin jobs**
+- [ ] **Step 1a: Skip `ChargeJobStart` for admin jobs**
 
-In `runner/webrunner/webrunner.go`, find the `ChargeActorStart` block (~line 592-606). Change:
+In `runner/webrunner/webrunner.go`, find the `ChargeJobStart` block (~line 592-606). Change:
 
 ```go
-	// Charge actor_start at job start (requires sufficient balance)
+	// Charge job_start at job start (requires sufficient balance)
 	if w.billingSvc != nil {
 ```
 
 To:
 
 ```go
-	// Charge actor_start at job start (requires sufficient balance).
+	// Charge job_start at job start (requires sufficient balance).
 	// Admin jobs bypass billing entirely — they are internal operations.
 	if w.billingSvc != nil && job.Source != models.SourceAdmin {
 ```
@@ -749,7 +749,7 @@ And after the closing `}` of the else block (~line 606), add:
 
 ```go
 	if job.Source == models.SourceAdmin {
-		w.logger.Info("actor_start_charge_skipped_admin_job",
+		w.logger.Info("job_start_charge_skipped_admin_job",
 			slog.String("job_id", job.ID),
 			slog.String("user_id", job.UserID),
 		)
@@ -979,7 +979,7 @@ git commit -m "feat: complete admin role system integration"
 | `web/handlers/admin.go` | Admin job create/list/cancel handlers | Bypasses credit system, defense-in-depth |
 | `web/handlers/handlers.go` | `Admin` field in `HandlerGroup` | Wiring |
 | `web/web.go` | `/api/v1/admin/*` routes with `RequireRole` | Route-level access control |
-| `runner/webrunner/webrunner.go` | Skip `ChargeActorStart` AND `ChargeAllJobEvents` for admin source | Complete billing bypass (both job-start and job-completion charges) |
+| `runner/webrunner/webrunner.go` | Skip `ChargeJobStart` AND `ChargeAllJobEvents` for admin source | Complete billing bypass (both job-start and job-completion charges) |
 | `scripts/migrations/000030_*` | Add `'admin'` to `jobs.source` CHECK | DB constraint |
 | `scripts/promote_admin.sh` | CLI tool for admin promotion | Narrow promotion path |
 

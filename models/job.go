@@ -2,8 +2,31 @@ package models
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
+
+// DurationSec wraps time.Duration but serializes as seconds in JSON.
+// Users send and receive seconds; the internal representation is nanoseconds.
+type DurationSec time.Duration
+
+func (d DurationSec) MarshalJSON() ([]byte, error) {
+	return json.Marshal(int64(time.Duration(d) / time.Second))
+}
+
+func (d *DurationSec) UnmarshalJSON(data []byte) error {
+	var sec int64
+	if err := json.Unmarshal(data, &sec); err != nil {
+		return err
+	}
+	*d = DurationSec(time.Duration(sec) * time.Second)
+	return nil
+}
+
+// Duration returns the underlying time.Duration.
+func (d DurationSec) Duration() time.Duration {
+	return time.Duration(d)
+}
 
 // JobData contains the configurable options for a job.
 //
@@ -43,19 +66,19 @@ type JobData struct {
 	// (validator/v10 doesn't have a clean duration min/max). Default is
 	// 30 minutes; ceiling is 1 hour — see cap_params.go for the
 	// headless-browser reasoning.
-	MaxTime  time.Duration `json:"max_time"`
-	FastMode bool          `json:"fast_mode"`
-	Proxies  []string      `json:"proxies" validate:"omitempty,max=100,dive,max=2048"`
+	MaxTime  DurationSec `json:"max_time"`
+	FastMode bool        `json:"fast_mode"`
+	Proxies  []string    `json:"proxies" validate:"omitempty,max=100,dive,max=2048"`
 }
 
 // Job represents a scraping job
 type Job struct {
-	ID            string
-	UserID        string
-	Name          string
-	Status        string
-	Data          JobData
-	Date          time.Time
+	ID            string     `json:"id"`
+	UserID        string     `json:"-"`
+	Name          string     `json:"name"`
+	Status        string     `json:"status"`
+	Data          JobData    `json:"data"`
+	Date          time.Time  `json:"-"`
 	CreatedAt     *time.Time `json:"created_at,omitempty"`
 	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
 	FailureReason string     `json:"failure_reason,omitempty"`
@@ -87,8 +110,7 @@ type PaginatedJobsResponse struct {
 	Total   int   `json:"total"`
 	Page    int   `json:"page"`
 	Limit   int   `json:"limit"`
-	HasNext bool  `json:"has_next"`
-	HasPrev bool  `json:"has_prev"`
+	HasMore bool  `json:"has_more"`
 }
 
 // JobRepository defines the interface for job storage
@@ -105,8 +127,8 @@ type JobRepository interface {
 // Common status constants
 const (
 	StatusPending   = "pending"
-	StatusWorking   = "working"
-	StatusOK        = "ok"
+	StatusRunning   = "running"
+	StatusCompleted = "completed"
 	StatusFailed    = "failed"
 	StatusCancelled = "cancelled"
 	StatusAborting  = "aborting"

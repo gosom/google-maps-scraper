@@ -16,10 +16,12 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/gosom/google-maps-scraper/billing"
 	"github.com/gosom/google-maps-scraper/config"
+	"github.com/gosom/google-maps-scraper/internal/crypto/aesutil"
 	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/pkg/encryption"
 	"github.com/gosom/google-maps-scraper/pkg/googlesheets"
 	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
+	"github.com/gosom/google-maps-scraper/pkg/notify"
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/web/auth"
 	webhandlers "github.com/gosom/google-maps-scraper/web/handlers"
@@ -45,17 +47,21 @@ type Server struct {
 }
 
 type ServerConfig struct {
-	Service             *Service
-	Addr                string
-	PgDB                *sql.DB // Optional PostgreSQL connection
-	UserRepo            postgres.UserRepository
-	APIKeyRepo          models.APIKeyRepository             // Optional; enables API key auth when set
-	WebhookConfigRepo   models.WebhookConfigRepository      // Optional; enables webhook config management
-	WebhookDeliveryRepo models.JobWebhookDeliveryRepository // Optional; enables webhook delivery tracking
-	ServerSecret        []byte                              // HMAC secret for API key HMAC (from API_KEY_SERVER_SECRET env)
-	ClerkSecretKey      string                              // Clerk server-side secret key for authentication
-	StripeAPIKey        string                              // Optional Stripe API key for subscriptions
-	StripeWebhookSecret string                              // Optional Stripe webhook secret
+	Service              *Service
+	Addr                 string
+	PgDB                 *sql.DB // Optional PostgreSQL connection
+	UserRepo             postgres.UserRepository
+	APIKeyRepo           models.APIKeyRepository             // Optional; enables API key auth when set
+	WebhookConfigRepo    models.WebhookConfigRepository      // Optional; enables webhook config management
+	WebhookDeliveryRepo  models.JobWebhookDeliveryRepository // Optional; enables webhook delivery tracking
+	ServerSecret         []byte                              // HMAC secret for API key HMAC (from API_KEY_SERVER_SECRET env)
+	ClerkSecretKey       string                              // Clerk server-side secret key for authentication
+	StripeAPIKey         string                              // Optional Stripe API key for subscriptions
+	StripeWebhookSecrets []string                            // Active first, then previous webhook secrets during rotation
+	// StripeWebhookAllowedCIDRs is an optional defense-in-depth allowlist for
+	// the Stripe webhook receiver. This should complement, not replace, edge
+	// firewall allowlisting because reverse proxies may mask the original peer IP.
+	StripeWebhookAllowedCIDRs []string
 	// Version is the Git SHA injected at build time via ldflags.
 	// It is returned by the /health endpoint as the "version" field.
 	Version string
@@ -64,6 +70,7 @@ type ServerConfig struct {
 	// avoid exposing Prometheus metrics to unauthenticated clients (CWE-200).
 	// Example: ":9090". If empty, no internal listener is created.
 	InternalAddr string
+	ResendAPIKey string // Optional; if empty, support requests are logged instead of emailed
 }
 
 func New(cfg ServerConfig) (*Server, error) {
@@ -90,7 +97,7 @@ func New(cfg ServerConfig) (*Server, error) {
 	// Stripe Customer creation (the next checkout will lazy-create).
 	if cfg.StripeAPIKey != "" && cfg.PgDB != nil {
 		cfgSvc := config.New(cfg.PgDB)
-		ans.billingSvc = billing.New(cfg.PgDB, cfgSvc, cfg.StripeAPIKey, cfg.StripeWebhookSecret, cfg.UserRepo)
+		ans.billingSvc = billing.New(cfg.PgDB, cfgSvc, cfg.StripeAPIKey, cfg.StripeWebhookSecrets, cfg.UserRepo)
 	}
 
 	// Initialize authentication middleware if Clerk secret key is provided
@@ -113,11 +120,10 @@ func New(cfg ServerConfig) (*Server, error) {
 	// Initialize encryption once at startup
 	enc, err := encryption.New(os.Getenv("ENCRYPTION_KEY"))
 	if err != nil {
-		slog.Error("failed to initialize encryption", slog.Any("error", err))
-		os.Exit(1)
+		return nil, fmt.Errorf("encryption init failed: %w", err)
 	}
 	if enc == nil {
-		slog.Warn("ENCRYPTION_KEY not set, integration credentials will be stored in plaintext")
+		slog.Warn("encryption_key_missing", slog.String("detail", "integration credentials will be stored in plaintext"))
 	}
 
 	// Initialize modular handler group (incremental migration)
@@ -128,10 +134,12 @@ func New(cfg ServerConfig) (*Server, error) {
 		Templates:           ans.tmpl,
 		Auth:                ans.authMiddleware,
 		App:                 ans.svc,
+		UserRepo:            ans.userRepo,
 		APIKeyRepo:          cfg.APIKeyRepo,
 		WebhookConfigRepo:   cfg.WebhookConfigRepo,
 		WebhookDeliveryRepo: cfg.WebhookDeliveryRepo,
 		ServerSecret:        cfg.ServerSecret,
+		WebhookKEK:          aesutil.DeriveKey(cfg.ServerSecret, "webhook-signing-key-encryption"),
 		PricingRuleRepo:     postgres.NewPricingRuleRepository(ans.db),
 		ResultsSvc:          webservices.NewResultsService(ans.db),
 		Encryptor:           enc,
@@ -142,6 +150,20 @@ func New(cfg ServerConfig) (*Server, error) {
 	if ans.db != nil {
 		deps.ConcurrentLimitSvc = webservices.NewConcurrentLimitService(ans.db)
 	}
+
+	// Support email sender: Resend if configured, log fallback otherwise
+	var supportSender notify.Sender
+	if cfg.ResendAPIKey != "" {
+		supportSender = notify.NewResendSender(
+			cfg.ResendAPIKey,
+			"BrezelScraper Support <noreply@brezel.ai>",
+			"support@brezel.ai",
+		)
+	} else {
+		supportSender = &notify.LogSender{Logger: ans.logger}
+	}
+	deps.Sender = supportSender
+
 	hg := webhandlers.NewHandlerGroup(deps)
 
 	// Health check endpoint (no authentication needed)
@@ -210,10 +232,33 @@ func New(cfg ServerConfig) (*Server, error) {
 		webmiddleware.RequestLogger(ans.logger),
 	)
 
-	// API endpoints (these are protected by middleware if enabled)
-	apiRouter.HandleFunc("/jobs", hg.API.GetJobs).Methods(http.MethodGet)
-	apiRouter.HandleFunc("/jobs/user", hg.API.GetUserJobs).Methods(http.MethodGet)
-	apiRouter.HandleFunc("/jobs", hg.API.Scrape).Methods(http.MethodPost)
+	// API endpoints (these are protected by middleware if enabled).
+	//
+	// Per-endpoint rate limit on POST /api/v1/jobs (Task 3.6):
+	// the global PerAPIKeyRateLimit on apiRouter caps every endpoint at
+	// the same rate (free 2/s burst 5, paid 10/s burst 30, session
+	// fallback 5/s burst 20). For job CREATION specifically — billable,
+	// takes a SELECT ... FOR UPDATE row lock, queues a scraping worker —
+	// that ceiling is too lenient. A single authenticated user could fire
+	// 30 paid-tier requests per second and exhaust their credit balance,
+	// flood the worker queue, or hold the user-row lock under contention.
+	//
+	// This tighter limiter wraps ONLY the POST /jobs route on top of the
+	// existing middleware chain. Burst 3 lets a human-driven UI submit
+	// a small batch of jobs without hitting the limit; the 1 req/s
+	// refill keeps any sustained automation honest.
+	jobCreateLimiter := webmiddleware.PerUserRateLimit(rate.Limit(1), 3)
+	// Idempotency middleware (Task 7.2): wraps POST /api/v1/jobs only.
+	// Implements the Stripe two-phase pattern — concurrent network
+	// retries carrying the same Idempotency-Key header are deduplicated
+	// at the storage layer (UNIQUE (user_id, key) is the lock), so a
+	// double-click or a flaky-network retry cannot double-bill the
+	// user. The middleware is opt-in per-request: requests without the
+	// header pass through unchanged. See web/middleware/idempotency.go
+	// for the design rationale and the concurrency test that pins it.
+	jobIdempotency := webmiddleware.Idempotency(postgres.NewIdempotencyRepository(ans.db), ans.logger)
+	apiRouter.HandleFunc("/jobs", hg.API.ListJobs).Methods(http.MethodGet)
+	apiRouter.Handle("/jobs", jobIdempotency(jobCreateLimiter(http.HandlerFunc(hg.API.Scrape)))).Methods(http.MethodPost)
 	apiRouter.HandleFunc("/jobs/{id}", hg.API.GetJob).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/{id}", hg.API.DeleteJob).Methods(http.MethodDelete)
 	apiRouter.HandleFunc("/jobs/{id}/cancel", hg.API.CancelJob).Methods(http.MethodPost)
@@ -259,6 +304,13 @@ func New(cfg ServerConfig) (*Server, error) {
 		apiRouter.HandleFunc("/credits/reconcile", hg.Billing.Reconcile).Methods(http.MethodPost)
 	}
 
+	// Support endpoint: per-user rate limit of 1 req/min, burst 2.
+	// Prevents support-form spam while allowing a quick retry after a typo fix.
+	supportLimiter := webmiddleware.PerUserRateLimit(rate.Limit(1.0/60.0), 2)
+	apiRouter.Handle("/support",
+		supportLimiter(http.HandlerFunc(hg.Support.SubmitSupportRequest)),
+	).Methods(http.MethodPost)
+
 	// ─── Admin routes ────────────────────────────────────────────────────
 	// Admin routes are isolated in their own namespace and protected by
 	// RequireRole middleware. API key auth is explicitly rejected in each
@@ -270,28 +322,36 @@ func New(cfg ServerConfig) (*Server, error) {
 	adminRouter.HandleFunc("/jobs", hg.Admin.GetJobs).Methods(http.MethodGet)
 	adminRouter.HandleFunc("/jobs/{id}/cancel", hg.Admin.CancelJob).Methods(http.MethodPost)
 
-	// Webhook endpoints (public access, no authentication)
-	// Apply a 64 KB body limit — Stripe payloads are small; this prevents OOM from
-	// oversized requests (CWE-400).
-	webhookHandler := webmiddleware.MaxBodySize(64 << 10)(http.HandlerFunc(hg.Billing.HandleStripeWebhook))
-	// goneHandler is returned on retired legacy webhook paths to surface any
-	// Stripe dashboard misconfiguration quickly.
+	// Webhook endpoints are public provider callbacks, not customer API routes.
+	// Keep them out of the /api/v1 customer namespace and give them a dedicated
+	// middleware chain rather than inheriting generic public API rate limits.
+	webhookMws := []func(http.Handler) http.Handler{
+		webmiddleware.RequestID,
+		webmiddleware.InjectLogger(ans.logger),
+		webmiddleware.RequestLogger(ans.logger),
+		webmiddleware.MaxBodySize(64 << 10), // Stripe payloads are small; cap memory use.
+	}
+	if len(cfg.StripeWebhookAllowedCIDRs) > 0 {
+		cidrMW, err := webmiddleware.AllowCIDRs(cfg.StripeWebhookAllowedCIDRs)
+		if err != nil {
+			return nil, fmt.Errorf("invalid Stripe webhook CIDR allowlist: %w", err)
+		}
+		webhookMws = append(webhookMws, cidrMW)
+	}
+	webhookHandler := webmiddleware.Chain(http.HandlerFunc(hg.Billing.HandleStripeWebhook), webhookMws...)
+	// goneHandler is returned on retired paths to surface Stripe dashboard
+	// misconfiguration quickly.
 	goneHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "This endpoint has been retired. Configure your Stripe dashboard to POST to /api/v1/billing/webhook", http.StatusGone)
+		http.Error(w, "This endpoint has been retired. Configure your Stripe dashboard to POST to /webhooks/stripe", http.StatusGone)
 	})
 	if ans.billingSvc != nil {
-		// Canonical webhook path — configure this URL in the Stripe dashboard.
-		// Stripe does not mandate a specific path; they simply require a single,
-		// consistent HTTPS endpoint that responds 2xx quickly. Our versioned API
-		// namespace (/api/v1/billing/webhook) keeps the route consistent with the
-		// rest of the billing surface and makes WAF/firewall rules easier to manage.
-		publicAPIRouter.Handle("/billing/webhook", webhookHandler).Methods(http.MethodPost)
+		// Canonical Stripe callback path. This route is intentionally separate
+		// from the documented customer API surface.
+		router.Handle("/webhooks/stripe", webhookHandler).Methods(http.MethodPost)
 
-		// Retired legacy paths — respond 410 Gone so any misconfigured Stripe
-		// dashboard endpoint surfaces as an obvious delivery failure rather than
-		// a silent auth error. Update the Stripe dashboard webhook URL before
-		// deploying this change or webhook delivery will fail on these paths.
-		router.Handle("/webhooks/stripe", goneHandler).Methods(http.MethodPost)
+		// Retired paths — respond 410 Gone so any stale provider configuration
+		// surfaces as an obvious delivery failure instead of silently drifting.
+		router.Handle("/api/v1/billing/webhook", goneHandler).Methods(http.MethodPost)
 		router.Handle("/api/stripe/webhook", goneHandler).Methods(http.MethodPost)
 	}
 
@@ -354,6 +414,24 @@ func (s *Server) Start(ctx context.Context) error {
 
 		s.logger.Info("server_stopped")
 	}()
+
+	// Launch the idempotency-keys cleanup goroutine (Task 7.2 step 5).
+	// Sweeps every 5 minutes; reaps completed rows past the 24h TTL and
+	// 'started' rows older than 15 minutes (rows whose handler crashed
+	// or was killed before Complete fired). The goroutine exits when
+	// ctx is cancelled by the shutdown sequence above. We require a non-nil
+	// db here — without it the middleware would have no place to write
+	// reservations either, so this is the same precondition as POST /jobs
+	// itself.
+	if s.db != nil {
+		go webmiddleware.RunIdempotencyCleanup(
+			ctx,
+			postgres.NewIdempotencyRepository(s.db),
+			5*time.Minute,
+			15*time.Minute,
+			s.logger,
+		)
+	}
 
 	// Launch internal server (metrics + health) in a background goroutine.
 	if s.internalSrv != nil {

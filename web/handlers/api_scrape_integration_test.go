@@ -81,14 +81,11 @@ type cachedToken struct {
 }
 
 type paginatedResultsResponse struct {
-	Results    []map[string]any `json:"results"`
-	TotalCount int              `json:"total_count"`
-	Page       int              `json:"page"`
-	Limit      int              `json:"limit"`
-	Offset     int              `json:"offset"`
-	TotalPages int              `json:"total_pages"`
-	HasNext    bool             `json:"has_next"`
-	HasPrev    bool             `json:"has_prev"`
+	Results []map[string]any `json:"results"`
+	Total   int              `json:"total"`
+	Page    int              `json:"page"`
+	Limit   int              `json:"limit"`
+	HasMore bool             `json:"has_more"`
 }
 
 type csvValidation struct {
@@ -324,7 +321,7 @@ func TestAPIJobs_ScrapeParameterMatrix(t *testing.T) {
 			}
 
 			finalStatus := extractJobStatus(finalJob)
-			if finalStatus != models.StatusOK {
+			if finalStatus != models.StatusCompleted {
 				t.Fatalf("expected final status ok, got %q", finalStatus)
 			}
 
@@ -354,8 +351,8 @@ func TestAPIJobs_ScrapeParameterMatrix(t *testing.T) {
 
 			assertResultsQuality(t, resultsPage, scenario.minResults, scenario.expectImages, scenario.expectReviews)
 
-			if scenario.assertMaxResult && maxResults > 0 && resultsPage.TotalCount > maxResults {
-				t.Fatalf("expected total results <= max_results (%d), got %d", maxResults, resultsPage.TotalCount)
+			if scenario.assertMaxResult && maxResults > 0 && resultsPage.Total > maxResults {
+				t.Fatalf("expected total results <= max_results (%d), got %d", maxResults, resultsPage.Total)
 			}
 
 			csvBytes, err := client.downloadJobCSV(jobID)
@@ -384,8 +381,8 @@ func TestAPIJobs_ScrapeParameterMatrix(t *testing.T) {
 				t.Fatalf("job %s expected user_reviews_extended in CSV but none of the rows had a non-empty payload", jobID)
 			}
 
-			if csvCheck.TotalDataRows != resultsPage.TotalCount {
-				t.Fatalf("job %s CSV/database mismatch: csv_rows=%d results_total=%d", jobID, csvCheck.TotalDataRows, resultsPage.TotalCount)
+			if csvCheck.TotalDataRows != resultsPage.Total {
+				t.Fatalf("job %s CSV/database mismatch: csv_rows=%d results_total=%d", jobID, csvCheck.TotalDataRows, resultsPage.Total)
 			}
 
 			duration := time.Since(scenarioStart).Round(time.Second)
@@ -399,7 +396,7 @@ func TestAPIJobs_ScrapeParameterMatrix(t *testing.T) {
 				scenario.jobData["reviews_max"],
 				scenario.jobData["max_results"],
 				scenario.jobData["max_time"],
-				resultsPage.TotalCount,
+				resultsPage.Total,
 				csvCheck.TotalDataRows,
 				csvCheck.RowsWithNonEmptyImages,
 				csvCheck.RowsWithNonEmptyReviewsExtended,
@@ -411,7 +408,7 @@ func TestAPIJobs_ScrapeParameterMatrix(t *testing.T) {
 				duration,
 				finalStatus,
 				finalObservedResults,
-				resultsPage.TotalCount,
+				resultsPage.Total,
 				csvCheck.TotalDataRows,
 			)
 		})
@@ -557,7 +554,7 @@ func (c *apiE2EClient) createJob(name string, jobData map[string]any) (string, e
 
 func (c *apiE2EClient) deleteJob(jobID string) error {
 	path := fmt.Sprintf("/api/v1/jobs/%s", url.PathEscape(jobID))
-	return c.doJSON(http.MethodDelete, path, nil, http.StatusOK, nil)
+	return c.doJSON(http.MethodDelete, path, nil, http.StatusNoContent, nil)
 }
 
 func (c *apiE2EClient) getJob(jobID string) (map[string]any, error) {
@@ -628,7 +625,7 @@ func (c *apiE2EClient) waitForSuccessfulCompletion(jobID string, maxResults int)
 		if err != nil {
 			return nil, lastResultsCount, fmt.Errorf("failed to retrieve intermediate results while status=%s: %w", status, err)
 		}
-		resultsCount := resultsPage.TotalCount
+		resultsCount := resultsPage.Total
 
 		if status != lastStatus || failureReason != lastFailureReason || resultsCount != lastResultsCount {
 			c.t.Logf(
@@ -652,7 +649,7 @@ func (c *apiE2EClient) waitForSuccessfulCompletion(jobID string, maxResults int)
 		}
 
 		switch status {
-		case models.StatusOK:
+		case models.StatusCompleted:
 			return job, resultsCount, nil
 		case models.StatusPending:
 			if pendingStartedAt.IsZero() {
@@ -665,7 +662,7 @@ func (c *apiE2EClient) waitForSuccessfulCompletion(jobID string, maxResults int)
 					c.cfg.pendingTimeout,
 				)
 			}
-		case models.StatusWorking:
+		case models.StatusRunning:
 			if workingStartedAt.IsZero() {
 				workingStartedAt = now
 			}
@@ -1086,11 +1083,11 @@ func validateCSVContent(csvBytes []byte) (csvValidation, error) {
 func assertResultsQuality(t *testing.T, page paginatedResultsResponse, minResults int, expectImages bool, expectReviews bool) {
 	t.Helper()
 
-	if page.TotalCount < minResults {
-		t.Fatalf("expected at least %d total results, got %d", minResults, page.TotalCount)
+	if page.Total < minResults {
+		t.Fatalf("expected at least %d total results, got %d", minResults, page.Total)
 	}
 	if len(page.Results) == 0 {
-		t.Fatalf("results page has total_count=%d but results array is empty", page.TotalCount)
+		t.Fatalf("results page has total=%d but results array is empty", page.Total)
 	}
 
 	nonEmptyTitleAndLink := 0

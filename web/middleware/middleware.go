@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"runtime/debug"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -88,6 +89,7 @@ func SecurityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("X-XSS-Protection", "1; mode=block")
+		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 		w.Header().Set("Content-Security-Policy",
 			"default-src 'self'; "+
 				"script-src 'self' cdn.redoc.ly cdnjs.cloudflare.com 'unsafe-inline' 'unsafe-eval'; "+
@@ -96,6 +98,8 @@ func SecurityHeaders(next http.Handler) http.Handler {
 				"img-src 'self' data: cdn.redoc.ly; "+
 				"font-src 'self' fonts.gstatic.com; "+
 				"connect-src 'self'")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		next.ServeHTTP(w, r)
 	})
 }
@@ -175,7 +179,12 @@ func RequestLogger(log *slog.Logger) func(http.Handler) http.Handler {
 func InjectLogger(log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			child := log.With(slog.String("request_id", GetRequestID(r.Context())))
+			attrs := []any{slog.String("request_id", GetRequestID(r.Context()))}
+			// Add user_id if authenticated (may be empty for public endpoints).
+			if userID, err := auth.GetUserID(r.Context()); err == nil && userID != "" {
+				attrs = append(attrs, slog.String("user_id", userID))
+			}
+			child := log.With(attrs...)
 			ctx := pkglogger.WithContext(r.Context(), child)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
@@ -203,8 +212,11 @@ func Recovery(log *slog.Logger) func(http.Handler) http.Handler {
 					}
 
 					stack := debug.Stack()
-					log.Error("panic recovered",
-						slog.String("panic", fmt.Sprintf("%v", rec)),
+					// Prefer the request-scoped logger (carries request_id, user_id)
+					// over the root logger passed to Recovery().
+					reqLog := pkglogger.FromContext(r.Context())
+					reqLog.Error("panic_recovered",
+						slog.Any("panic", rec),
 						slog.String("stack", string(stack)),
 						slog.String("method", r.Method),
 						slog.String("path", r.URL.Path),
@@ -240,6 +252,59 @@ func MaxBodySize(maxBytes int64) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// AllowCIDRs restricts access to requests whose source IP falls within one of
+// the configured CIDR ranges. This is intended for provider callback endpoints
+// such as Stripe webhooks. Parsing is done once at startup so each request only
+// pays a small linear scan over the prevalidated networks.
+func AllowCIDRs(cidrs []string) (func(http.Handler) http.Handler, error) {
+	networks := make([]*net.IPNet, 0, len(cidrs))
+	for _, raw := range cidrs {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		_, network, err := net.ParseCIDR(raw)
+		if err != nil {
+			return nil, fmt.Errorf("parse CIDR %q: %w", raw, err)
+		}
+		networks = append(networks, network)
+	}
+	if len(networks) == 0 {
+		return nil, fmt.Errorf("empty CIDR allowlist")
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			host := r.RemoteAddr
+			if parsedHost, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+				host = parsedHost
+			}
+			ip := net.ParseIP(strings.TrimSpace(host))
+			if ip == nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"code":    http.StatusForbidden,
+					"message": "forbidden",
+				})
+				return
+			}
+			for _, network := range networks {
+				if network.Contains(ip) {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    http.StatusForbidden,
+				"message": "forbidden",
+			})
+		})
+	}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -349,8 +414,7 @@ func concurrentLimitJSON(w http.ResponseWriter, limit int) {
 	w.WriteHeader(http.StatusTooManyRequests)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"code":    429,
-		"message": "concurrent job limit reached",
-		"limit":   limit,
+		"message": fmt.Sprintf("concurrent job limit reached (%d active jobs)", limit),
 	})
 }
 
@@ -367,6 +431,11 @@ func PerIPRateLimit(r rate.Limit, b int) func(http.Handler) http.Handler {
 				ip = r.RemoteAddr
 			}
 			if !krl.get(ip).Allow() {
+				slog.Warn("rate_limit_exceeded",
+					slog.String("key", ip),
+					slog.String("path", r.URL.Path),
+					slog.String("method", r.Method),
+				)
 				rateLimitJSON(w)
 				return
 			}
@@ -392,6 +461,11 @@ func PerUserRateLimit(r rate.Limit, b int) func(http.Handler) http.Handler {
 				key = "ip:" + ip
 			}
 			if !krl.get(key).Allow() {
+				slog.Warn("rate_limit_exceeded",
+					slog.String("key", key),
+					slog.String("path", req.URL.Path),
+					slog.String("method", req.Method),
+				)
 				rateLimitJSON(w)
 				return
 			}
@@ -435,6 +509,11 @@ func PerAPIKeyRateLimit(
 					allowed = freeKRL.get(apiKeyID).Allow()
 				}
 				if !allowed {
+					slog.Warn("rate_limit_exceeded",
+						slog.String("key", apiKeyID),
+						slog.String("path", req.URL.Path),
+						slog.String("method", req.Method),
+					)
 					rateLimitJSON(w)
 					return
 				}
@@ -452,6 +531,11 @@ func PerAPIKeyRateLimit(
 				key = "ip:" + ip
 			}
 			if !fallbackKRL.get(key).Allow() {
+				slog.Warn("rate_limit_exceeded",
+					slog.String("key", key),
+					slog.String("path", req.URL.Path),
+					slog.String("method", req.Method),
+				)
 				rateLimitJSON(w)
 				return
 			}

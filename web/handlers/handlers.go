@@ -11,6 +11,7 @@ import (
 	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/pkg/encryption"
 	"github.com/gosom/google-maps-scraper/pkg/googlesheets"
+	"github.com/gosom/google-maps-scraper/pkg/notify"
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/web/auth"
 	webservices "github.com/gosom/google-maps-scraper/web/services"
@@ -30,6 +31,7 @@ type Dependencies struct {
 	WebhookDeliveryRepo models.JobWebhookDeliveryRepository // nil if webhook delivery not configured
 	PricingRuleRepo     models.PricingRuleRepository        // nil-safe; estimation falls back to defaults
 	ServerSecret        []byte                              // HMAC secret for GenerateAPIKey
+	WebhookKEK          [32]byte                            // AES-GCM key-encryption-key for webhook signing secrets
 	ResultsSvc          ResultsService
 	Encryptor           *encryption.Encryptor // nil means encryption disabled
 	IntegrationRepo     models.IntegrationRepository
@@ -37,6 +39,7 @@ type Dependencies struct {
 	ConcurrentLimitSvc  *webservices.ConcurrentLimitService
 	// Version is the Git SHA injected at build time, used by the /health endpoint.
 	Version string
+	Sender  notify.Sender // Support email sender; nil-safe
 }
 
 // HandlerGroup groups all handler categories for routing setup.
@@ -49,6 +52,7 @@ type HandlerGroup struct {
 	Integration *IntegrationHandler
 	Version     *VersionHandler
 	Admin       *AdminHandlers
+	Support     *SupportHandlers
 }
 
 // NewHandlerGroup constructs a HandlerGroup with initialized handlers.
@@ -62,6 +66,7 @@ func NewHandlerGroup(deps Dependencies) *HandlerGroup {
 		Integration: NewIntegrationHandler(deps.IntegrationRepo, deps.Encryptor, deps.App, deps.GoogleSheetsSvc),
 		Version:     NewVersionHandler(),
 		Admin:       &AdminHandlers{Deps: deps},
+		Support:     &SupportHandlers{Deps: deps, Sender: deps.Sender},
 	}
 }
 
@@ -90,5 +95,5 @@ type JobService interface {
 type ResultsService interface {
 	GetJobResults(ctx context.Context, jobID string) ([]models.Result, error)
 	GetUserResults(ctx context.Context, userID string, limit, offset int) ([]models.Result, error)
-	GetEnhancedJobResultsPaginated(ctx context.Context, jobID string, limit, offset int) ([]models.EnhancedResult, int, error)
+	GetEnhancedJobResultsPaginated(ctx context.Context, jobID, userID string, limit, offset int) ([]models.EnhancedResult, int, error)
 }

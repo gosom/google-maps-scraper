@@ -82,6 +82,10 @@ func (m *mockWebhookConfigRepo) ListActiveByUserID(_ context.Context, userID str
 	return result, nil
 }
 
+func (m *mockWebhookConfigRepo) ListActiveWithSecretByUserID(_ context.Context, userID string) ([]*models.WebhookConfig, error) {
+	return m.ListActiveByUserID(context.Background(), userID)
+}
+
 func (m *mockWebhookConfigRepo) Update(_ context.Context, cfg *models.WebhookConfig) error {
 	return m.updateErr
 }
@@ -187,10 +191,10 @@ func TestListWebhooks_ReturnsUserConfigs(t *testing.T) {
 	}
 }
 
-func TestListWebhooks_DoesNotLeakSecretHash(t *testing.T) {
+func TestListWebhooks_DoesNotLeakEncryptedSecret(t *testing.T) {
 	repo := &mockWebhookConfigRepo{
 		configs: []*models.WebhookConfig{
-			{ID: testWebhookID1, UserID: "user-1", Name: "Hook 1", URL: "https://example.com/1", SecretHash: "supersecret123"},
+			{ID: testWebhookID1, UserID: "user-1", Name: "Hook 1", URL: "https://example.com/1", EncryptedSecret: "supersecret123"},
 		},
 	}
 	h := newWebhookHandlers(repo)
@@ -204,7 +208,7 @@ func TestListWebhooks_DoesNotLeakSecretHash(t *testing.T) {
 	}
 	body := rec.Body.String()
 	if strings.Contains(body, "supersecret123") {
-		t.Error("response body contains secret_hash — should never be exposed in list")
+		t.Error("response body contains encrypted_secret — should never be exposed in list")
 	}
 	if strings.Contains(body, "secret") {
 		t.Error("response body contains 'secret' field — should not appear in list response")
@@ -380,15 +384,15 @@ func TestCreateWebhook_SecretIsHashed(t *testing.T) {
 	var resp createWebhookResponse
 	decodeJSON(t, rec, &resp)
 
-	// The stored secret_hash must NOT equal the plaintext secret
+	// The stored encrypted_secret must NOT equal the plaintext secret
 	if repo.created == nil {
 		t.Fatal("expected Create to be called on repo")
 	}
-	if repo.created.SecretHash == resp.Secret {
-		t.Error("stored secret_hash equals plaintext secret — hashing is broken")
+	if repo.created.EncryptedSecret == resp.Secret {
+		t.Error("stored encrypted_secret equals plaintext secret — encryption is broken")
 	}
-	if repo.created.SecretHash == "" {
-		t.Error("stored secret_hash is empty")
+	if repo.created.EncryptedSecret == "" {
+		t.Error("stored encrypted_secret is empty")
 	}
 }
 

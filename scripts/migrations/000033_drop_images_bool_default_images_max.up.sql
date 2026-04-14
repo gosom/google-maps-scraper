@@ -23,12 +23,12 @@ SET data = jsonb_set(
     to_jsonb(1000),
     true  -- create the key if missing
 )
-WHERE status IN ('pending', 'working')
+WHERE status IN ('pending', 'running')
   AND COALESCE((data->>'images')::bool, false) = true
   AND data->>'images_max' IS NULL;
 
 -- Step 2: drop the now-unused `images` key from all in-flight rows.
 UPDATE jobs
 SET data = data - 'images'
-WHERE status IN ('pending', 'working')
+WHERE status IN ('pending', 'running')
   AND data ? 'images';

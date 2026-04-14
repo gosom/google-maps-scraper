@@ -45,19 +45,9 @@ func (w *CancellationAwareCSVWriter) Run(ctx context.Context, in <-chan scrapema
 		}
 
 		// Validate result type
-		entry, ok := result.Data.(*gmaps.Entry)
-		if !ok {
+		if _, ok := result.Data.(*gmaps.Entry); !ok {
 			close(filteredChan)
 			return errors.New("invalid data type")
-		}
-
-		// Log for debugging (but don't filter)
-		if entry.Title == "" {
-			slog.Debug("csv_writer_processing_result_empty_title")
-		} else {
-			slog.Debug("csv_writer_processing_result",
-				slog.String("title", entry.Title),
-			)
 		}
 
 		// Pass result to wrapped writer

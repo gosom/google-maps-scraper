@@ -198,11 +198,13 @@ func (ps *Server) handleConnection(clientConn net.Conn) {
 	reader := bufio.NewReader(clientConn)
 	request, err := reader.ReadString('\n')
 	if err != nil {
+		ps.logger.Debug("proxy_read_request_failed", slog.Any("error", err))
 		return
 	}
 
 	parts := strings.Fields(request)
 	if len(parts) < 3 {
+		ps.logger.Debug("proxy_malformed_request")
 		return
 	}
 
@@ -245,6 +247,7 @@ func (ps *Server) handleHTTPS(clientConn net.Conn, target string) {
 
 	_, err = proxyConn.Write([]byte(connectReq))
 	if err != nil {
+		ps.logger.Warn("proxy_connect_write_failed", slog.Any("error", err))
 		return
 	}
 
@@ -252,6 +255,7 @@ func (ps *Server) handleHTTPS(clientConn net.Conn, target string) {
 	response := make([]byte, 1024)
 	n, err := proxyConn.Read(response)
 	if err != nil {
+		ps.logger.Warn("proxy_connect_read_failed", slog.Any("error", err))
 		return
 	}
 

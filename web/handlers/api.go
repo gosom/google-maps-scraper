@@ -2,8 +2,8 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
@@ -44,14 +44,17 @@ type apiScrapeRequest struct {
 	models.JobData
 }
 
+// jobEstimateResponse is the typed response for EstimateJobCost.
+type jobEstimateResponse struct {
+	Estimate             *webservices.CostEstimate `json:"estimate"`
+	CurrentCreditBalance float64                   `json:"current_credit_balance"`
+	SufficientBalance    bool                      `json:"sufficient_balance"`
+}
+
 // apiScrape mirrors Server.apiScrape behavior
 func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "POST"), slog.String("path", r.URL.Path))
-	}
-
 	var req apiScrapeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeStrict(r, &req); err != nil {
 		if h.Deps.Logger != nil {
 			h.Deps.Logger.Error("json_decode_failed", slog.String("path", r.URL.Path), slog.Any("error", err))
 		}
@@ -82,7 +85,7 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 
 	// Log request parameters for job creation (no secrets involved)
 	if h.Deps.Logger != nil {
-		// Note: MaxTime is in seconds for JSON API; multiplied to Duration below
+		// Note: MaxTime auto-converts between seconds (JSON) and Duration (internal) via DurationSec
 		h.Deps.Logger.Info("create_job_request",
 			slog.String("user_id", userID),
 			slog.String("name", req.Name),
@@ -97,7 +100,7 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 			slog.String("lon", req.JobData.Lon),
 			slog.Int("zoom", req.JobData.Zoom),
 			slog.Int("radius", req.JobData.Radius),
-			slog.Int64("max_time", int64(req.JobData.MaxTime)),
+			slog.Int64("max_time_seconds", int64(req.JobData.MaxTime.Duration().Seconds())),
 			slog.Bool("fast_mode", req.JobData.FastMode),
 			slog.Int("proxies", len(req.JobData.Proxies)),
 		)
@@ -109,7 +112,6 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 	} else {
 		newJob.Source = models.SourceWeb
 	}
-	newJob.Data.MaxTime *= time.Second
 	if err := webutils.ValidateJob(&newJob); err != nil {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: err.Error()})
 		return
@@ -184,13 +186,6 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 	renderJSON(w, http.StatusCreated, models.ApiScrapeResponse{ID: newJob.ID})
 }
 
-// concurrentLimitResponse is the 429 body when a user has hit their job cap.
-type concurrentLimitResponse struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Limit   int    `json:"limit"`
-}
-
 // createJob inserts a job, enforcing the concurrent job limit and credit
 // balance check when the DB is available. The balance check inside the
 // transaction (via opts) is the authoritative check that prevents TOCTOU races.
@@ -203,10 +198,9 @@ func (h *APIHandlers) createJob(ctx context.Context, job *models.Job, w http.Res
 			var limitErr webservices.ErrConcurrentJobLimitReached
 			if errors.As(err, &limitErr) {
 				w.Header().Set("Retry-After", "60")
-				renderJSON(w, http.StatusTooManyRequests, concurrentLimitResponse{
+				renderJSON(w, http.StatusTooManyRequests, models.APIError{
 					Code:    http.StatusTooManyRequests,
-					Message: "concurrent job limit reached",
-					Limit:   limitErr.Limit,
+					Message: fmt.Sprintf("concurrent job limit reached (%d active jobs)", limitErr.Limit),
 				})
 				return err
 			}
@@ -233,32 +227,64 @@ func (h *APIHandlers) createJob(ctx context.Context, job *models.Job, w http.Res
 	return nil
 }
 
-func (h *APIHandlers) GetJobs(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
+// parseJobID extracts and validates the {id} path variable from a
+// gorilla/mux request. Returns the canonical lowercase UUID string on
+// success or an error suitable for rendering as a 422 response.
+//
+// Why this helper exists: GetJob, DeleteJob, and CancelJob each had
+// their own copy of this five-line block, but GetJobResults and
+// GetJobCosts forgot to validate at all — passing an arbitrary string
+// straight to the SQL layer. The arbitrary string couldn't trigger SQL
+// injection (the query uses placeholders) but it WAS leaking
+// db-specific error messages back to the client when the cast failed,
+// helping an attacker fingerprint the database.
+//
+// Centralizing the parse here ensures (a) every job-id endpoint
+// validates the same way, and (b) adding a new endpoint is one
+// `parseJobID(r)` call instead of five lines of boilerplate that
+// might get skipped.
+//
+// Returns the canonical (lowercase, hyphen-separated) UUID form so
+// downstream queries see a normalized value regardless of how the
+// client cased the input.
+func parseJobID(r *http.Request) (string, error) {
+	raw := mux.Vars(r)["id"]
+	if raw == "" {
+		return "", errors.New("missing job ID")
 	}
-	if h.Deps.Auth == nil {
-		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "Authentication not configured"})
-		return
-	}
-	userID, err := auth.GetUserID(r.Context())
+	id, err := uuid.Parse(raw)
 	if err != nil {
-		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
-		return
+		return "", errors.New("invalid job ID format")
 	}
-	jobs, err := h.Deps.App.All(r.Context(), userID)
-	if err != nil {
-		internalError(w, h.Deps.Logger, err, "internal server error",
-			slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
-		return
-	}
-	renderJSON(w, http.StatusOK, jobs)
+	return id.String(), nil
 }
 
-func (h *APIHandlers) GetUserJobs(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
-	}
+// allowedJobSorts is the closed allowlist of columns the ListJobs
+// endpoint will sort by. Anything outside this set is rejected with 400
+// — this prevents an attacker from sniffing column names by passing
+// `?sort=password` and observing whether the request succeeds.
+//
+// Security: this MUST be a literal set, not a tag scan or reflection
+// over models.Job. A reflection-based allowlist would silently include
+// any field added to the Job struct in the future, defeating the
+// allowlist. Adding a column requires a deliberate code change here.
+var allowedJobSorts = map[string]struct{}{
+	"created_at": {},
+	"name":       {},
+	"status":     {},
+	"updated_at": {},
+}
+
+// maxJobSearchLen caps the `?search=` query parameter at 200 bytes.
+// The search value flows into a SQL ILIKE in the repository layer; an
+// unbounded search string forces the database into a full table scan
+// against arbitrary input, which is both a CWE-400 and a slow-path
+// amplifier (one user can DoS the jobs list for everyone). 200 bytes
+// is generous for human-typed search input — anything beyond that is
+// almost certainly an attack or a buggy client.
+const maxJobSearchLen = 200
+
+func (h *APIHandlers) ListJobs(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Auth == nil {
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "Authentication not configured"})
 		return
@@ -269,25 +295,30 @@ func (h *APIHandlers) GetUserJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse pagination query parameters
+	// Parse pagination query parameters with the unified helper. The
+	// 10-row default is preserved for this endpoint (smaller than the
+	// 50-row default used for results) because the dashboard expects
+	// to show ~10 jobs per page in the UI.
 	q := r.URL.Query()
-
-	page := 1
-	if v := q.Get("page"); v != "" {
-		if p, err := strconv.Atoi(v); err == nil && p > 0 {
-			page = p
-		}
-	}
-
-	limit := 10
-	if v := q.Get("limit"); v != "" {
-		if l, err := strconv.Atoi(v); err == nil && l > 0 && l <= 100 {
-			limit = l
-		}
+	page, limit, _, err := parsePagination(r, 10)
+	if err != nil {
+		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: err.Error()})
+		return
 	}
 
 	sort := "created_at"
 	if v := q.Get("sort"); v != "" {
+		// Strict allowlist — see allowedJobSorts above. Reject unknown
+		// values with 400 instead of silently coercing to default,
+		// which would mask client typos and let an attacker fingerprint
+		// the schema by observing default-vs-explicit behavior.
+		if _, ok := allowedJobSorts[v]; !ok {
+			renderJSON(w, http.StatusBadRequest, models.APIError{
+				Code:    http.StatusBadRequest,
+				Message: "invalid sort field (allowed: created_at, name, status, updated_at)",
+			})
+			return
+		}
 		sort = v
 	}
 
@@ -297,6 +328,18 @@ func (h *APIHandlers) GetUserJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	search := q.Get("search")
+	// len() is bytes, not runes — that matches what the validator/v10
+	// `max=N` tag does in models/job.go and what the SQL LIKE engine
+	// actually consumes. A 200-byte cap is ~200 ASCII characters or
+	// ~50-66 CJK characters; both are well above any human-typed
+	// search input.
+	if len(search) > maxJobSearchLen {
+		renderJSON(w, http.StatusBadRequest, models.APIError{
+			Code:    http.StatusBadRequest,
+			Message: fmt.Sprintf("search exceeds maximum length of %d bytes", maxJobSearchLen),
+		})
+		return
+	}
 
 	params := models.PaginatedJobsParams{
 		UserID: userID,
@@ -319,25 +362,16 @@ func (h *APIHandlers) GetUserJobs(w http.ResponseWriter, r *http.Request) {
 		Total:   total,
 		Page:    page,
 		Limit:   limit,
-		HasNext: page*limit < total,
-		HasPrev: page > 1,
+		HasMore: page*limit < total,
 	}
 
 	renderJSON(w, http.StatusOK, resp)
 }
 
 func (h *APIHandlers) GetJob(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
-	}
-	idStr := mux.Vars(r)["id"]
-	if idStr == "" {
-		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Missing job ID"})
-		return
-	}
-	id, err := uuid.Parse(idStr)
+	jobID, err := parseJobID(r)
 	if err != nil {
-		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Invalid ID format"})
+		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: err.Error()})
 		return
 	}
 	userID, err := auth.GetUserID(r.Context())
@@ -345,8 +379,11 @@ func (h *APIHandlers) GetJob(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
 		return
 	}
-	job, err := h.Deps.App.Get(r.Context(), id.String(), userID)
+	job, err := h.Deps.App.Get(r.Context(), jobID, userID)
 	if err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Error("get_job_failed", slog.String("job_id", jobID), slog.String("user_id", userID), slog.Any("error", err))
+		}
 		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: http.StatusText(http.StatusNotFound)})
 		return
 	}
@@ -354,17 +391,9 @@ func (h *APIHandlers) GetJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *APIHandlers) DeleteJob(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "DELETE"), slog.String("path", r.URL.Path))
-	}
-	idStr := mux.Vars(r)["id"]
-	if idStr == "" {
-		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Missing job ID"})
-		return
-	}
-	id, err := uuid.Parse(idStr)
+	jobID, err := parseJobID(r)
 	if err != nil {
-		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Invalid ID format"})
+		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: err.Error()})
 		return
 	}
 	userID, err := auth.GetUserID(r.Context())
@@ -372,25 +401,20 @@ func (h *APIHandlers) DeleteJob(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
 		return
 	}
-	if err := h.Deps.App.Delete(r.Context(), id.String(), userID); err != nil {
+	if err := h.Deps.App.Delete(r.Context(), jobID, userID); err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Error("delete_job_failed", slog.String("job_id", jobID), slog.String("user_id", userID), slog.Any("error", err))
+		}
 		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: http.StatusText(http.StatusNotFound)})
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *APIHandlers) CancelJob(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "POST"), slog.String("path", r.URL.Path))
-	}
-	idStr := mux.Vars(r)["id"]
-	if idStr == "" {
-		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Missing job ID"})
-		return
-	}
-	id, err := uuid.Parse(idStr)
+	jobID, err := parseJobID(r)
 	if err != nil {
-		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Invalid ID format"})
+		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: err.Error()})
 		return
 	}
 	userID, err := auth.GetUserID(r.Context())
@@ -398,35 +422,31 @@ func (h *APIHandlers) CancelJob(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
 		return
 	}
-	if err := h.Deps.App.Cancel(r.Context(), id.String(), userID); err != nil {
+	if err := h.Deps.App.Cancel(r.Context(), jobID, userID); err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Error("cancel_job_failed", slog.String("job_id", jobID), slog.String("user_id", userID), slog.Any("error", err))
+		}
 		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: http.StatusText(http.StatusNotFound)})
 		return
 	}
-	renderJSON(w, http.StatusOK, map[string]any{"message": "Job cancellation initiated", "job_id": id.String()})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *APIHandlers) GetJobResults(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
-	}
-	jobID := mux.Vars(r)["id"]
-	if jobID == "" {
-		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Missing job ID"})
+	jobID, err := parseJobID(r)
+	if err != nil {
+		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: err.Error()})
 		return
 	}
-	page := 1
-	limit := 50
-	if v := r.URL.Query().Get("page"); v != "" {
-		if p, err := strconv.Atoi(v); err == nil && p > 0 {
-			page = p
-		}
+	// Unified pagination — see web/handlers/pagination.go. Caps the
+	// limit at MaxPageLimit (100, was 1000) and adds an overflow guard
+	// on (page-1)*limit. Default 50 matches the prior behavior so the
+	// frontend's default page size is unchanged.
+	page, limit, offset, err := parsePagination(r, 50)
+	if err != nil {
+		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: err.Error()})
+		return
 	}
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if l, err := strconv.Atoi(v); err == nil && l > 0 && l <= 1000 {
-			limit = l
-		}
-	}
-	offset := (page - 1) * limit
 	userID, err := auth.GetUserID(r.Context())
 	if err != nil {
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
@@ -447,21 +467,18 @@ func (h *APIHandlers) GetJobResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, total, err := h.Deps.ResultsSvc.GetEnhancedJobResultsPaginated(r.Context(), jobID, limit, offset)
+	results, total, err := h.Deps.ResultsSvc.GetEnhancedJobResultsPaginated(r.Context(), jobID, userID, limit, offset)
 	if err != nil {
 		internalError(w, h.Deps.Logger, err, "failed to retrieve results",
 			slog.String("user_id", userID), slog.String("job_id", jobID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
 		return
 	}
-	resp := models.PaginatedResultsResponse{Results: results, TotalCount: total, Page: page, Limit: limit, Offset: offset, TotalPages: (total + limit - 1) / limit, HasNext: offset+limit < total, HasPrev: page > 1}
+	resp := models.PaginatedResultsResponse{Results: results, Total: total, Page: page, Limit: limit, HasMore: page*limit < total}
 	renderJSON(w, http.StatusOK, resp)
 }
 
 // GetJobCosts returns the cost breakdown and totals for a job
 func (h *APIHandlers) GetJobCosts(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
-	}
 	// Require auth
 	if h.Deps.Auth == nil {
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "Authentication not configured"})
@@ -473,9 +490,9 @@ func (h *APIHandlers) GetJobCosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobID := mux.Vars(r)["id"]
-	if jobID == "" {
-		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Missing job ID"})
+	jobID, err := parseJobID(r)
+	if err != nil {
+		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: err.Error()})
 		return
 	}
 
@@ -492,7 +509,7 @@ func (h *APIHandlers) GetJobCosts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cs := webservices.NewCostsService(h.Deps.DB)
-	resp, err := cs.GetJobCosts(r.Context(), jobID)
+	resp, err := cs.GetJobCosts(r.Context(), jobID, userID)
 	if err != nil {
 		internalError(w, h.Deps.Logger, err, "failed to retrieve job costs",
 			slog.String("user_id", userID), slog.String("job_id", jobID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
@@ -504,9 +521,6 @@ func (h *APIHandlers) GetJobCosts(w http.ResponseWriter, r *http.Request) {
 // GetBatchJobCosts returns cost breakdowns and totals for multiple jobs in a
 // single request, eliminating N+1 individual cost fetches.
 func (h *APIHandlers) GetBatchJobCosts(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "POST"), slog.String("path", r.URL.Path))
-	}
 	if h.Deps.Auth == nil {
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "Authentication not configured"})
 		return
@@ -522,7 +536,11 @@ func (h *APIHandlers) GetBatchJobCosts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.BatchJobCostsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeStrict(r, &req); err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Warn("json_decode_failed",
+				slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+		}
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "Invalid request body"})
 		return
 	}
@@ -582,25 +600,18 @@ func (h *APIHandlers) GetBatchJobCosts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *APIHandlers) GetUserResults(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "GET"), slog.String("path", r.URL.Path))
-	}
 	userID, err := auth.GetUserID(r.Context())
 	if err != nil {
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
 		return
 	}
-	limit := 50
-	offset := 0
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if l, err := strconv.Atoi(v); err == nil && l > 0 && l <= 1000 {
-			limit = l
-		}
-	}
-	if v := r.URL.Query().Get("offset"); v != "" {
-		if o, err := strconv.Atoi(v); err == nil && o >= 0 {
-			offset = o
-		}
+	// Unified pagination — see web/handlers/pagination.go. Caps the
+	// limit at MaxPageLimit (100, was 1000) and rejects out-of-range
+	// offset/limit values with 400 instead of silently coercing.
+	limit, offset, err := parseOffsetPagination(r, 50)
+	if err != nil {
+		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: err.Error()})
+		return
 	}
 	results, err := h.Deps.ResultsSvc.GetUserResults(r.Context(), userID, limit, offset)
 	if err != nil {
@@ -613,12 +624,8 @@ func (h *APIHandlers) GetUserResults(w http.ResponseWriter, r *http.Request) {
 
 // EstimateJobCost returns the estimated cost for a job without creating it
 func (h *APIHandlers) EstimateJobCost(w http.ResponseWriter, r *http.Request) {
-	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("request", slog.String("method", "POST"), slog.String("path", r.URL.Path))
-	}
-
 	var req apiScrapeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeStrict(r, &req); err != nil {
 		if h.Deps.Logger != nil {
 			h.Deps.Logger.Error("json_decode_failed", slog.String("path", r.URL.Path), slog.Any("error", err))
 		}
@@ -690,10 +697,10 @@ func (h *APIHandlers) EstimateJobCost(w http.ResponseWriter, r *http.Request) {
 	balanceMicro := int64(math.Round(balanceFloat * models.MicroUnit))
 
 	// Build response with estimate and balance info
-	response := map[string]interface{}{
-		"estimate":               estimate,
-		"current_credit_balance": balanceFloat,
-		"sufficient_balance":     balanceMicro >= estimate.TotalMicro(),
+	response := jobEstimateResponse{
+		Estimate:             estimate,
+		CurrentCreditBalance: balanceFloat,
+		SufficientBalance:    balanceMicro >= estimate.TotalMicro(),
 	}
 
 	renderJSON(w, http.StatusOK, response)
