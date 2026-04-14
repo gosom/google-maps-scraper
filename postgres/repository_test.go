@@ -159,7 +159,7 @@ func createTestJob(t *testing.T) models.Job {
 			FastMode:   true,
 			Depth:      1,
 			MaxResults: 10,
-			MaxTime:    time.Minute * 5,
+			MaxTime:    models.DurationSec(time.Minute * 5),
 		},
 	}
 }
