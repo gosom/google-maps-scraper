@@ -272,7 +272,7 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 
 	// Inject Google cookies for authenticated access (reviews, full data)
 	if err := InjectCookiesIntoPage(page); err != nil {
-		slog.Debug("search_cookies_inject_skipped", slog.Any("error", err))
+		log.Debug("search_cookies_inject_skipped", slog.Any("error", err))
 	}
 
 	// Check for cancellation before starting
@@ -311,7 +311,7 @@ func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scra
 
 	// Re-inject cookies AFTER consent handling
 	if err := InjectCookiesIntoPage(page); err != nil {
-		slog.Debug("job_cookies_reinject_skipped", slog.Any("error", err))
+		log.Debug("job_cookies_reinject_skipped", slog.Any("error", err))
 	}
 
 	// Check for cancellation after consent handling
@@ -619,6 +619,8 @@ func scroll(ctx context.Context,
 		});
 	}`
 
+	log := scrapemate.GetLoggerFromContext(ctx)
+
 	var currentScrollHeight int
 	waitTime := 100.
 	cnt := 0
@@ -626,12 +628,12 @@ func scroll(ctx context.Context,
 	initialTimeout := 500
 	maxWait2 := 2000.0
 
-	slog.Debug("scroll_start", slog.String("selector", scrollSelector), slog.Int("max_depth", maxDepth))
+	log.Debug("scroll_start", slog.String("selector", scrollSelector), slog.Int("max_depth", maxDepth))
 
 	for i := 0; i < maxDepth; i++ {
 		select {
 		case <-ctx.Done():
-			slog.Debug("scroll_cancelled_before", slog.Int("iteration", i))
+			log.Debug("scroll_cancelled_before", slog.Int("iteration", i))
 			return cnt, ctx.Err()
 		default:
 		}
@@ -645,11 +647,11 @@ func scroll(ctx context.Context,
 
 		scrollHeight, err := page.Evaluate(fmt.Sprintf(expr, waitTime2))
 		if err != nil {
-			slog.Debug("scroll_evaluate_error", slog.Int("iteration", i), slog.Any("error", err))
+			log.Debug("scroll_evaluate_error", slog.Int("iteration", i), slog.Any("error", err))
 			return cnt, err
 		}
 
-		slog.Debug("scroll_evaluate_result",
+		log.Debug("scroll_evaluate_result",
 			slog.Int("iteration", i),
 			slog.String("type", fmt.Sprintf("%T", scrollHeight)),
 			slog.Any("value", scrollHeight))
@@ -665,10 +667,10 @@ func scroll(ctx context.Context,
 		case int64:
 			height = int(v)
 		case nil:
-			slog.Debug("scroll_evaluate_returned_nil", slog.Int("iteration", i))
+			log.Debug("scroll_evaluate_returned_nil", slog.Int("iteration", i))
 			return cnt, fmt.Errorf("scroll evaluate returned nil (element may have disappeared)")
 		default:
-			slog.Debug("scroll_evaluate_unexpected_type",
+			log.Debug("scroll_evaluate_unexpected_type",
 				slog.Int("iteration", i),
 				slog.String("type", fmt.Sprintf("%T", scrollHeight)),
 				slog.Any("value", scrollHeight))
@@ -676,17 +678,17 @@ func scroll(ctx context.Context,
 		}
 
 		if height == -1 {
-			slog.Debug("scroll_element_not_found", slog.Int("iteration", i), slog.String("selector", scrollSelector))
+			log.Debug("scroll_element_not_found", slog.Int("iteration", i), slog.String("selector", scrollSelector))
 			return cnt, fmt.Errorf("scroll target element not found: %s", scrollSelector)
 		}
 
-		slog.Debug("scroll_height",
+		log.Debug("scroll_height",
 			slog.Int("iteration", i),
 			slog.Int("height", height),
 			slog.Int("prev_height", currentScrollHeight))
 
 		if height == currentScrollHeight {
-			slog.Debug("scroll_height_unchanged_done", slog.Int("iteration", i), slog.Int("height", height))
+			log.Debug("scroll_height_unchanged_done", slog.Int("iteration", i), slog.Int("height", height))
 			break
 		}
 
@@ -694,7 +696,7 @@ func scroll(ctx context.Context,
 
 		select {
 		case <-ctx.Done():
-			slog.Debug("scroll_cancelled_after", slog.Int("iteration", i))
+			log.Debug("scroll_cancelled_after", slog.Int("iteration", i))
 			return cnt, ctx.Err()
 		default:
 		}

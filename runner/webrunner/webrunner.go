@@ -284,8 +284,7 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 	// connection pool settings — configurable via env vars
 	maxOpen := envInt("DB_MAX_OPEN_CONNS", 25)
 	if maxOpen == 0 {
-		slog.Error("db_pool_misconfigured", "msg", "DB_MAX_OPEN_CONNS=0 creates unbounded pool — refusing to start")
-		os.Exit(1)
+		return nil, fmt.Errorf("DB_MAX_OPEN_CONNS=0 creates unbounded pool — refusing to start")
 	}
 	maxIdle := envInt("DB_MAX_IDLE_CONNS", 10)
 	connMaxLifetime := envDuration("DB_CONN_MAX_LIFETIME", 5*time.Minute)
@@ -301,11 +300,7 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 		pingCtx, pingCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer pingCancel()
 		if err := db.PingContext(pingCtx); err != nil {
-			slog.Error("startup_db_ping_failed",
-				slog.Any("error", err),
-				slog.String("detail", "cannot reach PostgreSQL within 10s; aborting startup"),
-			)
-			os.Exit(1)
+			return nil, fmt.Errorf("startup DB ping failed (cannot reach PostgreSQL within 10s): %w", err)
 		}
 	}
 

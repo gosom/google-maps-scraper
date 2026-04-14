@@ -71,11 +71,13 @@ func (j *EmailExtractJob) Process(ctx context.Context, resp *scrapemate.Response
 
 	// if html fetch failed just return
 	if resp.Error != nil {
+		log.Warn("email_fetch_failed", "url", j.URL, "error", resp.Error.Error())
 		return j.Entry, nil, nil
 	}
 
 	doc, ok := resp.Document.(*goquery.Document)
 	if !ok {
+		log.Warn("email_document_type_assertion_failed", "url", j.URL)
 		return j.Entry, nil, nil
 	}
 

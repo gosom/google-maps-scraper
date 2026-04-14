@@ -120,8 +120,7 @@ func New(cfg ServerConfig) (*Server, error) {
 	// Initialize encryption once at startup
 	enc, err := encryption.New(os.Getenv("ENCRYPTION_KEY"))
 	if err != nil {
-		slog.Error("encryption_init_failed", slog.Any("error", err))
-		os.Exit(1)
+		return nil, fmt.Errorf("encryption init failed: %w", err)
 	}
 	if enc == nil {
 		slog.Warn("encryption_key_missing", slog.String("detail", "integration credentials will be stored in plaintext"))
