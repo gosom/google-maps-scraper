@@ -16,11 +16,11 @@ func durSec(d time.Duration) models.DurationSec { return models.DurationSec(d) }
 func newValidJobData() *models.JobData {
 	return &models.JobData{
 		Keywords:   []string{"pizza"},
-		Lang:       "en",
+		Language:   "en",
 		Depth:      5,
 		MaxResults: 10,
-		ReviewsMax: 0,
-		ImagesMax:  0,
+		MaxReviews: 0,
+		MaxImages:  0,
 		MaxTime:    durSec(60 * time.Second),
 	}
 }
@@ -59,7 +59,7 @@ func TestApplyJobDataDefaults_FillsZeroFields(t *testing.T) {
 	t.Parallel()
 	d := &models.JobData{
 		Keywords: []string{"pizza"},
-		Lang:     "en",
+		Language: "en",
 		// Depth, MaxResults, MaxTime intentionally zero
 	}
 	ApplyJobDataDefaults(d)
@@ -74,11 +74,11 @@ func TestApplyJobDataDefaults_FillsZeroFields(t *testing.T) {
 		t.Errorf("MaxTime: got %v, want %v", d.MaxTime, wantMaxTime)
 	}
 	// Toggle-off enrichments stay at zero — that IS the default.
-	if d.ReviewsMax != 0 {
-		t.Errorf("ReviewsMax should stay 0 (toggle off), got %d", d.ReviewsMax)
+	if d.MaxReviews != 0 {
+		t.Errorf("MaxReviews should stay 0 (toggle off), got %d", d.MaxReviews)
 	}
-	if d.ImagesMax != 0 {
-		t.Errorf("ImagesMax should stay 0 (toggle off), got %d", d.ImagesMax)
+	if d.MaxImages != 0 {
+		t.Errorf("MaxImages should stay 0 (toggle off), got %d", d.MaxImages)
 	}
 }
 
@@ -89,15 +89,15 @@ func TestApplyJobDataDefaults_PreservesNonZeroFields(t *testing.T) {
 	t.Parallel()
 	d := &models.JobData{
 		Keywords:   []string{"pizza"},
-		Lang:       "en",
+		Language:   "en",
 		Depth:      12,
 		MaxResults: 250,
 		MaxTime:    durSec(900 * time.Second),
-		ReviewsMax: 30,
-		ImagesMax:  5000,
+		MaxReviews: 30,
+		MaxImages:  5000,
 	}
 	ApplyJobDataDefaults(d)
-	if d.Depth != 12 || d.MaxResults != 250 || d.MaxTime != durSec(900*time.Second) || d.ReviewsMax != 30 || d.ImagesMax != 5000 {
+	if d.Depth != 12 || d.MaxResults != 250 || d.MaxTime != durSec(900*time.Second) || d.MaxReviews != 30 || d.MaxImages != 5000 {
 		t.Errorf("ApplyJobDataDefaults overwrote a non-zero field: %+v", d)
 	}
 }
@@ -147,7 +147,7 @@ func TestValidateJobData_AcceptsMaxTimeAtCap_OneHour(t *testing.T) {
 func TestValidateJobData_RejectsImagesMaxAbove40k_NewCeiling(t *testing.T) {
 	t.Parallel()
 	d := newValidJobData()
-	d.ImagesMax = 40_001
+	d.MaxImages = 40_001
 	err := ValidateJobData(d)
 	if err == nil {
 		t.Fatal("expected error for images_max=40001, got nil")
@@ -173,7 +173,7 @@ func TestValidateJobData_RejectsMaxResultsAboveCap(t *testing.T) {
 func TestValidateJobData_RejectsReviewsMaxAboveCap(t *testing.T) {
 	t.Parallel()
 	d := newValidJobData()
-	d.ReviewsMax = 9999
+	d.MaxReviews = 9999
 	err := ValidateJobData(d)
 	if err == nil {
 		t.Fatal("expected error for reviews_max=9999, got nil")
@@ -186,7 +186,7 @@ func TestValidateJobData_RejectsReviewsMaxAboveCap(t *testing.T) {
 func TestValidateJobData_AcceptsZeroReviewsMaxAsSkip(t *testing.T) {
 	t.Parallel()
 	d := newValidJobData()
-	d.ReviewsMax = 0
+	d.MaxReviews = 0
 	if err := ValidateJobData(d); err != nil {
 		t.Fatalf("expected reviews_max=0 (skip) to pass, got: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestValidateJobData_AcceptsZeroReviewsMaxAsSkip(t *testing.T) {
 func TestValidateJobData_RejectsImagesMaxAboveCap(t *testing.T) {
 	t.Parallel()
 	d := newValidJobData()
-	d.ImagesMax = 50_000
+	d.MaxImages = 50_000
 	err := ValidateJobData(d)
 	if err == nil {
 		t.Fatal("expected error for images_max=50000, got nil")
@@ -208,7 +208,7 @@ func TestValidateJobData_RejectsImagesMaxAboveCap(t *testing.T) {
 func TestValidateJobData_AcceptsZeroImagesMaxAsSkip(t *testing.T) {
 	t.Parallel()
 	d := newValidJobData()
-	d.ImagesMax = 0
+	d.MaxImages = 0
 	if err := ValidateJobData(d); err != nil {
 		t.Fatalf("expected images_max=0 (skip) to pass, got: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestValidateJobData_AcceptsZeroImagesMaxAsSkip(t *testing.T) {
 func TestValidateJobData_RejectsLangNotInAllowlist(t *testing.T) {
 	t.Parallel()
 	d := newValidJobData()
-	d.Lang = "xx"
+	d.Language = "xx"
 	err := ValidateJobData(d)
 	if err == nil {
 		t.Fatal("expected error for lang=xx, got nil")
@@ -230,7 +230,7 @@ func TestValidateJobData_RejectsLangNotInAllowlist(t *testing.T) {
 func TestValidateJobData_RejectsLangWrongCase(t *testing.T) {
 	t.Parallel()
 	d := newValidJobData()
-	d.Lang = "EN"
+	d.Language = "EN"
 	if err := ValidateJobData(d); err == nil {
 		t.Fatal("expected error for lang=EN (uppercase), got nil")
 	}

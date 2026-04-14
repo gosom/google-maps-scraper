@@ -19,11 +19,11 @@ import (
 
 // SeedJobConfig groups all parameters needed to create seed jobs.
 type SeedJobConfig struct {
-	FastMode bool
-	LangCode string
-	Input    io.Reader
-	MaxDepth int
-	Email    bool
+	FastMode      bool
+	LangCode      string
+	Input         io.Reader
+	MaxDepth      int
+	IncludeEmails bool
 	// Images enables image extraction at all. When false, no images are
 	// scraped regardless of ImageBudget. When true, images are scraped
 	// subject to the ImageBudget cross-place enforcement (if non-nil).
@@ -134,7 +134,7 @@ func CreateSeedJobs(cfg SeedJobConfig) (jobs []scrapemate.IJob, err error) {
 				opts = append(opts, gmaps.WithImageBudget(cfg.ImageBudget))
 			}
 
-			job = gmaps.NewGmapJob(id, cfg.LangCode, query, cfg.MaxDepth, cfg.Email, cfg.Images, cfg.ReviewsMax, cfg.GeoCoordinates, cfg.Zoom, opts...)
+			job = gmaps.NewGmapJob(id, cfg.LangCode, query, cfg.MaxDepth, cfg.IncludeEmails, cfg.Images, cfg.ReviewsMax, cfg.GeoCoordinates, cfg.Zoom, opts...)
 		} else {
 			jparams := gmaps.MapSearchParams{
 				Location: gmaps.MapLocation{

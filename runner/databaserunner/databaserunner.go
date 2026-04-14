@@ -198,13 +198,13 @@ func (d *dbrunner) produceSeedJobs(ctx context.Context) error {
 	}
 
 	jobs, err := runner.CreateSeedJobs(runner.SeedJobConfig{
-		FastMode: d.cfg.Scraping.FastMode,
-		LangCode: d.cfg.Scraping.LangCode,
-		Input:    input,
-		MaxDepth: d.cfg.Scraping.MaxDepth,
-		Email:    d.cfg.Scraping.Email,
-		Images:   d.cfg.Scraping.Images,
-		Debug:    d.cfg.Debug,
+		FastMode:      d.cfg.Scraping.FastMode,
+		LangCode:      d.cfg.Scraping.LangCode,
+		Input:         input,
+		MaxDepth:      d.cfg.Scraping.MaxDepth,
+		IncludeEmails: d.cfg.Scraping.IncludeEmails,
+		Images:        d.cfg.Scraping.Images,
+		Debug:         d.cfg.Debug,
 		ReviewsMax: func() int {
 			if d.cfg.Scraping.ExtraReviews {
 				return 1 // Default to 1 review if extra reviews enabled

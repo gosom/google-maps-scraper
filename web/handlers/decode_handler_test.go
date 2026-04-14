@@ -21,7 +21,7 @@ func TestScrape_RejectsUnknownFields(t *testing.T) {
 	t.Parallel()
 
 	h := &APIHandlers{Deps: Dependencies{Auth: &auth.AuthMiddleware{}}}
-	body := `{"name":"test","keywords":["pizza"],"lang":"en","depth":5,"max_results":10,"max_time":60,"admin_override":true}`
+	body := `{"name":"test","keywords":["pizza"],"language":"en","depth":5,"max_results":10,"max_time":60,"admin_override":true}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -48,7 +48,7 @@ func TestScrape_RejectsTrailingData(t *testing.T) {
 	t.Parallel()
 
 	h := &APIHandlers{Deps: Dependencies{Auth: &auth.AuthMiddleware{}}}
-	body := `{"name":"a","keywords":["x"],"lang":"en","depth":5,"max_results":10,"max_time":60}{"name":"b","keywords":["y"],"lang":"en","depth":5,"max_results":10,"max_time":60}`
+	body := `{"name":"a","keywords":["x"],"language":"en","depth":5,"max_results":10,"max_time":60}{"name":"b","keywords":["y"],"language":"en","depth":5,"max_results":10,"max_time":60}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()

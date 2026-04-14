@@ -89,13 +89,13 @@ func (l *lambdaAwsRunner) handler(ctx context.Context, input lInput) error {
 	exitMonitor := exiter.New()
 
 	seedJobs, err = runner.CreateSeedJobs(runner.SeedJobConfig{
-		FastMode: false, // TODO support fast mode
-		LangCode: input.Language,
-		Input:    in,
-		MaxDepth: input.Depth,
-		Email:    false,
-		Images:   false,
-		Debug:    false,
+		FastMode:      false, // TODO support fast mode
+		LangCode:      input.Language,
+		Input:         in,
+		MaxDepth:      input.Depth,
+		IncludeEmails: false,
+		Images:        false,
+		Debug:         false,
 		ReviewsMax: func() int {
 			if input.ExtraReviews {
 				return 1 // Default to 1 review if enabled

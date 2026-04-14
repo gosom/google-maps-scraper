@@ -13,6 +13,7 @@ import (
 
 	"github.com/gosom/google-maps-scraper/models"
 	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
+	webutils "github.com/gosom/google-maps-scraper/web/utils"
 )
 
 // EstimationService provides job cost estimation functionality
@@ -28,13 +29,11 @@ const (
 	AvgImagesPerPlace  = 30
 
 	// Default pricing fallbacks (used when DB has no active rules)
-	defaultPriceJobStart          = 0.007
-	defaultPricePlaceScraped      = 0.003
-	defaultPriceFiltersApplied    = 0.001
-	defaultPriceAdditionalDetails = 0.002
-	defaultPriceContactDetails    = 0.002
-	defaultPriceReview            = 0.0005
-	defaultPriceImage             = 0.0005
+	defaultPriceJobStart       = 0.007
+	defaultPricePlaceScraped   = 0.003
+	defaultPriceContactDetails = 0.002
+	defaultPriceReview         = 0.0005
+	defaultPriceImage          = 0.0005
 
 	priceCacheTTL = 60 * time.Second
 
@@ -51,13 +50,11 @@ var (
 
 // defaultPricesMicro stores default prices as micro-credits (int64).
 var defaultPricesMicro = map[string]int64{
-	"job_start":                creditsToMicro(defaultPriceJobStart),
-	"place_scraped":            creditsToMicro(defaultPricePlaceScraped),
-	"filters_applied":          creditsToMicro(defaultPriceFiltersApplied),
-	"additional_place_details": creditsToMicro(defaultPriceAdditionalDetails),
-	"contact_details":          creditsToMicro(defaultPriceContactDetails),
-	"review":                   creditsToMicro(defaultPriceReview),
-	"image":                    creditsToMicro(defaultPriceImage),
+	"job_start":       creditsToMicro(defaultPriceJobStart),
+	"place_scraped":   creditsToMicro(defaultPricePlaceScraped),
+	"contact_details": creditsToMicro(defaultPriceContactDetails),
+	"review":          creditsToMicro(defaultPriceReview),
+	"image":           creditsToMicro(defaultPriceImage),
 }
 
 // creditsToMicro converts a float64 credit value to integer micro-credits.
@@ -71,31 +68,64 @@ func microToCredits(micro int64) float64 {
 	return float64(micro) / microUnit
 }
 
-// CostEstimate represents the estimated cost breakdown for a job
-type CostEstimate struct {
-	JobStartCost        float64 `json:"job_start_cost"`
-	PlacesCost          float64 `json:"places_cost"`
-	ContactDetailsCost  float64 `json:"contact_details_cost"`
-	ReviewsCost         float64 `json:"reviews_cost"`
-	ImagesCost          float64 `json:"images_cost"`
-	TotalEstimatedCost  float64 `json:"total_estimated_cost"`
-	EstimatedPlaces     int     `json:"estimated_places"`
-	EstimatedReviews    int     `json:"estimated_reviews"`
-	EstimatedImages     int     `json:"estimated_images"`
-	IncludesEmailScrape bool    `json:"includes_email_scrape"`
-	Note                string  `json:"note"`
+// CostEstimate provides a range-based cost estimate with per-keyword
+// breakdown and full unit-price transparency.
+// CostBreakdown itemises the cost components of an estimate.
+type CostBreakdown struct {
+	JobStartCost       float64 `json:"job_start_cost"`
+	PlacesCost         float64 `json:"places_cost"`
+	ContactDetailsCost float64 `json:"contact_details_cost"`
+	ReviewsCost        float64 `json:"reviews_cost"`
+	ImagesCost         float64 `json:"images_cost"`
+}
 
-	// totalMicro is the authoritative total in micro-credits (int64).
-	// Used internally for precise comparisons; not serialised to JSON.
-	totalMicro int64
+// CostEstimate is the top-level estimate object returned by EstimateJobCost.
+type CostEstimate struct {
+	Object   string `json:"object"`   // always "job_estimate"
+	Currency string `json:"currency"` // always "credits"
+
+	// Place estimates
+	Places    int `json:"places"`
+	PlacesMin int `json:"places_min"`
+	PlacesMax int `json:"places_max"`
+
+	// Per-keyword info
+	KeywordCount     int `json:"keyword_count"`
+	PlacesPerKeyword int `json:"places_per_keyword"`
+
+	// Costs
+	Total    float64 `json:"total"`
+	TotalMin float64 `json:"total_min"`
+	TotalMax float64 `json:"total_max"`
+
+	Breakdown CostBreakdown `json:"breakdown"`
+
+	// Secondary resources
+	Reviews        int  `json:"reviews"`
+	Images         int  `json:"images"`
+	IncludesEmails bool `json:"includes_emails"`
+
+	// Transparency
+	UnitPrices         map[string]float64 `json:"unit_prices"`
+	MaxResultsProvided bool               `json:"max_results_provided"`
+	Description        string             `json:"description"`
+
+	// TTL — estimate is valid until pricing cache expires
+	ExpiresAt int64 `json:"expires_at"` // Unix timestamp
+
+	// Internal (not serialised to JSON)
+	totalMicro    int64
+	minTotalMicro int64
 }
 
 // TotalMicro returns the total estimated cost in micro-credits for precise
-// integer comparison (e.g. balance checks). This avoids IEEE 754 rounding
-// errors that occur when comparing float64 monetary values.
-func (c *CostEstimate) TotalMicro() int64 {
-	return c.totalMicro
-}
+// integer comparison (e.g. balance checks).
+func (c *CostEstimate) TotalMicro() int64 { return c.totalMicro }
+
+// MinTotalMicro returns the minimum estimated cost in micro-credits,
+// used for the credit sufficiency gate so users are not blocked
+// by an optimistic estimate.
+func (c *CostEstimate) MinTotalMicro() int64 { return c.minTotalMicro }
 
 func NewEstimationService(db *sql.DB, priceRepo models.PricingRuleRepository) *EstimationService {
 	return &EstimationService{
@@ -156,95 +186,6 @@ func (s *EstimationService) loadPrices(ctx context.Context) map[string]int64 {
 	return priceCacheData
 }
 
-// EstimateJobCost calculates the estimated cost for a job based on its parameters.
-// All arithmetic is performed in integer micro-credits to avoid IEEE 754 rounding
-// errors. The returned CostEstimate contains float64 fields for JSON compatibility.
-func (s *EstimationService) EstimateJobCost(ctx context.Context, jobData *models.JobData) (*CostEstimate, error) {
-	estimate := &CostEstimate{}
-
-	priceJobStart := s.getPriceMicro(ctx, "job_start")
-	pricePlaceScraped := s.getPriceMicro(ctx, "place_scraped")
-	priceContactDetails := s.getPriceMicro(ctx, "contact_details")
-	priceReview := s.getPriceMicro(ctx, "review")
-	priceImage := s.getPriceMicro(ctx, "image")
-
-	// All intermediate values are int64 micro-credits.
-	var jobStartMicro, placesMicro, contactMicro, reviewsMicro, imagesMicro int64
-
-	// 1. Job start cost (flat fee per job)
-	jobStartMicro = priceJobStart
-
-	// 2. Determine estimated number of places
-	estimatedPlaces := s.estimatePlaceCount(jobData)
-	estimate.EstimatedPlaces = estimatedPlaces
-
-	// 3. Calculate places cost
-	placesMicro = int64(estimatedPlaces) * pricePlaceScraped
-
-	// 4. Calculate contact details cost (if email scraping is enabled)
-	if jobData.Email {
-		estimate.IncludesEmailScrape = true
-		contactMicro = int64(estimatedPlaces) * priceContactDetails
-	}
-
-	// 5. Calculate reviews cost (ONLY if reviews are explicitly requested)
-	if jobData.ReviewsMax > 0 {
-		estimatedReviews := s.estimateReviewCount(jobData, estimatedPlaces)
-		estimate.EstimatedReviews = estimatedReviews
-		reviewsMicro = int64(estimatedReviews) * priceReview
-	}
-
-	// 6. Calculate images cost (if images are requested).
-	// images_max > 0 is the on/off signal — the legacy `images` bool was
-	// dropped in migration 000033. The estimate is bounded by ImagesMax
-	// when set, since the runner stops extracting once the per-job total
-	// budget is exhausted.
-	if jobData.ImagesMax > 0 {
-		estimatedImages := s.estimateImageCount(jobData, estimatedPlaces)
-		if estimatedImages > jobData.ImagesMax {
-			estimatedImages = jobData.ImagesMax
-		}
-		estimate.EstimatedImages = estimatedImages
-		imagesMicro = int64(estimatedImages) * priceImage
-	}
-
-	// 7. Calculate total in micro-credits (exact integer arithmetic)
-	totalMicro := jobStartMicro + placesMicro + contactMicro + reviewsMicro + imagesMicro
-
-	// 8. Convert micro-credits to float64 for JSON-compatible struct fields
-	estimate.JobStartCost = microToCredits(jobStartMicro)
-	estimate.PlacesCost = microToCredits(placesMicro)
-	estimate.ContactDetailsCost = microToCredits(contactMicro)
-	estimate.ReviewsCost = microToCredits(reviewsMicro)
-	estimate.ImagesCost = microToCredits(imagesMicro)
-	estimate.TotalEstimatedCost = microToCredits(totalMicro)
-	estimate.totalMicro = totalMicro
-
-	// 9. Add note about estimation
-	estimate.Note = s.generateEstimationNote(jobData)
-
-	s.log.Debug("job_cost_estimated",
-		slog.Int("estimated_places", estimate.EstimatedPlaces),
-		slog.Int("estimated_reviews", estimate.EstimatedReviews),
-		slog.Int("estimated_images", estimate.EstimatedImages),
-		slog.Bool("email_scrape", estimate.IncludesEmailScrape),
-		slog.Float64("total_estimated_cost", estimate.TotalEstimatedCost),
-	)
-
-	return estimate, nil
-}
-
-// estimatePlaceCount determines how many places will likely be scraped.
-// When no max_results cap is set, the estimate is derived from search depth
-// using a power-law curve calibrated to real scraper output:
-// depth 5 ≈ 40 places, depth 20 ≈ 120 places.
-func (s *EstimationService) estimatePlaceCount(jobData *models.JobData) int {
-	if jobData.MaxResults > 0 {
-		return jobData.MaxResults
-	}
-	return estimatePlacesFromDepth(jobData.Depth)
-}
-
 // estimatePlacesFromDepth returns the approximate number of places for a given
 // search depth using the formula: round(11.17 * depth^0.7925).
 // Calibrated: depth 5 ≈ 40, depth 20 ≈ 120.
@@ -255,35 +196,181 @@ func estimatePlacesFromDepth(depth int) int {
 	return int(math.Round(11.17 * math.Pow(float64(depth), 0.7925)))
 }
 
-// estimateReviewCount determines how many reviews will likely be scraped.
-// reviews_max is now bounded by the validator at [0, CapReviewsMax] (per
-// place), so the previous "unlimited reviews" branch is dead. The <= 0
-// fallback is unreachable today (the only caller gates on ReviewsMax > 0)
-// but kept as a defensive safety belt for future callers.
-func (s *EstimationService) estimateReviewCount(jobData *models.JobData, estimatedPlaces int) int {
-	reviewsPerPlace := jobData.ReviewsMax
-	if reviewsPerPlace <= 0 {
-		reviewsPerPlace = AvgReviewsPerPlace
+// EstimateJobCost calculates a range-based cost estimate using depth and
+// keyword count. When maxResults is nil, the estimate is derived entirely
+// from the depth power-law formula per keyword.
+//
+// Algorithm:
+//
+//	placesPerKeyword = estimatePlacesFromDepth(depth)
+//	rawEstimate      = len(keywords) × placesPerKeyword
+//	primaryEstimate  = min(rawEstimate, *maxResults if set, CapMaxResults)
+//	minEstimate      = max(1, primaryEstimate / 2)
+//	maxEstimate      = min(CapMaxResults, primaryEstimate * 6/5)
+func (s *EstimationService) EstimateJobCost(
+	ctx context.Context,
+	keywords []string,
+	depth int,
+	maxResults *int,
+	email bool,
+	reviewsMax int,
+	imagesMax int,
+) (*CostEstimate, error) {
+	if depth < 1 {
+		depth = 1
 	}
-	return estimatedPlaces * reviewsPerPlace
+
+	// Load unit prices (cached, from DB or defaults).
+	priceJobStart := s.getPriceMicro(ctx, "job_start")
+	pricePlaceScraped := s.getPriceMicro(ctx, "place_scraped")
+	priceContactDetails := s.getPriceMicro(ctx, "contact_details")
+	priceReview := s.getPriceMicro(ctx, "review")
+	priceImage := s.getPriceMicro(ctx, "image")
+
+	// ── Place estimation ───────────────────────────────────────────────
+	placesPerKeyword := estimatePlacesFromDepth(depth)
+	rawEstimate := len(keywords) * placesPerKeyword
+
+	maxResultsExplicit := maxResults != nil
+	primaryEstimate := rawEstimate
+	if maxResultsExplicit && *maxResults < primaryEstimate {
+		primaryEstimate = *maxResults
+	}
+	if primaryEstimate > webutils.CapMaxResults {
+		primaryEstimate = webutils.CapMaxResults
+	}
+
+	minEstimate := primaryEstimate / 2
+	if minEstimate < 1 {
+		minEstimate = 1
+	}
+	maxEstimate := primaryEstimate * 6 / 5
+	if maxEstimate > webutils.CapMaxResults {
+		maxEstimate = webutils.CapMaxResults
+	}
+
+	// ── Cost calculation for all three estimates ───────────────────────
+	calcCost := func(places int) (total int64, breakdown [5]int64) {
+		jobStart := priceJobStart
+		placesMicro := int64(places) * pricePlaceScraped
+		var contactMicro, reviewsMicro, imagesMicro int64
+		if email {
+			contactMicro = int64(places) * priceContactDetails
+		}
+		if reviewsMax > 0 {
+			estReviews := places * reviewsMax
+			reviewsMicro = int64(estReviews) * priceReview
+		}
+		if imagesMax > 0 {
+			estImages := places * AvgImagesPerPlace
+			if estImages > imagesMax {
+				estImages = imagesMax
+			}
+			imagesMicro = int64(estImages) * priceImage
+		}
+		total = jobStart + placesMicro + contactMicro + reviewsMicro + imagesMicro
+		breakdown = [5]int64{jobStart, placesMicro, contactMicro, reviewsMicro, imagesMicro}
+		return
+	}
+
+	primaryTotal, primaryBreakdown := calcCost(primaryEstimate)
+	minTotal, _ := calcCost(minEstimate)
+	maxTotal, _ := calcCost(maxEstimate)
+
+	// ── Secondary resource counts (based on primary estimate) ─────────
+	estimatedReviews := 0
+	if reviewsMax > 0 {
+		estimatedReviews = primaryEstimate * reviewsMax
+	}
+	estimatedImages := 0
+	if imagesMax > 0 {
+		estimatedImages = primaryEstimate * AvgImagesPerPlace
+		if estimatedImages > imagesMax {
+			estimatedImages = imagesMax
+		}
+	}
+
+	// ── Build unit prices map ─────────────────────────────────────────
+	unitPrices := map[string]float64{
+		"job_start":       microToCredits(priceJobStart),
+		"place_scraped":   microToCredits(pricePlaceScraped),
+		"contact_details": microToCredits(priceContactDetails),
+		"review":          microToCredits(priceReview),
+		"image":           microToCredits(priceImage),
+	}
+
+	estimate := &CostEstimate{
+		Object:   "job_estimate",
+		Currency: "credits",
+
+		Places:    primaryEstimate,
+		PlacesMin: minEstimate,
+		PlacesMax: maxEstimate,
+
+		KeywordCount:     len(keywords),
+		PlacesPerKeyword: placesPerKeyword,
+
+		Total:    microToCredits(primaryTotal),
+		TotalMin: microToCredits(minTotal),
+		TotalMax: microToCredits(maxTotal),
+
+		Breakdown: CostBreakdown{
+			JobStartCost:       microToCredits(primaryBreakdown[0]),
+			PlacesCost:         microToCredits(primaryBreakdown[1]),
+			ContactDetailsCost: microToCredits(primaryBreakdown[2]),
+			ReviewsCost:        microToCredits(primaryBreakdown[3]),
+			ImagesCost:         microToCredits(primaryBreakdown[4]),
+		},
+
+		Reviews:        estimatedReviews,
+		Images:         estimatedImages,
+		IncludesEmails: email,
+
+		UnitPrices:         unitPrices,
+		MaxResultsProvided: maxResultsExplicit,
+		Description:        generateEstimationNote(len(keywords), depth, maxResultsExplicit, primaryEstimate, minEstimate, maxEstimate),
+		ExpiresAt:          time.Now().Add(priceCacheTTL).Unix(),
+
+		totalMicro:    primaryTotal,
+		minTotalMicro: minTotal,
+	}
+
+	s.log.Debug("job_cost_estimated",
+		slog.Int("keyword_count", len(keywords)),
+		slog.Int("depth", depth),
+		slog.Int("places", primaryEstimate),
+		slog.Int("places_min", minEstimate),
+		slog.Int("places_max", maxEstimate),
+		slog.Float64("total", estimate.Total),
+		slog.Float64("total_min", estimate.TotalMin),
+		slog.Float64("total_max", estimate.TotalMax),
+	)
+
+	return estimate, nil
 }
 
-// estimateImageCount determines how many images will likely be scraped
-func (s *EstimationService) estimateImageCount(jobData *models.JobData, estimatedPlaces int) int {
-	return estimatedPlaces * AvgImagesPerPlace
-}
-
-// generateEstimationNote creates a helpful note explaining the estimate.
-// max_results is now bounded by the validator at [1, CapMaxResults] and
-// reviews_max at [0, CapReviewsMax], so the previous "unlimited" branches
-// are unreachable and have been removed.
-func (s *EstimationService) generateEstimationNote(_ *models.JobData) string {
-	return "Estimate based on your specified max_results limit. Set max_results and reviews_max to control costs precisely."
+// generateEstimationNote creates a context-aware note for the estimate.
+func generateEstimationNote(keywordCount, depth int, maxResultsExplicit bool, primary, min, max int) string {
+	if maxResultsExplicit {
+		return fmt.Sprintf(
+			"Capped at %d places (your limit). Depth %d could yield ~%d places per keyword without a cap.",
+			primary, depth, estimatePlacesFromDepth(depth),
+		)
+	}
+	if keywordCount == 1 {
+		return fmt.Sprintf(
+			"Estimated ~%d places for 1 keyword at depth %d (range: %d–%d).",
+			primary, depth, min, max,
+		)
+	}
+	return fmt.Sprintf(
+		"Estimated ~%d places across %d keywords at depth %d (range: %d–%d).",
+		primary, keywordCount, depth, min, max,
+	)
 }
 
 // CheckSufficientBalance verifies if a user has enough credits for a job.
-// The credit_balance is scanned as a string from the database and parsed to
-// micro-credits for precise integer comparison, avoiding IEEE 754 errors.
+// Uses the minimum estimate so users are not blocked unnecessarily.
 func (s *EstimationService) CheckSufficientBalance(ctx context.Context, userID string, estimate *CostEstimate) error {
 	if s.db == nil {
 		return fmt.Errorf("database not available")
@@ -305,19 +392,19 @@ func (s *EstimationService) CheckSufficientBalance(ctx context.Context, userID s
 	}
 	balanceMicro := creditsToMicro(balanceFloat)
 
-	if balanceMicro < estimate.TotalMicro() {
+	if balanceMicro < estimate.MinTotalMicro() {
 		creditBalance := microToCredits(balanceMicro)
 		s.log.Warn("insufficient_credits",
 			slog.String("user_id", userID),
 			slog.Float64("balance", creditBalance),
-			slog.Float64("required", estimate.TotalEstimatedCost),
-			slog.Int("estimated_places", estimate.EstimatedPlaces),
+			slog.Float64("required", estimate.Total),
+			slog.Int("places", estimate.Places),
 		)
 		return fmt.Errorf(
 			"insufficient credits: you have %.4f credits but this job requires a minimum of %.4f credits to start (estimated cost for %d places). Please purchase more credits to continue",
 			creditBalance,
-			estimate.TotalEstimatedCost,
-			estimate.EstimatedPlaces,
+			estimate.TotalMin,
+			estimate.Places,
 		)
 	}
 

@@ -158,7 +158,7 @@ type ScrapingConfig struct {
 	FastMode         bool
 	MaxDepth         int
 	LangCode         string
-	Email            bool
+	IncludeEmails    bool
 	Images           bool
 	ExtraReviews     bool
 	MaxResults       int
@@ -229,7 +229,7 @@ func ParseConfig() (*Config, error) {
 	flag.BoolVar(&cfg.ProduceOnly, "produce", false, "produce seed jobs only (requires dsn)")
 	flag.DurationVar(&cfg.ExitOnInactivityDuration, "exit-on-inactivity", 0, "exit after inactivity duration (e.g., '5m')")
 	flag.BoolVar(&cfg.JSON, "json", false, "produce JSON output instead of CSV")
-	flag.BoolVar(&cfg.Scraping.Email, "email", false, "extract emails from websites")
+	flag.BoolVar(&cfg.Scraping.IncludeEmails, "include-emails", false, "extract emails from websites")
 	flag.StringVar(&cfg.CustomWriter, "writer", "", "use custom writer plugin (format: 'dir:pluginName')")
 	flag.StringVar(&cfg.Scraping.GeoCoordinates, "geo", "", "set geo coordinates for search (e.g., '37.7749,-122.4194')")
 	flag.IntVar(&cfg.Scraping.Zoom, "zoom", 15, "set zoom level (0-21) for search")

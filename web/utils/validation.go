@@ -180,15 +180,15 @@ func ValidateJobData(d *models.JobData) error {
 		}
 	}
 
-	// Lang — must be in the launch allowlist.
-	if d.Lang == "" {
-		return errors.New("missing lang")
+	// Language — must be in the launch allowlist.
+	if d.Language == "" {
+		return errors.New("missing language")
 	}
-	if len(d.Lang) != 2 {
-		return errors.New("invalid lang: expected 2-character ISO 639-1 code")
+	if len(d.Language) != 2 {
+		return errors.New("invalid language: expected 2-character ISO 639-1 code")
 	}
-	if !IsSupportedLang(d.Lang) {
-		return fmt.Errorf("unsupported lang %q: must be a 2-character ISO 639-1 code in the supported allowlist", d.Lang)
+	if !IsSupportedLang(d.Language) {
+		return fmt.Errorf("unsupported language %q: must be a 2-character ISO 639-1 code in the supported allowlist", d.Language)
 	}
 
 	// Depth
@@ -244,20 +244,20 @@ func ValidateJobData(d *models.JobData) error {
 		return fmt.Errorf("max_results exceeds maximum of %d", CapMaxResults)
 	}
 
-	// ReviewsMax — per place. 0 means "skip reviews".
-	if d.ReviewsMax < 0 {
-		return errors.New("reviews_max cannot be negative")
+	// MaxReviews — per place. 0 means "skip reviews".
+	if d.MaxReviews < 0 {
+		return errors.New("max_reviews cannot be negative")
 	}
-	if d.ReviewsMax > CapReviewsMax {
-		return fmt.Errorf("reviews_max exceeds maximum of %d (per place)", CapReviewsMax)
+	if d.MaxReviews > CapReviewsMax {
+		return fmt.Errorf("max_reviews exceeds maximum of %d (per place)", CapReviewsMax)
 	}
 
-	// ImagesMax — per-job total across all places. 0 means "skip images".
-	if d.ImagesMax < 0 {
-		return errors.New("images_max cannot be negative")
+	// MaxImages — per-job total across all places. 0 means "skip images".
+	if d.MaxImages < 0 {
+		return errors.New("max_images cannot be negative")
 	}
-	if d.ImagesMax > CapImagesMaxTotal {
-		return fmt.Errorf("images_max exceeds maximum of %d (per-job total)", CapImagesMaxTotal)
+	if d.MaxImages > CapImagesMaxTotal {
+		return fmt.Errorf("max_images exceeds maximum of %d (per-job total)", CapImagesMaxTotal)
 	}
 
 	// Radius — bounded both directions.

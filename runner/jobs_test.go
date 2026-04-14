@@ -20,13 +20,13 @@ func TestCreateSeedJobs_PassesImageBudgetToGmapJob(t *testing.T) {
 	budget.Store(20000)
 
 	cfg := SeedJobConfig{
-		LangCode:    "en",
-		Input:       strings.NewReader("pizza\nburger\n"),
-		MaxDepth:    5,
-		Email:       false,
-		Images:      true,
-		ImageBudget: budget,
-		MaxResults:  10,
+		LangCode:      "en",
+		Input:         strings.NewReader("pizza\nburger\n"),
+		MaxDepth:      5,
+		IncludeEmails: false,
+		Images:        true,
+		ImageBudget:   budget,
+		MaxResults:    10,
 	}
 
 	jobs, err := CreateSeedJobs(cfg)
@@ -62,12 +62,12 @@ func TestCreateSeedJobs_NilImageBudgetWhenNotSet(t *testing.T) {
 	t.Parallel()
 
 	cfg := SeedJobConfig{
-		LangCode:   "en",
-		Input:      strings.NewReader("pizza\n"),
-		MaxDepth:   5,
-		Email:      false,
-		Images:     true,
-		MaxResults: 10,
+		LangCode:      "en",
+		Input:         strings.NewReader("pizza\n"),
+		MaxDepth:      5,
+		IncludeEmails: false,
+		Images:        true,
+		MaxResults:    10,
 		// ImageBudget: nil — explicit
 	}
 

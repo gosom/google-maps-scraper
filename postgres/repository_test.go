@@ -152,7 +152,7 @@ func createTestJob(t *testing.T) models.Job {
 		Status: models.StatusPending,
 		Data: models.JobData{
 			Keywords:   []string{"coffee", "shop"},
-			Lang:       "en",
+			Language:   "en",
 			Zoom:       15,
 			Lat:        "40.712776",
 			Lon:        "-74.005974",
