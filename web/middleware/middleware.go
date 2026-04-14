@@ -215,8 +215,8 @@ func Recovery(log *slog.Logger) func(http.Handler) http.Handler {
 					// Prefer the request-scoped logger (carries request_id, user_id)
 					// over the root logger passed to Recovery().
 					reqLog := pkglogger.FromContext(r.Context())
-					reqLog.Error("panic recovered",
-						slog.String("panic", fmt.Sprintf("%v", rec)),
+					reqLog.Error("panic_recovered",
+						slog.Any("panic", rec),
 						slog.String("stack", string(stack)),
 						slog.String("method", r.Method),
 						slog.String("path", r.URL.Path),

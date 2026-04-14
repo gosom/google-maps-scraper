@@ -119,6 +119,13 @@ func (h *BillingHandlers) Reconcile(w http.ResponseWriter, r *http.Request) {
 	}
 	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc)
 	if err := cs.Reconcile(r.Context(), req.SessionID, userID); err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Error("reconcile_failed",
+				slog.String("session_id", req.SessionID),
+				slog.String("user_id", userID),
+				slog.Any("error", err),
+			)
+		}
 		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: "session not found or does not belong to user"})
 		return
 	}

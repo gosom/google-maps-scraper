@@ -153,7 +153,7 @@ func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
 
 			newUser := postgres.User{ID: userID, Email: email}
 			if err := m.userRepo.Create(r.Context(), &newUser); err != nil {
-				slog.Error("user_record_creation_failed",
+				m.logger.Error("user_record_creation_failed",
 					slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
 				http.Error(w, "Failed to create user record", http.StatusInternalServerError)
 				return

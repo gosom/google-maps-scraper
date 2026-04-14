@@ -381,6 +381,9 @@ func (h *APIHandlers) GetJob(w http.ResponseWriter, r *http.Request) {
 	}
 	job, err := h.Deps.App.Get(r.Context(), jobID, userID)
 	if err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Error("get_job_failed", slog.String("job_id", jobID), slog.String("user_id", userID), slog.Any("error", err))
+		}
 		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: http.StatusText(http.StatusNotFound)})
 		return
 	}
@@ -399,6 +402,9 @@ func (h *APIHandlers) DeleteJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Deps.App.Delete(r.Context(), jobID, userID); err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Error("delete_job_failed", slog.String("job_id", jobID), slog.String("user_id", userID), slog.Any("error", err))
+		}
 		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: http.StatusText(http.StatusNotFound)})
 		return
 	}
@@ -417,6 +423,9 @@ func (h *APIHandlers) CancelJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Deps.App.Cancel(r.Context(), jobID, userID); err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Error("cancel_job_failed", slog.String("job_id", jobID), slog.String("user_id", userID), slog.Any("error", err))
+		}
 		renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: http.StatusText(http.StatusNotFound)})
 		return
 	}

@@ -547,7 +547,15 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 		log.Error("failed_to_get_user_balance_and_deficit", slog.Any("error", err))
 		return 500, fmt.Errorf("failed to get user balance and deficit: %w", err)
 	}
-	deficitFloat, _ := strconv.ParseFloat(deficitStr, 64)
+	deficitFloat, err := strconv.ParseFloat(deficitStr, 64)
+	if err != nil {
+		log.Error("refund_deficit_parse_failed",
+			slog.String("user_id", userID),
+			slog.String("raw_value", deficitStr),
+			slog.Any("error", err),
+		)
+		return 500, fmt.Errorf("failed to parse refund_deficit_credits: %w", err)
+	}
 	deficitMicro := int64(math.Round(deficitFloat * models.MicroUnit))
 
 	// Apply the incoming credits to the refund deficit first. Any remainder
@@ -828,7 +836,15 @@ func (s *Service) ReconcileSession(ctx context.Context, sessionID, callerUserID 
 	if err != nil {
 		return fmt.Errorf("failed to get user balance and deficit: %w", err)
 	}
-	deficitFloat, _ := strconv.ParseFloat(deficitStr, 64)
+	deficitFloat, err := strconv.ParseFloat(deficitStr, 64)
+	if err != nil {
+		log.Error("refund_deficit_parse_failed",
+			slog.String("user_id", userID),
+			slog.String("raw_value", deficitStr),
+			slog.Any("error", err),
+		)
+		return fmt.Errorf("failed to parse refund_deficit_credits: %w", err)
+	}
 	deficitMicro := int64(math.Round(deficitFloat * models.MicroUnit))
 
 	// Apply incoming credits to deficit first, remainder to balance.

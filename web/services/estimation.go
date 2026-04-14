@@ -152,7 +152,7 @@ func (s *EstimationService) loadPrices(ctx context.Context) map[string]int64 {
 
 	priceCacheData = prices
 	priceCacheTime = time.Now()
-	s.log.Debug("pricing rules refreshed from DB", slog.Int("count", len(prices)))
+	s.log.Debug("pricing_rules_refreshed", slog.Int("count", len(prices)))
 	return priceCacheData
 }
 

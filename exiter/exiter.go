@@ -193,7 +193,11 @@ func (e *exiter) Run(ctx context.Context) {
 	ticker := time.NewTicker(time.Second * 1) // Check every second instead of 5 seconds
 	defer ticker.Stop()
 
-	slog.Debug("exit_monitor_started", slog.Int("seed_count", e.seedCount), slog.Int("max_results", e.maxResults))
+	e.mu.Lock()
+	seedCount := e.seedCount
+	maxResults := e.maxResults
+	e.mu.Unlock()
+	slog.Debug("exit_monitor_started", slog.Int("seed_count", seedCount), slog.Int("max_results", maxResults))
 
 	for {
 		select {

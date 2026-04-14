@@ -103,7 +103,9 @@ func (h *WebHandlers) Redoc(w http.ResponseWriter, r *http.Request) {
 func renderJSON(w http.ResponseWriter, code int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(data)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		slog.Error("json_encode_failed", slog.Any("error", err))
+	}
 }
 
 // Index mirrors Server.index

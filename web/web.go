@@ -120,11 +120,11 @@ func New(cfg ServerConfig) (*Server, error) {
 	// Initialize encryption once at startup
 	enc, err := encryption.New(os.Getenv("ENCRYPTION_KEY"))
 	if err != nil {
-		slog.Error("failed to initialize encryption", slog.Any("error", err))
+		slog.Error("encryption_init_failed", slog.Any("error", err))
 		os.Exit(1)
 	}
 	if enc == nil {
-		slog.Warn("ENCRYPTION_KEY not set, integration credentials will be stored in plaintext")
+		slog.Warn("encryption_key_missing", slog.String("detail", "integration credentials will be stored in plaintext"))
 	}
 
 	// Initialize modular handler group (incremental migration)
