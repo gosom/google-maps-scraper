@@ -214,7 +214,7 @@ func (s *EstimationService) EstimateJobCost(
 	maxResults *int,
 	email bool,
 	maxReviews *int,
-	imagesMax int,
+	maxImages *int,
 ) (*CostEstimate, error) {
 	if depth < 1 {
 		depth = 1
@@ -227,6 +227,13 @@ func (s *EstimationService) EstimateJobCost(
 	maxReviewsProvided := maxReviews != nil
 	if maxReviewsProvided {
 		reviewsPerPlace = *maxReviews
+	}
+
+	// Same pattern for images: nil = "no limit" → estimate at average.
+	imagesTotal := 0
+	maxImagesProvided := maxImages != nil
+	if maxImagesProvided {
+		imagesTotal = *maxImages
 	}
 
 	// Load unit prices (cached, from DB or defaults).
@@ -272,12 +279,15 @@ func (s *EstimationService) EstimateJobCost(
 			// "No limit" — estimate at realistic average
 			reviewsMicro = int64(places*AvgReviewsPerPlace) * priceReview
 		}
-		if imagesMax > 0 {
+		if imagesTotal > 0 {
 			estImages := places * AvgImagesPerPlace
-			if estImages > imagesMax {
-				estImages = imagesMax
+			if estImages > imagesTotal {
+				estImages = imagesTotal
 			}
 			imagesMicro = int64(estImages) * priceImage
+		} else if !maxImagesProvided {
+			// "No limit" — estimate at realistic average
+			imagesMicro = int64(places*AvgImagesPerPlace) * priceImage
 		}
 		total = jobStart + placesMicro + contactMicro + reviewsMicro + imagesMicro
 		breakdown = [5]int64{jobStart, placesMicro, contactMicro, reviewsMicro, imagesMicro}
@@ -296,11 +306,13 @@ func (s *EstimationService) EstimateJobCost(
 		estimatedReviews = primaryEstimate * AvgReviewsPerPlace
 	}
 	estimatedImages := 0
-	if imagesMax > 0 {
+	if imagesTotal > 0 {
 		estimatedImages = primaryEstimate * AvgImagesPerPlace
-		if estimatedImages > imagesMax {
-			estimatedImages = imagesMax
+		if estimatedImages > imagesTotal {
+			estimatedImages = imagesTotal
 		}
+	} else if !maxImagesProvided {
+		estimatedImages = primaryEstimate * AvgImagesPerPlace
 	}
 
 	// ── Build unit prices map ─────────────────────────────────────────

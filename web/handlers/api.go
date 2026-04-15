@@ -51,7 +51,7 @@ type estimateRequest struct {
 	Keywords      []string `json:"keywords" validate:"required,min=1,max=5,dive,min=1,max=200"`
 	Depth         int      `json:"depth" validate:"min=0,max=20"`
 	IncludeEmails bool     `json:"include_emails"`
-	MaxImages     int      `json:"max_images" validate:"omitempty,min=0,max=40000"`
+	MaxImages     *int     `json:"max_images,omitempty" validate:"omitempty,min=0,max=40000"`
 	MaxReviews    *int     `json:"max_reviews,omitempty" validate:"omitempty,min=0,max=500"`
 	MaxResults    *int     `json:"max_results,omitempty" validate:"omitempty,min=1,max=500"`
 }
@@ -146,6 +146,7 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 		// resolved by ApplyJobDataDefaults.
 		mr := newJob.Data.MaxResults
 		rv := newJob.Data.MaxReviews
+		im := newJob.Data.MaxImages
 		estimate, err := estimationSvc.EstimateJobCost(
 			r.Context(),
 			newJob.Data.Keywords,
@@ -153,7 +154,7 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 			&mr,
 			newJob.Data.IncludeEmails,
 			&rv,
-			newJob.Data.MaxImages,
+			&im,
 		)
 		if err != nil {
 			if h.Deps.Logger != nil {
