@@ -25,7 +25,7 @@ type EstimationService struct {
 
 // Estimation constants - average values based on typical Google Maps data
 const (
-	AvgReviewsPerPlace = 25
+	AvgReviewsPerPlace = 50
 	AvgImagesPerPlace  = 30
 
 	// Default pricing fallbacks (used when DB has no active rules)
@@ -213,11 +213,20 @@ func (s *EstimationService) EstimateJobCost(
 	depth int,
 	maxResults *int,
 	email bool,
-	reviewsMax int,
+	maxReviews *int,
 	imagesMax int,
 ) (*CostEstimate, error) {
 	if depth < 1 {
 		depth = 1
+	}
+
+	// Resolve effective reviews-per-place for estimation.
+	// nil means "no limit" — estimate at the realistic average.
+	// An explicit value means "the user chose this cap" — estimate honestly.
+	reviewsPerPlace := 0
+	maxReviewsProvided := maxReviews != nil
+	if maxReviewsProvided {
+		reviewsPerPlace = *maxReviews
 	}
 
 	// Load unit prices (cached, from DB or defaults).
@@ -257,16 +266,11 @@ func (s *EstimationService) EstimateJobCost(
 		if email {
 			contactMicro = int64(places) * priceContactDetails
 		}
-		if reviewsMax > 0 {
-			// Use the lesser of the user's cap and the realistic average.
-			// Most Google Maps places have ~25 reviews; estimating 500/place
-			// when the user picks "no limit" would wildly inflate the cost.
-			perPlace := reviewsMax
-			if perPlace > AvgReviewsPerPlace {
-				perPlace = AvgReviewsPerPlace
-			}
-			estReviews := places * perPlace
-			reviewsMicro = int64(estReviews) * priceReview
+		if reviewsPerPlace > 0 {
+			reviewsMicro = int64(places*reviewsPerPlace) * priceReview
+		} else if !maxReviewsProvided {
+			// "No limit" — estimate at realistic average
+			reviewsMicro = int64(places*AvgReviewsPerPlace) * priceReview
 		}
 		if imagesMax > 0 {
 			estImages := places * AvgImagesPerPlace
@@ -286,12 +290,10 @@ func (s *EstimationService) EstimateJobCost(
 
 	// ── Secondary resource counts (based on primary estimate) ─────────
 	estimatedReviews := 0
-	if reviewsMax > 0 {
-		perPlace := reviewsMax
-		if perPlace > AvgReviewsPerPlace {
-			perPlace = AvgReviewsPerPlace
-		}
-		estimatedReviews = primaryEstimate * perPlace
+	if reviewsPerPlace > 0 {
+		estimatedReviews = primaryEstimate * reviewsPerPlace
+	} else if !maxReviewsProvided {
+		estimatedReviews = primaryEstimate * AvgReviewsPerPlace
 	}
 	estimatedImages := 0
 	if imagesMax > 0 {

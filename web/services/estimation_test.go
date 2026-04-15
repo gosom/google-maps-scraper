@@ -23,7 +23,7 @@ func TestEstimateJobCost(t *testing.T) {
 		depth      int
 		maxResults *int
 		email      bool
-		reviewsMax int
+		maxReviews *int
 		imagesMax  int
 		// Assertions on place estimates
 		wantPrimary int
@@ -33,76 +33,93 @@ func TestEstimateJobCost(t *testing.T) {
 		wantCostApprox float64
 	}{
 		{
-			name:           "bug scenario: 1 keyword depth 5 no cap",
+			name:           "bug scenario: 1 keyword depth 5 no cap no reviews",
 			keywords:       []string{"Cafe Mitte Berlin"},
 			depth:          5,
 			maxResults:     nil,
-			wantPrimary:    40, // 11.17 * 5^0.7925 ≈ 40
+			maxReviews:     intPtr(0), // reviews off
+			wantPrimary:    40,        // 11.17 * 5^0.7925 ≈ 40
 			wantMin:        20,
 			wantMax:        48,
 			wantCostApprox: 0.127, // 0.007 + 40*0.003
 		},
 		{
-			name:           "3 keywords depth 5 no cap",
+			name:           "3 keywords depth 5 no cap no reviews",
 			keywords:       []string{"Cafe", "Restaurant", "Bar"},
 			depth:          5,
 			maxResults:     nil,
+			maxReviews:     intPtr(0),
 			wantPrimary:    120, // 3 * 40
 			wantMin:        60,
 			wantMax:        144,
 			wantCostApprox: 0.367, // 0.007 + 120*0.003
 		},
 		{
-			name:           "1 keyword depth 5 user cap 30",
+			name:           "1 keyword depth 5 user cap 30 no reviews",
 			keywords:       []string{"Cafe"},
 			depth:          5,
 			maxResults:     intPtr(30),
+			maxReviews:     intPtr(0),
 			wantPrimary:    30,
 			wantMin:        15,
 			wantMax:        36,
 			wantCostApprox: 0.097, // 0.007 + 30*0.003
 		},
 		{
-			name:           "5 keywords depth 20 hits cap 500",
+			name:           "5 keywords depth 20 hits cap 500 no reviews",
 			keywords:       []string{"A", "B", "C", "D", "E"},
 			depth:          20,
 			maxResults:     nil,
+			maxReviews:     intPtr(0),
 			wantPrimary:    500, // 5 * ~120 = ~600, capped at 500
 			wantMin:        250,
 			wantMax:        500,   // 600 would be capped to 500
 			wantCostApprox: 1.507, // 0.007 + 500*0.003
 		},
 		{
-			name:           "1 keyword depth 1",
+			name:           "1 keyword depth 1 no reviews",
 			keywords:       []string{"Test"},
 			depth:          1,
 			maxResults:     nil,
+			maxReviews:     intPtr(0),
 			wantPrimary:    11,   // 11.17 * 1^0.7925 ≈ 11
 			wantMin:        5,    // 11/2 = 5
 			wantMax:        13,   // 11*6/5 = 13
 			wantCostApprox: 0.04, // 0.007 + 11*0.003
 		},
 		{
-			name:           "1 keyword depth 5 with email",
+			name:           "1 keyword depth 5 with email no reviews",
 			keywords:       []string{"Cafe"},
 			depth:          5,
 			maxResults:     nil,
 			email:          true,
+			maxReviews:     intPtr(0),
 			wantPrimary:    40,
 			wantMin:        20,
 			wantMax:        48,
 			wantCostApprox: 0.207, // 0.007 + 40*0.003 + 40*0.002
 		},
 		{
-			name:           "1 keyword depth 5 with reviews",
+			name:           "1 keyword depth 5 with explicit reviews cap",
 			keywords:       []string{"Cafe"},
 			depth:          5,
 			maxResults:     nil,
-			reviewsMax:     10,
+			maxReviews:     intPtr(10),
 			wantPrimary:    40,
 			wantMin:        20,
 			wantMax:        48,
 			wantCostApprox: 0.327, // 0.007 + 40*0.003 + 40*10*0.0005
+		},
+		{
+			name:           "1 keyword depth 5 reviews no limit (nil)",
+			keywords:       []string{"Cafe"},
+			depth:          5,
+			maxResults:     nil,
+			maxReviews:     nil, // no limit → estimate at AvgReviewsPerPlace (50)
+			wantPrimary:    40,
+			wantMin:        20,
+			wantMax:        48,
+			wantCostApprox: 1.127, // 0.007 + 40*0.003 + 40*50*0.0005
 		},
 	}
 
@@ -110,7 +127,7 @@ func TestEstimateJobCost(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			est, err := svc.EstimateJobCost(ctx, tc.keywords, tc.depth, tc.maxResults, tc.email, tc.reviewsMax, tc.imagesMax)
+			est, err := svc.EstimateJobCost(ctx, tc.keywords, tc.depth, tc.maxResults, tc.email, tc.maxReviews, tc.imagesMax)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -168,11 +185,11 @@ func TestEstimate_BugRegression(t *testing.T) {
 	est, err := svc.EstimateJobCost(
 		context.Background(),
 		[]string{"Cafe Mitte Berlin"},
-		5,     // depth
-		nil,   // no max_results
-		false, // email
-		0,     // reviewsMax
-		0,     // imagesMax
+		5,         // depth
+		nil,       // no max_results
+		false,     // email
+		intPtr(0), // maxReviews (reviews off)
+		0,         // imagesMax
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -196,19 +213,19 @@ func TestEstimate_NoteContent(t *testing.T) {
 	ctx := context.Background()
 
 	// Single keyword, no cap
-	est, _ := svc.EstimateJobCost(ctx, []string{"Test"}, 5, nil, false, 0, 0)
+	est, _ := svc.EstimateJobCost(ctx, []string{"Test"}, 5, nil, false, intPtr(0), 0)
 	if est.Description == "" {
 		t.Error("Note should not be empty for single keyword")
 	}
 
 	// With explicit cap
-	est, _ = svc.EstimateJobCost(ctx, []string{"Test"}, 5, intPtr(30), false, 0, 0)
+	est, _ = svc.EstimateJobCost(ctx, []string{"Test"}, 5, intPtr(30), false, intPtr(0), 0)
 	if est.Description == "" {
 		t.Error("Note should not be empty with explicit cap")
 	}
 
 	// Multiple keywords
-	est, _ = svc.EstimateJobCost(ctx, []string{"A", "B", "C"}, 5, nil, false, 0, 0)
+	est, _ = svc.EstimateJobCost(ctx, []string{"A", "B", "C"}, 5, nil, false, intPtr(0), 0)
 	if est.Description == "" {
 		t.Error("Note should not be empty for multiple keywords")
 	}
