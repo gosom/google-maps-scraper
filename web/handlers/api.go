@@ -734,7 +734,7 @@ func (h *APIHandlers) EstimateJobCost(w http.ResponseWriter, r *http.Request) {
 		Estimate: estimate,
 		Balance: estimateBalance{
 			Current:    balanceFloat,
-			Sufficient: balanceMicro >= estimate.MinTotalMicro(),
+			Sufficient: balanceMicro >= estimate.TotalMicro(),
 		},
 	}
 
