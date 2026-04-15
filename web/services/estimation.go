@@ -258,7 +258,14 @@ func (s *EstimationService) EstimateJobCost(
 			contactMicro = int64(places) * priceContactDetails
 		}
 		if reviewsMax > 0 {
-			estReviews := places * reviewsMax
+			// Use the lesser of the user's cap and the realistic average.
+			// Most Google Maps places have ~25 reviews; estimating 500/place
+			// when the user picks "no limit" would wildly inflate the cost.
+			perPlace := reviewsMax
+			if perPlace > AvgReviewsPerPlace {
+				perPlace = AvgReviewsPerPlace
+			}
+			estReviews := places * perPlace
 			reviewsMicro = int64(estReviews) * priceReview
 		}
 		if imagesMax > 0 {
@@ -280,7 +287,11 @@ func (s *EstimationService) EstimateJobCost(
 	// ── Secondary resource counts (based on primary estimate) ─────────
 	estimatedReviews := 0
 	if reviewsMax > 0 {
-		estimatedReviews = primaryEstimate * reviewsMax
+		perPlace := reviewsMax
+		if perPlace > AvgReviewsPerPlace {
+			perPlace = AvgReviewsPerPlace
+		}
+		estimatedReviews = primaryEstimate * perPlace
 	}
 	estimatedImages := 0
 	if imagesMax > 0 {
