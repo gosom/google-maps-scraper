@@ -126,9 +126,8 @@ func ApplyJobDataDefaults(d *models.JobData) {
 	if d == nil {
 		return
 	}
-	if d.MaxResults == 0 {
-		d.MaxResults = DefaultMaxResults
-	}
+	// MaxResults 0 means "no cap" — do not fill a default.
+	// The scraper will use depth-based natural yield.
 	if d.Depth == 0 {
 		d.Depth = DefaultDepth
 	}
@@ -236,9 +235,10 @@ func ValidateJobData(d *models.JobData) error {
 		}
 	}
 
-	// MaxResults — strict minimum 1, no more 0=unlimited.
-	if d.MaxResults < 1 {
-		return errors.New("max_results must be >= 1 (no unlimited sentinel)")
+	// MaxResults — 0 means "no cap" (use depth-based yield).
+	// Positive values are hard caps, bounded by CapMaxResults.
+	if d.MaxResults < 0 {
+		return errors.New("max_results cannot be negative")
 	}
 	if d.MaxResults > CapMaxResults {
 		return fmt.Errorf("max_results exceeds maximum of %d", CapMaxResults)

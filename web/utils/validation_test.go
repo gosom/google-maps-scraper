@@ -32,22 +32,15 @@ func TestValidateJobData_AcceptsValidPayload(t *testing.T) {
 	}
 }
 
-// TestValidateJobData_RejectsZeroMaxResults guards the SERVICE-LAYER
-// behavior: ValidateJobData stays strict and rejects MaxResults=0 because
-// the API entry point is responsible for calling ApplyJobDataDefaults
-// first. A service-layer caller that constructs JobData by hand and
-// forgets to set MaxResults is a programming error, not a missing-field
-// API request.
-func TestValidateJobData_RejectsZeroMaxResults(t *testing.T) {
+// TestValidateJobData_AcceptsZeroMaxResults ensures MaxResults=0 is valid
+// (meaning "no cap" — the scraper uses depth-based natural yield).
+func TestValidateJobData_AcceptsZeroMaxResults(t *testing.T) {
 	t.Parallel()
 	d := newValidJobData()
 	d.MaxResults = 0
 	err := ValidateJobData(d)
-	if err == nil {
-		t.Fatal("expected error for max_results=0, got nil")
-	}
-	if !strings.Contains(err.Error(), "max_results") {
-		t.Errorf("expected error to mention max_results, got: %v", err)
+	if err != nil {
+		t.Fatalf("expected max_results=0 to be valid (no cap), got error: %v", err)
 	}
 }
 
@@ -63,8 +56,9 @@ func TestApplyJobDataDefaults_FillsZeroFields(t *testing.T) {
 		// Depth, MaxResults, MaxTime intentionally zero
 	}
 	ApplyJobDataDefaults(d)
-	if d.MaxResults != DefaultMaxResults {
-		t.Errorf("MaxResults: got %d, want %d", d.MaxResults, DefaultMaxResults)
+	// MaxResults 0 means "no cap" — defaults should NOT override it.
+	if d.MaxResults != 0 {
+		t.Errorf("MaxResults: got %d, want 0 (no cap)", d.MaxResults)
 	}
 	if d.Depth != DefaultDepth {
 		t.Errorf("Depth: got %d, want %d", d.Depth, DefaultDepth)

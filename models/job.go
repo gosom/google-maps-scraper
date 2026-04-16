@@ -57,7 +57,7 @@ type JobData struct {
 	// `images` boolean was dropped in migration 000033.
 	MaxImages  int    `json:"max_images"  validate:"omitempty,min=0,max=40000"`
 	MaxReviews int    `json:"max_reviews" validate:"omitempty,min=0,max=500"`
-	MaxResults int    `json:"max_results" validate:"min=1,max=500"`
+	MaxResults int    `json:"max_results" validate:"omitempty,min=0,max=500"`
 	Lat        string `json:"lat"         validate:"omitempty,latitude"`
 	Lon        string `json:"lon"         validate:"omitempty,longitude"`
 	Zoom       int    `json:"zoom"        validate:"omitempty,min=0,max=21"`

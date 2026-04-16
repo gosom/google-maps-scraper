@@ -142,19 +142,26 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.DB != nil {
 		estimationSvc := webservices.NewEstimationService(h.Deps.DB, h.Deps.PricingRuleRepo)
 
-		// Estimate job cost — pass MaxResults as a pointer since it was already
-		// resolved by ApplyJobDataDefaults.
-		mr := newJob.Data.MaxResults
-		rv := newJob.Data.MaxReviews
-		im := newJob.Data.MaxImages
+		// Estimate job cost. 0 means "no cap" — pass nil so the
+		// estimator uses depth-based calculation.
+		var mrPtr, rvPtr, imPtr *int
+		if v := newJob.Data.MaxResults; v > 0 {
+			mrPtr = &v
+		}
+		if v := newJob.Data.MaxReviews; v > 0 {
+			rvPtr = &v
+		}
+		if v := newJob.Data.MaxImages; v > 0 {
+			imPtr = &v
+		}
 		estimate, err := estimationSvc.EstimateJobCost(
 			r.Context(),
 			newJob.Data.Keywords,
 			newJob.Data.Depth,
-			&mr,
+			mrPtr,
 			newJob.Data.IncludeEmails,
-			&rv,
-			&im,
+			rvPtr,
+			imPtr,
 		)
 		if err != nil {
 			if h.Deps.Logger != nil {
