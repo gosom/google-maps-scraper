@@ -206,6 +206,7 @@ func extractPlaceID(mapURL string) (string, error) {
 			hexMatchPattern,                          // Hex format place ID
 		}
 
+		patterns = make(map[string]*regexp.Regexp)
 		for _, p := range avail {
 			patterns[p] = regexp.MustCompile(p)
 		}
