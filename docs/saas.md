@@ -1,10 +1,29 @@
 # Google Maps Scraper - SaaS Edition
 
-A multi-user Google Maps scraping platform with REST API, admin UI, job queuing, and cloud deployment.
+The SaaS edition is an optional self-hosted Google Maps scraping platform for teams and automation workflows. It adds REST API access, API keys, admin UI, job queue, workers, and cloud deployment on top of the scraper.
+
+## When to Use It
+
+Use the SaaS edition when you need:
+
+- Multiple users or API clients
+- API keys for controlled access
+- Admin screens for jobs, workers, and settings
+- Queue-based scraping with workers
+- A deployable scraping API on your own infrastructure
+
+For a single local scrape to CSV or JSON, start with the main README quick start or [recipes](recipes.md).
 
 ## Deploy
 
 Requirements: **Docker** installed and running.
+
+The provisioning wizard supports VPS, DigitalOcean, and Hetzner deployments. If you plan to deploy on a new cloud account, using these links helps fund project maintenance:
+
+| Provider | Link |
+|---|---|
+| DigitalOcean | [Create account / deploy](https://www.digitalocean.com/?refcode=c11136c4693c&utm_campaign=Referral_Invite&utm_medium=Referral_Program&utm_source=badge) |
+| Hetzner | [Create account / deploy](https://hetzner.cloud/?ref=ihtQPa0cT18n) |
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/gosom/google-maps-scraper/main/PROVISION | sh
