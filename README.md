@@ -12,24 +12,21 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Chat-7289DA?logo=discord&logoColor=white)](https://discord.gg/fpaAVhNCCu)
 
-**A powerful, free, and open-source Google Maps scraper** for extracting business data at scale. Available as CLI, Web UI, REST API, or deployable to Kubernetes/AWS Lambda.
+Extract Google Maps business leads, emails, reviews, phone numbers, websites, ratings, coordinates, and more with a free open-source CLI, Web UI, REST API, and optional self-hosted platform.
 
-> **SaaS Edition Available (BETA):** Deploy as a multi-user platform with REST API, admin dashboard,
-> job queue, and cloud provisioning. Try it now — just Docker required:
-> ```bash
-> curl -fsSL https://raw.githubusercontent.com/gosom/google-maps-scraper/main/PROVISION | sh
-> ```
-> [Read the SaaS documentation](docs/saas.md)
->
-> [Deploy your own Maps scraping API in 5 minutes (includes video walkthrough)](https://gosom.dev/deploy-your-own-maps-scraping-api-in-5-minutes/)
->
-> [Video walkthrough (YouTube)](https://www.youtube.com/watch?v=STG9mZw_nac)
+Use it for lead generation, local business research, sales prospecting, data enrichment, or developer automation.
+
+| Goal | Start here |
+|---|---|
+| Get leads into CSV/JSON | [Command Line](#command-line) |
+| Run a browser UI locally | [Web UI](#web-ui) |
+| Automate scraping from your app | [REST API](#rest-api) |
+| Run a multi-user scraping platform | [SaaS Edition](docs/saas.md) |
+| Follow common workflows | [Recipes](docs/recipes.md) |
 
 ![Example GIF](img/example.gif)
 
-> 💡 **New:** Export leads directly to [LeadsDB](https://getleadsdb.com/) - manage via API, AI/MCP integration, or UI with custom filtering and exports.
-
-> **Love this project?** A star helps others discover it and motivates continued development. [Become a sponsor](https://github.com/sponsors/gosom) to directly support new features and maintenance.
+If this project is useful to you, a GitHub star helps others discover it. Sponsorships help fund maintenance and new work.
 
 ---
 
@@ -139,9 +136,12 @@ The scraper has [built-in LeadsDB integration](#export-to-leadsdb) - just add yo
 ## Table of Contents
 
 - [Quick Start](#quick-start)
-  - [Web UI](#web-ui)
   - [Command Line](#command-line)
+  - [Web UI](#web-ui)
   - [REST API](#rest-api)
+  - [SaaS Edition](#saas-edition)
+- [Recipes](docs/recipes.md)
+- [Proxy Sponsors](docs/proxies.md)
 - [AI Agent Skill](#ai-agent-skill)
 - [Installation](#installation)
 - [Features](#features)
