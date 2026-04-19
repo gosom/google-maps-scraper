@@ -199,10 +199,11 @@ Useful options:
 
 ```bash
 docker run \
-  -v $PWD/example-queries.txt:/example-queries \
+  -v gmaps-playwright-cache:/opt \
+  -v "$PWD/example-queries.txt:/queries.txt:ro" \
   gosom/google-maps-scraper \
+  -input /queries.txt \
   -depth 1 \
-  -input /example-queries \
   -leadsdb-api-key "your-api-key" \
   -exit-on-inactivity 3m
 ```
@@ -507,10 +508,11 @@ Skip the CSV files and send leads directly to a managed database. [LeadsDB](http
 **Using Docker:**
 ```bash
 docker run \
-  -v $PWD/example-queries.txt:/example-queries \
+  -v gmaps-playwright-cache:/opt \
+  -v "$PWD/example-queries.txt:/queries.txt:ro" \
   gosom/google-maps-scraper \
+  -input /queries.txt \
   -depth 1 \
-  -input /example-queries \
   -leadsdb-api-key "your-api-key" \
   -exit-on-inactivity 3m
 ```
