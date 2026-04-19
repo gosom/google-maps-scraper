@@ -19,6 +19,7 @@ Use it for lead generation, local business research, sales prospecting, data enr
 | Goal | Start here |
 |---|---|
 | Get leads into CSV/JSON | [Command Line](#command-line) |
+| Ask an AI coding agent to run a scrape | [AI Agent Skill](#ai-agent-skill) |
 | Run a browser UI locally | [Web UI](#web-ui) |
 | Automate scraping from your app | [REST API](#rest-api) |
 | Run a multi-user scraping platform | [SaaS Edition](docs/saas.md) |
@@ -140,9 +141,9 @@ The scraper has [built-in LeadsDB integration](#export-to-leadsdb) - just add yo
   - [Web UI](#web-ui)
   - [REST API](#rest-api)
   - [SaaS Edition](#saas-edition)
+- [AI Agent Skill](#ai-agent-skill)
 - [Recipes](docs/recipes.md)
 - [Proxy Sponsors](docs/proxies.md)
-- [AI Agent Skill](#ai-agent-skill)
 - [Installation](#installation)
 - [Features](#features)
 - [Extracted Data Points](#extracted-data-points)
