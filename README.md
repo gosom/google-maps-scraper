@@ -167,6 +167,46 @@ The scraper has [built-in LeadsDB integration](#export-to-leadsdb) - just add yo
 
 ## Quick Start
 
+### Command Line
+
+```bash
+mkdir -p gmaps-output
+
+docker run \
+  -v gmaps-playwright-cache:/opt \
+  -v "$PWD/example-queries.txt:/queries.txt:ro" \
+  -v "$PWD/gmaps-output:/out" \
+  gosom/google-maps-scraper \
+  -input /queries.txt \
+  -results /out/results.csv \
+  -depth 1 \
+  -exit-on-inactivity 3m
+```
+
+Useful options:
+
+| Need | Flag |
+|---|---|
+| Extract emails from business websites | `-email` |
+| Write JSON instead of CSV | `-json -results /out/results.json` |
+| Collect extra reviews | `-extra-reviews -json -results /out/results.json` |
+| Increase concurrency | `-c 4`, `-c 8`, or `-c 16` |
+| Use proxies | `-proxies "http://user:pass@host:port,socks5://host:port"` |
+
+`-c` controls how many scrape jobs run in parallel. Higher concurrency can finish large input files faster, but it also uses more CPU/RAM and can increase blocking or failures, especially without proxies. Start with the default for a first run. For larger jobs on a capable machine, try `-c 4`, `-c 8`, or `-c 16` and measure the result.
+
+**Want to skip CSV files?** Send leads directly to [LeadsDB](https://getleadsdb.com/):
+
+```bash
+docker run \
+  -v $PWD/example-queries.txt:/example-queries \
+  gosom/google-maps-scraper \
+  -depth 1 \
+  -input /example-queries \
+  -leadsdb-api-key "your-api-key" \
+  -exit-on-inactivity 3m
+```
+
 ### Web UI
 
 Start the web interface with a single command:
@@ -182,35 +222,6 @@ Or download the [binary release](https://github.com/gosom/google-maps-scraper/re
 > **Note:** Results take at least 3 minutes to appear (minimum configured runtime).
 > 
 > **macOS Users:** Docker command may not work. See [MacOS Instructions](MacOS%20instructions.md).
-
-### Command Line
-
-```bash
-touch results.csv && docker run \
-  -v $PWD/example-queries.txt:/example-queries \
-  -v $PWD/results.csv:/results.csv \
-  gosom/google-maps-scraper \
-  -depth 1 \
-  -input /example-queries \
-  -results /results.csv \
-  -exit-on-inactivity 3m
-```
-
-**Want emails?** Add the `-email` flag.
-
-**Want all reviews (up to ~300)?** Add `--extra-reviews` and use `-json` output.
-
-**Want to skip CSV files?** Send leads directly to [LeadsDB](https://getleadsdb.com/):
-
-```bash
-docker run \
-  -v $PWD/example-queries.txt:/example-queries \
-  gosom/google-maps-scraper \
-  -depth 1 \
-  -input /example-queries \
-  -leadsdb-api-key "your-api-key" \
-  -exit-on-inactivity 3m
-```
 
 ### REST API
 
@@ -235,6 +246,8 @@ curl -fsSL https://raw.githubusercontent.com/gosom/google-maps-scraper/main/PROV
 ```
 
 See [SaaS documentation](docs/saas.md) for deployment and operations details.
+
+More examples are available in [Recipes](docs/recipes.md). If you need proxies for larger jobs, see [Proxy Sponsors](docs/proxies.md).
 
 ---
 
