@@ -226,6 +226,16 @@ When running the web server, a full REST API is available:
 
 Full OpenAPI 3.0.3 documentation available at http://localhost:8080/api/docs
 
+### SaaS Edition
+
+Need a multi-user platform with API keys, admin UI, job queue, workers, and cloud provisioning? Use the optional self-hosted SaaS edition:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gosom/google-maps-scraper/main/PROVISION | sh
+```
+
+See [SaaS documentation](docs/saas.md) for deployment and operations details.
+
 ---
 
 ## AI Agent Skill
