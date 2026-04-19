@@ -99,7 +99,7 @@ The most affordable premium proxies across 195 countries & 80+ million IPs, plus
 ---
 
 <p align="center">
-  <a href="#sponsors">View all sponsors</a> | <a href="https://github.com/sponsors/gosom">Become a sponsor</a>
+  <a href="#sponsored-by">View all sponsors</a> | <a href="https://github.com/sponsors/gosom">Become a sponsor</a>
 </p>
 
 ---
@@ -158,7 +158,6 @@ The scraper has [built-in LeadsDB integration](#export-to-leadsdb) - just add yo
   - [Custom Writer Plugins](#custom-writer-plugins)
 - [Performance](#performance)
 - [Support the Project](#support-the-project)
-- [Sponsors](#sponsors)
 - [Community](#community)
 - [Contributing](#contributing)
 - [License](#license)
