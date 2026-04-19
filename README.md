@@ -93,6 +93,14 @@ The most affordable premium proxies across 195 countries & 80+ million IPs, plus
 
 ---
 
+### [Legion Proxy](https://legionproxy.io/?utm_source=github&utm_campaign=gmaps) - Residential proxies for Google Maps Scraper
+
+74M+ real residential IPs, HTTP/3 & UDP support, SOCKS5-ready, 195+ countries. Works out of the box with Google Maps Scraper. [**Get 1GB free →**](https://legionproxy.io/?utm_source=github&utm_campaign=gmaps)
+
+[![Legion Proxy](./img/legion-proxy.png)](https://legionproxy.io/?utm_source=github&utm_campaign=gmaps)
+
+---
+
 <p align="center">
   <a href="#sponsors">View all sponsors</a> | <a href="https://github.com/sponsors/gosom">Become a sponsor</a>
 </p>
@@ -702,6 +710,14 @@ A huge thank you to the sponsors who make this project possible!
 **The most affordable premium proxies across 195 countries & 80+ million IPs, plus a FREE plan for new users.** [Learn more](webshare.md)
 
 [**Start free →**](https://www.webshare.io/?referral_code=0q3l81eet8mp)
+
+---
+
+#### [Legion Proxy](https://legionproxy.io/?utm_source=github&utm_campaign=gmaps)
+
+**74M+ real residential IPs, HTTP/3 & UDP support, SOCKS5-ready, 195+ countries. Works out of the box with Google Maps Scraper. [Get 1GB free →](https://legionproxy.io/?utm_source=github&utm_campaign=gmaps)**
+
+[![Legion Proxy](./img/legion-proxy.png)](https://legionproxy.io/?utm_source=github&utm_campaign=gmaps)
 
 ---
 
