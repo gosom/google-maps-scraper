@@ -212,7 +212,13 @@ docker run \
 Start the web interface with a single command:
 
 ```bash
-mkdir -p gmapsdata && docker run -v $PWD/gmapsdata:/gmapsdata -p 8080:8080 gosom/google-maps-scraper -data-folder /gmapsdata
+mkdir -p gmapsdata
+
+docker run \
+  -v "$PWD/gmapsdata:/gmapsdata" \
+  -p 8080:8080 \
+  gosom/google-maps-scraper \
+  -data-folder /gmapsdata
 ```
 
 Then open http://localhost:8080 in your browser.
@@ -714,22 +720,6 @@ Please use this scraper responsibly and in accordance with applicable laws and r
 
 ---
 
-## Custom Scraping Solutions
-
-Need a custom scraper tailored to your specific requirements? **[Book a consulting call](https://www.cal.eu/g-k-lsoknt/gosom)** to discuss your project.
-
----
-
 <p align="center">
   <sub>Banner generated using OpenAI's DALL-E</sub>
-</p>
-
-<p align="center">
-  <a href="https://github.com/gosom/google-maps-scraper/stargazers">
-    <img src="https://img.shields.io/github/stars/gosom/google-maps-scraper?style=social" alt="Star on GitHub">
-  </a>
-</p>
-
-<p align="center">
-  <b>If this project saved you time, consider <a href="https://github.com/gosom/google-maps-scraper">starring it</a> or <a href="https://github.com/sponsors/gosom">sponsoring</a> its development!</b>
 </p>
