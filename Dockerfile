@@ -2,12 +2,21 @@
 FROM ubuntu:20.04 AS playwright-deps
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/browsers
 #ENV PLAYWRIGHT_DRIVER_PATH=/opt/
+ARG TARGETARCH
+
 RUN export PATH=$PATH:/usr/local/go/bin:/root/go/bin \
     && apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl wget \
-    && wget -q https://go.dev/dl/go1.26.2.linux-amd64.tar.gz \
-    && tar -C /usr/local -xzf go1.26.2.linux-amd64.tar.gz \
-    && rm go1.26.2.linux-amd64.tar.gz \
+    # Architektur-Logik für den Go-Download
+    && if [ "$TARGETARCH" = "arm64" ]; then \
+         GO_ARCH="arm64"; \
+       else \
+         GO_ARCH="amd64"; \
+       fi \
+    && wget -q "https://go.dev/dl/go1.26.2.linux-${GO_ARCH}.tar.gz" \
+    && tar -C /usr/local -xzf "go1.26.2.linux-${GO_ARCH}.tar.gz" \
+    && rm "go1.26.2.linux-${GO_ARCH}.tar.gz" \
+    # ... (Rest des ursprünglichen RUN-Befehls: Nodejs, Playwright, etc.)
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && apt-get clean \
