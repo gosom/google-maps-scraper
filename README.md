@@ -252,6 +252,7 @@ curl -fsSL https://raw.githubusercontent.com/gosom/google-maps-scraper/main/PROV
 ```
 
 See [SaaS documentation](docs/saas.md) for deployment and operations details.
+There is also a [5-minute deployment walkthrough](https://gosom.dev/deploy-your-own-maps-scraping-api-in-5-minutes/) and a [YouTube video walkthrough](https://www.youtube.com/watch?v=STG9mZw_nac).
 
 More examples are available in [Recipes](docs/recipes.md). If you need proxies for larger jobs, see [Proxy Sponsors](docs/proxies.md).
 

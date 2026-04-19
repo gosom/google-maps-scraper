@@ -29,6 +29,10 @@ The provisioning wizard supports VPS, DigitalOcean, and Hetzner deployments. If 
 curl -fsSL https://raw.githubusercontent.com/gosom/google-maps-scraper/main/PROVISION | sh
 ```
 
+Walkthroughs:
+- [Deploy your own Maps scraping API in 5 minutes](https://gosom.dev/deploy-your-own-maps-scraping-api-in-5-minutes/)
+- [Video walkthrough on YouTube](https://www.youtube.com/watch?v=STG9mZw_nac)
+
 The interactive wizard will guide you through:
 1. Docker image setup (build your own or use the public image)
 2. Cloud provider selection (VPS, DigitalOcean, or Hetzner)
