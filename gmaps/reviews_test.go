@@ -1,7 +1,10 @@
+//nolint:testpackage // we need to test unexported functions in the same package
 package gmaps
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func Test_extractPlaceID(t *testing.T) {
@@ -50,9 +53,8 @@ func Test_extractPlaceID(t *testing.T) {
 				t.Errorf("extractPlaceID() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if got != tt.want {
-				t.Errorf("extractPlaceID() = %v, want %v", got, tt.want)
-			}
+
+			assert.Equal(t, tt.want, got, "extractPlaceID() = %v, want %v", got, tt.want)
 		})
 	}
 }
