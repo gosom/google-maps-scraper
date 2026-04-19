@@ -434,16 +434,7 @@ For larger scraping jobs, proxies help avoid rate limiting. Here's how to config
 
 **Supported protocols:** `socks5`, `socks5h`, `http`, `https`
 
-#### Proxy Providers
-
-If you need reliable proxies, these providers support this project as sponsors:
-
-| Provider | Highlight | Offer |
-|----------|-----------|-------|
-| [Decodo](https://visit.decodo.com/APVbbx) | #1 response time, 125M+ IPs | [3-day free trial](https://visit.decodo.com/APVbbx) |
-| [Evomi](https://evomi.com?utm_source=github&utm_medium=banner&utm_campaign=gosom-maps) | Swiss quality, 150+ countries | From $0.49/GB |
-
-Using their services helps fund continued development of this scraper.
+Current proxy sponsors are listed in [Proxy Sponsors](docs/proxies.md). Using those links helps fund project maintenance.
 
 ### Email Extraction
 
