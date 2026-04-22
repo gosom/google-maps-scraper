@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net"
 	"time"
 
@@ -102,7 +103,10 @@ func (r *webhookConfigRepository) Update(ctx context.Context, cfg *models.Webhoo
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
 	if n == 0 {
 		return models.ErrWebhookConfigNotFound
 	}
@@ -120,7 +124,10 @@ func (r *webhookConfigRepository) Revoke(ctx context.Context, id string, ownerUs
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
 	if n == 0 {
 		return models.ErrWebhookConfigNotFound
 	}
