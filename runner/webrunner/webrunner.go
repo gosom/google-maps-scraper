@@ -288,10 +288,11 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 	}
 	maxIdle := envInt("DB_MAX_IDLE_CONNS", 10)
 	connMaxLifetime := envDuration("DB_CONN_MAX_LIFETIME", 5*time.Minute)
+	connMaxIdleTime := envDuration("DB_CONN_MAX_IDLE_TIME", 2*time.Minute)
 	db.SetMaxOpenConns(maxOpen)
 	db.SetMaxIdleConns(maxIdle)
 	db.SetConnMaxLifetime(connMaxLifetime)
-	db.SetConnMaxIdleTime(2 * time.Minute)
+	db.SetConnMaxIdleTime(connMaxIdleTime)
 
 	// Startup validation: verify DB connectivity with a 10-second timeout before
 	// the HTTP server starts accepting traffic. This ensures the container/process
