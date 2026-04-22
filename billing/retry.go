@@ -28,6 +28,19 @@ func isSerializationFailure(err error) bool {
 	return false
 }
 
+// IsTransientConnectionError returns true if the error is a transient
+// PostgreSQL connection error (class 08). These indicate the connection
+// was lost mid-operation — common during managed DB failovers and rolling
+// maintenance (e.g., DigitalOcean). The caller should create a new
+// connection and retry the operation.
+func IsTransientConnectionError(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return len(pgErr.Code) >= 2 && pgErr.Code[:2] == "08"
+	}
+	return false
+}
+
 // withSerializableRetry executes fn inside a serializable transaction,
 // retrying up to maxSerializableRetries times on serialization failures.
 // fn receives a started *sql.Tx and must NOT call Commit or Rollback — the

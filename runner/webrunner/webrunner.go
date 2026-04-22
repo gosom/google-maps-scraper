@@ -275,6 +275,14 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 		return nil, err
 	}
 
+	if !strings.Contains(cfg.Dsn, "sslmode=disable") {
+		if strings.Contains(cfg.Dsn, "sslmode=require") && !strings.Contains(cfg.Dsn, "sslmode=verify") {
+			logger.Warn("db_tls_not_verified",
+				slog.String("detail", "sslmode=require encrypts but does not verify the server certificate — vulnerable to MITM. Use sslmode=verify-full with sslrootcert for production."),
+			)
+		}
+	}
+
 	var repo web.JobRepository
 	var err error
 	db, err := sql.Open("pgx", cfg.Dsn)
@@ -308,8 +316,18 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 		}
 	}
 
-	// Run database migrations automatically on startup with meaningful logs
-	mr := postgres.NewMigrationRunner(cfg.Dsn)
+	// Run database migrations using the direct PostgreSQL connection (not through
+	// PgBouncer). Migrations use pg_advisory_lock which is session-level and
+	// incompatible with PgBouncer Transaction mode.
+	//
+	// Production DSN format (DigitalOcean):
+	//   DSN (app, via PgBouncer):      ...host:25061/pool?sslmode=verify-full&sslrootcert=/etc/brezel/secrets/do-ca.crt&default_query_exec_mode=simple_protocol
+	//   MIGRATION_DSN (direct to PG):  ...host:25060/db?sslmode=verify-full&sslrootcert=/etc/brezel/secrets/do-ca.crt
+	migrationDSN := os.Getenv("MIGRATION_DSN")
+	if migrationDSN == "" {
+		migrationDSN = cfg.Dsn
+	}
+	mr := postgres.NewMigrationRunner(migrationDSN)
 	if err := mr.RunMigrations(); err != nil {
 		return nil, fmt.Errorf("failed to run database migrations: %w", err)
 	}
