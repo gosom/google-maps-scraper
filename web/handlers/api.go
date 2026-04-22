@@ -5,19 +5,17 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"net/http"
-	"strconv"
 	"time"
 
+	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/web/auth"
 	webservices "github.com/gosom/google-maps-scraper/web/services"
 	webutils "github.com/gosom/google-maps-scraper/web/utils"
-
-	"github.com/go-playground/validator/v10"
+	"github.com/shopspring/decimal"
 )
 
 var validate = validator.New()
@@ -726,7 +724,7 @@ func (h *APIHandlers) EstimateJobCost(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: "failed to retrieve credit balance"})
 		return
 	}
-	balanceFloat, err := strconv.ParseFloat(balanceStr, 64)
+	balanceDec, err := decimal.NewFromString(balanceStr)
 	if err != nil {
 		if h.Deps.Logger != nil {
 			h.Deps.Logger.Error("credit_balance_parse_failed",
@@ -735,7 +733,8 @@ func (h *APIHandlers) EstimateJobCost(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: "failed to parse credit balance"})
 		return
 	}
-	balanceMicro := int64(math.Round(balanceFloat * models.MicroUnit))
+	balanceFloat, _ := balanceDec.Float64()
+	balanceMicro := balanceDec.Mul(decimal.NewFromInt(models.MicroUnit)).IntPart()
 
 	response := estimateResponse{
 		Estimate: estimate,

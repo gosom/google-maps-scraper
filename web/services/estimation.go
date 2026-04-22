@@ -7,13 +7,13 @@ import (
 	"log/slog"
 	"math"
 	"os"
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/gosom/google-maps-scraper/models"
 	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	webutils "github.com/gosom/google-maps-scraper/web/utils"
+	"github.com/shopspring/decimal"
 )
 
 // EstimationService provides job cost estimation functionality
@@ -411,11 +411,11 @@ func (s *EstimationService) CheckSufficientBalance(ctx context.Context, userID s
 		return fmt.Errorf("failed to retrieve credit balance: %w", err)
 	}
 
-	balanceFloat, err := strconv.ParseFloat(balanceStr, 64)
+	balanceDec, err := decimal.NewFromString(balanceStr)
 	if err != nil {
 		return fmt.Errorf("failed to parse credit balance: %w", err)
 	}
-	balanceMicro := creditsToMicro(balanceFloat)
+	balanceMicro := balanceDec.Mul(decimal.NewFromInt(microUnit)).IntPart()
 
 	if balanceMicro < estimate.MinTotalMicro() {
 		creditBalance := microToCredits(balanceMicro)
