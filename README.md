@@ -59,6 +59,22 @@ Fast, reliable, and scalable. Used by Fortune 500 companies. [**View all APIs �
 
 ---
 
+### [SearchApi](https://www.searchapi.io/google-maps?via=gosom) - Google Maps API for SERP scraping
+
+[![SearchApi](https://www.searchapi.io/press/v1/svg/searchapi_logo_black_h.svg)](https://www.searchapi.io/google-maps?via=gosom)
+
+Real-time Google Maps data with a simple integration. [**Explore the API →**](https://www.searchapi.io/google-maps?via=gosom)
+
+---
+
+### [Evomi](https://evomi.com?utm_source=github&utm_medium=banner&utm_campaign=gosom-maps) - Swiss quality proxies for scraping
+
+[![Evomi](https://my.evomi.com/images/brand/cta.png)](https://evomi.com?utm_source=github&utm_medium=banner&utm_campaign=gosom-maps)
+
+Swiss quality proxies from $0.49/GB across 150+ countries, with 24/7 support and 99.9% uptime. [**Visit Evomi →**](https://evomi.com?utm_source=github&utm_medium=banner&utm_campaign=gosom-maps)
+
+---
+
 ### [HasData](https://hasdata.com/scrapers/google-maps?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom) - No-code Google Maps Scraper & Email Extraction
 
 [![HasData Google Maps Scraper](./img/hd-gm-banner.png)](https://hasdata.com/scrapers/google-maps?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom)
