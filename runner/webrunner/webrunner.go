@@ -24,6 +24,7 @@ import (
 	"github.com/gosom/google-maps-scraper/internal/crypto/aesutil"
 	"github.com/gosom/google-maps-scraper/models"
 	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
+	"github.com/gosom/google-maps-scraper/pkg/metrics"
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/proxy"
 	"github.com/gosom/google-maps-scraper/runner"
@@ -293,6 +294,8 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 	db.SetMaxIdleConns(maxIdle)
 	db.SetConnMaxLifetime(connMaxLifetime)
 	db.SetConnMaxIdleTime(connMaxIdleTime)
+
+	metrics.RegisterDBPoolCollector(db, nil)
 
 	// Startup validation: verify DB connectivity with a 10-second timeout before
 	// the HTTP server starts accepting traffic. This ensures the container/process
