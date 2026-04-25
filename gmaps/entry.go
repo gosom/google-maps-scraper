@@ -470,12 +470,16 @@ func parseReviews(reviewsI []any) []Review {
 		// Try multiple paths for date (relative time)
 		// Path 1: el[1][6] = "7 months ago"
 		// Path 2: el[2][1][3][8][0] = "4 years ago"
-		var relativeDate string
+var relativeDate string
 		date16 := getNthElementAndCast[string](el, 1, 6)
+		date33 := getNthElementAndCast[string](el, 3, 3)
 		date213080 := getNthElementAndCast[string](el, 2, 1, 3, 8, 0)
 
+		// Try multiple paths for date (relative time)
 		if date16 != "" {
 			relativeDate = date16
+		} else if date33 != "" {
+			relativeDate = date33
 		} else if date213080 != "" {
 			relativeDate = date213080
 		}
