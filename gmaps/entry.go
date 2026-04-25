@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"iter"
+	"log"
 	"math"
 	"net/url"
 	"runtime/debug"
@@ -258,11 +259,12 @@ func extractReviews(data []byte) []Review {
 
 	var jd []any
 	if err := json.Unmarshal(data, &jd); err != nil {
-		fmt.Printf("Error unmarshalling RPC JSON: %v (data len: %d)\n", err, len(data))
+		log.Printf("DEBUG: Error unmarshalling RPC JSON: %v (data len: %d)", err, len(data))
 		return nil
 	}
 
 	if len(jd) < 3 {
+		log.Printf("DEBUG: RPC response has only %d elements, expected 3+", len(jd))
 		return nil
 	}
 
@@ -465,10 +467,17 @@ func parseReviews(reviewsI []any) []Review {
 			}
 		}
 
-		// Try multiple paths for the timestamp
-		time := getNthElementAndCast[[]any](el, 2, 2, 0, 1, 21, 6, 8)
-		if len(time) == 0 {
-			time = getNthElementAndCast[[]any](el, 2, 2, 0, 1, 6, 8)
+		// Try multiple paths for date (relative time)
+		// Path 1: el[1][6] = "7 months ago"
+		// Path 2: el[2][1][3][8][0] = "4 years ago"
+		var relativeDate string
+		date16 := getNthElementAndCast[string](el, 1, 6)
+		date213080 := getNthElementAndCast[string](el, 2, 1, 3, 8, 0)
+
+		if date16 != "" {
+			relativeDate = date16
+		} else if date213080 != "" {
+			relativeDate = date213080
 		}
 
 		// Try multiple paths for profile picture
@@ -510,15 +519,9 @@ func parseReviews(reviewsI []any) []Review {
 		review := Review{
 			Name:           authorName,
 			ProfilePicture: profilePic,
-			When: func() string {
-				if len(time) < 3 {
-					return ""
-				}
-
-				return fmt.Sprintf("%v-%v-%v", time[0], time[1], time[2])
-			}(),
-			Rating:      rating,
-			Description: description,
+			When:           relativeDate,
+			Rating:         rating,
+			Description:    description,
 		}
 
 		if review.Name == "" {
