@@ -387,6 +387,17 @@ go build
 Matsuhisa Athens #!#MyCustomID
 ```
 
+**Direct Google Maps URLs:** Input lines can be regular search queries or direct Google Maps URLs. Supported URL formats include:
+
+```text
+https://www.google.com/maps/search/pizza
+https://www.google.com/maps/place/Empire+State+Building/@40.7484405,-73.9856632
+https://maps.google.com/maps?z=16&q=Empire+State+Building
+maps.app.goo.gl/abc123
+```
+
+URLs on `google.com` subdomains must include a scheme (`http://` or `https://`) and a `/maps` path. Short `maps.app.goo.gl` links are also supported without a scheme.
+
 ---
 
 ## Configuration
