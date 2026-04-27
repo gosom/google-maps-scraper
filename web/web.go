@@ -9,8 +9,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -82,6 +80,12 @@ type ServerConfig struct {
 	// GoogleConfig holds Google OAuth credentials read once at startup.
 	// Passed through to IntegrationHandler so per-request os.Getenv is eliminated.
 	GoogleConfig pkgconfig.GoogleConfig
+	// EncryptionKey is read once from pkg/config at startup. Eliminates
+	// the direct os.Getenv("ENCRYPTION_KEY") call inside web.New.
+	EncryptionKey string
+	// AllowedOrigins is read once from pkg/config at startup. Eliminates
+	// the direct os.Getenv("ALLOWED_ORIGINS") call inside web.New.
+	AllowedOrigins []string
 }
 
 func New(cfg ServerConfig) (*Server, error) {
@@ -132,8 +136,8 @@ func New(cfg ServerConfig) (*Server, error) {
 	fileServer := http.FileServer(http.FS(staticFS))
 	router := mux.NewRouter()
 
-	// Initialize encryption once at startup
-	enc, err := encryption.New(os.Getenv("ENCRYPTION_KEY"))
+	// Initialize encryption once at startup (key injected via ServerConfig, not os.Getenv)
+	enc, err := encryption.New(cfg.EncryptionKey)
 	if err != nil {
 		return nil, fmt.Errorf("encryption init failed: %w", err)
 	}
@@ -373,18 +377,10 @@ func New(cfg ServerConfig) (*Server, error) {
 	}
 
 	// Apply security headers and CORS to all routes via middleware chain.
-	// ALLOWED_ORIGINS is a comma-separated list of permitted origins (e.g.
-	// "https://brezel.ai,https://www.brezel.ai"). If unset, only localhost
-	// origins are allowed (safe development default).
-	var allowedOrigins []string
-	if raw := os.Getenv("ALLOWED_ORIGINS"); raw != "" {
-		for _, o := range strings.Split(raw, ",") {
-			if trimmed := strings.TrimSpace(o); trimmed != "" {
-				allowedOrigins = append(allowedOrigins, trimmed)
-			}
-		}
-	}
-	handler := webmiddleware.Chain(router, webmiddleware.Recovery(ans.logger), webmiddleware.SecurityHeaders, webmiddleware.NewCORS(allowedOrigins))
+	// AllowedOrigins is injected via ServerConfig (parsed once at startup from
+	// ALLOWED_ORIGINS by pkg/config). If empty, only localhost origins are allowed
+	// (safe development default).
+	handler := webmiddleware.Chain(router, webmiddleware.Recovery(ans.logger), webmiddleware.SecurityHeaders, webmiddleware.NewCORS(cfg.AllowedOrigins))
 	ans.srv.Handler = handler
 
 	tmplsKeys := []string{

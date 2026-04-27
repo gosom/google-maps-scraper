@@ -172,6 +172,8 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service, appCfg 
 		Environment:               appCfg.AppEnv,
 		Logger:                    logger,
 		GoogleConfig:              appCfg.Google,
+		EncryptionKey:             appCfg.EncryptionKey,
+		AllowedOrigins:            appCfg.AllowedOrigins,
 	}
 
 	slog.Info("auth_enabled", slog.String("provider", "clerk"))
