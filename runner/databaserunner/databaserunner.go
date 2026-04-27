@@ -8,14 +8,13 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"strconv"
-	"time"
 
 	// postgres driver
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/google-maps-scraper/models"
+	pkgconfig "github.com/gosom/google-maps-scraper/pkg/config"
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/runner"
 	"github.com/gosom/google-maps-scraper/tlmt"
@@ -34,12 +33,12 @@ type dbrunner struct {
 	jobRepo     models.JobRepository
 }
 
-func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
+func New(cfg *runner.Config, appCfg *pkgconfig.Config, logger *slog.Logger) (runner.Runner, error) {
 	if cfg.RunMode != runner.RunModeDatabase && cfg.RunMode != runner.RunModeDatabaseProduce {
 		return nil, fmt.Errorf("%w: %d", runner.ErrInvalidRunMode, cfg.RunMode)
 	}
 
-	conn, err := openPsqlConn(cfg.Dsn)
+	conn, err := openPsqlConn(cfg.Dsn, appCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -236,7 +235,7 @@ func (d *dbrunner) produceSeedJobs(ctx context.Context) error {
 	return nil
 }
 
-func openPsqlConn(dsn string) (conn *sql.DB, err error) {
+func openPsqlConn(dsn string, appCfg *pkgconfig.Config) (conn *sql.DB, err error) {
 	conn, err = sql.Open("pgx", dsn)
 	if err != nil {
 		return
@@ -247,33 +246,14 @@ func openPsqlConn(dsn string) (conn *sql.DB, err error) {
 		return
 	}
 
-	// connection pool settings — configurable via env vars
-	maxOpen := dbEnvInt("DB_MAX_OPEN_CONNS", 25)
-	if maxOpen == 0 {
+	// connection pool settings — read from typed config (defaults applied by pkg/config)
+	if appCfg.DB.MaxOpenConns == 0 {
 		slog.Warn("db_pool_unbounded", slog.String("detail", "DB_MAX_OPEN_CONNS=0 means unlimited connections"))
 	}
-	conn.SetMaxOpenConns(maxOpen)
-	conn.SetMaxIdleConns(dbEnvInt("DB_MAX_IDLE_CONNS", 10))
-	conn.SetConnMaxLifetime(dbEnvDuration("DB_CONN_MAX_LIFETIME", 5*time.Minute))
-	conn.SetConnMaxIdleTime(2 * time.Minute)
+	conn.SetMaxOpenConns(appCfg.DB.MaxOpenConns)
+	conn.SetMaxIdleConns(appCfg.DB.MaxIdleConns)
+	conn.SetConnMaxLifetime(appCfg.DB.ConnMaxLifetime)
+	conn.SetConnMaxIdleTime(appCfg.DB.ConnMaxIdleTime)
 
 	return
-}
-
-func dbEnvInt(key string, defaultVal int) int {
-	if s := os.Getenv(key); s != "" {
-		if v, err := strconv.Atoi(s); err == nil {
-			return v
-		}
-	}
-	return defaultVal
-}
-
-func dbEnvDuration(key string, defaultVal time.Duration) time.Duration {
-	if s := os.Getenv(key); s != "" {
-		if d, err := time.ParseDuration(s); err == nil {
-			return d
-		}
-	}
-	return defaultVal
 }
