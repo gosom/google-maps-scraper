@@ -30,21 +30,29 @@ var version = "dev"
 func main() {
 	_ = godotenv.Load() // Load .env file if present
 
-	// Create structured JSON logger and set as global default (fallback for
-	// code that doesn't yet receive the logger via injection).
-	logger := pkglogger.New(os.Getenv("LOG_LEVEL"))
-	slog.SetDefault(logger)
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// Load typed env config early so all downstream code receives values
-	// from a single validated source rather than scattered os.Getenv calls.
+	// Load typed env config first so the logger can be built from validated,
+	// typed values rather than raw os.Getenv calls.
+	// Use a temporary stderr logger for any config-load failures.
 	appCfg, err := pkgconfig.Load()
 	if err != nil {
 		slog.Error("config_load_failed", slog.Any("error", err))
-		cancel()
 		os.Exit(1)
 	}
+
+	// Build the single root logger from typed config. All downstream code
+	// receives this logger via constructor injection — no further os.Getenv
+	// calls for LOG_LEVEL or log rotation settings.
+	logger := pkglogger.New(appCfg.LogLevel, pkglogger.LogConfig{
+		Output:        appCfg.Log.Output,
+		FilePath:      appCfg.Log.FilePath,
+		Dir:           appCfg.Log.Dir,
+		FileName:      appCfg.Log.FileName,
+		MaxSizeMB:     appCfg.Log.MaxSizeMB,
+		RetentionDays: appCfg.Log.RetentionDays,
+	})
+	slog.SetDefault(logger)
+
+	ctx, cancel := context.WithCancel(context.Background())
 
 	// Parse CLI-flag config (separate from env config).
 	cfg, err := runner.ParseConfig()
