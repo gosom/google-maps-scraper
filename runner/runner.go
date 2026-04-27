@@ -343,14 +343,6 @@ func ParseConfig() (*Config, error) {
 		}
 	}
 
-	if cfg.AWS.AccessKey != "" && cfg.AWS.SecretKey != "" && cfg.AWS.Region != "" {
-		uploader, err := s3uploader.New(cfg.AWS.AccessKey, cfg.AWS.SecretKey, cfg.AWS.Region, slog.Default())
-		if err != nil {
-			return nil, fmt.Errorf("creating S3 uploader: %w", err)
-		}
-		cfg.S3Uploader = uploader
-	}
-
 	switch {
 	case cfg.AWS.LambdaInvoker:
 		cfg.RunMode = RunModeAwsLambdaInvoker
@@ -377,6 +369,9 @@ func ParseConfig() (*Config, error) {
 //
 // Call this after ParseConfig() and before constructing runners that need S3.
 func MergeAWSDefaults(cfg *Config, appCfg *pkgconfig.Config) {
+	if cfg == nil || appCfg == nil {
+		return
+	}
 	if cfg.AWS.AccessKey == "" {
 		cfg.AWS.AccessKey = appCfg.AWS.AccessKeyID
 	}
@@ -386,6 +381,25 @@ func MergeAWSDefaults(cfg *Config, appCfg *pkgconfig.Config) {
 	if cfg.AWS.Region == "" {
 		cfg.AWS.Region = appCfg.AWS.Region
 	}
+}
+
+// BuildS3Uploader constructs the S3 uploader from cfg.AWS credentials and
+// stores it in cfg.S3Uploader. If any required credential (AccessKey, SecretKey,
+// Region) is missing, the function is a no-op and returns nil — preserving the
+// same silent-skip semantics as the original inline block in ParseConfig.
+//
+// Call this after MergeAWSDefaults so that env-only AWS deployments have their
+// credentials populated before the uploader is constructed.
+func BuildS3Uploader(cfg *Config, logger *slog.Logger) error {
+	if cfg.AWS.AccessKey == "" || cfg.AWS.SecretKey == "" || cfg.AWS.Region == "" {
+		return nil
+	}
+	uploader, err := s3uploader.New(cfg.AWS.AccessKey, cfg.AWS.SecretKey, cfg.AWS.Region, logger)
+	if err != nil {
+		return fmt.Errorf("creating S3 uploader: %w", err)
+	}
+	cfg.S3Uploader = uploader
+	return nil
 }
 
 var (

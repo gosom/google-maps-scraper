@@ -66,6 +66,15 @@ func main() {
 	// CLI flags take precedence; env values from pkg/config fill in the gaps.
 	runner.MergeAWSDefaults(cfg, appCfg)
 
+	// Build the S3 uploader now that AWS credentials are fully resolved.
+	// This must run after MergeAWSDefaults so that env-only deployments
+	// (credentials supplied via AWS_ACCESS_KEY_ID etc.) get an uploader.
+	if err := runner.BuildS3Uploader(cfg, logger); err != nil {
+		slog.Error("s3_uploader_init_failed", slog.Any("error", err))
+		cancel()
+		os.Exit(1)
+	}
+
 	// Propagate build-time version into config so the health endpoint can report it.
 	cfg.Version = version
 
