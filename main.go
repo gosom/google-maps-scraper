@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	pkgconfig "github.com/gosom/google-maps-scraper/pkg/config"
 	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	"github.com/gosom/google-maps-scraper/runner"
 	"github.com/gosom/google-maps-scraper/runner/databaserunner"
@@ -36,7 +37,16 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Parse config first so banner can reflect debug mode
+	// Load typed env config early so all downstream code receives values
+	// from a single validated source rather than scattered os.Getenv calls.
+	appCfg, err := pkgconfig.Load()
+	if err != nil {
+		slog.Error("config_load_failed", slog.Any("error", err))
+		cancel()
+		os.Exit(1)
+	}
+
+	// Parse CLI-flag config (separate from env config).
 	cfg, err := runner.ParseConfig()
 	if err != nil {
 		slog.Error("invalid_configuration", slog.Any("error", err))
@@ -60,7 +70,7 @@ func main() {
 		cancel()
 	}()
 
-	runnerInstance, err := runnerFactory(cfg, logger)
+	runnerInstance, err := runnerFactory(cfg, appCfg, logger)
 	if err != nil {
 		cancel()
 		os.Stderr.WriteString(err.Error() + "\n")
@@ -93,16 +103,16 @@ func main() {
 	os.Exit(0)
 }
 
-func runnerFactory(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
+func runnerFactory(cfg *runner.Config, appCfg *pkgconfig.Config, logger *slog.Logger) (runner.Runner, error) {
 	switch cfg.RunMode {
 	case runner.RunModeFile:
 		return filerunner.New(cfg, logger.With(slog.String("component", "filerunner")))
 	case runner.RunModeDatabase, runner.RunModeDatabaseProduce:
-		return databaserunner.New(cfg, logger.With(slog.String("component", "databaserunner")))
+		return databaserunner.New(cfg, appCfg, logger.With(slog.String("component", "databaserunner")))
 	case runner.RunModeInstallPlaywright:
 		return installplaywright.New(cfg)
 	case runner.RunModeWeb:
-		return webrunner.New(cfg, logger.With(slog.String("component", "webrunner")))
+		return webrunner.New(cfg, appCfg, logger.With(slog.String("component", "webrunner")))
 	case runner.RunModeAwsLambda:
 		return lambdaaws.New(cfg, logger.With(slog.String("component", "lambdaaws")))
 	case runner.RunModeAwsLambdaInvoker:
