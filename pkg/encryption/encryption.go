@@ -5,10 +5,8 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"io"
-	"os"
 )
 
 // Encryptor handles AES-256-GCM encryption/decryption.
@@ -64,30 +62,4 @@ func (e *Encryptor) Decrypt(cryptoText string) (string, error) {
 		return "", fmt.Errorf("decryption failed: %w", err)
 	}
 	return string(plaintext), nil
-}
-
-// Deprecated: Use New() and inject the *Encryptor instead.
-// Encrypt encrypts a plaintext string using AES-GCM with the key from ENCRYPTION_KEY env var.
-func Encrypt(plaintext string) (string, error) {
-	e, err := New(os.Getenv("ENCRYPTION_KEY"))
-	if err != nil {
-		return "", err
-	}
-	if e == nil {
-		return "", errors.New("ENCRYPTION_KEY environment variable not set")
-	}
-	return e.Encrypt(plaintext)
-}
-
-// Deprecated: Use New() and inject the *Encryptor instead.
-// Decrypt decrypts a base64 encoded string using AES-GCM with the key from ENCRYPTION_KEY env var.
-func Decrypt(cryptoText string) (string, error) {
-	e, err := New(os.Getenv("ENCRYPTION_KEY"))
-	if err != nil {
-		return "", err
-	}
-	if e == nil {
-		return "", errors.New("ENCRYPTION_KEY environment variable not set")
-	}
-	return e.Decrypt(cryptoText)
 }
