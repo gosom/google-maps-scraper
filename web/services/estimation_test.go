@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"log/slog"
 	"math"
 	"testing"
 )
@@ -14,7 +15,7 @@ func TestEstimateJobCost(t *testing.T) {
 
 	// Use a nil-DB service — EstimateJobCost only needs pricing, which
 	// falls back to hardcoded defaults when DB is nil.
-	svc := NewEstimationService(nil, nil)
+	svc := NewEstimationService(nil, nil, slog.Default())
 	ctx := context.Background()
 
 	cases := []struct {
@@ -189,7 +190,7 @@ func TestEstimateJobCost(t *testing.T) {
 func TestEstimate_BugRegression(t *testing.T) {
 	t.Parallel()
 
-	svc := NewEstimationService(nil, nil)
+	svc := NewEstimationService(nil, nil, slog.Default())
 	est, err := svc.EstimateJobCost(
 		context.Background(),
 		[]string{"Cafe Mitte Berlin"},
@@ -217,7 +218,7 @@ func TestEstimate_BugRegression(t *testing.T) {
 func TestEstimate_NoteContent(t *testing.T) {
 	t.Parallel()
 
-	svc := NewEstimationService(nil, nil)
+	svc := NewEstimationService(nil, nil, slog.Default())
 	ctx := context.Background()
 
 	// Single keyword, no cap

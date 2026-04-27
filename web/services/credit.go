@@ -6,11 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 
 	"github.com/gosom/google-maps-scraper/billing"
 	"github.com/gosom/google-maps-scraper/models"
-	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 )
 
 // CreditService encapsulates credit-related operations.
@@ -20,11 +18,11 @@ type CreditService struct {
 	log     *slog.Logger
 }
 
-func NewCreditService(db *sql.DB, billingSvc *billing.Service) *CreditService {
+func NewCreditService(db *sql.DB, billingSvc *billing.Service, logger *slog.Logger) *CreditService {
 	return &CreditService{
 		db:      db,
 		billing: billingSvc,
-		log:     pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "credit"),
+		log:     logger.With(slog.String("component", "credit")),
 	}
 }
 

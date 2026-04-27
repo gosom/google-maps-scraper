@@ -138,7 +138,7 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 	// a SELECT ... FOR UPDATE lock (see concurrent_limit.go).
 	var estimateOpts *webservices.JobLimitOpts
 	if h.Deps.DB != nil {
-		estimationSvc := webservices.NewEstimationService(h.Deps.DB, h.Deps.PricingRuleRepo)
+		estimationSvc := webservices.NewEstimationService(h.Deps.DB, h.Deps.PricingRuleRepo, h.Deps.Logger)
 
 		// Estimate job cost. 0 means "no cap" — pass nil so the
 		// estimator uses depth-based calculation.
@@ -542,7 +542,7 @@ func (h *APIHandlers) GetJobCosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cs := webservices.NewCostsService(h.Deps.DB)
+	cs := webservices.NewCostsService(h.Deps.DB, h.Deps.Logger)
 	resp, err := cs.GetJobCosts(r.Context(), jobID, userID)
 	if err != nil {
 		internalError(w, h.Deps.Logger, err, "failed to retrieve job costs",
@@ -622,7 +622,7 @@ func (h *APIHandlers) GetBatchJobCosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cs := webservices.NewCostsService(h.Deps.DB)
+	cs := webservices.NewCostsService(h.Deps.DB, h.Deps.Logger)
 	costs, err := cs.GetBatchJobCosts(r.Context(), validIDs)
 	if err != nil {
 		internalError(w, h.Deps.Logger, err, "failed to retrieve batch job costs",
@@ -694,7 +694,7 @@ func (h *APIHandlers) EstimateJobCost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Estimate cost.
-	estimationSvc := webservices.NewEstimationService(h.Deps.DB, h.Deps.PricingRuleRepo)
+	estimationSvc := webservices.NewEstimationService(h.Deps.DB, h.Deps.PricingRuleRepo, h.Deps.Logger)
 	estimate, err := estimationSvc.EstimateJobCost(
 		r.Context(),
 		req.Keywords,

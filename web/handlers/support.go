@@ -92,7 +92,7 @@ func (h *SupportHandlers) SubmitSupportRequest(w http.ResponseWriter, r *http.Re
 	}
 
 	if h.Deps.DB != nil && h.Deps.BillingSvc != nil {
-		cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc)
+		cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc, h.Deps.Logger)
 		resp, err := cs.GetBalance(r.Context(), userID)
 		if err == nil {
 			creditBalance = resp.CreditBalance

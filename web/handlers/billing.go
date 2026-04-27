@@ -35,7 +35,7 @@ func (h *BillingHandlers) GetCreditBalance(w http.ResponseWriter, r *http.Reques
 		renderJSON(w, http.StatusUnauthorized, models.APIError{Code: http.StatusUnauthorized, Message: "User not authenticated"})
 		return
 	}
-	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc)
+	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc, h.Deps.Logger)
 	resp, err := cs.GetBalance(r.Context(), userID)
 	if err != nil {
 		if h.Deps.Logger != nil {
@@ -76,7 +76,7 @@ func (h *BillingHandlers) CreateCheckoutSession(w http.ResponseWriter, r *http.R
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "invalid payload"})
 		return
 	}
-	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc)
+	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc, h.Deps.Logger)
 	out, err := cs.CreateCheckoutSession(r.Context(), billing.CheckoutRequest{UserID: userID, Credits: req.Credits, Currency: req.Currency})
 	if err != nil {
 		if h.Deps.Logger != nil {
@@ -117,7 +117,7 @@ func (h *BillingHandlers) Reconcile(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusUnprocessableEntity, models.APIError{Code: http.StatusUnprocessableEntity, Message: "invalid payload"})
 		return
 	}
-	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc)
+	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc, h.Deps.Logger)
 	if err := cs.Reconcile(r.Context(), req.SessionID, userID); err != nil {
 		if h.Deps.Logger != nil {
 			h.Deps.Logger.Error("reconcile_failed",
@@ -149,7 +149,7 @@ func (h *BillingHandlers) HandleStripeWebhook(w http.ResponseWriter, r *http.Req
 	sig := r.Header.Get("Stripe-Signature")
 	h.Deps.Logger.Debug("webhook_received", slog.Int("payload_length", len(payload)), slog.Bool("signature_present", sig != ""))
 
-	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc)
+	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc, h.Deps.Logger)
 	code, err := cs.HandleWebhook(r.Context(), payload, sig)
 	if err != nil {
 		h.Deps.Logger.Error("webhook_processing_failed",
@@ -193,7 +193,7 @@ func (h *BillingHandlers) GetBillingHistory(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc)
+	cs := webservices.NewCreditService(h.Deps.DB, h.Deps.BillingSvc, h.Deps.Logger)
 	resp, err := cs.GetBillingHistory(r.Context(), userID, page, limit, offset, typeFilter)
 	if err != nil {
 		if h.Deps.Logger != nil {

@@ -6,11 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 
 	"github.com/gosom/google-maps-scraper/models"
-	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 )
 
 // CostsService provides job cost breakdown queries.
@@ -19,10 +17,10 @@ type CostsService struct {
 	log *slog.Logger
 }
 
-func NewCostsService(db *sql.DB) *CostsService {
+func NewCostsService(db *sql.DB, logger *slog.Logger) *CostsService {
 	return &CostsService{
 		db:  db,
-		log: pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "costs"),
+		log: logger.With(slog.String("component", "costs")),
 	}
 }
 

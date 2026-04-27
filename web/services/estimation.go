@@ -6,12 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"os"
 	"sync"
 	"time"
 
 	"github.com/gosom/google-maps-scraper/models"
-	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	webutils "github.com/gosom/google-maps-scraper/web/utils"
 	"github.com/shopspring/decimal"
 )
@@ -127,10 +125,10 @@ func (c *CostEstimate) TotalMicro() int64 { return c.totalMicro }
 // by an optimistic estimate.
 func (c *CostEstimate) MinTotalMicro() int64 { return c.minTotalMicro }
 
-func NewEstimationService(db *sql.DB, priceRepo models.PricingRuleRepository) *EstimationService {
+func NewEstimationService(db *sql.DB, priceRepo models.PricingRuleRepository, logger *slog.Logger) *EstimationService {
 	return &EstimationService{
 		db:        db,
-		log:       pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "estimation"),
+		log:       logger.With(slog.String("component", "estimation")),
 		priceRepo: priceRepo,
 	}
 }
