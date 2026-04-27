@@ -17,6 +17,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"golang.org/x/term"
 
+	pkgconfig "github.com/gosom/google-maps-scraper/pkg/config"
 	"github.com/gosom/google-maps-scraper/s3uploader"
 	"github.com/gosom/google-maps-scraper/tlmt"
 	"github.com/gosom/google-maps-scraper/tlmt/gonoop"
@@ -253,18 +254,6 @@ func ParseConfig() (*Config, error) {
 
 	flag.Parse()
 
-	if cfg.AWS.AccessKey == "" {
-		cfg.AWS.AccessKey = os.Getenv("MY_AWS_ACCESS_KEY")
-	}
-
-	if cfg.AWS.SecretKey == "" {
-		cfg.AWS.SecretKey = os.Getenv("MY_AWS_SECRET_KEY")
-	}
-
-	if cfg.AWS.Region == "" {
-		cfg.AWS.Region = os.Getenv("MY_AWS_REGION")
-	}
-
 	if cfg.Dsn == "" {
 		cfg.Dsn = os.Getenv("DSN")
 	}
@@ -380,6 +369,23 @@ func ParseConfig() (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// MergeAWSDefaults fills empty AWS credential fields in cfg from the standard
+// AWS_* environment variables already parsed into appCfg. CLI flag values
+// (non-empty) always take precedence over the env-based defaults.
+//
+// Call this after ParseConfig() and before constructing runners that need S3.
+func MergeAWSDefaults(cfg *Config, appCfg *pkgconfig.Config) {
+	if cfg.AWS.AccessKey == "" {
+		cfg.AWS.AccessKey = appCfg.AWS.AccessKeyID
+	}
+	if cfg.AWS.SecretKey == "" {
+		cfg.AWS.SecretKey = appCfg.AWS.SecretAccessKey
+	}
+	if cfg.AWS.Region == "" {
+		cfg.AWS.Region = appCfg.AWS.Region
+	}
 }
 
 var (

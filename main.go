@@ -62,6 +62,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Merge standard AWS_* env values into the CLI-flag config.
+	// CLI flags take precedence; env values from pkg/config fill in the gaps.
+	runner.MergeAWSDefaults(cfg, appCfg)
+
 	// Propagate build-time version into config so the health endpoint can report it.
 	cfg.Version = version
 
