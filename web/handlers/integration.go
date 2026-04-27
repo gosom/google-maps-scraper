@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 
 	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/pkg/appenv"
+	pkgconfig "github.com/gosom/google-maps-scraper/pkg/config"
 	"github.com/gosom/google-maps-scraper/pkg/encryption"
 	"github.com/gosom/google-maps-scraper/pkg/googlesheets"
 	"github.com/gosom/google-maps-scraper/web/auth"
@@ -28,25 +28,27 @@ type IntegrationHandler struct {
 	jobService    JobService
 	sheetsService *googlesheets.Service
 	env           appenv.Environment
+	google        pkgconfig.GoogleConfig
 	log           *slog.Logger
 }
 
-func NewIntegrationHandler(repo models.IntegrationRepository, enc *encryption.Encryptor, jobService JobService, sheetsService *googlesheets.Service, env appenv.Environment, logger *slog.Logger) *IntegrationHandler {
+func NewIntegrationHandler(repo models.IntegrationRepository, enc *encryption.Encryptor, jobService JobService, sheetsService *googlesheets.Service, env appenv.Environment, googleCfg pkgconfig.GoogleConfig, logger *slog.Logger) *IntegrationHandler {
 	return &IntegrationHandler{
 		repo:          repo,
 		enc:           enc,
 		jobService:    jobService,
 		sheetsService: sheetsService,
 		env:           env,
+		google:        googleCfg,
 		log:           logger.With(slog.String("component", "integration")),
 	}
 }
 
 func (h *IntegrationHandler) googleConfig() *oauth2.Config {
 	return &oauth2.Config{
-		ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
-		ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
-		RedirectURL:  os.Getenv("GOOGLE_REDIRECT_URL"),
+		ClientID:     h.google.ClientID,
+		ClientSecret: h.google.ClientSecret,
+		RedirectURL:  h.google.RedirectURL,
 		Scopes: []string{
 			"https://www.googleapis.com/auth/spreadsheets",
 			"https://www.googleapis.com/auth/drive.file", // Allows creating files/folders and managing them
@@ -345,9 +347,9 @@ func (h *IntegrationHandler) getHTTPClient(ctx context.Context, userID string) (
 }
 
 func (h *IntegrationHandler) HandleGetConfig(w http.ResponseWriter, r *http.Request) {
-	googleEnabled := os.Getenv("GOOGLE_CLIENT_ID") != "" &&
-		os.Getenv("GOOGLE_CLIENT_SECRET") != "" &&
-		os.Getenv("GOOGLE_REDIRECT_URL") != ""
+	googleEnabled := h.google.ClientID != "" &&
+		h.google.ClientSecret != "" &&
+		h.google.RedirectURL != ""
 
 	config := map[string]bool{
 		"google_sheets": googleEnabled,

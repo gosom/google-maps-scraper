@@ -19,6 +19,7 @@ import (
 	"github.com/gosom/google-maps-scraper/internal/crypto/aesutil"
 	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/pkg/appenv"
+	pkgconfig "github.com/gosom/google-maps-scraper/pkg/config"
 	"github.com/gosom/google-maps-scraper/pkg/encryption"
 	"github.com/gosom/google-maps-scraper/pkg/googlesheets"
 	"github.com/gosom/google-maps-scraper/pkg/notify"
@@ -78,6 +79,9 @@ type ServerConfig struct {
 	// Logger is the root structured logger injected from main via pkglogger.New.
 	// New() derives a per-component child via logger.With("component", "api").
 	Logger *slog.Logger
+	// GoogleConfig holds Google OAuth credentials read once at startup.
+	// Passed through to IntegrationHandler so per-request os.Getenv is eliminated.
+	GoogleConfig pkgconfig.GoogleConfig
 }
 
 func New(cfg ServerConfig) (*Server, error) {
@@ -158,6 +162,7 @@ func New(cfg ServerConfig) (*Server, error) {
 		GoogleSheetsSvc:     googlesheets.NewService(),
 		Version:             cfg.Version,
 		Environment:         cfg.Environment,
+		GoogleConfig:        cfg.GoogleConfig,
 	}
 	if ans.db != nil {
 		deps.ConcurrentLimitSvc = webservices.NewConcurrentLimitService(ans.db)

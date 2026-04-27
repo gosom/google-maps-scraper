@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gosom/google-maps-scraper/pkg/appenv"
+	pkgconfig "github.com/gosom/google-maps-scraper/pkg/config"
 )
 
 // TestIntegrationHandler_LoggerDI asserts that NewIntegrationHandler accepts
@@ -15,7 +16,7 @@ func TestIntegrationHandler_LoggerDI(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	h := NewIntegrationHandler(nil, nil, nil, nil, appenv.Environment(0), logger)
+	h := NewIntegrationHandler(nil, nil, nil, nil, appenv.Environment(0), pkgconfig.GoogleConfig{}, logger)
 	if h == nil {
 		t.Fatal("NewIntegrationHandler returned nil")
 	}
