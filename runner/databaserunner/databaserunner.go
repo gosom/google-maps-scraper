@@ -54,7 +54,7 @@ func New(cfg *runner.Config, appCfg *pkgconfig.Config, logger *slog.Logger) (run
 	}
 
 	// Initialize job repository for tracking job status
-	jobRepo, err := postgres.NewRepository(conn)
+	jobRepo, err := postgres.NewRepository(conn, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create job repository: %w", err)
 	}

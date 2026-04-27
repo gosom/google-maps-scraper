@@ -1,6 +1,7 @@
 package webrunner
 
 import (
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -94,7 +95,7 @@ func TestBuildServerConfig_DoesNotFailInDevelopmentWhenSecretsMissing(t *testing
 	// specific error string rather than expecting a fully successful build,
 	// because the test would otherwise need a real DB + Clerk client to
 	// reach the success path.
-	_, err := buildServerConfig(&runner.Config{}, nil, nil, appCfg)
+	_, err := buildServerConfig(&runner.Config{}, nil, nil, appCfg, slog.Default())
 	if err != nil && strings.Contains(err.Error(), "production mode requires") {
 		t.Errorf("development environment should NOT trigger the production fail-fast guard, got: %v", err)
 	}

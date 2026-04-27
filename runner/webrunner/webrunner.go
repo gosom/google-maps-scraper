@@ -136,7 +136,7 @@ type webrunner struct {
 // buildServerConfig constructs the web.ServerConfig from the typed *pkgconfig.Config
 // and the runner's CLI-flag Config. Production validation was already performed by
 // pkgconfig.Load() → Validate(), so no duplicate checks are needed here.
-func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service, appCfg *pkgconfig.Config) (web.ServerConfig, error) {
+func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service, appCfg *pkgconfig.Config, logger *slog.Logger) (web.ServerConfig, error) {
 	stripeWebhookSecrets := appCfg.Stripe.WebhookSecrets()
 	stripeWebhookAllowedCIDRs := appCfg.Stripe.WebhookAllowedCIDRs
 
@@ -170,6 +170,7 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service, appCfg 
 		InternalAddr:              appCfg.InternalAddr,
 		ResendAPIKey:              appCfg.ResendAPIKey,
 		Environment:               appCfg.AppEnv,
+		Logger:                    logger,
 	}
 
 	slog.Info("auth_enabled", slog.String("provider", "clerk"))
@@ -251,12 +252,12 @@ func New(cfg *runner.Config, appCfg *pkgconfig.Config, logger *slog.Logger) (run
 	if migrationDSN == "" {
 		migrationDSN = cfg.Dsn
 	}
-	mr := postgres.NewMigrationRunner(migrationDSN)
+	mr := postgres.NewMigrationRunner(migrationDSN, logger)
 	if err := mr.RunMigrations(); err != nil {
 		return nil, fmt.Errorf("failed to run database migrations: %w", err)
 	}
 
-	repo, err = postgres.NewRepository(db)
+	repo, err = postgres.NewRepository(db, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PostgreSQL repository: %w", err)
 	}
@@ -267,7 +268,7 @@ func New(cfg *runner.Config, appCfg *pkgconfig.Config, logger *slog.Logger) (run
 
 	// Build server config (enforces Clerk, applies Stripe if present)
 
-	serverCfg, err := buildServerConfig(cfg, db, svc, appCfg)
+	serverCfg, err := buildServerConfig(cfg, db, svc, appCfg, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +286,7 @@ func New(cfg *runner.Config, appCfg *pkgconfig.Config, logger *slog.Logger) (run
 	// shared, so we wire a real repo rather than nil.
 	cfgSvc := config.New(db)
 	billUserRepo := postgres.NewUserRepository(db)
-	billSvc := billing.New(db, cfgSvc, "", nil, billUserRepo)
+	billSvc := billing.New(db, cfgSvc, "", nil, billUserRepo, logger)
 	if billSvc != nil {
 		slog.Info("billing_service_initialized")
 	} else {
@@ -313,7 +314,7 @@ func New(cfg *runner.Config, appCfg *pkgconfig.Config, logger *slog.Logger) (run
 
 	if appCfg.AWS.AccessKeyID != "" && appCfg.AWS.SecretAccessKey != "" && appCfg.AWS.Region != "" && s3BucketName != "" {
 		var s3Err error
-		s3Upload, s3Err = s3uploader.New(appCfg.AWS.AccessKeyID, appCfg.AWS.SecretAccessKey, appCfg.AWS.Region)
+		s3Upload, s3Err = s3uploader.New(appCfg.AWS.AccessKeyID, appCfg.AWS.SecretAccessKey, appCfg.AWS.Region, logger)
 		if s3Err != nil {
 			slog.Warn("s3_uploader_init_failed", slog.String("detail", "files will only be stored locally"), slog.Any("error", s3Err))
 		} else {
@@ -403,7 +404,7 @@ func (w *webrunner) Run(ctx context.Context) error {
 	// Start webhook delivery worker goroutine: polls for pending webhook
 	// deliveries and sends HTTP callbacks to user-registered endpoints.
 	if w.webhookDeliveryRepo != nil && w.webhookConfigRepo != nil {
-		jobRepo, repoErr := postgres.NewRepository(w.db)
+		jobRepo, repoErr := postgres.NewRepository(w.db, w.logger)
 		if repoErr != nil {
 			w.logger.Error("webhook_worker_repo_init_failed", slog.Any("error", repoErr))
 		} else {
