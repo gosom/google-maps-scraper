@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -67,7 +66,7 @@ const webhookSignatureTolerance = 5 * time.Minute
 // the version cannot be overridden by Dashboard settings or by a runtime
 // reassignment in our code. To upgrade, bump the stripe-go module version
 // in go.mod — that is the deliberate, reviewable code change.
-func New(db *sql.DB, cfg *config.Service, stripeSecretKey string, webhookSigningKeys []string, userRepo models.UserRepository) *Service {
+func New(db *sql.DB, cfg *config.Service, stripeSecretKey string, webhookSigningKeys []string, userRepo models.UserRepository, logger *slog.Logger) *Service {
 	// Set the Stripe API key once at startup to avoid a data race from
 	// concurrent goroutines writing the package-level global on every request.
 	// Guard: only set when non-empty so a second billing.New("") used for
@@ -76,12 +75,15 @@ func New(db *sql.DB, cfg *config.Service, stripeSecretKey string, webhookSigning
 		stripe.Key = stripeSecretKey
 	}
 
-	logger := pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "billing")
+	if logger == nil {
+		logger = slog.Default()
+	}
+	svcLogger := logger.With(slog.String("component", "billing"))
 	if stripeSecretKey != "" {
 		// Emit the SDK-pinned API version at startup so ops can confirm
 		// which Stripe API contract we're talking to without reading source.
 		// (S-L1)
-		logger.Info("billing_service_initialized",
+		svcLogger.Info("billing_service_initialized",
 			slog.String("stripe_api_version", stripe.APIVersion),
 			slog.String("stripe_sdk", "stripe-go/v82"),
 		)
@@ -92,7 +94,7 @@ func New(db *sql.DB, cfg *config.Service, stripeSecretKey string, webhookSigning
 		cfg:                cfg,
 		webhookSigningKeys: compactWebhookSecrets(webhookSigningKeys),
 		userRepo:           userRepo,
-		logger:             logger,
+		logger:             svcLogger,
 		metrics:            metrics.NewBillingMetrics(nil), // uses default Prometheus registry
 	}
 }
