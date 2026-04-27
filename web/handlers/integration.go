@@ -16,6 +16,7 @@ import (
 	"golang.org/x/oauth2/google"
 
 	"github.com/gosom/google-maps-scraper/models"
+	"github.com/gosom/google-maps-scraper/pkg/appenv"
 	"github.com/gosom/google-maps-scraper/pkg/encryption"
 	"github.com/gosom/google-maps-scraper/pkg/googlesheets"
 	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
@@ -27,15 +28,17 @@ type IntegrationHandler struct {
 	enc           *encryption.Encryptor // nil means encryption disabled
 	jobService    JobService
 	sheetsService *googlesheets.Service
+	env           appenv.Environment
 	log           *slog.Logger
 }
 
-func NewIntegrationHandler(repo models.IntegrationRepository, enc *encryption.Encryptor, jobService JobService, sheetsService *googlesheets.Service) *IntegrationHandler {
+func NewIntegrationHandler(repo models.IntegrationRepository, enc *encryption.Encryptor, jobService JobService, sheetsService *googlesheets.Service, env appenv.Environment) *IntegrationHandler {
 	return &IntegrationHandler{
 		repo:          repo,
 		enc:           enc,
 		jobService:    jobService,
 		sheetsService: sheetsService,
+		env:           env,
 		log:           pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "integration"),
 	}
 }
@@ -67,9 +70,11 @@ func (h *IntegrationHandler) HandleGoogleAuth(w http.ResponseWriter, r *http.Req
 	state := uuid.New().String()
 
 	// Store state in a secure cookie.
-	// Use IS_PRODUCTION env var to unconditionally set Secure in production
-	// rather than trusting the client-supplied X-Forwarded-Proto header (CWE-614).
-	isSecure := r.TLS != nil || os.Getenv("IS_PRODUCTION") == "1"
+	// Use the injected appenv.Environment to unconditionally set Secure in
+	// production rather than trusting the client-supplied X-Forwarded-Proto
+	// header (CWE-614). The Environment is parsed once at startup from
+	// APP_ENV; see pkg/appenv.
+	isSecure := r.TLS != nil || h.env.IsProduction()
 	http.SetCookie(w, &http.Cookie{
 		Name:     "oauth_state",
 		Value:    state,
@@ -97,8 +102,9 @@ func (h *IntegrationHandler) HandleGoogleCallback(w http.ResponseWriter, r *http
 	}
 
 	// Clear the cookie.
-	// Use IS_PRODUCTION env var (not X-Forwarded-Proto) to set Secure flag (CWE-614).
-	isSecure := r.TLS != nil || os.Getenv("IS_PRODUCTION") == "1"
+	// Use the injected appenv.Environment (not X-Forwarded-Proto) to set
+	// Secure flag (CWE-614).
+	isSecure := r.TLS != nil || h.env.IsProduction()
 	http.SetCookie(w, &http.Cookie{
 		Name:     "oauth_state",
 		Value:    "",

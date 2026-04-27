@@ -18,6 +18,7 @@ import (
 	"github.com/gosom/google-maps-scraper/config"
 	"github.com/gosom/google-maps-scraper/internal/crypto/aesutil"
 	"github.com/gosom/google-maps-scraper/models"
+	"github.com/gosom/google-maps-scraper/pkg/appenv"
 	"github.com/gosom/google-maps-scraper/pkg/encryption"
 	"github.com/gosom/google-maps-scraper/pkg/googlesheets"
 	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
@@ -71,6 +72,10 @@ type ServerConfig struct {
 	// Example: ":9090". If empty, no internal listener is created.
 	InternalAddr string
 	ResendAPIKey string // Optional; if empty, support requests are logged instead of emailed
+	// Environment is parsed once from APP_ENV at startup (see pkg/appenv)
+	// and propagated through Dependencies into handlers. Replaces the
+	// previous APP_ENV / IS_PRODUCTION env-read pattern at handler layer.
+	Environment appenv.Environment
 }
 
 func New(cfg ServerConfig) (*Server, error) {
@@ -146,6 +151,7 @@ func New(cfg ServerConfig) (*Server, error) {
 		IntegrationRepo:     postgres.NewIntegrationRepository(ans.db, enc),
 		GoogleSheetsSvc:     googlesheets.NewService(),
 		Version:             cfg.Version,
+		Environment:         cfg.Environment,
 	}
 	if ans.db != nil {
 		deps.ConcurrentLimitSvc = webservices.NewConcurrentLimitService(ans.db)

@@ -1,11 +1,24 @@
 package webrunner
 
 import (
+	"os"
 	"strings"
 	"testing"
 
+	"github.com/gosom/google-maps-scraper/pkg/appenv"
 	"github.com/gosom/google-maps-scraper/runner"
 )
+
+// envForTest mirrors the parse-once behavior in New() so tests exercise the
+// same code path as the production binary.
+func envForTest(t *testing.T) appenv.Environment {
+	t.Helper()
+	env, err := appenv.Parse(os.Getenv("APP_ENV"))
+	if err != nil {
+		t.Fatalf("appenv.Parse failed for test APP_ENV=%q: %v", os.Getenv("APP_ENV"), err)
+	}
+	return env
+}
 
 // TestBuildServerConfig_FailsInProductionWhenEncryptionKeyMissing covers the
 // S-C5 / audit M-7 fail-fast guard. Without ENCRYPTION_KEY in production,
@@ -19,7 +32,7 @@ func TestBuildServerConfig_FailsInProductionWhenEncryptionKeyMissing(t *testing.
 	t.Setenv("ALLOWED_ORIGINS", "https://example.com")
 	t.Setenv("ENCRYPTION_KEY", "")
 
-	_, err := buildServerConfig(&runner.Config{}, nil, nil)
+	_, err := buildServerConfig(&runner.Config{}, nil, nil, envForTest(t))
 	if err == nil {
 		t.Fatal("expected error when ENCRYPTION_KEY is missing in production, got nil")
 	}
@@ -39,7 +52,7 @@ func TestBuildServerConfig_FailsInProductionWhenStripeWebhookSecretMissing(t *te
 	t.Setenv("ALLOWED_ORIGINS", "https://example.com")
 	t.Setenv("ENCRYPTION_KEY", "0123456789abcdef0123456789abcdef")
 
-	_, err := buildServerConfig(&runner.Config{}, nil, nil)
+	_, err := buildServerConfig(&runner.Config{}, nil, nil, envForTest(t))
 	if err == nil {
 		t.Fatal("expected error when STRIPE_WEBHOOK_SECRET is missing in production, got nil")
 	}
@@ -69,7 +82,7 @@ func TestBuildServerConfig_DoesNotFailInDevelopmentWhenSecretsMissing(t *testing
 	// specific error string rather than expecting a fully successful build,
 	// because the test would otherwise need a real DB + Clerk client to
 	// reach the success path.
-	_, err := buildServerConfig(&runner.Config{}, nil, nil)
+	_, err := buildServerConfig(&runner.Config{}, nil, nil, envForTest(t))
 	if err != nil && strings.Contains(err.Error(), "production mode requires") {
 		t.Errorf("development environment should NOT trigger the production fail-fast guard, got: %v", err)
 	}

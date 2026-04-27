@@ -23,6 +23,7 @@ import (
 	"github.com/gosom/google-maps-scraper/gmaps"
 	"github.com/gosom/google-maps-scraper/internal/crypto/aesutil"
 	"github.com/gosom/google-maps-scraper/models"
+	"github.com/gosom/google-maps-scraper/pkg/appenv"
 	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	"github.com/gosom/google-maps-scraper/pkg/metrics"
 	"github.com/gosom/google-maps-scraper/postgres"
@@ -169,7 +170,11 @@ type webrunner struct {
 // buildServerConfig loads integration settings from environment, enforces required
 // dependencies (Clerk), and constructs the web.ServerConfig in a single place.
 // Stripe settings are optional; if present, they are applied.
-func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.ServerConfig, error) {
+//
+// The env parameter is the parsed APP_ENV (see pkg/appenv) — it is read
+// once at the binary entry point and threaded through here so the
+// production fail-fast guards never re-read the raw env string.
+func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service, env appenv.Environment) (web.ServerConfig, error) {
 	clerkSecretKey := os.Getenv("CLERK_SECRET_KEY")
 	stripeAPIKey := os.Getenv("STRIPE_SECRET_KEY")
 	stripeWebhookSecrets := stripeWebhookSecretsFromEnv()
@@ -180,9 +185,7 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.Se
 		return web.ServerConfig{}, fmt.Errorf("CLERK_SECRET_KEY environment variable is required")
 	}
 
-	isProduction := strings.TrimSpace(os.Getenv("APP_ENV")) == "production"
-
-	if isProduction {
+	if env.IsProduction() {
 		var missing []string
 		if stripeAPIKey == "" {
 			missing = append(missing, "STRIPE_SECRET_KEY")
@@ -241,6 +244,7 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.Se
 		Version:                   cfg.Version,
 		InternalAddr:              internalAddr,
 		ResendAPIKey:              os.Getenv("RESEND_API_KEY"),
+		Environment:               env,
 	}
 
 	slog.Info("auth_enabled", slog.String("provider", "clerk"))
@@ -256,7 +260,7 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.Se
 	slog.Info("startup_config_summary",
 		slog.Bool("stripe_enabled", stripeAPIKey != ""),
 		slog.Bool("stripe_webhook_ip_allowlist_configured", len(stripeWebhookAllowedCIDRs) > 0),
-		slog.Bool("production_mode", isProduction),
+		slog.Bool("production_mode", env.IsProduction()),
 		slog.Bool("resend_enabled", serverCfg.ResendAPIKey != ""),
 	)
 
@@ -264,6 +268,16 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.Se
 }
 
 func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
+	// Parse APP_ENV exactly once for the lifetime of this process.
+	// Every downstream caller receives the typed appenv.Environment via
+	// dependency injection — handlers, the production fail-fast guard,
+	// the S3-required gate, and the startup feature log all read from
+	// this single value. APP_ENV is not consulted again.
+	env, err := appenv.Parse(os.Getenv("APP_ENV"))
+	if err != nil {
+		return nil, err
+	}
+
 	if cfg.DataFolder == "" {
 		return nil, fmt.Errorf("data folder is required")
 	}
@@ -284,7 +298,6 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 	}
 
 	var repo web.JobRepository
-	var err error
 	db, err := sql.Open("pgx", cfg.Dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to PostgreSQL: %w", err)
@@ -343,7 +356,7 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 
 	// Build server config (enforces Clerk, applies Stripe if present)
 
-	serverCfg, err := buildServerConfig(cfg, db, svc)
+	serverCfg, err := buildServerConfig(cfg, db, svc, env)
 	if err != nil {
 		return nil, err
 	}
@@ -414,13 +427,13 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 		}
 	}
 
-	if strings.TrimSpace(os.Getenv("APP_ENV")) == "production" && s3Upload == nil {
+	if env.IsProduction() && s3Upload == nil {
 		return nil, fmt.Errorf("S3 credentials are required when APP_ENV=production")
 	}
 
 	slog.Info("startup_feature_summary",
 		slog.Bool("s3_enabled", s3Upload != nil),
-		slog.String("app_env", os.Getenv("APP_ENV")),
+		slog.String("app_env", env.String()),
 	)
 
 	// Initialize job file repository

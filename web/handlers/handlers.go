@@ -9,6 +9,7 @@ import (
 
 	"github.com/gosom/google-maps-scraper/billing"
 	"github.com/gosom/google-maps-scraper/models"
+	"github.com/gosom/google-maps-scraper/pkg/appenv"
 	"github.com/gosom/google-maps-scraper/pkg/encryption"
 	"github.com/gosom/google-maps-scraper/pkg/googlesheets"
 	"github.com/gosom/google-maps-scraper/pkg/notify"
@@ -40,6 +41,11 @@ type Dependencies struct {
 	// Version is the Git SHA injected at build time, used by the /health endpoint.
 	Version string
 	Sender  notify.Sender // Support email sender; nil-safe
+	// Environment is parsed once at startup from APP_ENV. Handlers use this
+	// instead of reading os.Getenv at request time so that production-only
+	// behavior (e.g. cookie Secure flag — CWE-614) is consistent and
+	// typo-safe across all call sites.
+	Environment appenv.Environment
 }
 
 // HandlerGroup groups all handler categories for routing setup.
@@ -63,7 +69,7 @@ func NewHandlerGroup(deps Dependencies) *HandlerGroup {
 		APIKey:      &APIKeyHandlers{Deps: deps},
 		Webhook:     &WebhookHandlers{Deps: deps},
 		Billing:     &BillingHandlers{Deps: deps},
-		Integration: NewIntegrationHandler(deps.IntegrationRepo, deps.Encryptor, deps.App, deps.GoogleSheetsSvc),
+		Integration: NewIntegrationHandler(deps.IntegrationRepo, deps.Encryptor, deps.App, deps.GoogleSheetsSvc, deps.Environment),
 		Version:     NewVersionHandler(),
 		Admin:       &AdminHandlers{Deps: deps},
 		Support:     &SupportHandlers{Deps: deps, Sender: deps.Sender},
