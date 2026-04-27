@@ -19,7 +19,6 @@ import (
 	"github.com/gosom/google-maps-scraper/pkg/appenv"
 	"github.com/gosom/google-maps-scraper/pkg/encryption"
 	"github.com/gosom/google-maps-scraper/pkg/googlesheets"
-	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	"github.com/gosom/google-maps-scraper/web/auth"
 )
 
@@ -32,14 +31,14 @@ type IntegrationHandler struct {
 	log           *slog.Logger
 }
 
-func NewIntegrationHandler(repo models.IntegrationRepository, enc *encryption.Encryptor, jobService JobService, sheetsService *googlesheets.Service, env appenv.Environment) *IntegrationHandler {
+func NewIntegrationHandler(repo models.IntegrationRepository, enc *encryption.Encryptor, jobService JobService, sheetsService *googlesheets.Service, env appenv.Environment, logger *slog.Logger) *IntegrationHandler {
 	return &IntegrationHandler{
 		repo:          repo,
 		enc:           enc,
 		jobService:    jobService,
 		sheetsService: sheetsService,
 		env:           env,
-		log:           pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "integration"),
+		log:           logger.With(slog.String("component", "integration")),
 	}
 }
 

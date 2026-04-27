@@ -21,7 +21,6 @@ import (
 	"github.com/gosom/google-maps-scraper/pkg/appenv"
 	"github.com/gosom/google-maps-scraper/pkg/encryption"
 	"github.com/gosom/google-maps-scraper/pkg/googlesheets"
-	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	"github.com/gosom/google-maps-scraper/pkg/notify"
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/web/auth"
@@ -76,15 +75,22 @@ type ServerConfig struct {
 	// and propagated through Dependencies into handlers. Replaces the
 	// previous APP_ENV / IS_PRODUCTION env-read pattern at handler layer.
 	Environment appenv.Environment
+	// Logger is the root structured logger injected from main via pkglogger.New.
+	// New() derives a per-component child via logger.With("component", "api").
+	Logger *slog.Logger
 }
 
 func New(cfg ServerConfig) (*Server, error) {
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	ans := Server{
 		svc:      cfg.Service,
 		tmpl:     make(map[string]*template.Template),
 		db:       cfg.PgDB,
 		userRepo: cfg.UserRepo,
-		logger:   pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "api"),
+		logger:   logger.With(slog.String("component", "api")),
 		srv: &http.Server{
 			Addr:              cfg.Addr,
 			ReadHeaderTimeout: 10 * time.Second,
@@ -102,7 +108,7 @@ func New(cfg ServerConfig) (*Server, error) {
 	// Stripe Customer creation (the next checkout will lazy-create).
 	if cfg.StripeAPIKey != "" && cfg.PgDB != nil {
 		cfgSvc := config.New(cfg.PgDB)
-		ans.billingSvc = billing.New(cfg.PgDB, cfgSvc, cfg.StripeAPIKey, cfg.StripeWebhookSecrets, cfg.UserRepo)
+		ans.billingSvc = billing.New(cfg.PgDB, cfgSvc, cfg.StripeAPIKey, cfg.StripeWebhookSecrets, cfg.UserRepo, ans.logger)
 	}
 
 	// Initialize authentication middleware if Clerk secret key is provided
@@ -146,7 +152,7 @@ func New(cfg ServerConfig) (*Server, error) {
 		ServerSecret:        cfg.ServerSecret,
 		WebhookKEK:          aesutil.DeriveKey(cfg.ServerSecret, "webhook-signing-key-encryption"),
 		PricingRuleRepo:     postgres.NewPricingRuleRepository(ans.db),
-		ResultsSvc:          webservices.NewResultsService(ans.db),
+		ResultsSvc:          webservices.NewResultsService(ans.db, ans.logger),
 		Encryptor:           enc,
 		IntegrationRepo:     postgres.NewIntegrationRepository(ans.db, enc),
 		GoogleSheetsSvc:     googlesheets.NewService(),

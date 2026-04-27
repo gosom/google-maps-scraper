@@ -69,7 +69,7 @@ func NewHandlerGroup(deps Dependencies) *HandlerGroup {
 		APIKey:      &APIKeyHandlers{Deps: deps},
 		Webhook:     &WebhookHandlers{Deps: deps},
 		Billing:     &BillingHandlers{Deps: deps},
-		Integration: NewIntegrationHandler(deps.IntegrationRepo, deps.Encryptor, deps.App, deps.GoogleSheetsSvc, deps.Environment),
+		Integration: NewIntegrationHandler(deps.IntegrationRepo, deps.Encryptor, deps.App, deps.GoogleSheetsSvc, deps.Environment, deps.Logger),
 		Version:     NewVersionHandler(),
 		Admin:       &AdminHandlers{Deps: deps},
 		Support:     &SupportHandlers{Deps: deps, Sender: deps.Sender},
