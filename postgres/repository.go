@@ -7,12 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/gosom/google-maps-scraper/models"
-	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	_ "github.com/jackc/pgx/v5/stdlib" // PostgreSQL driver
 )
 
@@ -22,15 +20,21 @@ type repository struct {
 }
 
 // NewRepository creates a new PostgreSQL implementation of models.JobRepository
-func NewRepository(db *sql.DB) (models.JobRepository, error) {
+func NewRepository(db *sql.DB, logger *slog.Logger) (models.JobRepository, error) {
+	if db == nil {
+		return nil, fmt.Errorf("database connection is required")
+	}
 	if err := db.Ping(); err != nil {
 		return nil, err
 	}
 
+	if logger == nil {
+		logger = slog.Default()
+	}
 	// We don't create schema here anymore since we're using migrations
 	return &repository{
 		db:  db,
-		log: pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "repository"),
+		log: logger.With(slog.String("component", "repository")),
 	}, nil
 }
 

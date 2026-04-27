@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -27,7 +28,7 @@ func TestPostgresRepository(t *testing.T) {
 	defer db.Close()
 
 	// Create repository
-	repo, err := NewRepository(db)
+	repo, err := NewRepository(db, slog.Default())
 	if err != nil {
 		t.Fatalf("Failed to create repository: %v", err)
 	}

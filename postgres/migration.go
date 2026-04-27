@@ -15,7 +15,6 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
-	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 )
 
 /*
@@ -35,10 +34,13 @@ type MigrationRunner struct {
 	timeout       time.Duration
 }
 
-func NewMigrationRunner(dsn string) *MigrationRunner {
+func NewMigrationRunner(dsn string, logger *slog.Logger) *MigrationRunner {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &MigrationRunner{
 		dsn:     dsn,
-		logger:  pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "migration"),
+		logger:  logger.With(slog.String("component", "migration")),
 		timeout: 120 * time.Second,
 	}
 }
