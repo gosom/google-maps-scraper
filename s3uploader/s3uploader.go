@@ -5,14 +5,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 )
 
 type Uploader struct {
@@ -26,7 +24,10 @@ type UploadResult struct {
 	VersionID *string // S3 version ID if bucket versioning is enabled
 }
 
-func New(accessKey, secretKey, region string) (*Uploader, error) {
+func New(accessKey, secretKey, region string, logger *slog.Logger) (*Uploader, error) {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	creds := credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")
 
 	cfg, err := config.LoadDefaultConfig(context.Background(),
@@ -49,7 +50,7 @@ func New(accessKey, secretKey, region string) (*Uploader, error) {
 
 	return &Uploader{
 		client: client,
-		log:    pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "s3uploader"),
+		log:    logger.With(slog.String("component", "s3uploader")),
 	}, nil
 }
 
