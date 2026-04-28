@@ -26,6 +26,20 @@ import (
 )
 
 // parseConcurrency parses dynamic concurrency values including percentages, fractions, and keywords
+// splitAndTrim splits a comma-separated string into a slice, trims whitespace
+// around each element, and drops empty entries. Returns nil when no entries
+// remain (so callers can use `len(...) == 0` and `== nil` interchangeably).
+// Used for env vars whose value is a list of items (e.g. PROXIES).
+func splitAndTrim(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func parseConcurrency(value string) (int, error) {
 	if value == "" {
 		return 0, fmt.Errorf("empty value")
@@ -307,13 +321,18 @@ func ParseConfig() (*Config, error) {
 
 	slog.Debug("proxy_config", slog.String("proxies_env", os.Getenv("PROXIES")), slog.String("cli_proxies_flag", proxies))
 
-	// Priority: CLI proxies > Webshare API > No proxies
+	// Priority: CLI -proxies flag > PROXIES env var > Webshare API > No proxies.
+	// PROXIES is provider-agnostic: any rotating-gateway provider (Decodo,
+	// Bright Data, Smartproxy, etc.) is configured by setting this to a
+	// comma-separated list of proxy URLs of the form
+	//   http://USERNAME:PASSWORD@HOST:PORT
+	// Single-URL providers (e.g. Decodo gateway) just use one entry.
 	if proxies != "" {
-		cfg.Proxy.Proxies = strings.Split(proxies, ",")
+		cfg.Proxy.Proxies = splitAndTrim(proxies)
 		slog.Debug("cli_proxies_configured", slog.Int("count", len(cfg.Proxy.Proxies)))
-	} else if os.Getenv("PROXIES") != "" {
-		// Informative log: PROXIES env is set but ignored unless -proxies flag is provided
-		slog.Debug("proxies_env_ignored", slog.String("hint", "pass with -proxies flag to enable"))
+	} else if envProxies := os.Getenv("PROXIES"); envProxies != "" {
+		cfg.Proxy.Proxies = splitAndTrim(envProxies)
+		slog.Info("proxies_from_env_loaded", slog.Int("count", len(cfg.Proxy.Proxies)))
 	}
 
 	// Check for Webshare API key

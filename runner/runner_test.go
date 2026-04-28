@@ -164,3 +164,20 @@ func TestBuildS3Uploader_PartialConfigRejected(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "AWS_ENDPOINT")
 }
+
+func TestSplitAndTrim(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"", nil},
+		{"http://a:b@host:1", []string{"http://a:b@host:1"}},
+		{" http://a:b@h:1 , http://c:d@h2:2 ", []string{"http://a:b@h:1", "http://c:d@h2:2"}},
+		{",,, ,", nil},
+		{"http://only", []string{"http://only"}},
+	}
+	for _, c := range cases {
+		got := splitAndTrim(c.in)
+		assert.Equal(t, c.want, got, "input %q", c.in)
+	}
+}
