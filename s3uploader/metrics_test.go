@@ -1,9 +1,16 @@
 package s3uploader
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestNewMetrics_DoubleRegistrationOK locks in the AlreadyRegisteredError
@@ -57,9 +64,60 @@ func TestNewMetrics_NilRegistererUsesDefault(t *testing.T) {
 	}
 }
 
-// TODO: add a TestUpload_RecordsMetrics in Chunk 4 once stub_test.go
-// lands the s3API stubbing infrastructure (Task 11). The metric path is
-// covered by hand-runs against a real bucket today; once we have a stub,
-// we can assert OpTotal counter increments for both the success and
-// failure branches without depending on the ordering of NewMetrics
-// initialization or AWS connectivity.
+// TestUpload_RecordsMetrics asserts that a successful Upload increments
+// OpTotal{op="upload",result="ok"} from 0 to 1 and OpBytes{op="upload"}
+// by the body length, while a failed Upload increments
+// OpTotal{op="upload",result="error"} but does NOT credit bytes.
+//
+// Each test owns a fresh prometheus.Registry to avoid polluting the
+// global DefaultRegisterer (which other tests in this package and in the
+// process at large rely on for clean assertions).
+func TestUpload_RecordsMetrics(t *testing.T) {
+	t.Parallel()
+
+	t.Run("success path increments ok counter and bytes", func(t *testing.T) {
+		t.Parallel()
+
+		reg := prometheus.NewRegistry()
+		metrics := NewMetrics(reg)
+		stub := &fakeS3{}
+		u := newTestUploader(stub, WithMetrics(metrics))
+
+		// Pre-condition: counters start at 0.
+		require.Equal(t, 0.0, testutil.ToFloat64(metrics.OpTotal.WithLabelValues("upload", "ok")))
+		require.Equal(t, 0.0, testutil.ToFloat64(metrics.OpBytes.WithLabelValues("upload")))
+
+		body := []byte("a,b\nc,d\n")
+		_, err := u.Upload(context.Background(), "bkt", "k.csv", bytes.NewReader(body), "text/csv")
+		require.NoError(t, err)
+		require.NotNil(t, stub.lastPut, "fake should have observed the PutObject call")
+
+		assert.Equal(t, 1.0, testutil.ToFloat64(metrics.OpTotal.WithLabelValues("upload", "ok")),
+			"OpTotal{upload,ok} should increment by 1 on success")
+		assert.Equal(t, float64(len(body)), testutil.ToFloat64(metrics.OpBytes.WithLabelValues("upload")),
+			"OpBytes{upload} should equal body length on success")
+		assert.Equal(t, 0.0, testutil.ToFloat64(metrics.OpTotal.WithLabelValues("upload", "error")),
+			"OpTotal{upload,error} must remain 0 on success")
+	})
+
+	t.Run("error path increments error counter and skips bytes", func(t *testing.T) {
+		t.Parallel()
+
+		reg := prometheus.NewRegistry()
+		metrics := NewMetrics(reg)
+		stub := &fakeS3{put: func(*s3.PutObjectInput) (*s3.PutObjectOutput, error) {
+			return nil, errors.New("boom")
+		}}
+		u := newTestUploader(stub, WithMetrics(metrics))
+
+		_, err := u.Upload(context.Background(), "bkt", "k.csv", bytes.NewReader([]byte("x")), "text/csv")
+		require.Error(t, err)
+
+		assert.Equal(t, 1.0, testutil.ToFloat64(metrics.OpTotal.WithLabelValues("upload", "error")),
+			"OpTotal{upload,error} should increment by 1 on failure")
+		assert.Equal(t, 0.0, testutil.ToFloat64(metrics.OpTotal.WithLabelValues("upload", "ok")),
+			"OpTotal{upload,ok} must remain 0 on failure")
+		assert.Equal(t, 0.0, testutil.ToFloat64(metrics.OpBytes.WithLabelValues("upload")),
+			"OpBytes{upload} must NOT be credited on failure (recordOp passes 0 bytes)")
+	})
+}
