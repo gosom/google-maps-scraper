@@ -356,14 +356,13 @@ func New(cfg *runner.Config, appCfg *pkgconfig.Config, logger *slog.Logger) (run
 	// runs without working S3 don't fail-loop on startup.
 	if s3Upload != nil && s3BucketName != "" {
 		preflightCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 		if err := s3Upload.VerifyBucket(preflightCtx, s3BucketName); err != nil {
-			cancel()
 			if appCfg.AppEnv.IsProduction() {
 				return nil, fmt.Errorf("S3 preflight failed: %w", err)
 			}
 			slog.Warn("s3_preflight_failed_dev_continuing", slog.Any("error", err))
 		} else {
-			cancel()
 			slog.Info("s3_preflight_ok", slog.String("bucket", s3BucketName))
 		}
 	}
@@ -1449,9 +1448,13 @@ func (w *webrunner) uploadToS3AndSaveMetadata(ctx context.Context, job *web.Job,
 	// Construct S3 object key: users/{user_id}/jobs/{job_id}.csv
 	objectKey := fmt.Sprintf("users/%s/jobs/%s.csv", job.UserID, job.ID)
 
-	// Upload to S3 with proper Content-Type (including charset) and capture response
-	// CRITICAL: Upload FIRST, then create database record only if upload succeeds
-	result, err := w.s3Uploader.Upload(ctx, w.s3Bucket, objectKey, file, "text/csv; charset=utf-8")
+	// Upload to S3 with proper Content-Type (including charset) and capture response.
+	// CRITICAL: Upload FIRST, then create database record only if upload succeeds.
+	// 2-minute per-call timeout caps the worst case for hung S3 connections so a
+	// single bad request can't tie up a goroutine indefinitely (CSVs are MB-scale).
+	uploadCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	result, err := w.s3Uploader.Upload(uploadCtx, w.s3Bucket, objectKey, file, "text/csv; charset=utf-8")
 	if err != nil {
 		w.logger.Error("s3_upload_failed",
 			slog.String("job_id", job.ID),

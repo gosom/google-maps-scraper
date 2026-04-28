@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gosom/google-maps-scraper/models"
 	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
@@ -142,12 +143,18 @@ func (s *Service) GetCSVReader(ctx context.Context, id string) (io.ReadCloser, s
 					slog.String("bucket", jobFile.BucketName),
 					slog.String("object_key", jobFile.ObjectKey),
 				)
-				reader, err := s.s3Uploader.Download(ctx, jobFile.BucketName, jobFile.ObjectKey)
+				// 2-minute per-call timeout caps the worst case for hung S3
+				// connections. NOTE: cannot defer cancel here — the returned
+				// reader streams after this function returns. Tie cancel to
+				// the reader's Close via cancelOnClose below.
+				dlCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+				reader, err := s.s3Uploader.Download(dlCtx, jobFile.BucketName, jobFile.ObjectKey)
 				if err == nil {
 					fileName := id + ".csv"
 					log.Debug("get_csv_reader_s3_download_success", slog.String("job_id", id))
-					return reader, fileName, nil
+					return &cancelOnClose{ReadCloser: reader, cancel: cancel}, fileName, nil
 				}
+				cancel()
 				// If S3 download fails, fall through to local filesystem.
 				// s3uploader no longer logs on error (single-handling rule);
 				// this is the only place the failure surfaces.
@@ -258,4 +265,19 @@ func (s *Service) Cancel(ctx context.Context, id string, userID string) error {
 	}
 
 	return nil
+}
+
+// cancelOnClose wraps an io.ReadCloser so the per-call download timeout's
+// cancel func runs when the consumer closes the reader. This keeps the
+// timeout context alive for the entire stream lifetime (which outlives the
+// GetCSVReader function), then releases context resources at Close.
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnClose) Close() error {
+	err := c.ReadCloser.Close()
+	c.cancel()
+	return err
 }
