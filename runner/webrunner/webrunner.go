@@ -320,6 +320,10 @@ func New(cfg *runner.Config, appCfg *pkgconfig.Config, logger *slog.Logger) (run
 		s3Upload, s3Err = s3uploader.New(
 			s3uploader.WithCredentials(appCfg.AWS.AccessKeyID, appCfg.AWS.SecretAccessKey),
 			s3uploader.WithRegion(appCfg.AWS.Region),
+			s3uploader.WithEndpoint(appCfg.AWS.Endpoint),
+			s3uploader.WithForcePathStyle(appCfg.AWS.ForcePathStyle),
+			s3uploader.WithServerSideEncryption(appCfg.AWS.SSEEnabled),
+			s3uploader.WithChecksumMode(s3uploader.ParseChecksumMode(appCfg.AWS.ChecksumMode)),
 			s3uploader.WithLogger(logger),
 		)
 		if s3Err != nil {

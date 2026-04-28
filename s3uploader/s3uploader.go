@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 // s3API is the subset of *s3.Client we use for normal upload/download.
@@ -121,6 +122,12 @@ func (u *Uploader) Upload(ctx context.Context, bucketName, key string, body io.R
 		Key:         aws.String(key),
 		Body:        body,
 		ContentType: aws.String(contentType), // Set Content-Type header
+	}
+	// SSE is opt-in via WithServerSideEncryption(true). Default is off so
+	// DigitalOcean Spaces — which doesn't document the SSE header — keeps
+	// working out of the box.
+	if u.sseEnabled {
+		input.ServerSideEncryption = types.ServerSideEncryptionAes256
 	}
 
 	u.log.Debug("s3_upload_started", slog.String("bucket", bucketName), slog.String("object_key", key), slog.String("content_type", contentType))
