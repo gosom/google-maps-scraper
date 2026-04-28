@@ -15,11 +15,19 @@ import (
 	"github.com/gosom/google-maps-scraper/s3uploader"
 )
 
+// S3Object is the minimal contract the web Service needs from an object
+// store. Defined here (consumer-side) so the Service can be tested with a
+// stub and remains decoupled from the concrete s3uploader implementation.
+type S3Object interface {
+	Upload(ctx context.Context, bucketName, key string, body io.Reader, contentType string) (*s3uploader.UploadResult, error)
+	Download(ctx context.Context, bucketName, key string) (io.ReadCloser, error)
+}
+
 type Service struct {
 	repo        JobRepository
 	dataFolder  string
 	jobFileRepo models.JobFileRepository
-	s3Uploader  *s3uploader.Uploader
+	s3Uploader  S3Object
 	s3Bucket    string
 }
 
@@ -31,9 +39,9 @@ func NewService(repo JobRepository, dataFolder string) *Service {
 }
 
 // SetS3Config sets the S3 configuration for the service
-func (s *Service) SetS3Config(jobFileRepo models.JobFileRepository, s3Uploader *s3uploader.Uploader, s3Bucket string) {
+func (s *Service) SetS3Config(jobFileRepo models.JobFileRepository, s3 S3Object, s3Bucket string) {
 	s.jobFileRepo = jobFileRepo
-	s.s3Uploader = s3Uploader
+	s.s3Uploader = s3
 	s.s3Bucket = s3Bucket
 }
 
@@ -281,3 +289,8 @@ func (c *cancelOnClose) Close() error {
 	c.cancel()
 	return err
 }
+
+// Compile-time check that the concrete uploader satisfies the consumer-side
+// interface. If s3uploader.Uploader's method set drifts from S3Object, this
+// fails at build time rather than at the first runtime call.
+var _ S3Object = (*s3uploader.Uploader)(nil)
