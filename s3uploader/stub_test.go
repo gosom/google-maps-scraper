@@ -8,13 +8,33 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// fakePresigner satisfies the package-private presigner interface. The
+// optional get hook lets tests inject errors; unset returns a fixed URL so
+// the success path can be asserted without SDK ceremony.
+type fakePresigner struct {
+	get     func(*s3.GetObjectInput) (*v4.PresignedHTTPRequest, error)
+	lastIn  *s3.GetObjectInput
+	lastOpt int // captured PresignOptions count for assertions
+}
+
+func (f *fakePresigner) PresignGetObject(_ context.Context, in *s3.GetObjectInput, opts ...func(*s3.PresignOptions)) (*v4.PresignedHTTPRequest, error) {
+	f.lastIn = in
+	f.lastOpt = len(opts)
+	if f.get == nil {
+		return &v4.PresignedHTTPRequest{URL: "https://example.com/presigned?sig=abc"}, nil
+	}
+	return f.get(in)
+}
 
 // fakeS3 implements the package-private s3API interface with hooks per
 // method. Each test sets only the hooks it cares about; unset hooks fall
@@ -164,6 +184,54 @@ func TestVerifyBucket_WrapsError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "bkt")
 	assert.Contains(t, err.Error(), "403")
+}
+
+func TestPresignGet_ReturnsURL(t *testing.T) {
+	t.Parallel()
+
+	pres := &fakePresigner{}
+	u := &Uploader{
+		client:    &fakeS3{},
+		presigner: pres,
+		log:       slog.Default().With(slog.String("component", "s3uploader")),
+	}
+	url, err := u.PresignGet(context.Background(), "bkt", "k.csv", 5*time.Minute)
+	require.NoError(t, err)
+	assert.Equal(t, "https://example.com/presigned?sig=abc", url)
+	require.NotNil(t, pres.lastIn)
+	assert.Equal(t, "bkt", aws.ToString(pres.lastIn.Bucket))
+	assert.Equal(t, "k.csv", aws.ToString(pres.lastIn.Key))
+	assert.Equal(t, 1, pres.lastOpt, "WithPresignExpires should be passed exactly once")
+}
+
+func TestPresignGet_WrapsError(t *testing.T) {
+	t.Parallel()
+
+	pres := &fakePresigner{get: func(*s3.GetObjectInput) (*v4.PresignedHTTPRequest, error) {
+		return nil, errors.New("boom")
+	}}
+	u := &Uploader{
+		client:    &fakeS3{},
+		presigner: pres,
+		log:       slog.Default().With(slog.String("component", "s3uploader")),
+	}
+	_, err := u.PresignGet(context.Background(), "bkt", "k.csv", time.Minute)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bkt/k.csv")
+	assert.Contains(t, err.Error(), "boom")
+}
+
+func TestPresignGet_NilPresignerReturnsError(t *testing.T) {
+	t.Parallel()
+
+	u := &Uploader{
+		client:    &fakeS3{},
+		presigner: nil,
+		log:       slog.Default().With(slog.String("component", "s3uploader")),
+	}
+	_, err := u.PresignGet(context.Background(), "bkt", "k.csv", time.Minute)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "presigner not configured")
 }
 
 func TestValidateEndpoint(t *testing.T) {

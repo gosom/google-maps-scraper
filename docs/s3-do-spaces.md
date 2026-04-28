@@ -72,6 +72,29 @@ endpoint; `AWS_FORCE_PATH_STYLE=false` → virtual-hosted (unchanged);
    `GET /api/v1/jobs/<id>/download` (proxied stream); confirm both return
    the CSV.
 
+## Download URLs
+
+Two endpoints serve CSV downloads. New integrations should use the
+presigned variant; the legacy proxied stream is kept only for backward
+compatibility while clients migrate.
+
+| Endpoint                                  | Method | Behaviour                                                                                          |
+|-------------------------------------------|--------|----------------------------------------------------------------------------------------------------|
+| `GET /api/v1/jobs/{id}/download-url`      | GET    | Returns `{"url": "<presigned>", "expires_in": "300"}`. Client GETs `<presigned>` directly. 5-minute TTL. |
+| `GET /api/v1/jobs/{id}/download` (legacy) | GET    | Streams the CSV through the backend (`text/csv`, `Content-Disposition: attachment`). Deprecated.   |
+
+The legacy route emits a `download_legacy_route_used` info log on every
+call; once the LogQL query at the bottom of this doc returns zero rows
+for two weeks, the route can be removed (separate ticket). Both routes
+require the same auth — Clerk JWT or API key — and resolve the bucket
+via the `job_files` row, so the presigned URL works regardless of
+whether the bucket lives on AWS S3 or DO Spaces (both speak SigV4).
+
+If `job_files` has no row for the job (e.g. legacy jobs uploaded before
+the table existed, or jobs whose CSV is still on local disk),
+`/download-url` returns 404 and the client should fall back to
+`/download`.
+
 ## Querying S3 activity in Grafana
 
 Logs are shipped to Loki via the Docker logging driver

@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"io"
 	"log/slog"
+	"time"
 
 	"github.com/gosom/google-maps-scraper/billing"
 	"github.com/gosom/google-maps-scraper/models"
@@ -99,6 +100,7 @@ type JobService interface {
 	Cancel(ctx context.Context, id string, userID string) error
 	GetCSV(ctx context.Context, id string) (string, error)
 	GetCSVReader(ctx context.Context, id string) (io.ReadCloser, string, error)
+	GetCSVPresignedURL(ctx context.Context, id, userID string, ttl time.Duration) (string, error)
 }
 
 // ResultsService exposes read operations for results data.

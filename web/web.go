@@ -284,6 +284,7 @@ func New(cfg ServerConfig) (*Server, error) {
 	apiRouter.HandleFunc("/jobs/{id}", hg.API.DeleteJob).Methods(http.MethodDelete)
 	apiRouter.HandleFunc("/jobs/{id}/cancel", hg.API.CancelJob).Methods(http.MethodPost)
 	apiRouter.HandleFunc("/jobs/{id}/download", hg.Web.Download).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/jobs/{id}/download-url", hg.Web.DownloadURL).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/{id}/results", hg.API.GetJobResults).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/{id}/costs", hg.API.GetJobCosts).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/costs/batch", hg.API.GetBatchJobCosts).Methods(http.MethodPost)

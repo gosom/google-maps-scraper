@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
@@ -16,9 +17,10 @@ import (
 
 // mockJobService is a minimal stub for ownership tests.
 type mockJobService struct {
-	getFunc    func(ctx context.Context, id string, userID string) (models.Job, error)
-	deleteFunc func(ctx context.Context, id string, userID string) error
-	cancelFunc func(ctx context.Context, id string, userID string) error
+	getFunc        func(ctx context.Context, id string, userID string) (models.Job, error)
+	deleteFunc     func(ctx context.Context, id string, userID string) error
+	cancelFunc     func(ctx context.Context, id string, userID string) error
+	presignURLFunc func(ctx context.Context, id, userID string, ttl time.Duration) (string, error)
 }
 
 func (m *mockJobService) Create(_ context.Context, _ *models.Job) error { return nil }
@@ -49,6 +51,12 @@ func (m *mockJobService) Cancel(ctx context.Context, id string, userID string) e
 func (m *mockJobService) GetCSV(_ context.Context, _ string) (string, error) { return "", nil }
 func (m *mockJobService) GetCSVReader(_ context.Context, _ string) (io.ReadCloser, string, error) {
 	return nil, "", nil
+}
+func (m *mockJobService) GetCSVPresignedURL(ctx context.Context, id, userID string, ttl time.Duration) (string, error) {
+	if m.presignURLFunc != nil {
+		return m.presignURLFunc(ctx, id, userID, ttl)
+	}
+	return "", errors.New("not configured")
 }
 
 // withUserID injects a userID into the request context.

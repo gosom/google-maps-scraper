@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
 
@@ -49,6 +50,9 @@ func (m *mockAdminJobService) GetCSV(_ context.Context, _ string) (string, error
 }
 func (m *mockAdminJobService) GetCSVReader(_ context.Context, _ string) (io.ReadCloser, string, error) {
 	return nil, "", nil
+}
+func (m *mockAdminJobService) GetCSVPresignedURL(_ context.Context, _, _ string, _ time.Duration) (string, error) {
+	return "", nil
 }
 
 // ---------------------------------------------------------------------------

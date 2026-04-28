@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -21,6 +22,7 @@ import (
 type S3Object interface {
 	Upload(ctx context.Context, bucketName, key string, body io.Reader, contentType string) (*s3uploader.UploadResult, error)
 	Download(ctx context.Context, bucketName, key string) (io.ReadCloser, error)
+	PresignGet(ctx context.Context, bucketName, key string, ttl time.Duration) (string, error)
 }
 
 type Service struct {
@@ -202,6 +204,23 @@ func (s *Service) GetCSVReader(ctx context.Context, id string) (io.ReadCloser, s
 
 	fileName := filepath.Base(datapath)
 	return file, fileName, nil
+}
+
+// GetCSVPresignedURL returns a short-lived presigned URL the client can use
+// to download the CSV directly from S3/Spaces, bypassing the backend stream.
+// Ownership is enforced via the repo.Get call (scoped by userID).
+func (s *Service) GetCSVPresignedURL(ctx context.Context, id, userID string, ttl time.Duration) (string, error) {
+	if _, err := s.repo.Get(ctx, id, userID); err != nil {
+		return "", err
+	}
+	if s.jobFileRepo == nil || s.s3Uploader == nil || s.s3Bucket == "" {
+		return "", errors.New("s3 not configured")
+	}
+	jobFile, err := s.jobFileRepo.GetByJobID(ctx, id, models.JobFileTypeCSV)
+	if err != nil || jobFile.Status != models.JobFileStatusAvailable {
+		return "", errors.New("job file not available")
+	}
+	return s.s3Uploader.PresignGet(ctx, jobFile.BucketName, jobFile.ObjectKey, ttl)
 }
 
 // GetCSV returns the local file path for the CSV file (legacy method for backward compatibility)
