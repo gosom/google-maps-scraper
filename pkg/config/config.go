@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/caarlos0/env/v11"
@@ -177,11 +178,36 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("config: parse env: %w", err)
 	}
 
+	// caarlos0/env's envSeparator splits on the literal separator only; it
+	// does not trim per-element whitespace. Operators commonly write
+	// "https://a.com, https://b.com" with a space after the comma — without
+	// this pass, the second origin would be " https://b.com" (leading space)
+	// and silently fail exact-match lookups (CORS map, CIDR parser, proxy URL
+	// parser). Trim every []string field that uses envSeparator.
+	cfg.AllowedOrigins = trimAndDropEmpty(cfg.AllowedOrigins)
+	cfg.Proxies = trimAndDropEmpty(cfg.Proxies)
+	cfg.Stripe.WebhookAllowedCIDRs = trimAndDropEmpty(cfg.Stripe.WebhookAllowedCIDRs)
+
 	if validateErr := cfg.Validate(); validateErr != nil {
 		return nil, validateErr
 	}
 
 	return &cfg, nil
+}
+
+// trimAndDropEmpty trims whitespace from each element and drops empties.
+// Pure helper; tested via TestLoad_TrimsCSVWhitespace.
+func trimAndDropEmpty(in []string) []string {
+	if len(in) == 0 {
+		return in
+	}
+	out := in[:0]
+	for _, s := range in {
+		if t := strings.TrimSpace(s); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // Validate enforces runtime invariants. In production, required secrets

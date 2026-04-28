@@ -366,3 +366,39 @@ func TestValidate_ProductionAllValid(t *testing.T) {
 	require.NoError(t, err)
 	assert.NoError(t, cfg.Validate())
 }
+
+// TestLoad_TrimsCSVWhitespace verifies that values written with spaces around
+// the comma separator (a common operator-formatting style) are normalized.
+// caarlos0/env's envSeparator does not trim per-element whitespace; without
+// the explicit pass in Load(), the second origin in "https://a, https://b"
+// would carry a leading space and silently fail exact-match CORS lookups.
+func TestLoad_TrimsCSVWhitespace(t *testing.T) {
+	t.Setenv("DSN", "postgres://localhost/test")
+	t.Setenv("CLERK_SECRET_KEY", "sk_test_clerk")
+	t.Setenv("ALLOWED_ORIGINS", "https://a.com, https://b.com ,  https://c.com")
+	t.Setenv("STRIPE_WEBHOOK_ALLOWED_CIDRS", "10.0.0.0/8 , 192.168.0.0/16")
+	t.Setenv("PROXIES", "http://p1, http://p2 ")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"https://a.com", "https://b.com", "https://c.com"}, cfg.AllowedOrigins,
+		"AllowedOrigins must be trimmed per element")
+	assert.Equal(t, []string{"10.0.0.0/8", "192.168.0.0/16"}, cfg.Stripe.WebhookAllowedCIDRs,
+		"WebhookAllowedCIDRs must be trimmed per element")
+	assert.Equal(t, []string{"http://p1", "http://p2"}, cfg.Proxies,
+		"Proxies must be trimmed per element")
+}
+
+// TestLoad_DropsEmptyCSVElements covers a related edge case where consecutive
+// commas or trailing commas (e.g. "a,,b" or "a,b,") produce empty elements.
+// The trim pass also drops them so downstream consumers don't see empty strings.
+func TestLoad_DropsEmptyCSVElements(t *testing.T) {
+	t.Setenv("DSN", "postgres://localhost/test")
+	t.Setenv("CLERK_SECRET_KEY", "sk_test_clerk")
+	t.Setenv("ALLOWED_ORIGINS", "https://a.com,, https://b.com,")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"https://a.com", "https://b.com"}, cfg.AllowedOrigins)
+}
