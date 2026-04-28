@@ -148,15 +148,19 @@ func (r *IdempotencyRepository) CleanupExpired(ctx context.Context, stuckGrace t
 	if err != nil {
 		return 0, 0, fmt.Errorf("idempotency cleanup completed: %w", err)
 	}
-	completed, _ := res.RowsAffected()
+	completed, err := res.RowsAffected()
+	if err != nil {
+		return 0, 0, fmt.Errorf("idempotency cleanup completed rows affected: %w", err)
+	}
 
 	const startedQ = `DELETE FROM idempotency_keys WHERE status = 'started' AND created_at < NOW() - $1::interval`
-	// pgx wants the interval as a string like '15 minutes'; build it
-	// from stuckGrace so the caller controls the grace period.
 	res, err = r.db.ExecContext(ctx, startedQ, fmt.Sprintf("%d seconds", int(stuckGrace.Seconds())))
 	if err != nil {
 		return completed, 0, fmt.Errorf("idempotency cleanup started: %w", err)
 	}
-	started, _ := res.RowsAffected()
+	started, err := res.RowsAffected()
+	if err != nil {
+		return completed, 0, fmt.Errorf("idempotency cleanup started rows affected: %w", err)
+	}
 	return completed, started, nil
 }

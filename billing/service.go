@@ -7,8 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -68,7 +66,7 @@ const webhookSignatureTolerance = 5 * time.Minute
 // the version cannot be overridden by Dashboard settings or by a runtime
 // reassignment in our code. To upgrade, bump the stripe-go module version
 // in go.mod — that is the deliberate, reviewable code change.
-func New(db *sql.DB, cfg *config.Service, stripeSecretKey string, webhookSigningKeys []string, userRepo models.UserRepository) *Service {
+func New(db *sql.DB, cfg *config.Service, stripeSecretKey string, webhookSigningKeys []string, userRepo models.UserRepository, logger *slog.Logger) *Service {
 	// Set the Stripe API key once at startup to avoid a data race from
 	// concurrent goroutines writing the package-level global on every request.
 	// Guard: only set when non-empty so a second billing.New("") used for
@@ -77,12 +75,15 @@ func New(db *sql.DB, cfg *config.Service, stripeSecretKey string, webhookSigning
 		stripe.Key = stripeSecretKey
 	}
 
-	logger := pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "billing")
+	if logger == nil {
+		logger = slog.Default()
+	}
+	svcLogger := logger.With(slog.String("component", "billing"))
 	if stripeSecretKey != "" {
 		// Emit the SDK-pinned API version at startup so ops can confirm
 		// which Stripe API contract we're talking to without reading source.
 		// (S-L1)
-		logger.Info("billing_service_initialized",
+		svcLogger.Info("billing_service_initialized",
 			slog.String("stripe_api_version", stripe.APIVersion),
 			slog.String("stripe_sdk", "stripe-go/v82"),
 		)
@@ -93,7 +94,7 @@ func New(db *sql.DB, cfg *config.Service, stripeSecretKey string, webhookSigning
 		cfg:                cfg,
 		webhookSigningKeys: compactWebhookSecrets(webhookSigningKeys),
 		userRepo:           userRepo,
-		logger:             logger,
+		logger:             svcLogger,
 		metrics:            metrics.NewBillingMetrics(nil), // uses default Prometheus registry
 	}
 }
@@ -433,231 +434,204 @@ func (s *Service) handleCheckoutSessionCompleted(ctx context.Context, event stri
 		return 200, nil
 	}
 
-	// Process the payment in a transaction with proper isolation level
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
-		Isolation: sql.LevelSerializable,
-	})
-	if err != nil {
-		log.Error("failed_to_begin_transaction", slog.Any("error", err))
-		return 500, fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() {
-		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-			log.Warn("tx_rollback_failed", slog.Any("error", rbErr))
+	// Process the payment in a serializable transaction with automatic retry
+	// on PostgreSQL serialization failures (40001).
+	return withSerializableRetryHTTP(ctx, s.db, log, func(tx *sql.Tx) (int, error) {
+
+		// Dedup check: insert into processed_webhook_events at the START of the transaction.
+		// ON CONFLICT DO NOTHING returns 0 rows affected if already processed.
+		// This is the sole idempotency gate — no pre-check outside the transaction.
+		isDuplicate, err := s.markEventProcessed(ctx, tx, event.ID, string(event.Type))
+		if err != nil {
+			log.Error("failed_to_mark_event_processed", slog.Any("error", err))
+			return 500, fmt.Errorf("failed to mark event as processed: %w", err)
 		}
-	}()
+		if isDuplicate {
+			log.Debug("event_already_processed", slog.String("event_id", event.ID))
+			return 200, nil // tx deferred Rollback handles cleanup
+		}
 
-	// Dedup check: insert into processed_webhook_events at the START of the transaction.
-	// ON CONFLICT DO NOTHING returns 0 rows affected if already processed.
-	// This is the sole idempotency gate — no pre-check outside the transaction.
-	isDuplicate, err := s.markEventProcessed(ctx, tx, event.ID, string(event.Type))
-	if err != nil {
-		log.Error("failed_to_mark_event_processed", slog.Any("error", err))
-		return 500, fmt.Errorf("failed to mark event as processed: %w", err)
-	}
-	if isDuplicate {
-		log.Debug("event_already_processed", slog.String("event_id", event.ID))
-		return 200, nil // tx deferred Rollback handles cleanup
-	}
-
-	// Backfill the Stripe PaymentIntent ID onto the stripe_payments row. The
-	// row was created during CreateCheckoutSession with only the checkout
-	// session ID; this is the first and canonical opportunity to learn the PI
-	// ID and link them. Without this backfill, the charge.refunded handler's
-	// primary lookup by stripe_payment_intent_id always misses. (S-C2)
-	paymentIntentID := ""
-	if session.PaymentIntent != nil && session.PaymentIntent.ID != "" {
-		paymentIntentID = session.PaymentIntent.ID
-	}
-	if paymentIntentID != "" {
-		// Idempotent: tolerate webhook replays (where the PI ID may already be set)
-		// by matching both NULL and the same value.
-		const updPI = `UPDATE stripe_payments
+		// Backfill the Stripe PaymentIntent ID onto the stripe_payments row. The
+		// row was created during CreateCheckoutSession with only the checkout
+		// session ID; this is the first and canonical opportunity to learn the PI
+		// ID and link them. Without this backfill, the charge.refunded handler's
+		// primary lookup by stripe_payment_intent_id always misses. (S-C2)
+		paymentIntentID := ""
+		if session.PaymentIntent != nil && session.PaymentIntent.ID != "" {
+			paymentIntentID = session.PaymentIntent.ID
+		}
+		if paymentIntentID != "" {
+			// Idempotent: tolerate webhook replays (where the PI ID may already be set)
+			// by matching both NULL and the same value.
+			const updPI = `UPDATE stripe_payments
 			SET stripe_payment_intent_id = $1
 			WHERE stripe_checkout_session_id = $2
 			  AND (stripe_payment_intent_id IS NULL OR stripe_payment_intent_id = $1)`
-		if _, err := tx.ExecContext(ctx, updPI, paymentIntentID, session.ID); err != nil {
-			log.Error("failed_to_backfill_payment_intent_id",
-				slog.String("session_id", session.ID),
-				slog.String("payment_intent_id", paymentIntentID),
-				slog.Any("error", err),
-			)
-			return 500, fmt.Errorf("failed to backfill payment intent: %w", err)
-		}
+			if _, err := tx.ExecContext(ctx, updPI, paymentIntentID, session.ID); err != nil {
+				log.Error("failed_to_backfill_payment_intent_id",
+					slog.String("session_id", session.ID),
+					slog.String("payment_intent_id", paymentIntentID),
+					slog.Any("error", err),
+				)
+				return 500, fmt.Errorf("failed to backfill payment intent: %w", err)
+			}
 
-		// Fetch the PaymentIntent with latest_charge expanded so we can
-		// persist the Stripe-hosted receipt URL into stripe_payments. The
-		// receipt URL is "kept up-to-date to the latest state of the charge,
-		// including any refunds" (Stripe docs), so persisting it once is
-		// sufficient — the rendered receipt always reflects current state.
-		// (S-M6)
-		//
-		// This is best-effort: if Stripe is unreachable or the receipt URL
-		// is unexpectedly missing, we log a WARN and continue. The credit
-		// grant is more important than the receipt link, and a future
-		// reconcile call can repair the link via the same code path in
-		// ReconcileSession.
-		piParams := &stripe.PaymentIntentParams{}
-		piParams.AddExpand("latest_charge")
-		if pi, piErr := paymentintent.Get(paymentIntentID, piParams); piErr == nil {
-			if pi.LatestCharge != nil && pi.LatestCharge.ReceiptURL != "" {
-				const updReceipt = `UPDATE stripe_payments
+			// Fetch the PaymentIntent with latest_charge expanded so we can
+			// persist the Stripe-hosted receipt URL into stripe_payments. The
+			// receipt URL is "kept up-to-date to the latest state of the charge,
+			// including any refunds" (Stripe docs), so persisting it once is
+			// sufficient — the rendered receipt always reflects current state.
+			// (S-M6)
+			//
+			// This is best-effort: if Stripe is unreachable or the receipt URL
+			// is unexpectedly missing, we log a WARN and continue. The credit
+			// grant is more important than the receipt link, and a future
+			// reconcile call can repair the link via the same code path in
+			// ReconcileSession.
+			piParams := &stripe.PaymentIntentParams{}
+			piParams.AddExpand("latest_charge")
+			if pi, piErr := paymentintent.Get(paymentIntentID, piParams); piErr == nil {
+				if pi.LatestCharge != nil && pi.LatestCharge.ReceiptURL != "" {
+					const updReceipt = `UPDATE stripe_payments
 					SET stripe_receipt_url = $1
 					WHERE stripe_checkout_session_id = $2 AND stripe_receipt_url IS NULL`
-				if _, err := tx.ExecContext(ctx, updReceipt, pi.LatestCharge.ReceiptURL, session.ID); err != nil {
-					log.Warn("failed_to_persist_receipt_url",
-						slog.String("session_id", session.ID),
-						slog.Any("error", err),
-					)
+					if _, err := tx.ExecContext(ctx, updReceipt, pi.LatestCharge.ReceiptURL, session.ID); err != nil {
+						log.Warn("failed_to_persist_receipt_url",
+							slog.String("session_id", session.ID),
+							slog.Any("error", err),
+						)
+					}
 				}
+			} else {
+				log.Warn("failed_to_fetch_payment_intent_for_receipt",
+					slog.String("payment_intent_id", paymentIntentID),
+					slog.Any("error", piErr),
+				)
 			}
 		} else {
-			log.Warn("failed_to_fetch_payment_intent_for_receipt",
-				slog.String("payment_intent_id", paymentIntentID),
-				slog.Any("error", piErr),
+			// Missing PI on a payment-mode session should not happen, but we log
+			// rather than fail because balance credit is more important than the link.
+			log.Warn("checkout_completed_missing_payment_intent",
+				slog.String("session_id", session.ID),
+				slog.String("event_id", event.ID),
 			)
 		}
-	} else {
-		// Missing PI on a payment-mode session should not happen, but we log
-		// rather than fail because balance credit is more important than the link.
-		log.Warn("checkout_completed_missing_payment_intent",
-			slog.String("session_id", session.ID),
-			slog.String("event_id", event.ID),
-		)
-	}
 
-	// Read the user's current balance AND refund deficit in a single
-	// SELECT FOR UPDATE. The same row-level lock protects both fields — we
-	// need the deficit value because the refund deficit ledger (S-C4) pays
-	// down any outstanding deficit from the incoming purchase BEFORE crediting
-	// new spendable balance. credit_balance is scanned as float64 (via
-	// ::float8) while refund_deficit_credits is scanned as text and then
-	// parsed into int64 micro-credits to avoid IEEE 754 rounding errors in
-	// the split arithmetic below.
-	var currentBalance float64
-	var deficitStr string
-	err = tx.QueryRowContext(ctx,
-		`SELECT COALESCE(credit_balance, 0)::float8, COALESCE(refund_deficit_credits, 0)::text
-		 FROM users WHERE id = $1 FOR UPDATE`, userID).Scan(&currentBalance, &deficitStr)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			log.Warn("user_not_found", slog.String("user_id", userID))
-			return 400, fmt.Errorf("user not found: %s", userID)
+		// Read the user's current balance AND refund deficit in a single
+		// SELECT FOR UPDATE. Both are scanned as text and parsed with
+		// shopspring/decimal to preserve NUMERIC(18,6) precision — never
+		// detour through float64 for financial values.
+		var balanceStr, deficitStr string
+		err = tx.QueryRowContext(ctx,
+			`SELECT COALESCE(credit_balance, 0)::text, COALESCE(refund_deficit_credits, 0)::text
+		 FROM users WHERE id = $1 FOR UPDATE`, userID).Scan(&balanceStr, &deficitStr)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				log.Warn("user_not_found", slog.String("user_id", userID))
+				return 400, fmt.Errorf("user not found: %s", userID)
+			}
+			log.Error("failed_to_get_user_balance_and_deficit", slog.Any("error", err))
+			return 500, fmt.Errorf("failed to get user balance and deficit: %w", err)
 		}
-		log.Error("failed_to_get_user_balance_and_deficit", slog.Any("error", err))
-		return 500, fmt.Errorf("failed to get user balance and deficit: %w", err)
-	}
-	deficitFloat, err := strconv.ParseFloat(deficitStr, 64)
-	if err != nil {
-		log.Error("refund_deficit_parse_failed",
-			slog.String("user_id", userID),
-			slog.String("raw_value", deficitStr),
-			slog.Any("error", err),
-		)
-		return 500, fmt.Errorf("failed to parse refund_deficit_credits: %w", err)
-	}
-	deficitMicro := int64(math.Round(deficitFloat * models.MicroUnit))
-
-	// Apply the incoming credits to the refund deficit first. Any remainder
-	// goes to spendable balance. This is what makes the refund deficit ledger
-	// self-correcting: users who owe us credits from a past refund pay it back
-	// through their next purchase before any new spendable balance accrues.
-	//
-	// We do the split in integer micro-credit arithmetic to avoid float drift.
-	purchaseMicro := int64(credits) * models.MicroUnit
-	appliedToDeficitMicro := int64(0)
-	appliedToBalanceMicro := purchaseMicro
-	if deficitMicro > 0 {
-		if purchaseMicro >= deficitMicro {
-			appliedToDeficitMicro = deficitMicro
-			appliedToBalanceMicro = purchaseMicro - deficitMicro
-		} else {
-			appliedToDeficitMicro = purchaseMicro
-			appliedToBalanceMicro = 0
+		currentBalance, err := decimal.NewFromString(balanceStr)
+		if err != nil {
+			log.Error("credit_balance_parse_failed", slog.String("user_id", userID), slog.String("raw_value", balanceStr), slog.Any("error", err))
+			return 500, fmt.Errorf("failed to parse credit_balance: %w", err)
 		}
-	}
-	appliedToDeficitFloat := float64(appliedToDeficitMicro) / models.MicroUnit
-	appliedToBalanceFloat := float64(appliedToBalanceMicro) / models.MicroUnit
+		deficitDec, err := decimal.NewFromString(deficitStr)
+		if err != nil {
+			log.Error("refund_deficit_parse_failed", slog.String("user_id", userID), slog.String("raw_value", deficitStr), slog.Any("error", err))
+			return 500, fmt.Errorf("failed to parse refund_deficit_credits: %w", err)
+		}
+		deficitMicro := deficitDec.Mul(decimal.NewFromInt(models.MicroUnit)).IntPart()
 
-	// Update user credit balance. The deficit paydown is applied via
-	// GREATEST(0, ...) so a concurrent write cannot drive it negative — the
-	// CHECK constraint on the column would reject the row even if we tried.
-	// total_credits_purchased tracks lifetime purchases regardless of how
-	// much of this purchase hit the balance vs deficit.
-	// updated_at is intentionally NOT set here — the table trigger handles it.
-	const updUser = `UPDATE users SET
+		// Apply the incoming credits to the refund deficit first. Any remainder
+		// goes to spendable balance. Integer micro-credit arithmetic avoids drift.
+		purchaseMicro := int64(credits) * models.MicroUnit
+		appliedToDeficitMicro := int64(0)
+		appliedToBalanceMicro := purchaseMicro
+		if deficitMicro > 0 {
+			if purchaseMicro >= deficitMicro {
+				appliedToDeficitMicro = deficitMicro
+				appliedToBalanceMicro = purchaseMicro - deficitMicro
+			} else {
+				appliedToDeficitMicro = purchaseMicro
+				appliedToBalanceMicro = 0
+			}
+		}
+		appliedToDeficitDec := decimal.NewFromInt(appliedToDeficitMicro).Div(decimal.NewFromInt(models.MicroUnit))
+		appliedToBalanceDec := decimal.NewFromInt(appliedToBalanceMicro).Div(decimal.NewFromInt(models.MicroUnit))
+
+		// Update user credit balance. The deficit paydown is applied via
+		// GREATEST(0, ...) so a concurrent write cannot drive it negative.
+		// updated_at is intentionally NOT set here — the table trigger handles it.
+		const updUser = `UPDATE users SET
 		credit_balance = COALESCE(credit_balance, 0) + $1::numeric,
 		total_credits_purchased = COALESCE(total_credits_purchased, 0) + $2::numeric,
 		refund_deficit_credits = GREATEST(0, refund_deficit_credits - $3::numeric)
 		WHERE id = $4`
-	result, err := tx.ExecContext(ctx, updUser, appliedToBalanceFloat, credits, appliedToDeficitFloat, userID)
-	if err != nil {
-		log.Error("failed_to_update_user_credits", slog.Any("error", err))
-		return 500, fmt.Errorf("failed to update user credits: %w", err)
-	}
+		result, err := tx.ExecContext(ctx, updUser, appliedToBalanceDec.StringFixed(6), credits, appliedToDeficitDec.StringFixed(6), userID)
+		if err != nil {
+			log.Error("failed_to_update_user_credits", slog.Any("error", err))
+			return 500, fmt.Errorf("failed to update user credits: %w", err)
+		}
 
-	// Check if user exists
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		log.Error("failed_to_get_rows_affected", slog.Any("error", err))
-		return 500, fmt.Errorf("failed to get rows affected: %w", err)
-	}
-	if rowsAffected == 0 {
-		log.Warn("no_user_found", slog.String("user_id", userID))
-		return 400, fmt.Errorf("user not found: %s", userID)
-	}
+		// Check if user exists
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			log.Error("failed_to_get_rows_affected", slog.Any("error", err))
+			return 500, fmt.Errorf("failed to get rows affected: %w", err)
+		}
+		if rowsAffected == 0 {
+			log.Warn("no_user_found", slog.String("user_id", userID))
+			return 400, fmt.Errorf("user not found: %s", userID)
+		}
 
-	// If any portion of the purchase paid down a deficit, record a
-	// deficit_paydown ledger row for audit. amount=0 because the deficit
-	// lives outside the spendable balance ledger; balance_before and
-	// balance_after are identical (currentBalance) so the
-	// balance_calculation_check constraint is satisfied.
-	if appliedToDeficitMicro > 0 {
-		const insTxnPaydown = `INSERT INTO credit_transactions
+		// If any portion of the purchase paid down a deficit, record a
+		// deficit_paydown ledger row for audit. amount=0 because the deficit
+		// lives outside the spendable balance ledger; balance_before and
+		// balance_after are identical (currentBalance) so the
+		// balance_calculation_check constraint is satisfied.
+		if appliedToDeficitMicro > 0 {
+			const insTxnPaydown = `INSERT INTO credit_transactions
 			(id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
 			VALUES ($1, $2, 'deficit_paydown', 0, $3, $3, $4, $5, 'payment')`
-		desc := fmt.Sprintf("Deficit paydown from Stripe purchase %s: %.6f credits", session.ID, appliedToDeficitFloat)
-		if _, err := tx.ExecContext(ctx, insTxnPaydown,
-			uuid.Must(uuid.NewV7()).String(), userID, currentBalance, desc, session.ID); err != nil {
-			log.Error("failed_to_insert_deficit_paydown_transaction", slog.Any("error", err))
-			return 500, fmt.Errorf("failed to insert deficit paydown transaction: %w", err)
+			desc := fmt.Sprintf("Deficit paydown from Stripe purchase %s: %s credits", session.ID, appliedToDeficitDec.StringFixed(6))
+			if _, err := tx.ExecContext(ctx, insTxnPaydown,
+				uuid.Must(uuid.NewV7()).String(), userID, currentBalance.StringFixed(6), desc, session.ID); err != nil {
+				log.Error("failed_to_insert_deficit_paydown_transaction", slog.Any("error", err))
+				return 500, fmt.Errorf("failed to insert deficit paydown transaction: %w", err)
+			}
 		}
-	}
 
-	// Insert the purchase ledger row. The amount, balance_before, and
-	// balance_after triple must satisfy balance_after = balance_before + amount
-	// per the balance_calculation_check constraint. We use
-	// appliedToBalanceFloat (not the full purchase amount) because only that
-	// portion actually hit the spendable balance — the deficit paydown is a
-	// separate entry above.
-	const insTxn = `INSERT INTO credit_transactions (id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
+		// Insert the purchase ledger row. The amount, balance_before, and
+		// balance_after triple must satisfy balance_after = balance_before + amount
+		// per the balance_calculation_check constraint. We use
+		// appliedToBalanceFloat (not the full purchase amount) because only that
+		// portion actually hit the spendable balance — the deficit paydown is a
+		// separate entry above.
+		const insTxn = `INSERT INTO credit_transactions (id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
 					VALUES ($1, $2, 'purchase', $3, $4, $5, $6, $7, 'payment')`
-	_, err = tx.ExecContext(ctx, insTxn, uuid.Must(uuid.NewV7()).String(), userID,
-		appliedToBalanceFloat,
-		currentBalance,
-		currentBalance+appliedToBalanceFloat,
-		"Stripe purchase", session.ID)
-	if err != nil {
-		log.Error("failed_to_insert_credit_transaction", slog.Any("error", err))
-		return 500, fmt.Errorf("failed to insert credit transaction: %w", err)
-	}
+		_, err = tx.ExecContext(ctx, insTxn, uuid.Must(uuid.NewV7()).String(), userID,
+			appliedToBalanceDec.StringFixed(6),
+			currentBalance.StringFixed(6),
+			currentBalance.Add(appliedToBalanceDec).StringFixed(6),
+			"Stripe purchase", session.ID)
+		if err != nil {
+			log.Error("failed_to_insert_credit_transaction", slog.Any("error", err))
+			return 500, fmt.Errorf("failed to insert credit transaction: %w", err)
+		}
 
-	// Mark stripe payment as succeeded
-	const updPay = `UPDATE stripe_payments SET status='succeeded', completed_at=NOW() WHERE stripe_checkout_session_id=$1`
-	_, err = tx.ExecContext(ctx, updPay, session.ID)
-	if err != nil {
-		log.Error("failed_to_update_payment_status", slog.Any("error", err))
-		return 500, fmt.Errorf("failed to update payment status: %w", err)
-	}
+		// Mark stripe payment as succeeded
+		const updPay = `UPDATE stripe_payments SET status='succeeded', completed_at=NOW() WHERE stripe_checkout_session_id=$1`
+		if _, err := tx.ExecContext(ctx, updPay, session.ID); err != nil {
+			log.Error("failed_to_update_payment_status", slog.Any("error", err))
+			return 500, fmt.Errorf("failed to update payment status: %w", err)
+		}
 
-	// Commit transaction
-	if err := tx.Commit(); err != nil {
-		log.Error("failed_to_commit_transaction", slog.Any("error", err))
-		return 500, fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	log.Info("checkout_session_completed", slog.String("user_id", userID), slog.Int("credits", credits), slog.String("session_id", session.ID))
-	return 200, nil
+		log.Info("checkout_session_completed", slog.String("user_id", userID), slog.Int("credits", credits), slog.String("session_id", session.ID))
+		return 200, nil
+	}) // end withSerializableRetryHTTP
 }
 
 func (s *Service) handleCheckoutSessionExpired(ctx context.Context, event stripe.Event) (int, error) {
@@ -777,151 +751,139 @@ func (s *Service) ReconcileSession(ctx context.Context, sessionID, callerUserID 
 		return mismatchErr
 	}
 
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
-		Isolation: sql.LevelSerializable,
-	})
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-			log.Warn("tx_rollback_failed", slog.Any("error", rbErr))
-		}
-	}()
+	return withSerializableRetry(ctx, s.db, log, func(tx *sql.Tx) error {
 
-	var exists bool
-	err = tx.QueryRowContext(ctx,
-		"SELECT EXISTS(SELECT 1 FROM credit_transactions WHERE reference_id=$1 AND reference_type='payment')",
-		sessionID).Scan(&exists)
-	if err != nil {
-		return fmt.Errorf("failed to check transaction existence: %w", err)
-	}
-	if exists {
-		if _, err := tx.ExecContext(ctx, `UPDATE stripe_payments SET status='succeeded', completed_at=NOW() WHERE stripe_checkout_session_id=$1`, sessionID); err != nil {
-			return fmt.Errorf("failed to update payment status (idempotent path): %w", err)
+		var exists bool
+		err = tx.QueryRowContext(ctx,
+			"SELECT EXISTS(SELECT 1 FROM credit_transactions WHERE reference_id=$1 AND reference_type='payment')",
+			sessionID).Scan(&exists)
+		if err != nil {
+			return fmt.Errorf("failed to check transaction existence: %w", err)
 		}
-		// Repair the receipt URL if it's missing on this idempotent-success
-		// path. The S-M6 fetch in handleCheckoutSessionCompleted may have
-		// failed silently (Stripe outage etc.); reconcile is the operator's
-		// retry hook to set it after the fact. (S-M6)
-		//
-		// Best-effort: log on failure but do NOT abort the commit. A genuine
-		// transient DB error (e.g. serialization failure) will surface from
-		// tx.Commit() below anyway, so we don't lose the signal.
-		if sess.PaymentIntent != nil && sess.PaymentIntent.LatestCharge != nil && sess.PaymentIntent.LatestCharge.ReceiptURL != "" {
-			if _, err := tx.ExecContext(ctx,
-				`UPDATE stripe_payments SET stripe_receipt_url = $1
+		if exists {
+			if _, err := tx.ExecContext(ctx, `UPDATE stripe_payments SET status='succeeded', completed_at=NOW() WHERE stripe_checkout_session_id=$1`, sessionID); err != nil {
+				return fmt.Errorf("failed to update payment status (idempotent path): %w", err)
+			}
+			// Repair the receipt URL if it's missing on this idempotent-success
+			// path. The S-M6 fetch in handleCheckoutSessionCompleted may have
+			// failed silently (Stripe outage etc.); reconcile is the operator's
+			// retry hook to set it after the fact. (S-M6)
+			//
+			// Best-effort: log on failure but do NOT abort the commit. A genuine
+			// transient DB error (e.g. serialization failure) will surface from
+			// tx.Commit() below anyway, so we don't lose the signal.
+			if sess.PaymentIntent != nil && sess.PaymentIntent.LatestCharge != nil && sess.PaymentIntent.LatestCharge.ReceiptURL != "" {
+				if _, err := tx.ExecContext(ctx,
+					`UPDATE stripe_payments SET stripe_receipt_url = $1
 				 WHERE stripe_checkout_session_id = $2 AND stripe_receipt_url IS NULL`,
-				sess.PaymentIntent.LatestCharge.ReceiptURL, sessionID); err != nil {
-				log.Warn("reconcile_receipt_url_repair_failed",
-					slog.String("session_id", sessionID),
-					slog.Any("error", err),
-				)
+					sess.PaymentIntent.LatestCharge.ReceiptURL, sessionID); err != nil {
+					log.Warn("reconcile_receipt_url_repair_failed",
+						slog.String("session_id", sessionID),
+						slog.Any("error", err),
+					)
+				}
+			}
+			return nil
+		}
+
+		// Read the user's current balance AND refund deficit in one
+		// SELECT FOR UPDATE. Both scanned as text → decimal to preserve
+		// NUMERIC(18,6) precision. Mirrors handleCheckoutSessionCompleted.
+		var balanceStr, deficitStr string
+		err = tx.QueryRowContext(ctx,
+			`SELECT COALESCE(credit_balance, 0)::text, COALESCE(refund_deficit_credits, 0)::text
+		 FROM users WHERE id = $1 FOR UPDATE`, userID).Scan(&balanceStr, &deficitStr)
+		if err != nil {
+			return fmt.Errorf("failed to get user balance and deficit: %w", err)
+		}
+		currentBalance, err := decimal.NewFromString(balanceStr)
+		if err != nil {
+			log.Error("credit_balance_parse_failed", slog.String("user_id", userID), slog.String("raw_value", balanceStr), slog.Any("error", err))
+			return fmt.Errorf("failed to parse credit_balance: %w", err)
+		}
+		deficitDec, err := decimal.NewFromString(deficitStr)
+		if err != nil {
+			log.Error("refund_deficit_parse_failed", slog.String("user_id", userID), slog.String("raw_value", deficitStr), slog.Any("error", err))
+			return fmt.Errorf("failed to parse refund_deficit_credits: %w", err)
+		}
+		deficitMicro := deficitDec.Mul(decimal.NewFromInt(models.MicroUnit)).IntPart()
+
+		// Apply incoming credits to deficit first, remainder to balance.
+		// Integer micro-credit math avoids drift on the split.
+		purchaseMicro := int64(credits) * models.MicroUnit
+		appliedToDeficitMicro := int64(0)
+		appliedToBalanceMicro := purchaseMicro
+		if deficitMicro > 0 {
+			if purchaseMicro >= deficitMicro {
+				appliedToDeficitMicro = deficitMicro
+				appliedToBalanceMicro = purchaseMicro - deficitMicro
+			} else {
+				appliedToDeficitMicro = purchaseMicro
+				appliedToBalanceMicro = 0
 			}
 		}
-		return tx.Commit()
-	}
+		appliedToDeficitDec := decimal.NewFromInt(appliedToDeficitMicro).Div(decimal.NewFromInt(models.MicroUnit))
+		appliedToBalanceDec := decimal.NewFromInt(appliedToBalanceMicro).Div(decimal.NewFromInt(models.MicroUnit))
 
-	// Read the user's current balance AND refund deficit in one
-	// SELECT FOR UPDATE. Same row-level lock protects both fields. The
-	// deficit-paydown logic mirrors handleCheckoutSessionCompleted (S-C4)
-	// so the webhook-fallback reconcile path applies the same paydown
-	// invariant — without this, a user could exploit a delayed webhook to
-	// bypass the deficit ledger by triggering reconcile from the frontend.
-	var currentBalance float64
-	var deficitStr string
-	err = tx.QueryRowContext(ctx,
-		`SELECT COALESCE(credit_balance, 0)::float8, COALESCE(refund_deficit_credits, 0)::text
-		 FROM users WHERE id = $1 FOR UPDATE`, userID).Scan(&currentBalance, &deficitStr)
-	if err != nil {
-		return fmt.Errorf("failed to get user balance and deficit: %w", err)
-	}
-	deficitFloat, err := strconv.ParseFloat(deficitStr, 64)
-	if err != nil {
-		log.Error("refund_deficit_parse_failed",
-			slog.String("user_id", userID),
-			slog.String("raw_value", deficitStr),
-			slog.Any("error", err),
-		)
-		return fmt.Errorf("failed to parse refund_deficit_credits: %w", err)
-	}
-	deficitMicro := int64(math.Round(deficitFloat * models.MicroUnit))
-
-	// Apply incoming credits to deficit first, remainder to balance.
-	// Integer micro-credit math avoids float drift on the split.
-	purchaseMicro := int64(credits) * models.MicroUnit
-	appliedToDeficitMicro := int64(0)
-	appliedToBalanceMicro := purchaseMicro
-	if deficitMicro > 0 {
-		if purchaseMicro >= deficitMicro {
-			appliedToDeficitMicro = deficitMicro
-			appliedToBalanceMicro = purchaseMicro - deficitMicro
-		} else {
-			appliedToDeficitMicro = purchaseMicro
-			appliedToBalanceMicro = 0
-		}
-	}
-	appliedToDeficitFloat := float64(appliedToDeficitMicro) / models.MicroUnit
-	appliedToBalanceFloat := float64(appliedToBalanceMicro) / models.MicroUnit
-
-	// Update user row: add to balance, add to lifetime, decrement deficit.
-	// updated_at handled by trigger.
-	const updUser = `UPDATE users SET
+		// Update user row: add to balance, add to lifetime, decrement deficit.
+		// updated_at handled by trigger.
+		const updUser = `UPDATE users SET
 		credit_balance = COALESCE(credit_balance, 0) + $1::numeric,
 		total_credits_purchased = COALESCE(total_credits_purchased, 0) + $2::numeric,
 		refund_deficit_credits = GREATEST(0, refund_deficit_credits - $3::numeric)
 		WHERE id = $4`
-	if _, err := tx.ExecContext(ctx, updUser, appliedToBalanceFloat, credits, appliedToDeficitFloat, userID); err != nil {
-		return fmt.Errorf("failed to update user credits: %w", err)
-	}
+		if _, err := tx.ExecContext(ctx, updUser, appliedToBalanceDec.StringFixed(6), credits, appliedToDeficitDec.StringFixed(6), userID); err != nil {
+			return fmt.Errorf("failed to update user credits: %w", err)
+		}
 
-	// If any portion paid down deficit, record a deficit_paydown ledger row.
-	// amount=0 because deficit lives outside the spendable balance ledger.
-	if appliedToDeficitMicro > 0 {
-		const insTxnPaydown = `INSERT INTO credit_transactions
+		// If any portion paid down deficit, record a deficit_paydown ledger row.
+		// amount=0 because deficit lives outside the spendable balance ledger.
+		if appliedToDeficitMicro > 0 {
+			const insTxnPaydown = `INSERT INTO credit_transactions
 			(id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
 			VALUES ($1, $2, 'deficit_paydown', 0, $3, $3, $4, $5, 'payment')`
-		desc := fmt.Sprintf("Deficit paydown from Stripe purchase %s (reconcile): %.6f credits", sessionID, appliedToDeficitFloat)
-		if _, err := tx.ExecContext(ctx, insTxnPaydown,
-			uuid.Must(uuid.NewV7()).String(), userID, currentBalance, desc, sessionID); err != nil {
-			return fmt.Errorf("failed to insert deficit paydown transaction: %w", err)
+			desc := fmt.Sprintf("Deficit paydown from Stripe purchase %s (reconcile): %s credits", sessionID, appliedToDeficitDec.StringFixed(6))
+			if _, err := tx.ExecContext(ctx, insTxnPaydown,
+				uuid.Must(uuid.NewV7()).String(), userID, currentBalance.StringFixed(6), desc, sessionID); err != nil {
+				return fmt.Errorf("failed to insert deficit paydown transaction: %w", err)
+			}
 		}
-	}
 
-	// Insert the purchase ledger row using appliedToBalanceFloat (not full
-	// credits) so the balance_calculation_check constraint holds.
-	const insTxn = `INSERT INTO credit_transactions
+		// Insert the purchase ledger row using appliedToBalanceDec (not full
+		// credits) so the balance_calculation_check constraint holds.
+		const insTxn = `INSERT INTO credit_transactions
 		(id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
 		VALUES ($1, $2, 'purchase', $3, $4, $5, $6, $7, 'payment')`
-	if _, err := tx.ExecContext(ctx, insTxn,
-		uuid.Must(uuid.NewV7()).String(), userID,
-		appliedToBalanceFloat,
-		currentBalance,
-		currentBalance+appliedToBalanceFloat,
-		"Stripe purchase (reconcile)", sessionID); err != nil {
-		return fmt.Errorf("failed to insert credit transaction: %w", err)
-	}
+		if _, err := tx.ExecContext(ctx, insTxn,
+			uuid.Must(uuid.NewV7()).String(), userID,
+			appliedToBalanceDec.StringFixed(6),
+			currentBalance.StringFixed(6),
+			currentBalance.Add(appliedToBalanceDec).StringFixed(6),
+			"Stripe purchase (reconcile)", sessionID); err != nil {
+			return fmt.Errorf("failed to insert credit transaction: %w", err)
+		}
 
-	// Update payment status and persist the receipt URL if available. The
-	// receipt URL is fetched in one shot via the payment_intent.latest_charge
-	// expansion (S-M2 added the expand call). If Stripe didn't return a
-	// receipt URL — e.g. the charge is still pending or the expansion failed
-	// — we leave stripe_receipt_url NULL and a future reconcile call can
-	// fill it in. (S-M6)
-	receiptURL := ""
-	if sess.PaymentIntent != nil && sess.PaymentIntent.LatestCharge != nil {
-		receiptURL = sess.PaymentIntent.LatestCharge.ReceiptURL
-	}
-	const updPaymentStatus = `UPDATE stripe_payments
+		// Update payment status and persist the receipt URL if available. The
+		// receipt URL is fetched in one shot via the payment_intent.latest_charge
+		// expansion (S-M2 added the expand call). If Stripe didn't return a
+		// receipt URL — e.g. the charge is still pending or the expansion failed
+		// — we leave stripe_receipt_url NULL and a future reconcile call can
+		// fill it in. (S-M6)
+		receiptURL := ""
+		if sess.PaymentIntent != nil && sess.PaymentIntent.LatestCharge != nil {
+			receiptURL = sess.PaymentIntent.LatestCharge.ReceiptURL
+		}
+		const updPaymentStatus = `UPDATE stripe_payments
 		SET status = 'succeeded',
 		    completed_at = NOW(),
 		    stripe_receipt_url = COALESCE(stripe_receipt_url, NULLIF($1, ''))
 		WHERE stripe_checkout_session_id = $2`
-	if _, err := tx.ExecContext(ctx, updPaymentStatus, receiptURL, sessionID); err != nil {
-		return fmt.Errorf("failed to update payment status: %w", err)
-	}
+		if _, err := tx.ExecContext(ctx, updPaymentStatus, receiptURL, sessionID); err != nil {
+			return fmt.Errorf("failed to update payment status: %w", err)
+		}
 
-	return tx.Commit()
+		return nil
+	}) // end withSerializableRetry
 }
 
 // ChargeEvent inserts a billing event and atomically deducts credits based on resolved pricing.
@@ -947,70 +909,60 @@ func (s *Service) ChargeEvent(ctx context.Context, userID, jobID, eventType stri
 		return fmt.Errorf("failed to marshal billing metadata: %w", err)
 	}
 
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
-		Isolation: sql.LevelSerializable,
-	})
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-			log.Warn("tx_rollback_failed", slog.Any("error", rbErr))
-		}
-	}()
-
-	// Insert billing event; trigger resolves pricing and totals
-	var (
-		eventID               string
-		unitPrice, totalPrice string // scan as text to preserve precision
-	)
-	const insEvent = `INSERT INTO billing_events (id, user_id, job_id, event_type_code, quantity, metadata)
-	                  VALUES ($1,$2,$3,$4,$5,$6::jsonb)
-	                  ON CONFLICT (job_id, event_type_code, (metadata->>'idempotency_key'))
-	                  WHERE (metadata ? 'idempotency_key')
-	                  DO UPDATE SET quantity = billing_events.quantity
-	                  RETURNING id, unit_price_credits::text, total_price_credits::text`
-	if err := tx.QueryRowContext(ctx, insEvent, uuid.Must(uuid.NewV7()).String(), userID, jobID, eventType, quantity, string(metaJSON)).Scan(&eventID, &unitPrice, &totalPrice); err != nil {
-		return fmt.Errorf("insert billing event: %w", err)
-	}
-
-	// Decrement user balance atomically, ensuring non-negative balance
-	const decBal = `UPDATE users
-		SET credit_balance = credit_balance - $1::numeric,
-		    total_credits_consumed = COALESCE(total_credits_consumed, 0) + $1::numeric,
-		    updated_at = NOW()
-		WHERE id = $2 AND credit_balance >= $1::numeric
-		RETURNING credit_balance::text`
-	var newBalance string
-	if err := tx.QueryRowContext(ctx, decBal, totalPrice, userID).Scan(&newBalance); err != nil {
-		if err == sql.ErrNoRows {
-			return fmt.Errorf("insufficient credits")
-		}
-		return fmt.Errorf("failed to update balance: %w", err)
-	}
-
-	// Low-water-mark alert: warn when balance drops below $1 after a charge.
-	if balVal, parseErr := strconv.ParseFloat(newBalance, 64); parseErr == nil && balVal < 1.0 {
-		log.Warn("credit_balance_low",
-			slog.String("user_id", userID),
-			slog.Float64("balance", balVal),
+	return withSerializableRetry(ctx, s.db, log, func(tx *sql.Tx) error {
+		// Insert billing event; trigger resolves pricing and totals
+		var (
+			eventID               string
+			unitPrice, totalPrice string // scan as text to preserve precision
 		)
-	}
+		const insEvent = `INSERT INTO billing_events (id, user_id, job_id, event_type_code, quantity, metadata)
+		                  VALUES ($1,$2,$3,$4,$5,$6::jsonb)
+		                  ON CONFLICT (job_id, event_type_code, (metadata->>'idempotency_key'))
+		                  WHERE (metadata ? 'idempotency_key')
+		                  DO UPDATE SET quantity = billing_events.quantity
+		                  RETURNING id, unit_price_credits::text, total_price_credits::text`
+		if err := tx.QueryRowContext(ctx, insEvent, uuid.Must(uuid.NewV7()).String(), userID, jobID, eventType, quantity, string(metaJSON)).Scan(&eventID, &unitPrice, &totalPrice); err != nil {
+			return fmt.Errorf("insert billing event: %w", err)
+		}
 
-	// Insert credit transaction (consumption), linking to billing event via metadata reference_id
-	const insTxn = `INSERT INTO credit_transactions (
-		id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type, metadata
-	) VALUES (
-		$1, $2, 'consumption', -$3::numeric,
-		($4::numeric + $3::numeric),
-		$4::numeric,
-		$5, $6, 'job', jsonb_build_object('billing_event_id', $7::text)
-	)`
-	if _, err := tx.ExecContext(ctx, insTxn, uuid.Must(uuid.NewV7()).String(), userID, totalPrice, newBalance, fmt.Sprintf("Billing charge: %s", eventType), jobID, eventID); err != nil {
-		return fmt.Errorf("insert credit transaction: %w", err)
-	}
+		// Decrement user balance atomically, ensuring non-negative balance
+		const decBal = `UPDATE users
+			SET credit_balance = credit_balance - $1::numeric,
+			    total_credits_consumed = COALESCE(total_credits_consumed, 0) + $1::numeric,
+			    updated_at = NOW()
+			WHERE id = $2 AND credit_balance >= $1::numeric
+			RETURNING credit_balance::text`
+		var newBalance string
+		if err := tx.QueryRowContext(ctx, decBal, totalPrice, userID).Scan(&newBalance); err != nil {
+			if err == sql.ErrNoRows {
+				return fmt.Errorf("insufficient credits")
+			}
+			return fmt.Errorf("failed to update balance: %w", err)
+		}
 
-	return tx.Commit()
+		// Low-water-mark alert: warn when balance drops below $1 after a charge.
+		if balVal, parseErr := strconv.ParseFloat(newBalance, 64); parseErr == nil && balVal < 1.0 {
+			log.Warn("credit_balance_low",
+				slog.String("user_id", userID),
+				slog.Float64("balance", balVal),
+			)
+		}
+
+		// Insert credit transaction (consumption), linking to billing event via metadata reference_id
+		const insTxn = `INSERT INTO credit_transactions (
+			id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type, metadata
+		) VALUES (
+			$1, $2, 'consumption', -$3::numeric,
+			($4::numeric + $3::numeric),
+			$4::numeric,
+			$5, $6, 'job', jsonb_build_object('billing_event_id', $7::text)
+		)`
+		if _, err := tx.ExecContext(ctx, insTxn, uuid.Must(uuid.NewV7()).String(), userID, totalPrice, newBalance, fmt.Sprintf("Billing charge: %s", eventType), jobID, eventID); err != nil {
+			return fmt.Errorf("insert credit transaction: %w", err)
+		}
+
+		return nil
+	})
 }
 
 // ChargeJobStart charges a flat job_start event (quantity=1) for a job.
@@ -1121,62 +1073,52 @@ func (s *Service) ChargeAllJobEvents(ctx context.Context, userID, jobID string, 
 		return fmt.Errorf("db not configured")
 	}
 
-	// Start a single transaction for all charges
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
-		Isolation: sql.LevelSerializable,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() {
-		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-			s.logger.Warn("tx_rollback_failed", slog.Any("error", rbErr))
-		}
-	}() // Rollback if we don't commit
+	log := s.log(ctx)
 
-	// Helper function to charge an event within this transaction
-	chargeEventInTx := func(eventType string, quantity int, idempotencyKey string) error {
-		if quantity <= 0 {
-			return nil // Skip if nothing to charge
-		}
+	return withSerializableRetry(ctx, s.db, log, func(tx *sql.Tx) error {
+		// Helper function to charge an event within this transaction
+		chargeEventInTx := func(eventType string, quantity int, idempotencyKey string) error {
+			if quantity <= 0 {
+				return nil // Skip if nothing to charge
+			}
 
-		metadata := map[string]any{"idempotency_key": idempotencyKey}
-		metaJSON, err := json.Marshal(metadata)
-		if err != nil {
-			return fmt.Errorf("failed to marshal billing metadata: %w", err)
-		}
+			metadata := map[string]any{"idempotency_key": idempotencyKey}
+			metaJSON, err := json.Marshal(metadata)
+			if err != nil {
+				return fmt.Errorf("failed to marshal billing metadata: %w", err)
+			}
 
-		// Insert billing event
-		var eventID, unitPrice, totalPrice string
-		const insEvent = `INSERT INTO billing_events (id, user_id, job_id, event_type_code, quantity, metadata)
+			// Insert billing event
+			var eventID, unitPrice, totalPrice string
+			const insEvent = `INSERT INTO billing_events (id, user_id, job_id, event_type_code, quantity, metadata)
 			VALUES ($1,$2,$3,$4,$5,$6::jsonb)
 			ON CONFLICT (job_id, event_type_code, (metadata->>'idempotency_key'))
 			WHERE (metadata ? 'idempotency_key')
 			DO UPDATE SET quantity = billing_events.quantity
 			RETURNING id, unit_price_credits::text, total_price_credits::text`
 
-		if err := tx.QueryRowContext(ctx, insEvent, uuid.Must(uuid.NewV7()).String(), userID, jobID, eventType, quantity, string(metaJSON)).Scan(&eventID, &unitPrice, &totalPrice); err != nil {
-			return fmt.Errorf("insert %s event: %w", eventType, err)
-		}
+			if err := tx.QueryRowContext(ctx, insEvent, uuid.Must(uuid.NewV7()).String(), userID, jobID, eventType, quantity, string(metaJSON)).Scan(&eventID, &unitPrice, &totalPrice); err != nil {
+				return fmt.Errorf("insert %s event: %w", eventType, err)
+			}
 
-		// Decrement user balance atomically
-		const decBal = `UPDATE users
+			// Decrement user balance atomically
+			const decBal = `UPDATE users
 			SET credit_balance = credit_balance - $1::numeric,
 			    total_credits_consumed = COALESCE(total_credits_consumed, 0) + $1::numeric,
 			    updated_at = NOW()
 			WHERE id = $2 AND credit_balance >= $1::numeric
 			RETURNING credit_balance::text`
 
-		var newBalance string
-		if err := tx.QueryRowContext(ctx, decBal, totalPrice, userID).Scan(&newBalance); err != nil {
-			if err == sql.ErrNoRows {
-				return fmt.Errorf("insufficient credits to charge %s (%d items)", eventType, quantity)
+			var newBalance string
+			if err := tx.QueryRowContext(ctx, decBal, totalPrice, userID).Scan(&newBalance); err != nil {
+				if err == sql.ErrNoRows {
+					return fmt.Errorf("insufficient credits to charge %s (%d items)", eventType, quantity)
+				}
+				return fmt.Errorf("failed to update balance for %s: %w", eventType, err)
 			}
-			return fmt.Errorf("failed to update balance for %s: %w", eventType, err)
-		}
 
-		// Insert credit transaction
-		const insTxn = `INSERT INTO credit_transactions (
+			// Insert credit transaction
+			const insTxn = `INSERT INTO credit_transactions (
 			id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type, metadata
 		) VALUES (
 			$1, $2, 'consumption', -$3::numeric,
@@ -1184,45 +1126,42 @@ func (s *Service) ChargeAllJobEvents(ctx context.Context, userID, jobID string, 
 			$4::numeric,
 			$5, $6, 'job', jsonb_build_object('billing_event_id', $7::text)
 		)`
-		if _, err := tx.ExecContext(ctx, insTxn, uuid.Must(uuid.NewV7()).String(), userID, totalPrice, newBalance, fmt.Sprintf("Billing charge: %s", eventType), jobID, eventID); err != nil {
-			return fmt.Errorf("insert credit transaction for %s: %w", eventType, err)
+			if _, err := tx.ExecContext(ctx, insTxn, uuid.Must(uuid.NewV7()).String(), userID, totalPrice, newBalance, fmt.Sprintf("Billing charge: %s", eventType), jobID, eventID); err != nil {
+				return fmt.Errorf("insert credit transaction for %s: %w", eventType, err)
+			}
+
+			return nil
 		}
 
+		// 1. Charge for places
+		if err := chargeEventInTx("place_scraped", placesCount, "job:"+jobID+":place_scraped"); err != nil {
+			return err // Transaction will be rolled back
+		}
+
+		// 2. Count and charge for reviews, images, and contacts (within the tx to avoid read skew)
+		counts, err := s.countBillableItemsWith(ctx, tx, jobID)
+		if err != nil {
+			return fmt.Errorf("failed to count billable items: %w", err)
+		}
+
+		// 3. Charge for reviews
+		if err := chargeEventInTx("review", counts.TotalReviews, "job:"+jobID+":review"); err != nil {
+			return err // Transaction will be rolled back
+		}
+
+		// 4. Charge for images
+		if err := chargeEventInTx("image", counts.TotalImages, "job:"+jobID+":image"); err != nil {
+			return err // Transaction will be rolled back
+		}
+
+		// 5. Charge for contact details
+		if err := chargeEventInTx("contact_details", counts.PlacesWithContacts, "job:"+jobID+":contact_details"); err != nil {
+			return err // Transaction will be rolled back
+		}
+
+		// All charges succeeded
 		return nil
-	}
-
-	// 1. Charge for places
-	if err := chargeEventInTx("place_scraped", placesCount, "job:"+jobID+":place_scraped"); err != nil {
-		return err // Transaction will be rolled back
-	}
-
-	// 2. Count and charge for reviews, images, and contacts (within the tx to avoid read skew)
-	counts, err := s.countBillableItemsWith(ctx, tx, jobID)
-	if err != nil {
-		return fmt.Errorf("failed to count billable items: %w", err)
-	}
-
-	// 3. Charge for reviews
-	if err := chargeEventInTx("review", counts.TotalReviews, "job:"+jobID+":review"); err != nil {
-		return err // Transaction will be rolled back
-	}
-
-	// 4. Charge for images
-	if err := chargeEventInTx("image", counts.TotalImages, "job:"+jobID+":image"); err != nil {
-		return err // Transaction will be rolled back
-	}
-
-	// 5. Charge for contact details
-	if err := chargeEventInTx("contact_details", counts.PlacesWithContacts, "job:"+jobID+":contact_details"); err != nil {
-		return err // Transaction will be rolled back
-	}
-
-	// All charges succeeded - commit the transaction
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit billing transaction: %w", err)
-	}
-
-	return nil
+	})
 }
 
 // handleChargeRefunded processes charge.refunded Stripe webhook events.
@@ -1323,181 +1262,164 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 	}
 
 	// Begin transaction for idempotency and credit deduction.
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
-	if err != nil {
-		log.Error("failed_to_begin_transaction_charge_refunded", slog.Any("error", err))
-		return 500, fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() {
-		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-			log.Warn("tx_rollback_failed", slog.Any("error", rbErr))
-		}
-	}()
-
-	isDuplicate, err := s.markEventProcessed(ctx, tx, event.ID, string(event.Type))
-	if err != nil {
-		log.Error("failed_to_mark_charge_refunded_processed", slog.Any("error", err))
-		return 500, fmt.Errorf("failed to mark event as processed: %w", err)
-	}
-	if isDuplicate {
-		log.Debug("event_already_processed", slog.String("event_id", event.ID))
-		return 200, nil
-	}
-
-	if shouldDeduct {
-		// Get current balance with a row lock — scan as text and parse with
-		// decimal.NewFromString to preserve NUMERIC(18,6) precision through
-		// the proportional refund math. (S-H2)
-		var balanceStr string
-		err = tx.QueryRowContext(ctx,
-			"SELECT COALESCE(credit_balance, 0)::text FROM users WHERE id = $1 FOR UPDATE", userID).Scan(&balanceStr)
+	var deficitApplied bool
+	status, err := withSerializableRetryHTTP(ctx, s.db, log, func(tx *sql.Tx) (int, error) {
+		deficitApplied = false
+		isDuplicate, err := s.markEventProcessed(ctx, tx, event.ID, string(event.Type))
 		if err != nil {
-			log.Error("failed_to_get_user_balance_for_refund", slog.Any("error", err))
-			return 500, fmt.Errorf("failed to get user balance: %w", err)
+			log.Error("failed_to_mark_charge_refunded_processed", slog.Any("error", err))
+			return 500, fmt.Errorf("failed to mark event as processed: %w", err)
 		}
-		balance, parseErr := decimal.NewFromString(balanceStr)
-		if parseErr != nil {
-			log.Error("failed_to_parse_user_balance_for_refund", slog.Any("error", parseErr))
-			return 500, fmt.Errorf("failed to parse user balance: %w", parseErr)
-		}
-
-		// Compute the (balance, deficit) split using exact decimal arithmetic.
-		// See computeRefundSplit godoc for the rule. (S-H2)
-		//
-		// The deficit portion represents credits that were already consumed
-		// before this refund arrived. Instead of failing the refund or silently
-		// losing integrity, we write the remainder to users.refund_deficit_credits
-		// so the next purchase pays it down before crediting new spendable balance.
-		//
-		// This preserves the CHECK (credit_balance >= 0) financial-safety
-		// invariant while making the refund pipeline financially correct
-		// end-to-end. Matches the pre-paid credit refund pattern used by
-		// Vercel, Anthropic (Claude API), OpenAI, and Stripe Billing's own
-		// credit grants.
-		//
-		// Idempotency: the markEventProcessed gate (processed_webhook_events)
-		// at the top of this transaction prevents double-deductions on Stripe
-		// webhook retries. The metric increment below is therefore also
-		// idempotency-safe — it is only reached once per Stripe event.
-		//
-		// Alerting: the refund_deficit_applied_total Prometheus counter is
-		// incremented when any deficit is created. Any non-zero rate indicates
-		// users buying, consuming, then refunding — possibly benign churn or
-		// possibly fraud. See pkg/metrics/billing.go for the ops runbook.
-		deductFromBalanceDec, deductFromDeficitDec := computeRefundSplit(balance, creditsGranted, amountCents, charge.AmountRefunded)
-		newBalanceDec := balance.Sub(deductFromBalanceDec)
-
-		// Float64 values are computed ONLY for ledger row inserts and slog
-		// log fields where the existing schema/types require float64. All
-		// arithmetic operands above are decimal.Decimal — these conversions
-		// happen at the leaf rendering edge only.
-		balanceFloat, _ := balance.Float64()
-		newBalanceFloat, _ := newBalanceDec.Float64()
-		actualDeductFloat, _ := deductFromBalanceDec.Float64()
-		deficitIncreaseFloat, _ := deductFromDeficitDec.Float64()
-
-		// Update both columns in one UPDATE — pass decimal values as strings
-		// so Postgres NUMERIC handles the arithmetic without any Go-side float
-		// rounding. updated_at is intentionally NOT touched; the trigger handles it.
-		const updBalance = `UPDATE users
-			SET credit_balance = $1::numeric,
-			    refund_deficit_credits = refund_deficit_credits + $2::numeric
-			WHERE id = $3`
-		if _, err := tx.ExecContext(ctx, updBalance,
-			newBalanceDec.StringFixed(6),
-			deductFromDeficitDec.StringFixed(6),
-			userID); err != nil {
-			log.Error("failed_to_deduct_credits_for_refund", slog.Any("error", err))
-			return 500, fmt.Errorf("failed to deduct credits: %w", err)
+		if isDuplicate {
+			log.Debug("event_already_processed", slog.String("event_id", event.ID))
+			return 200, nil
 		}
 
-		// Record the balance-side deduction as a 'refund' ledger row, only if
-		// any portion actually hit the spendable balance. The amount,
-		// balance_before, and balance_after triple satisfies the
-		// balance_calculation_check constraint (balance_after = balance_before + amount).
-		if !deductFromBalanceDec.IsZero() {
-			const insTxnRefund = `INSERT INTO credit_transactions
-				(id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
-				VALUES ($1, $2, 'refund', $3, $4, $5, $6, $7, 'payment')`
-			desc := fmt.Sprintf("Stripe refund for charge %s", charge.ID)
-			if _, err := tx.ExecContext(ctx, insTxnRefund,
-				uuid.Must(uuid.NewV7()).String(), userID, -actualDeductFloat,
-				balanceFloat, newBalanceFloat, desc, charge.ID); err != nil {
-				log.Error("failed_to_insert_refund_transaction", slog.Any("error", err))
-				return 500, fmt.Errorf("failed to insert refund transaction: %w", err)
-			}
-		}
-
-		// Record the deficit-side portion as a separate 'refund_deficit' row.
-		// amount=0 because the deficit lives outside the spendable balance
-		// ledger; balance_before and balance_after are identical (newBalanceFloat)
-		// so the balance_calculation_check constraint is satisfied. The
-		// deficit amount is captured in metadata for audit queries.
-		if !deductFromDeficitDec.IsZero() {
-			const insTxnDeficit = `INSERT INTO credit_transactions
-				(id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type, metadata)
-				VALUES ($1, $2, 'refund_deficit', 0, $3, $3, $4, $5, 'payment', $6::jsonb)`
-			desc := fmt.Sprintf("Stripe refund deficit for charge %s: %.6f credits uncollectable", charge.ID, deficitIncreaseFloat)
-			// Use json.Marshal rather than hand-formatting the JSON: even though
-			// charge.ID is alphanumeric by Stripe convention, defensive encoding
-			// removes injection-shape concerns regardless of what Stripe ever sends.
-			metadataBytes, err := json.Marshal(map[string]string{
-				"deficit_amount": strconv.FormatFloat(deficitIncreaseFloat, 'f', 6, 64),
-				"charge_id":      charge.ID,
-			})
+		if shouldDeduct {
+			// Get current balance with a row lock — scan as text and parse with
+			// decimal.NewFromString to preserve NUMERIC(18,6) precision through
+			// the proportional refund math. (S-H2)
+			var balanceStr string
+			err = tx.QueryRowContext(ctx,
+				"SELECT COALESCE(credit_balance, 0)::text FROM users WHERE id = $1 FOR UPDATE", userID).Scan(&balanceStr)
 			if err != nil {
-				log.Error("failed_to_marshal_refund_deficit_metadata", slog.Any("error", err))
-				return 500, fmt.Errorf("failed to marshal refund deficit metadata: %w", err)
+				log.Error("failed_to_get_user_balance_for_refund", slog.Any("error", err))
+				return 500, fmt.Errorf("failed to get user balance: %w", err)
 			}
-			if _, err := tx.ExecContext(ctx, insTxnDeficit,
-				uuid.Must(uuid.NewV7()).String(), userID, newBalanceFloat, desc, charge.ID, string(metadataBytes)); err != nil {
-				log.Error("failed_to_insert_refund_deficit_transaction", slog.Any("error", err))
-				return 500, fmt.Errorf("failed to insert refund deficit transaction: %w", err)
+			balance, parseErr := decimal.NewFromString(balanceStr)
+			if parseErr != nil {
+				log.Error("failed_to_parse_user_balance_for_refund", slog.Any("error", parseErr))
+				return 500, fmt.Errorf("failed to parse user balance: %w", parseErr)
 			}
 
-			// Emit metric + ERROR log so ops sees every deficit event. ERROR
-			// (not WARN) because this is the signal that a user bought,
-			// consumed, then refunded — worth a Grafana alert.
-			s.metrics.RefundDeficitAppliedTotal.Inc()
-			log.Error("refund_deficit_applied",
-				slog.String("user_id", userID),
-				slog.String("charge_id", charge.ID),
-				slog.Float64("deficit_credits", deficitIncreaseFloat),
-				slog.Float64("actual_balance_deduction", actualDeductFloat),
-				slog.Float64("original_balance", balanceFloat),
-			)
-		}
+			// Compute the (balance, deficit) split using exact decimal arithmetic.
+			// See computeRefundSplit godoc for the rule. (S-H2)
+			//
+			// The deficit portion represents credits that were already consumed
+			// before this refund arrived. Instead of failing the refund or silently
+			// losing integrity, we write the remainder to users.refund_deficit_credits
+			// so the next purchase pays it down before crediting new spendable balance.
+			//
+			// This preserves the CHECK (credit_balance >= 0) financial-safety
+			// invariant while making the refund pipeline financially correct
+			// end-to-end. Matches the pre-paid credit refund pattern used by
+			// Vercel, Anthropic (Claude API), OpenAI, and Stripe Billing's own
+			// credit grants.
+			//
+			// Idempotency: the markEventProcessed gate (processed_webhook_events)
+			// at the top of this transaction prevents double-deductions on Stripe
+			// webhook retries. The metric increment below is therefore also
+			// idempotency-safe — it is only reached once per Stripe event.
+			//
+			// Alerting: the refund_deficit_applied_total Prometheus counter is
+			// incremented when any deficit is created. Any non-zero rate indicates
+			// users buying, consuming, then refunding — possibly benign churn or
+			// possibly fraud. See pkg/metrics/billing.go for the ops runbook.
+			deductFromBalanceDec, deductFromDeficitDec := computeRefundSplit(balance, creditsGranted, amountCents, charge.AmountRefunded)
+			newBalanceDec := balance.Sub(deductFromBalanceDec)
 
-		// Update stripe_payments record if we have a payment intent ID.
-		// Status precedence:
-		//   - refund_deficit_applied (any deficit was created — ops review)
-		//   - partial_refund (Stripe refunded less than the original charge)
-		//   - refunded (full refund, no deficit)
-		// updated_at is intentionally NOT touched; trigger handles it.
-		if paymentIntentID != "" {
-			paymentStatus := "refunded"
-			if charge.AmountRefunded < charge.Amount {
-				paymentStatus = "partial_refund"
+			// Update both columns in one UPDATE — pass decimal values as strings
+			// so Postgres NUMERIC handles the arithmetic without any Go-side float
+			// rounding. updated_at is intentionally NOT touched; the trigger handles it.
+			const updBalance = `UPDATE users
+				SET credit_balance = $1::numeric,
+				    refund_deficit_credits = refund_deficit_credits + $2::numeric
+				WHERE id = $3`
+			if _, err := tx.ExecContext(ctx, updBalance,
+				newBalanceDec.StringFixed(6),
+				deductFromDeficitDec.StringFixed(6),
+				userID); err != nil {
+				log.Error("failed_to_deduct_credits_for_refund", slog.Any("error", err))
+				return 500, fmt.Errorf("failed to deduct credits: %w", err)
 			}
+
+			// Record the balance-side deduction as a 'refund' ledger row, only if
+			// any portion actually hit the spendable balance. The amount,
+			// balance_before, and balance_after triple satisfies the
+			// balance_calculation_check constraint (balance_after = balance_before + amount).
+			if !deductFromBalanceDec.IsZero() {
+				const insTxnRefund = `INSERT INTO credit_transactions
+					(id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
+					VALUES ($1, $2, 'refund', -$3::numeric, $4::numeric, $5::numeric, $6, $7, 'payment')`
+				desc := fmt.Sprintf("Stripe refund for charge %s", charge.ID)
+				if _, err := tx.ExecContext(ctx, insTxnRefund,
+					uuid.Must(uuid.NewV7()).String(), userID,
+					deductFromBalanceDec.StringFixed(6),
+					balance.StringFixed(6),
+					newBalanceDec.StringFixed(6),
+					desc, charge.ID); err != nil {
+					log.Error("failed_to_insert_refund_transaction", slog.Any("error", err))
+					return 500, fmt.Errorf("failed to insert refund transaction: %w", err)
+				}
+			}
+
+			// Record the deficit-side portion as a separate 'refund_deficit' row.
+			// amount=0 because the deficit lives outside the spendable balance
+			// ledger; balance_before and balance_after are identical so the
+			// balance_calculation_check constraint is satisfied.
 			if !deductFromDeficitDec.IsZero() {
-				paymentStatus = "refund_deficit_applied"
+				const insTxnDeficit = `INSERT INTO credit_transactions
+					(id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type, metadata)
+					VALUES ($1, $2, 'refund_deficit', 0, $3::numeric, $3::numeric, $4, $5, 'payment', $6::jsonb)`
+				desc := fmt.Sprintf("Stripe refund deficit for charge %s: %s credits uncollectable", charge.ID, deductFromDeficitDec.StringFixed(6))
+				metadataBytes, err := json.Marshal(map[string]string{
+					"deficit_amount": deductFromDeficitDec.StringFixed(6),
+					"charge_id":      charge.ID,
+				})
+				if err != nil {
+					log.Error("failed_to_marshal_refund_deficit_metadata", slog.Any("error", err))
+					return 500, fmt.Errorf("failed to marshal refund deficit metadata: %w", err)
+				}
+				if _, err := tx.ExecContext(ctx, insTxnDeficit,
+					uuid.Must(uuid.NewV7()).String(), userID,
+					newBalanceDec.StringFixed(6),
+					desc, charge.ID, string(metadataBytes)); err != nil {
+					log.Error("failed_to_insert_refund_deficit_transaction", slog.Any("error", err))
+					return 500, fmt.Errorf("failed to insert refund deficit transaction: %w", err)
+				}
+
+				deficitApplied = true
 			}
-			if _, err := tx.ExecContext(ctx,
-				`UPDATE stripe_payments SET status = $1, refunded_amount_cents = $2 WHERE stripe_payment_intent_id = $3`,
-				paymentStatus, charge.AmountRefunded, paymentIntentID); err != nil {
-				log.Error("failed_to_update_stripe_payment_status",
-					slog.String("payment_intent_id", paymentIntentID),
-					slog.String("status", paymentStatus),
-					slog.Any("error", err),
-				)
-				return 500, fmt.Errorf("failed to update stripe payment status: %w", err)
+
+			// Update stripe_payments record if we have a payment intent ID.
+			// Status precedence:
+			//   - refund_deficit_applied (any deficit was created — ops review)
+			//   - partial_refund (Stripe refunded less than the original charge)
+			//   - refunded (full refund, no deficit)
+			// updated_at is intentionally NOT touched; trigger handles it.
+			if paymentIntentID != "" {
+				paymentStatus := "refunded"
+				if charge.AmountRefunded < charge.Amount {
+					paymentStatus = "partial_refund"
+				}
+				if !deductFromDeficitDec.IsZero() {
+					paymentStatus = "refund_deficit_applied"
+				}
+				if _, err := tx.ExecContext(ctx,
+					`UPDATE stripe_payments SET status = $1, refunded_amount_cents = $2 WHERE stripe_payment_intent_id = $3`,
+					paymentStatus, charge.AmountRefunded, paymentIntentID); err != nil {
+					log.Error("failed_to_update_stripe_payment_status",
+						slog.String("payment_intent_id", paymentIntentID),
+						slog.String("status", paymentStatus),
+						slog.Any("error", err),
+					)
+					return 500, fmt.Errorf("failed to update stripe payment status: %w", err)
+				}
 			}
 		}
+
+		return 200, nil
+	})
+	if err != nil {
+		return status, err
 	}
 
-	if err := tx.Commit(); err != nil {
-		log.Error("failed_to_commit_charge_refunded", slog.Any("error", err))
-		return 500, fmt.Errorf("failed to commit transaction: %w", err)
+	if deficitApplied {
+		s.metrics.RefundDeficitAppliedTotal.Inc()
+		log.Error("refund_deficit_applied",
+			slog.String("user_id", userID),
+			slog.String("charge_id", charge.ID),
+		)
 	}
 
 	creditsToDeductFloat, _ := creditsToDeductDec.Float64()
@@ -1506,7 +1428,7 @@ func (s *Service) handleChargeRefunded(ctx context.Context, event stripe.Event) 
 		slog.String("charge_id", charge.ID),
 		slog.Float64("credits_deducted", creditsToDeductFloat),
 	)
-	return 200, nil
+	return status, nil
 }
 
 // handleChargeFailed processes charge.failed Stripe webhook events.
@@ -1674,52 +1596,43 @@ func (s *Service) handleChargeDisputeCreated(ctx context.Context, event stripe.E
 		slog.Int64("evidence_due_by_unix", dueBy),
 	)
 
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
-	if err != nil {
-		s.logger.Error("failed_to_begin_transaction_charge_dispute_created", slog.Any("error", err))
-		return 500, fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() {
-		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-			s.logger.Warn("tx_rollback_failed", slog.Any("error", rbErr))
+	status, err := withSerializableRetryHTTP(ctx, s.db, s.logger, func(tx *sql.Tx) (int, error) {
+		isDuplicate, err := s.markEventProcessed(ctx, tx, event.ID, string(event.Type))
+		if err != nil {
+			s.logger.Error("failed_to_mark_dispute_event_processed", slog.Any("error", err))
+			return 500, fmt.Errorf("failed to mark event as processed: %w", err)
 		}
-	}()
+		if isDuplicate {
+			s.logger.Debug("event_already_processed", slog.String("event_id", event.ID))
+			return 200, nil
+		}
 
-	isDuplicate, err := s.markEventProcessed(ctx, tx, event.ID, string(event.Type))
-	if err != nil {
-		s.logger.Error("failed_to_mark_dispute_event_processed", slog.Any("error", err))
-		return 500, fmt.Errorf("failed to mark event as processed: %w", err)
-	}
-	if isDuplicate {
-		s.logger.Debug("event_already_processed", slog.String("event_id", event.ID))
+		// Flag the affected stripe_payments row with status='disputed'. We use
+		// the PaymentIntent ID as the join key (the same path the refund handler
+		// uses, populated by the S-C2 backfill on checkout.session.completed).
+		// If the row doesn't exist (legacy payment without backfilled PI ID, or
+		// non-checkout charge), we fall through to the metric/log only — the
+		// ERROR log above is the only ops signal in that case.
+		if paymentIntentID != "" {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE stripe_payments SET status = 'disputed' WHERE stripe_payment_intent_id = $1`,
+				paymentIntentID); err != nil {
+				s.logger.Error("failed_to_flag_disputed_payment",
+					slog.String("payment_intent_id", paymentIntentID),
+					slog.Any("error", err),
+				)
+				return 500, fmt.Errorf("failed to flag disputed payment: %w", err)
+			}
+		}
+
 		return 200, nil
-	}
-
-	// Flag the affected stripe_payments row with status='disputed'. We use
-	// the PaymentIntent ID as the join key (the same path the refund handler
-	// uses, populated by the S-C2 backfill on checkout.session.completed).
-	// If the row doesn't exist (legacy payment without backfilled PI ID, or
-	// non-checkout charge), we fall through to the metric/log only — the
-	// ERROR log above is the only ops signal in that case.
-	if paymentIntentID != "" {
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE stripe_payments SET status = 'disputed' WHERE stripe_payment_intent_id = $1`,
-			paymentIntentID); err != nil {
-			s.logger.Error("failed_to_flag_disputed_payment",
-				slog.String("payment_intent_id", paymentIntentID),
-				slog.Any("error", err),
-			)
-			return 500, fmt.Errorf("failed to flag disputed payment: %w", err)
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		s.logger.Error("failed_to_commit_charge_dispute_created", slog.Any("error", err))
-		return 500, fmt.Errorf("failed to commit transaction: %w", err)
+	})
+	if err != nil {
+		return status, err
 	}
 
 	s.metrics.DisputeCreatedTotal.Inc()
-	return 200, nil
+	return status, nil
 }
 
 // handleRefundUpdated processes refund.updated webhook events. (S-M3)
@@ -1797,26 +1710,16 @@ func (s *Service) handleRefundUpdated(ctx context.Context, event stripe.Event) (
 	}
 
 	// Idempotency gate so Stripe webhook retries don't double-log.
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
-	if err != nil {
-		return 500, fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() {
-		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-			s.logger.Warn("tx_rollback_failed", slog.Any("error", rbErr))
+	return withSerializableRetryHTTP(ctx, s.db, s.logger, func(tx *sql.Tx) (int, error) {
+		isDuplicate, err := s.markEventProcessed(ctx, tx, event.ID, string(event.Type))
+		if err != nil {
+			return 500, fmt.Errorf("failed to mark event as processed: %w", err)
 		}
-	}()
-	isDuplicate, err := s.markEventProcessed(ctx, tx, event.ID, string(event.Type))
-	if err != nil {
-		return 500, fmt.Errorf("failed to mark event as processed: %w", err)
-	}
-	if isDuplicate {
+		if isDuplicate {
+			return 200, nil
+		}
 		return 200, nil
-	}
-	if err := tx.Commit(); err != nil {
-		return 500, fmt.Errorf("failed to commit transaction: %w", err)
-	}
-	return 200, nil
+	})
 }
 
 // handleCheckoutAsyncPaymentSucceeded processes checkout.session.async_payment_succeeded
@@ -1879,26 +1782,16 @@ func (s *Service) handleAsyncPaymentEvent(ctx context.Context, event stripe.Even
 		slog.String("detail", "MVP is card-only; async payment events should not fire in production. Investigate if seen."),
 	)
 
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
-	if err != nil {
-		return 500, fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() {
-		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-			s.logger.Warn("tx_rollback_failed", slog.Any("error", rbErr))
+	return withSerializableRetryHTTP(ctx, s.db, s.logger, func(tx *sql.Tx) (int, error) {
+		isDuplicate, err := s.markEventProcessed(ctx, tx, event.ID, string(event.Type))
+		if err != nil {
+			return 500, fmt.Errorf("failed to mark event as processed: %w", err)
 		}
-	}()
-	isDuplicate, err := s.markEventProcessed(ctx, tx, event.ID, string(event.Type))
-	if err != nil {
-		return 500, fmt.Errorf("failed to mark event as processed: %w", err)
-	}
-	if isDuplicate {
+		if isDuplicate {
+			return 200, nil
+		}
 		return 200, nil
-	}
-	if err := tx.Commit(); err != nil {
-		return 500, fmt.Errorf("failed to commit transaction: %w", err)
-	}
-	return 200, nil
+	})
 }
 
 // StartWebhookEventCleanup starts a background goroutine that deletes old

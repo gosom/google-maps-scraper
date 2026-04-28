@@ -123,8 +123,19 @@ func (h *WebHandlers) Index(w http.ResponseWriter, r *http.Request) {
 	_ = tmpl.Execute(w, data)
 }
 
-// Download mirrors Server.download with S3 support
+// Download mirrors Server.download with S3 support.
+//
+// Deprecated: prefer DownloadURL (`/jobs/{id}/download-url`), which returns a
+// short-lived presigned URL the client can hit directly. This route streams
+// the full CSV through the backend and is kept for backward compatibility;
+// it emits an info-level `download_legacy_route_used` log so operators can
+// confirm zero usage before the route is removed.
 func (h *WebHandlers) Download(w http.ResponseWriter, r *http.Request) {
+	if h.Deps.Logger != nil {
+		h.Deps.Logger.Info("download_legacy_route_used",
+			slog.String("path", "/api/v1/jobs/{id}/download"),
+			slog.String("recommendation", "use /download-url instead"))
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -199,4 +210,36 @@ func (h *WebHandlers) Download(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.Logger != nil {
 		h.Deps.Logger.Debug("csv_served", slog.String("file_name", fileName), slog.String("job_id", id))
 	}
+}
+
+// DownloadURL returns a short-lived presigned URL the client can hit directly
+// against S3/Spaces, removing the backend from the data path. Replaces the
+// legacy /download proxied stream.
+func (h *WebHandlers) DownloadURL(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := mux.Vars(r)["id"]
+	if _, err := uuid.Parse(id); err != nil {
+		http.Error(w, "Invalid ID format", http.StatusUnprocessableEntity)
+		return
+	}
+	userID, err := auth.GetUserID(r.Context())
+	if err != nil {
+		http.Error(w, "User not authenticated", http.StatusUnauthorized)
+		return
+	}
+	url, err := h.Deps.App.GetCSVPresignedURL(r.Context(), id, userID, 5*time.Minute)
+	if err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Warn("download_url_unavailable",
+				slog.String("user_id", userID),
+				slog.String("job_id", id),
+				slog.Any("error", err))
+		}
+		http.Error(w, "not available", http.StatusNotFound)
+		return
+	}
+	renderJSON(w, http.StatusOK, map[string]string{"url": url, "expires_in": "300"})
 }

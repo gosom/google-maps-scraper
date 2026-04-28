@@ -80,13 +80,13 @@ func (r *fileRunner) Run(ctx context.Context) (err error) {
 	exitMonitor := exiter.New()
 
 	seedJobs, err = runner.CreateSeedJobs(runner.SeedJobConfig{
-		FastMode: r.cfg.Scraping.FastMode,
-		LangCode: r.cfg.Scraping.LangCode,
-		Input:    r.input,
-		MaxDepth: r.cfg.Scraping.MaxDepth,
-		Email:    r.cfg.Scraping.Email,
-		Images:   r.cfg.Scraping.Images,
-		Debug:    r.cfg.Debug,
+		FastMode:      r.cfg.Scraping.FastMode,
+		LangCode:      r.cfg.Scraping.LangCode,
+		Input:         r.input,
+		MaxDepth:      r.cfg.Scraping.MaxDepth,
+		IncludeEmails: r.cfg.Scraping.IncludeEmails,
+		Images:        r.cfg.Scraping.Images,
+		Debug:         r.cfg.Debug,
 		ReviewsMax: func() int {
 			if r.cfg.Scraping.ExtraReviews {
 				return 1 // Default to 1 review if extra reviews enabled

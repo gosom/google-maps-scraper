@@ -17,6 +17,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"golang.org/x/term"
 
+	pkgconfig "github.com/gosom/google-maps-scraper/pkg/config"
 	"github.com/gosom/google-maps-scraper/s3uploader"
 	"github.com/gosom/google-maps-scraper/tlmt"
 	"github.com/gosom/google-maps-scraper/tlmt/gonoop"
@@ -25,6 +26,20 @@ import (
 )
 
 // parseConcurrency parses dynamic concurrency values including percentages, fractions, and keywords
+// splitAndTrim splits a comma-separated string into a slice, trims whitespace
+// around each element, and drops empty entries. Returns nil when no entries
+// remain (so callers can use `len(...) == 0` and `== nil` interchangeably).
+// Used for env vars whose value is a list of items (e.g. PROXIES).
+func splitAndTrim(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func parseConcurrency(value string) (int, error) {
 	if value == "" {
 		return 0, fmt.Errorf("empty value")
@@ -146,6 +161,10 @@ type AWSConfig struct {
 	AccessKey       string
 	SecretKey       string
 	Region          string
+	Endpoint        string
+	ForcePathStyle  bool
+	SSEEnabled      bool
+	ChecksumMode    string
 	S3Bucket        string
 	LambdaRunner    bool
 	LambdaInvoker   bool
@@ -158,7 +177,7 @@ type ScrapingConfig struct {
 	FastMode         bool
 	MaxDepth         int
 	LangCode         string
-	Email            bool
+	IncludeEmails    bool
 	Images           bool
 	ExtraReviews     bool
 	MaxResults       int
@@ -229,7 +248,7 @@ func ParseConfig() (*Config, error) {
 	flag.BoolVar(&cfg.ProduceOnly, "produce", false, "produce seed jobs only (requires dsn)")
 	flag.DurationVar(&cfg.ExitOnInactivityDuration, "exit-on-inactivity", 0, "exit after inactivity duration (e.g., '5m')")
 	flag.BoolVar(&cfg.JSON, "json", false, "produce JSON output instead of CSV")
-	flag.BoolVar(&cfg.Scraping.Email, "email", false, "extract emails from websites")
+	flag.BoolVar(&cfg.Scraping.IncludeEmails, "include-emails", false, "extract emails from websites")
 	flag.StringVar(&cfg.CustomWriter, "writer", "", "use custom writer plugin (format: 'dir:pluginName')")
 	flag.StringVar(&cfg.Scraping.GeoCoordinates, "geo", "", "set geo coordinates for search (e.g., '37.7749,-122.4194')")
 	flag.IntVar(&cfg.Scraping.Zoom, "zoom", 15, "set zoom level (0-21) for search")
@@ -252,18 +271,6 @@ func ParseConfig() (*Config, error) {
 	flag.IntVar(&cfg.Scraping.MaxResults, "max-results", 0, "maximum number of results to collect (0 = unlimited)")
 
 	flag.Parse()
-
-	if cfg.AWS.AccessKey == "" {
-		cfg.AWS.AccessKey = os.Getenv("MY_AWS_ACCESS_KEY")
-	}
-
-	if cfg.AWS.SecretKey == "" {
-		cfg.AWS.SecretKey = os.Getenv("MY_AWS_SECRET_KEY")
-	}
-
-	if cfg.AWS.Region == "" {
-		cfg.AWS.Region = os.Getenv("MY_AWS_REGION")
-	}
 
 	if cfg.Dsn == "" {
 		cfg.Dsn = os.Getenv("DSN")
@@ -314,13 +321,18 @@ func ParseConfig() (*Config, error) {
 
 	slog.Debug("proxy_config", slog.String("proxies_env", os.Getenv("PROXIES")), slog.String("cli_proxies_flag", proxies))
 
-	// Priority: CLI proxies > Webshare API > No proxies
+	// Priority: CLI -proxies flag > PROXIES env var > Webshare API > No proxies.
+	// PROXIES is provider-agnostic: any rotating-gateway provider (Decodo,
+	// Bright Data, Smartproxy, etc.) is configured by setting this to a
+	// comma-separated list of proxy URLs of the form
+	//   http://USERNAME:PASSWORD@HOST:PORT
+	// Single-URL providers (e.g. Decodo gateway) just use one entry.
 	if proxies != "" {
-		cfg.Proxy.Proxies = strings.Split(proxies, ",")
+		cfg.Proxy.Proxies = splitAndTrim(proxies)
 		slog.Debug("cli_proxies_configured", slog.Int("count", len(cfg.Proxy.Proxies)))
-	} else if os.Getenv("PROXIES") != "" {
-		// Informative log: PROXIES env is set but ignored unless -proxies flag is provided
-		slog.Debug("proxies_env_ignored", slog.String("hint", "pass with -proxies flag to enable"))
+	} else if envProxies := os.Getenv("PROXIES"); envProxies != "" {
+		cfg.Proxy.Proxies = splitAndTrim(envProxies)
+		slog.Info("proxies_from_env_loaded", slog.Int("count", len(cfg.Proxy.Proxies)))
 	}
 
 	// Check for Webshare API key
@@ -354,14 +366,6 @@ func ParseConfig() (*Config, error) {
 		}
 	}
 
-	if cfg.AWS.AccessKey != "" && cfg.AWS.SecretKey != "" && cfg.AWS.Region != "" {
-		uploader, err := s3uploader.New(cfg.AWS.AccessKey, cfg.AWS.SecretKey, cfg.AWS.Region)
-		if err != nil {
-			return nil, fmt.Errorf("creating S3 uploader: %w", err)
-		}
-		cfg.S3Uploader = uploader
-	}
-
 	switch {
 	case cfg.AWS.LambdaInvoker:
 		cfg.RunMode = RunModeAwsLambdaInvoker
@@ -380,6 +384,75 @@ func ParseConfig() (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// MergeAWSDefaults fills empty AWS credential fields in cfg from the standard
+// AWS_* environment variables already parsed into appCfg. CLI flag values
+// (non-empty) always take precedence over the env-based defaults.
+//
+// Call this after ParseConfig() and before constructing runners that need S3.
+func MergeAWSDefaults(cfg *Config, appCfg *pkgconfig.Config) {
+	if cfg == nil || appCfg == nil {
+		return
+	}
+	if cfg.AWS.AccessKey == "" {
+		cfg.AWS.AccessKey = appCfg.AWS.AccessKeyID
+	}
+	if cfg.AWS.SecretKey == "" {
+		cfg.AWS.SecretKey = appCfg.AWS.SecretAccessKey
+	}
+	if cfg.AWS.Region == "" {
+		cfg.AWS.Region = appCfg.AWS.Region
+	}
+	if cfg.AWS.Endpoint == "" {
+		cfg.AWS.Endpoint = appCfg.AWS.Endpoint
+	}
+	if !cfg.AWS.ForcePathStyle {
+		cfg.AWS.ForcePathStyle = appCfg.AWS.ForcePathStyle
+	}
+	if !cfg.AWS.SSEEnabled {
+		cfg.AWS.SSEEnabled = appCfg.AWS.SSEEnabled
+	}
+	if cfg.AWS.ChecksumMode == "" {
+		cfg.AWS.ChecksumMode = appCfg.AWS.ChecksumMode
+	}
+}
+
+// BuildS3Uploader constructs the S3 uploader from cfg.AWS credentials and
+// stores it in cfg.S3Uploader. If any required credential (AccessKey, SecretKey,
+// Region) is missing, the function is a no-op and returns nil — preserving the
+// same silent-skip semantics as the original inline block in ParseConfig.
+//
+// Call this after MergeAWSDefaults so that env-only AWS deployments have their
+// credentials populated before the uploader is constructed.
+func BuildS3Uploader(cfg *Config, logger *slog.Logger) error {
+	if cfg.AWS.AccessKey == "" || cfg.AWS.SecretKey == "" || cfg.AWS.Region == "" {
+		// Sanity guard for partial-config: if the operator set an endpoint
+		// but forgot creds, surface a clear error rather than silently no-op.
+		if cfg.AWS.Endpoint != "" {
+			return fmt.Errorf("AWS_ENDPOINT is set but AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY/AWS_REGION are missing")
+		}
+		return nil
+	}
+	uploader, err := s3uploader.New(
+		s3uploader.WithCredentials(cfg.AWS.AccessKey, cfg.AWS.SecretKey),
+		s3uploader.WithRegion(cfg.AWS.Region),
+		s3uploader.WithEndpoint(cfg.AWS.Endpoint),
+		s3uploader.WithForcePathStyle(cfg.AWS.ForcePathStyle),
+		s3uploader.WithServerSideEncryption(cfg.AWS.SSEEnabled),
+		s3uploader.WithChecksumMode(s3uploader.ParseChecksumMode(cfg.AWS.ChecksumMode)),
+		s3uploader.WithLogger(logger),
+		// Mirrors the pkg/metrics/billing.go callers: passing nil to
+		// NewMetrics uses prometheus.DefaultRegisterer. The constructor
+		// tolerates double-registration (AlreadyRegisteredError) so
+		// repeated BuildS3Uploader calls within one process are safe.
+		s3uploader.WithMetrics(s3uploader.NewMetrics(nil)),
+	)
+	if err != nil {
+		return fmt.Errorf("creating S3 uploader: %w", err)
+	}
+	cfg.S3Uploader = uploader
+	return nil
 }
 
 var (

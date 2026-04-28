@@ -7,12 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/gosom/google-maps-scraper/models"
-	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	_ "github.com/jackc/pgx/v5/stdlib" // PostgreSQL driver
 )
 
@@ -22,15 +20,21 @@ type repository struct {
 }
 
 // NewRepository creates a new PostgreSQL implementation of models.JobRepository
-func NewRepository(db *sql.DB) (models.JobRepository, error) {
+func NewRepository(db *sql.DB, logger *slog.Logger) (models.JobRepository, error) {
+	if db == nil {
+		return nil, fmt.Errorf("database connection is required")
+	}
 	if err := db.Ping(); err != nil {
 		return nil, err
 	}
 
+	if logger == nil {
+		logger = slog.Default()
+	}
 	// We don't create schema here anymore since we're using migrations
 	return &repository{
 		db:  db,
-		log: pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "repository"),
+		log: logger.With(slog.String("component", "repository")),
 	}, nil
 }
 
@@ -390,135 +394,4 @@ type job struct {
 	Source        string
 	ResultCount   int
 	TotalCost     string
-}
-
-// Additional methods for soft delete management
-
-// PermanentDelete permanently removes a job and its results from the database
-// Use with caution - this operation cannot be undone
-func (repo *repository) PermanentDelete(ctx context.Context, id string) error {
-	// Start a transaction to ensure atomicity
-	tx, err := repo.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() {
-		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-			repo.log.Error("rollback_failed", slog.Any("error", rbErr))
-		}
-	}()
-
-	// First, delete all results that reference this job
-	const deleteResultsQuery = `DELETE FROM results WHERE job_id = $1`
-	_, err = tx.ExecContext(ctx, deleteResultsQuery, id)
-	if err != nil {
-		return fmt.Errorf("failed to delete job results: %w", err)
-	}
-
-	// Then permanently delete the job itself
-	const deleteJobQuery = `DELETE FROM jobs WHERE id = $1`
-	jobResult, err := tx.ExecContext(ctx, deleteJobQuery, id)
-	if err != nil {
-		return fmt.Errorf("failed to delete job: %w", err)
-	}
-
-	// Check if the job actually existed
-	jobRowsAffected, _ := jobResult.RowsAffected()
-	if jobRowsAffected == 0 {
-		return fmt.Errorf("job with id %s not found", id)
-	}
-
-	// Commit the transaction
-	if err := tx.Commit(); err != nil {
-		repo.log.Error("job_permanent_delete_commit_failed", slog.String("job_id", id), slog.Any("error", err))
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	repo.log.Info("job_permanently_deleted", slog.String("job_id", id))
-	return nil
-}
-
-// RestoreJob restores a soft-deleted job
-func (repo *repository) RestoreJob(ctx context.Context, id string) error {
-	const q = `UPDATE jobs SET deleted_at = NULL WHERE id = $1 AND deleted_at IS NOT NULL`
-
-	result, err := repo.db.ExecContext(ctx, q, id)
-	if err != nil {
-		return fmt.Errorf("failed to restore job: %w", err)
-	}
-
-	// Check if the job actually existed and was deleted
-	rowsAffected, _ := result.RowsAffected()
-	if rowsAffected == 0 {
-		return fmt.Errorf("job with id %s not found in deleted jobs", id)
-	}
-
-	return nil
-}
-
-// GetDeletedJobs retrieves all soft-deleted jobs (for admin purposes)
-func (repo *repository) GetDeletedJobs(ctx context.Context, params models.SelectParams) ([]models.Job, error) {
-	// Apply default limit to prevent unbounded queries
-	if params.Limit == 0 {
-		params.Limit = 1000
-	}
-
-	q := `SELECT id, name, status, data, extract(epoch from created_at), extract(epoch from updated_at), user_id, COALESCE(failure_reason, ''), COALESCE(source, 'web'), COALESCE(result_count, 0), COALESCE(actual_cost_precise, 0)::text FROM jobs`
-
-	var args []interface{}
-	var conditions []string
-	var argNum int = 1
-
-	// Only get deleted jobs
-	conditions = append(conditions, "deleted_at IS NOT NULL")
-
-	if params.Status != "" {
-		conditions = append(conditions, fmt.Sprintf("status = $%d", argNum))
-		args = append(args, params.Status)
-		argNum++
-	}
-
-	if params.UserID != "" {
-		conditions = append(conditions, fmt.Sprintf("user_id = $%d", argNum))
-		args = append(args, params.UserID)
-		argNum++
-	}
-
-	if len(conditions) > 0 {
-		q += " WHERE " + conditions[0]
-		for i := 1; i < len(conditions); i++ {
-			q += " AND " + conditions[i]
-		}
-	}
-
-	q += " ORDER BY deleted_at DESC"
-
-	if params.Limit > 0 {
-		q += fmt.Sprintf(" LIMIT $%d", argNum)
-		args = append(args, params.Limit)
-	}
-
-	rows, err := repo.db.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to select deleted jobs: %w", err)
-	}
-
-	defer rows.Close()
-
-	var ans []models.Job
-
-	for rows.Next() {
-		job, err := rowToJob(rows)
-		if err != nil {
-			return nil, err
-		}
-
-		ans = append(ans, job)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return ans, nil
 }

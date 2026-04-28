@@ -6,9 +6,12 @@ import (
 	"html/template"
 	"io"
 	"log/slog"
+	"time"
 
 	"github.com/gosom/google-maps-scraper/billing"
 	"github.com/gosom/google-maps-scraper/models"
+	"github.com/gosom/google-maps-scraper/pkg/appenv"
+	pkgconfig "github.com/gosom/google-maps-scraper/pkg/config"
 	"github.com/gosom/google-maps-scraper/pkg/encryption"
 	"github.com/gosom/google-maps-scraper/pkg/googlesheets"
 	"github.com/gosom/google-maps-scraper/pkg/notify"
@@ -40,6 +43,14 @@ type Dependencies struct {
 	// Version is the Git SHA injected at build time, used by the /health endpoint.
 	Version string
 	Sender  notify.Sender // Support email sender; nil-safe
+	// Environment is parsed once at startup from APP_ENV. Handlers use this
+	// instead of reading os.Getenv at request time so that production-only
+	// behavior (e.g. cookie Secure flag — CWE-614) is consistent and
+	// typo-safe across all call sites.
+	Environment appenv.Environment
+	// GoogleConfig holds Google OAuth credentials parsed once at startup.
+	// Injected into IntegrationHandler so per-request os.Getenv is eliminated.
+	GoogleConfig pkgconfig.GoogleConfig
 }
 
 // HandlerGroup groups all handler categories for routing setup.
@@ -63,7 +74,7 @@ func NewHandlerGroup(deps Dependencies) *HandlerGroup {
 		APIKey:      &APIKeyHandlers{Deps: deps},
 		Webhook:     &WebhookHandlers{Deps: deps},
 		Billing:     &BillingHandlers{Deps: deps},
-		Integration: NewIntegrationHandler(deps.IntegrationRepo, deps.Encryptor, deps.App, deps.GoogleSheetsSvc),
+		Integration: NewIntegrationHandler(deps.IntegrationRepo, deps.Encryptor, deps.App, deps.GoogleSheetsSvc, deps.Environment, deps.GoogleConfig, deps.Logger),
 		Version:     NewVersionHandler(),
 		Admin:       &AdminHandlers{Deps: deps},
 		Support:     &SupportHandlers{Deps: deps, Sender: deps.Sender},
@@ -89,6 +100,7 @@ type JobService interface {
 	Cancel(ctx context.Context, id string, userID string) error
 	GetCSV(ctx context.Context, id string) (string, error)
 	GetCSVReader(ctx context.Context, id string) (io.ReadCloser, string, error)
+	GetCSVPresignedURL(ctx context.Context, id, userID string, ttl time.Duration) (string, error)
 }
 
 // ResultsService exposes read operations for results data.

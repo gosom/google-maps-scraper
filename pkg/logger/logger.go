@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,25 +28,33 @@ var (
 	sharedOutput     io.Writer
 )
 
-// New creates a *slog.Logger with JSON output at the given level.
-// Output is controlled by environment variables:
-// - LOG_OUTPUT: stdout | file | both (default: both)
-// - LOG_FILE_PATH: explicit log file path (overrides LOG_DIR/LOG_FILE_NAME)
-// - LOG_DIR: log directory when LOG_FILE_PATH is not set (default: logs)
-// - LOG_FILE_NAME: log filename when LOG_FILE_PATH is not set (default: brezel-api.log)
-// - LOG_MAX_SIZE_MB: max size per dated file before rollover (default: 100)
-// - LOG_RETENTION_DAYS: number of days to keep dated files (default: 14)
-// Valid levels: "debug", "info", "warn", "error". Defaults to "info".
-func New(level string) *slog.Logger {
-	return slog.New(slog.NewJSONHandler(outputWriter(), &slog.HandlerOptions{
-		Level: parseLevel(level),
-	}))
+// LogConfig carries the log-sink settings that were previously read from
+// environment variables inside this package. Callers now pass these values
+// explicitly so the logger package has no direct env dependency.
+type LogConfig struct {
+	// Output controls where log lines are written: "stdout", "file", or "both".
+	Output string
+	// FilePath is an explicit path for the log file. When non-empty it takes
+	// precedence over Dir+FileName.
+	FilePath string
+	// Dir is the directory for the log file when FilePath is empty.
+	Dir string
+	// FileName is the base filename when FilePath is empty.
+	FileName string
+	// MaxSizeMB is the maximum size of a single dated log file in megabytes.
+	MaxSizeMB int
+	// RetentionDays is how many calendar days of log files to retain.
+	RetentionDays int
 }
 
-// NewWithComponent creates a logger with a "component" attribute.
-// Replaces the old pattern of log.New(os.Stdout, "[API] ", ...).
-func NewWithComponent(level, component string) *slog.Logger {
-	return New(level).With(slog.String("component", component))
+// New creates a *slog.Logger with JSON output at the given level.
+// All output/rotation settings are taken from cfg; no environment variables
+// are read by this package at call time.
+// Valid levels: "debug", "info", "warn", "error". Defaults to "info".
+func New(level string, cfg LogConfig) *slog.Logger {
+	return slog.New(slog.NewJSONHandler(buildOutputWriterFromConfig(cfg), &slog.HandlerOptions{
+		Level: parseLevel(level),
+	}))
 }
 
 // FromContext extracts the *slog.Logger from context.
@@ -66,13 +73,13 @@ func WithContext(ctx context.Context, l *slog.Logger) context.Context {
 
 func outputWriter() io.Writer {
 	outputWriterOnce.Do(func() {
-		sharedOutput = buildOutputWriter()
+		sharedOutput = buildOutputWriterFromConfig(LogConfig{})
 	})
 	return sharedOutput
 }
 
-func buildOutputWriter() io.Writer {
-	mode := strings.ToLower(strings.TrimSpace(os.Getenv("LOG_OUTPUT")))
+func buildOutputWriterFromConfig(cfg LogConfig) io.Writer {
+	mode := strings.ToLower(strings.TrimSpace(cfg.Output))
 	if mode == "" {
 		mode = defaultLogOutputMode
 	}
@@ -91,7 +98,7 @@ func buildOutputWriter() io.Writer {
 	}
 
 	if useFile {
-		fileWriter, err := openLogFileWriter()
+		fileWriter, err := openLogFileWriterFromConfig(cfg)
 		if err != nil {
 			os.Stderr.WriteString("logger: failed to open log file: " + err.Error() + "\n")
 		} else {
@@ -108,14 +115,15 @@ func buildOutputWriter() io.Writer {
 	return io.MultiWriter(writers...)
 }
 
-func openLogFileWriter() (io.Writer, error) {
-	path := resolveLogFilePath()
-	maxSizeMB := envInt("LOG_MAX_SIZE_MB", defaultLogMaxSizeMB)
+func openLogFileWriterFromConfig(cfg LogConfig) (io.Writer, error) {
+	path := resolveLogFilePathFromConfig(cfg)
+
+	maxSizeMB := cfg.MaxSizeMB
 	if maxSizeMB < 1 {
 		maxSizeMB = defaultLogMaxSizeMB
 	}
 
-	retentionDays := envInt("LOG_RETENTION_DAYS", defaultLogRetention)
+	retentionDays := cfg.RetentionDays
 	if retentionDays < 1 {
 		retentionDays = defaultLogRetention
 	}
@@ -123,17 +131,17 @@ func openLogFileWriter() (io.Writer, error) {
 	return newRotatingFileWriter(path, int64(maxSizeMB)*1024*1024, retentionDays)
 }
 
-func resolveLogFilePath() string {
-	if path := strings.TrimSpace(os.Getenv("LOG_FILE_PATH")); path != "" {
-		return filepath.Clean(path)
+func resolveLogFilePathFromConfig(cfg LogConfig) string {
+	if cfg.FilePath != "" {
+		return filepath.Clean(cfg.FilePath)
 	}
 
-	dir := strings.TrimSpace(os.Getenv("LOG_DIR"))
+	dir := strings.TrimSpace(cfg.Dir)
 	if dir == "" {
 		dir = defaultLogDir
 	}
 
-	name := strings.TrimSpace(os.Getenv("LOG_FILE_NAME"))
+	name := strings.TrimSpace(cfg.FileName)
 	if name == "" {
 		name = defaultLogFileName
 	}
@@ -152,20 +160,6 @@ func parseLevel(s string) slog.Level {
 	default:
 		return slog.LevelInfo
 	}
-}
-
-func envInt(key string, fallback int) int {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback
-	}
-
-	n, err := strconv.Atoi(value)
-	if err != nil {
-		os.Stderr.WriteString(fmt.Sprintf("logger: invalid %s=%q, using %d\n", key, value, fallback))
-		return fallback
-	}
-	return n
 }
 
 type rotatingFileWriter struct {

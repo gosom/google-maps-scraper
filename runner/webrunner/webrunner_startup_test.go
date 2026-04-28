@@ -1,25 +1,32 @@
 package webrunner
 
 import (
+	"log/slog"
 	"strings"
 	"testing"
 
+	"github.com/gosom/google-maps-scraper/pkg/appenv"
+	pkgconfig "github.com/gosom/google-maps-scraper/pkg/config"
 	"github.com/gosom/google-maps-scraper/runner"
 )
 
-// TestBuildServerConfig_FailsInProductionWhenEncryptionKeyMissing covers the
+// TestValidate_FailsInProductionWhenEncryptionKeyMissing covers the
 // S-C5 / audit M-7 fail-fast guard. Without ENCRYPTION_KEY in production,
 // integration credentials would be stored as plaintext (web/web.go silently
-// downgrades). The buildServerConfig guard refuses to start the server.
-func TestBuildServerConfig_FailsInProductionWhenEncryptionKeyMissing(t *testing.T) {
-	t.Setenv("APP_ENV", "production")
-	t.Setenv("CLERK_SECRET_KEY", "sk_test_clerk")
-	t.Setenv("STRIPE_SECRET_KEY", "sk_test_stripe")
-	t.Setenv("STRIPE_WEBHOOK_SECRET", "whsec_test")
-	t.Setenv("ALLOWED_ORIGINS", "https://example.com")
-	t.Setenv("ENCRYPTION_KEY", "")
+// downgrades). pkg/config.Validate() enforces this before any runner starts.
+func TestValidate_FailsInProductionWhenEncryptionKeyMissing(t *testing.T) {
+	cfg := &pkgconfig.Config{
+		AppEnv:         appenv.Production,
+		ClerkSecretKey: "sk_test_clerk",
+		Stripe: pkgconfig.StripeConfig{
+			SecretKey:     "sk_test_stripe",
+			WebhookSecret: "whsec_test",
+		},
+		AllowedOrigins: []string{"https://example.com"},
+		EncryptionKey:  "",
+	}
 
-	_, err := buildServerConfig(&runner.Config{}, nil, nil)
+	err := cfg.Validate()
 	if err == nil {
 		t.Fatal("expected error when ENCRYPTION_KEY is missing in production, got nil")
 	}
@@ -28,18 +35,22 @@ func TestBuildServerConfig_FailsInProductionWhenEncryptionKeyMissing(t *testing.
 	}
 }
 
-// TestBuildServerConfig_FailsInProductionWhenStripeWebhookSecretMissing covers
-// the existing pre-S-C5 STRIPE_WEBHOOK_SECRET guard. Documented here so the
-// test net for the production fail-fast block is complete.
-func TestBuildServerConfig_FailsInProductionWhenStripeWebhookSecretMissing(t *testing.T) {
-	t.Setenv("APP_ENV", "production")
-	t.Setenv("CLERK_SECRET_KEY", "sk_test_clerk")
-	t.Setenv("STRIPE_SECRET_KEY", "sk_test_stripe")
-	t.Setenv("STRIPE_WEBHOOK_SECRET", "")
-	t.Setenv("ALLOWED_ORIGINS", "https://example.com")
-	t.Setenv("ENCRYPTION_KEY", "0123456789abcdef0123456789abcdef")
+// TestValidate_FailsInProductionWhenStripeWebhookSecretMissing covers
+// the STRIPE_WEBHOOK_SECRET guard. Documented here so the test net for
+// the production fail-fast block is complete.
+func TestValidate_FailsInProductionWhenStripeWebhookSecretMissing(t *testing.T) {
+	cfg := &pkgconfig.Config{
+		AppEnv:         appenv.Production,
+		ClerkSecretKey: "sk_test_clerk",
+		Stripe: pkgconfig.StripeConfig{
+			SecretKey:     "sk_test_stripe",
+			WebhookSecret: "",
+		},
+		AllowedOrigins: []string{"https://example.com"},
+		EncryptionKey:  "0123456789abcdef0123456789abcdef",
+	}
 
-	_, err := buildServerConfig(&runner.Config{}, nil, nil)
+	err := cfg.Validate()
 	if err == nil {
 		t.Fatal("expected error when STRIPE_WEBHOOK_SECRET is missing in production, got nil")
 	}
@@ -48,20 +59,35 @@ func TestBuildServerConfig_FailsInProductionWhenStripeWebhookSecretMissing(t *te
 	}
 }
 
-// TestBuildServerConfig_DoesNotFailInDevelopmentWhenSecretsMissing verifies
+// TestValidate_DoesNotFailInDevelopmentWhenSecretsMissing verifies
 // that the fail-fast block is gated on APP_ENV=production and does not fire
 // in local dev / test environments where these secrets are routinely absent.
+func TestValidate_DoesNotFailInDevelopmentWhenSecretsMissing(t *testing.T) {
+	cfg := &pkgconfig.Config{
+		AppEnv:         appenv.Development,
+		ClerkSecretKey: "sk_test_clerk",
+	}
+
+	err := cfg.Validate()
+	if err != nil {
+		t.Errorf("development environment should NOT trigger the production fail-fast guard, got: %v", err)
+	}
+}
+
+// TestBuildServerConfig_DoesNotFailInDevelopmentWhenSecretsMissing verifies
+// that buildServerConfig does not re-apply production-only validation (which
+// now lives entirely in pkg/config.Validate). It should succeed in dev even
+// with no Stripe credentials, as long as APIKeyServerSecret is either empty
+// or ≥ 32 bytes.
 func TestBuildServerConfig_DoesNotFailInDevelopmentWhenSecretsMissing(t *testing.T) {
-	t.Setenv("APP_ENV", "development")
-	t.Setenv("CLERK_SECRET_KEY", "sk_test_clerk")
-	t.Setenv("STRIPE_SECRET_KEY", "")
-	t.Setenv("STRIPE_WEBHOOK_SECRET", "")
-	t.Setenv("ALLOWED_ORIGINS", "")
-	t.Setenv("ENCRYPTION_KEY", "")
 	// API_KEY_SERVER_SECRET is required at >= 32 bytes when api keys are
 	// enabled; supply a long enough value to clear the unrelated guard so
 	// this test isolates only the production-secrets check.
-	t.Setenv("API_KEY_SERVER_SECRET", "0123456789abcdef0123456789abcdef")
+	appCfg := &pkgconfig.Config{
+		AppEnv:             appenv.Development,
+		ClerkSecretKey:     "sk_test_clerk",
+		APIKeyServerSecret: []byte("0123456789abcdef0123456789abcdef"),
+	}
 
 	// buildServerConfig will return an error from a different code path (it
 	// touches DB-backed repos with a nil DB), but it must NOT return the
@@ -69,17 +95,19 @@ func TestBuildServerConfig_DoesNotFailInDevelopmentWhenSecretsMissing(t *testing
 	// specific error string rather than expecting a fully successful build,
 	// because the test would otherwise need a real DB + Clerk client to
 	// reach the success path.
-	_, err := buildServerConfig(&runner.Config{}, nil, nil)
+	_, err := buildServerConfig(&runner.Config{}, nil, nil, appCfg, slog.Default())
 	if err != nil && strings.Contains(err.Error(), "production mode requires") {
 		t.Errorf("development environment should NOT trigger the production fail-fast guard, got: %v", err)
 	}
 }
 
-func TestStripeWebhookSecretsFromEnv_IncludesPreviousSecret(t *testing.T) {
-	t.Setenv("STRIPE_WEBHOOK_SECRET", "whsec_current")
-	t.Setenv("STRIPE_WEBHOOK_SECRET_PREVIOUS", "whsec_previous")
+func TestStripeWebhookSecrets_IncludesPreviousSecret(t *testing.T) {
+	stripeCfg := pkgconfig.StripeConfig{
+		WebhookSecret:         "whsec_current",
+		WebhookSecretPrevious: "whsec_previous",
+	}
 
-	got := stripeWebhookSecretsFromEnv()
+	got := stripeCfg.WebhookSecrets()
 	if len(got) != 2 {
 		t.Fatalf("expected 2 webhook secrets, got %d (%v)", len(got), got)
 	}

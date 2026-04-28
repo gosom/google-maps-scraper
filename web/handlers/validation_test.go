@@ -15,9 +15,9 @@ func validBody() map[string]interface{} {
 	return map[string]interface{}{
 		"name":        "test job",
 		"keywords":    []string{"pizza"},
-		"lang":        "en",
+		"language":    "en",
 		"depth":       5,
-		"reviews_max": 100,
+		"max_reviews": 100,
 		"max_results": 10,
 		"max_time":    60,
 	}
@@ -60,7 +60,7 @@ func TestAPIHandlers_Scrape_Validation(t *testing.T) {
 			body: map[string]interface{}{
 				"name":     "minimal",
 				"keywords": []string{"pizza"},
-				"lang":     "en",
+				"language": "en",
 			},
 			expectedStatus: http.StatusUnauthorized,
 		},
@@ -81,7 +81,7 @@ func TestAPIHandlers_Scrape_Validation(t *testing.T) {
 		},
 		{
 			name:           "Invalid Lang Length",
-			body:           cloneBody(map[string]interface{}{"lang": "eng"}),
+			body:           cloneBody(map[string]interface{}{"language": "eng"}),
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
@@ -112,12 +112,12 @@ func TestAPIHandlers_Scrape_Validation(t *testing.T) {
 		},
 		{
 			name:           "Valid ReviewsMax",
-			body:           cloneBody(map[string]interface{}{"reviews_max": 11}),
+			body:           cloneBody(map[string]interface{}{"max_reviews": 11}),
 			expectedStatus: http.StatusUnauthorized,
 		},
 		{
 			name:           "Invalid ReviewsMax Negative",
-			body:           cloneBody(map[string]interface{}{"reviews_max": -1}),
+			body:           cloneBody(map[string]interface{}{"max_reviews": -1}),
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
@@ -127,22 +127,22 @@ func TestAPIHandlers_Scrape_Validation(t *testing.T) {
 		},
 		{
 			name:           "Missing Lang",
-			body:           dropKey("lang"),
+			body:           dropKey("language"),
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
 			name:           "Valid ReviewsMax 0",
-			body:           cloneBody(map[string]interface{}{"reviews_max": 0}),
+			body:           cloneBody(map[string]interface{}{"max_reviews": 0}),
 			expectedStatus: http.StatusUnauthorized,
 		},
 		{
 			name:           "Invalid ReviewsMax Above Cap",
-			body:           cloneBody(map[string]interface{}{"reviews_max": 501}),
+			body:           cloneBody(map[string]interface{}{"max_reviews": 501}),
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
 			name:           "Invalid ReviewsMax Legacy 9999",
-			body:           cloneBody(map[string]interface{}{"reviews_max": 9999}),
+			body:           cloneBody(map[string]interface{}{"max_reviews": 9999}),
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
@@ -181,13 +181,13 @@ func TestAPIHandlers_Scrape_Validation(t *testing.T) {
 		// TestValidateJobData_RejectsMaxTimeAboveCap instead.
 		{
 			name:           "Valid ImagesMax",
-			body:           cloneBody(map[string]interface{}{"images_max": 5000}),
+			body:           cloneBody(map[string]interface{}{"max_images": 5000}),
 			expectedStatus: http.StatusUnauthorized,
 		},
 		{
-			// After Task 2.4: images_max ceiling bumped 20k → 40k.
+			// After Task 2.4: max_images ceiling bumped 20k → 40k.
 			name:           "Invalid ImagesMax Above Cap",
-			body:           cloneBody(map[string]interface{}{"images_max": 40001}),
+			body:           cloneBody(map[string]interface{}{"max_images": 40001}),
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
@@ -214,6 +214,18 @@ func TestAPIHandlers_Scrape_Validation(t *testing.T) {
 	}
 }
 
+// validEstimateBody returns a baseline estimate request body.
+// estimateRequest has a different shape than apiScrapeRequest (no "name",
+// no "max_time"), so it needs its own helper.
+func validEstimateBody() map[string]interface{} {
+	return map[string]interface{}{
+		"keywords":    []string{"pizza"},
+		"depth":       5,
+		"max_reviews": 100,
+		"max_results": 10,
+	}
+}
+
 func TestAPIHandlers_EstimateJobCost_Validation(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -221,19 +233,26 @@ func TestAPIHandlers_EstimateJobCost_Validation(t *testing.T) {
 		expectedStatus int
 	}{
 		{
-			name: "Valid Request",
-			body: validBody(),
-			// Expect 401 because validation passes but auth is missing
+			name:           "Valid Request",
+			body:           validEstimateBody(),
 			expectedStatus: http.StatusUnauthorized,
 		},
 		{
-			name:           "Missing Name",
-			body:           dropKey("name"),
+			name: "Missing Keywords",
+			body: func() map[string]interface{} {
+				b := validEstimateBody()
+				delete(b, "keywords")
+				return b
+			}(),
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name:           "Invalid Keywords",
-			body:           cloneBody(map[string]interface{}{"keywords": []string{}}),
+			name: "Invalid Keywords",
+			body: func() map[string]interface{} {
+				b := validEstimateBody()
+				b["keywords"] = []string{}
+				return b
+			}(),
 			expectedStatus: http.StatusBadRequest,
 		},
 	}

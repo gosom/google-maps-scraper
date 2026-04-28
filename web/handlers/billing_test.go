@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -23,9 +24,10 @@ import (
 // config.Service hits the env-override path and never touches the nil DB.
 func newBillingHandlersForTest() *BillingHandlers {
 	cfgSvc := config.New(nil)
-	billingSvc := billing.New(nil, cfgSvc, "", nil, nil)
+	billingSvc := billing.New(nil, cfgSvc, "", nil, nil, slog.Default())
 	return &BillingHandlers{
 		Deps: Dependencies{
+			Logger:     slog.Default(),
 			BillingSvc: billingSvc,
 			Auth:       &auth.AuthMiddleware{},
 		},

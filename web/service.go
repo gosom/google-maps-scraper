@@ -2,23 +2,34 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gosom/google-maps-scraper/models"
 	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	"github.com/gosom/google-maps-scraper/s3uploader"
 )
 
+// S3Object is the minimal contract the web Service needs from an object
+// store. Defined here (consumer-side) so the Service can be tested with a
+// stub and remains decoupled from the concrete s3uploader implementation.
+type S3Object interface {
+	Upload(ctx context.Context, bucketName, key string, body io.Reader, contentType string) (*s3uploader.UploadResult, error)
+	Download(ctx context.Context, bucketName, key string) (io.ReadCloser, error)
+	PresignGet(ctx context.Context, bucketName, key string, ttl time.Duration) (string, error)
+}
+
 type Service struct {
 	repo        JobRepository
 	dataFolder  string
 	jobFileRepo models.JobFileRepository
-	s3Uploader  *s3uploader.Uploader
+	s3Uploader  S3Object
 	s3Bucket    string
 }
 
@@ -30,9 +41,9 @@ func NewService(repo JobRepository, dataFolder string) *Service {
 }
 
 // SetS3Config sets the S3 configuration for the service
-func (s *Service) SetS3Config(jobFileRepo models.JobFileRepository, s3Uploader *s3uploader.Uploader, s3Bucket string) {
+func (s *Service) SetS3Config(jobFileRepo models.JobFileRepository, s3 S3Object, s3Bucket string) {
 	s.jobFileRepo = jobFileRepo
-	s.s3Uploader = s3Uploader
+	s.s3Uploader = s3
 	s.s3Bucket = s3Bucket
 }
 
@@ -142,15 +153,25 @@ func (s *Service) GetCSVReader(ctx context.Context, id string) (io.ReadCloser, s
 					slog.String("bucket", jobFile.BucketName),
 					slog.String("object_key", jobFile.ObjectKey),
 				)
-				reader, err := s.s3Uploader.Download(ctx, jobFile.BucketName, jobFile.ObjectKey)
+				// 2-minute per-call timeout caps the worst case for hung S3
+				// connections. NOTE: cannot defer cancel here — the returned
+				// reader streams after this function returns. Tie cancel to
+				// the reader's Close via cancelOnClose below.
+				dlCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+				reader, err := s.s3Uploader.Download(dlCtx, jobFile.BucketName, jobFile.ObjectKey)
 				if err == nil {
 					fileName := id + ".csv"
 					log.Debug("get_csv_reader_s3_download_success", slog.String("job_id", id))
-					return reader, fileName, nil
+					return &cancelOnClose{ReadCloser: reader, cancel: cancel}, fileName, nil
 				}
-				// If S3 download fails, fall through to local filesystem
+				cancel()
+				// If S3 download fails, fall through to local filesystem.
+				// s3uploader no longer logs on error (single-handling rule);
+				// this is the only place the failure surfaces.
 				log.Warn("get_csv_reader_s3_download_failed",
 					slog.String("job_id", id),
+					slog.String("bucket", jobFile.BucketName),
+					slog.String("object_key", jobFile.ObjectKey),
 					slog.Any("error", err),
 				)
 			} else {
@@ -183,6 +204,23 @@ func (s *Service) GetCSVReader(ctx context.Context, id string) (io.ReadCloser, s
 
 	fileName := filepath.Base(datapath)
 	return file, fileName, nil
+}
+
+// GetCSVPresignedURL returns a short-lived presigned URL the client can use
+// to download the CSV directly from S3/Spaces, bypassing the backend stream.
+// Ownership is enforced via the repo.Get call (scoped by userID).
+func (s *Service) GetCSVPresignedURL(ctx context.Context, id, userID string, ttl time.Duration) (string, error) {
+	if _, err := s.repo.Get(ctx, id, userID); err != nil {
+		return "", err
+	}
+	if s.jobFileRepo == nil || s.s3Uploader == nil || s.s3Bucket == "" {
+		return "", errors.New("s3 not configured")
+	}
+	jobFile, err := s.jobFileRepo.GetByJobID(ctx, id, models.JobFileTypeCSV)
+	if err != nil || jobFile.Status != models.JobFileStatusAvailable {
+		return "", errors.New("job file not available")
+	}
+	return s.s3Uploader.PresignGet(ctx, jobFile.BucketName, jobFile.ObjectKey, ttl)
 }
 
 // GetCSV returns the local file path for the CSV file (legacy method for backward compatibility)
@@ -255,3 +293,23 @@ func (s *Service) Cancel(ctx context.Context, id string, userID string) error {
 
 	return nil
 }
+
+// cancelOnClose wraps an io.ReadCloser so the per-call download timeout's
+// cancel func runs when the consumer closes the reader. This keeps the
+// timeout context alive for the entire stream lifetime (which outlives the
+// GetCSVReader function), then releases context resources at Close.
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnClose) Close() error {
+	err := c.ReadCloser.Close()
+	c.cancel()
+	return err
+}
+
+// Compile-time check that the concrete uploader satisfies the consumer-side
+// interface. If s3uploader.Uploader's method set drifts from S3Object, this
+// fails at build time rather than at the first runtime call.
+var _ S3Object = (*s3uploader.Uploader)(nil)

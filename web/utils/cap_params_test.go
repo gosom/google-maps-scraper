@@ -41,8 +41,8 @@ func TestCapConstants_DefaultsWithinCaps(t *testing.T) {
 		min, def, max int
 	}{
 		"max_results": {1, DefaultMaxResults, CapMaxResults},
-		"reviews_max": {0, DefaultReviewsMax, CapReviewsMax},
-		"images_max":  {0, DefaultImagesMaxTotal, CapImagesMaxTotal},
+		"max_reviews": {0, DefaultReviewsMax, CapReviewsMax},
+		"max_images":  {0, DefaultImagesMaxTotal, CapImagesMaxTotal},
 		"depth":       {1, DefaultDepth, CapDepth},
 		"radius":      {0, DefaultRadiusMeters, CapRadiusMeters},
 		"max_time":    {60, DefaultMaxTimeSeconds, CapMaxTimeSeconds},

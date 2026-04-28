@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
 
@@ -50,6 +51,9 @@ func (m *mockAdminJobService) GetCSV(_ context.Context, _ string) (string, error
 func (m *mockAdminJobService) GetCSVReader(_ context.Context, _ string) (io.ReadCloser, string, error) {
 	return nil, "", nil
 }
+func (m *mockAdminJobService) GetCSVPresignedURL(_ context.Context, _, _ string, _ time.Duration) (string, error) {
+	return "", nil
+}
 
 // ---------------------------------------------------------------------------
 // Happy-path tests
@@ -64,7 +68,7 @@ func TestAdminCreateJob_SetsAdminSource(t *testing.T) {
 	body := map[string]interface{}{
 		"name":        "Berlin mass scrape",
 		"keywords":    []string{"restaurants in Berlin"},
-		"lang":        "de",
+		"language":    "de",
 		"depth":       10,
 		"max_time":    60,
 		"max_results": 100,
@@ -159,7 +163,7 @@ func TestAdminHandlers_RejectUnauthorized(t *testing.T) {
 
 	// Shared request body for CreateJob tests.
 	body := map[string]interface{}{
-		"name": "test", "keywords": []string{"test"}, "lang": "en", "depth": 1,
+		"name": "test", "keywords": []string{"test"}, "language": "en", "depth": 1,
 	}
 	bodyBytes, _ := json.Marshal(body)
 

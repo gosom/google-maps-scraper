@@ -63,7 +63,11 @@ func (r *jobWebhookDeliveryRepository) MarkDelivered(ctx context.Context, jobID,
 	if err != nil {
 		return err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
 		return models.ErrDeliveryNotFound
 	}
 	return nil
@@ -79,7 +83,11 @@ func (r *jobWebhookDeliveryRepository) MarkFailed(ctx context.Context, jobID, we
 	if err != nil {
 		return err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
 		return models.ErrDeliveryNotFound
 	}
 	return nil
@@ -170,7 +178,11 @@ func (r *jobWebhookDeliveryRepository) SetNextRetry(ctx context.Context, jobID, 
 	if err != nil {
 		return err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
 		return models.ErrDeliveryNotFound
 	}
 	return nil

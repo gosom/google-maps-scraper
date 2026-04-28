@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,7 +22,9 @@ import (
 	"github.com/gosom/google-maps-scraper/gmaps"
 	"github.com/gosom/google-maps-scraper/internal/crypto/aesutil"
 	"github.com/gosom/google-maps-scraper/models"
+	pkgconfig "github.com/gosom/google-maps-scraper/pkg/config"
 	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
+	"github.com/gosom/google-maps-scraper/pkg/metrics"
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/proxy"
 	"github.com/gosom/google-maps-scraper/runner"
@@ -58,40 +59,6 @@ type leakTracker struct {
 	// count tracks the total number of leaked mate goroutines for observability.
 	// Incremented atomically each time a mate.Start goroutine cannot be joined.
 	count atomic.Int64
-}
-
-func parseCSVEnv(raw string) []string {
-	parts := strings.Split(raw, ",")
-	values := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part != "" {
-			values = append(values, part)
-		}
-	}
-	return values
-}
-
-func stripeWebhookSecretsFromEnv() []string {
-	// A small ordered slice is intentional here: we want deterministic
-	// verification order (active secret first, previous secret second) and the
-	// expected rotation cardinality is tiny.
-	secrets := make([]string, 0, 2)
-	appendIfMissing := func(secret string) {
-		secret = strings.TrimSpace(secret)
-		if secret == "" {
-			return
-		}
-		for _, existing := range secrets {
-			if existing == secret {
-				return
-			}
-		}
-		secrets = append(secrets, secret)
-	}
-	appendIfMissing(os.Getenv("STRIPE_WEBHOOK_SECRET"))
-	appendIfMissing(os.Getenv("STRIPE_WEBHOOK_SECRET_PREVIOUS"))
-	return secrets
 }
 
 // track registers the result channel of an abandoned mate.Start goroutine.
@@ -150,6 +117,7 @@ type webrunner struct {
 	srv                 *web.Server
 	svc                 *web.Service
 	cfg                 *runner.Config
+	appCfg              *pkgconfig.Config
 	db                  *sql.DB
 	billingSvc          *billing.Service
 	proxyPool           *proxy.Pool
@@ -165,63 +133,24 @@ type webrunner struct {
 	lc    lifecycle
 }
 
-// buildServerConfig loads integration settings from environment, enforces required
-// dependencies (Clerk), and constructs the web.ServerConfig in a single place.
-// Stripe settings are optional; if present, they are applied.
-func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.ServerConfig, error) {
-	clerkSecretKey := os.Getenv("CLERK_SECRET_KEY")
-	stripeAPIKey := os.Getenv("STRIPE_SECRET_KEY")
-	stripeWebhookSecrets := stripeWebhookSecretsFromEnv()
-	stripeWebhookAllowedCIDRs := parseCSVEnv(os.Getenv("STRIPE_WEBHOOK_ALLOWED_CIDRS"))
-
-	if clerkSecretKey == "" {
-		slog.Error("clerk_secret_key_missing", slog.String("detail", "CLERK_SECRET_KEY is required but missing"))
-		return web.ServerConfig{}, fmt.Errorf("CLERK_SECRET_KEY environment variable is required")
-	}
-
-	isProduction := strings.TrimSpace(os.Getenv("APP_ENV")) == "production"
-
-	if isProduction {
-		var missing []string
-		if stripeAPIKey == "" {
-			missing = append(missing, "STRIPE_SECRET_KEY")
-		}
-		if len(stripeWebhookSecrets) == 0 {
-			missing = append(missing, "STRIPE_WEBHOOK_SECRET")
-		}
-		if os.Getenv("ALLOWED_ORIGINS") == "" {
-			missing = append(missing, "ALLOWED_ORIGINS")
-		}
-		// ENCRYPTION_KEY is required in production to prevent integration
-		// credentials from being stored as plaintext in the user_integrations
-		// table. web/web.go silently downgrades to plaintext storage with a
-		// WARN log if this is empty — fine for local dev, dangerous in prod.
-		// (S-C5, audit M-7)
-		if os.Getenv("ENCRYPTION_KEY") == "" {
-			missing = append(missing, "ENCRYPTION_KEY")
-		}
-		if len(missing) > 0 {
-			return web.ServerConfig{}, fmt.Errorf("production mode requires these environment variables: %s", strings.Join(missing, ", "))
-		}
-	}
+// buildServerConfig constructs the web.ServerConfig from the typed *pkgconfig.Config
+// and the runner's CLI-flag Config. Production validation was already performed by
+// pkgconfig.Load() → Validate(), so no duplicate checks are needed here.
+func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service, appCfg *pkgconfig.Config, logger *slog.Logger) (web.ServerConfig, error) {
+	stripeWebhookSecrets := appCfg.Stripe.WebhookSecrets()
+	stripeWebhookAllowedCIDRs := appCfg.Stripe.WebhookAllowedCIDRs
 
 	userRepo := postgres.NewUserRepository(db)
 	apiKeyRepo := postgres.NewAPIKeyRepository(db)
 	webhookConfigRepo := postgres.NewWebhookConfigRepository(db)
 	webhookDeliveryRepo := postgres.NewJobWebhookDeliveryRepository(db)
-	apiKeyServerSecret := []byte(os.Getenv("API_KEY_SERVER_SECRET"))
 
 	// Validate API_KEY_SERVER_SECRET: when API key auth is enabled (apiKeyRepo != nil),
 	// an empty or short secret silently disables API key authentication in the auth
 	// middleware (which checks len(serverSecret) > 0). Require ≥ 32 bytes to prevent
 	// this silent misconfiguration trap (TOCTOU between "repo exists" and "secret exists").
-	if apiKeyRepo != nil && len(apiKeyServerSecret) < 32 {
-		return web.ServerConfig{}, fmt.Errorf("API_KEY_SERVER_SECRET must be at least 32 bytes when API key auth is enabled (got %d bytes)", len(apiKeyServerSecret))
-	}
-
-	internalAddr := os.Getenv("INTERNAL_ADDR")
-	if internalAddr == "" {
-		internalAddr = ":9090"
+	if apiKeyRepo != nil && len(appCfg.APIKeyServerSecret) < 32 {
+		return web.ServerConfig{}, fmt.Errorf("API_KEY_SERVER_SECRET must be at least 32 bytes when API key auth is enabled (got %d bytes)", len(appCfg.APIKeyServerSecret))
 	}
 
 	serverCfg := web.ServerConfig{
@@ -232,37 +161,42 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service) (web.Se
 		APIKeyRepo:                apiKeyRepo,
 		WebhookConfigRepo:         webhookConfigRepo,
 		WebhookDeliveryRepo:       webhookDeliveryRepo,
-		ServerSecret:              apiKeyServerSecret,
-		ClerkSecretKey:            clerkSecretKey,
-		StripeAPIKey:              stripeAPIKey,
+		ServerSecret:              appCfg.APIKeyServerSecret,
+		ClerkSecretKey:            appCfg.ClerkSecretKey,
+		StripeAPIKey:              appCfg.Stripe.SecretKey,
 		StripeWebhookSecrets:      stripeWebhookSecrets,
 		StripeWebhookAllowedCIDRs: stripeWebhookAllowedCIDRs,
 		Version:                   cfg.Version,
-		InternalAddr:              internalAddr,
-		ResendAPIKey:              os.Getenv("RESEND_API_KEY"),
+		InternalAddr:              appCfg.InternalAddr,
+		ResendAPIKey:              appCfg.ResendAPIKey,
+		Environment:               appCfg.AppEnv,
+		Logger:                    logger,
+		GoogleConfig:              appCfg.Google,
+		EncryptionKey:             appCfg.EncryptionKey,
+		AllowedOrigins:            appCfg.AllowedOrigins,
 	}
 
 	slog.Info("auth_enabled", slog.String("provider", "clerk"))
-	if stripeAPIKey != "" {
+	if appCfg.Stripe.SecretKey != "" {
 		slog.Info("payment_enabled", slog.String("provider", "stripe"))
 	}
-	if stripeAPIKey != "" && len(stripeWebhookAllowedCIDRs) == 0 {
+	if appCfg.Stripe.SecretKey != "" && len(stripeWebhookAllowedCIDRs) == 0 {
 		slog.Warn("stripe_webhook_ip_allowlist_not_configured",
 			slog.String("detail", "Configure STRIPE_WEBHOOK_ALLOWED_CIDRS and enforce the same Stripe CIDRs at the edge for defense in depth"),
 		)
 	}
 
 	slog.Info("startup_config_summary",
-		slog.Bool("stripe_enabled", stripeAPIKey != ""),
+		slog.Bool("stripe_enabled", appCfg.Stripe.SecretKey != ""),
 		slog.Bool("stripe_webhook_ip_allowlist_configured", len(stripeWebhookAllowedCIDRs) > 0),
-		slog.Bool("production_mode", isProduction),
+		slog.Bool("production_mode", appCfg.AppEnv.IsProduction()),
 		slog.Bool("resend_enabled", serverCfg.ResendAPIKey != ""),
 	)
 
 	return serverCfg, nil
 }
 
-func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
+func New(cfg *runner.Config, appCfg *pkgconfig.Config, logger *slog.Logger) (runner.Runner, error) {
 	if cfg.DataFolder == "" {
 		return nil, fmt.Errorf("data folder is required")
 	}
@@ -274,24 +208,30 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 		return nil, err
 	}
 
+	if !strings.Contains(cfg.Dsn, "sslmode=disable") {
+		if strings.Contains(cfg.Dsn, "sslmode=require") && !strings.Contains(cfg.Dsn, "sslmode=verify") {
+			logger.Warn("db_tls_not_verified",
+				slog.String("detail", "sslmode=require encrypts but does not verify the server certificate — vulnerable to MITM. Use sslmode=verify-full with sslrootcert for production."),
+			)
+		}
+	}
+
 	var repo web.JobRepository
-	var err error
 	db, err := sql.Open("pgx", cfg.Dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to PostgreSQL: %w", err)
 	}
 
-	// connection pool settings — configurable via env vars
-	maxOpen := envInt("DB_MAX_OPEN_CONNS", 25)
-	if maxOpen == 0 {
+	// connection pool settings — read from typed config (defaults applied by pkg/config)
+	if appCfg.DB.MaxOpenConns == 0 {
 		return nil, fmt.Errorf("DB_MAX_OPEN_CONNS=0 creates unbounded pool — refusing to start")
 	}
-	maxIdle := envInt("DB_MAX_IDLE_CONNS", 10)
-	connMaxLifetime := envDuration("DB_CONN_MAX_LIFETIME", 5*time.Minute)
-	db.SetMaxOpenConns(maxOpen)
-	db.SetMaxIdleConns(maxIdle)
-	db.SetConnMaxLifetime(connMaxLifetime)
-	db.SetConnMaxIdleTime(2 * time.Minute)
+	db.SetMaxOpenConns(appCfg.DB.MaxOpenConns)
+	db.SetMaxIdleConns(appCfg.DB.MaxIdleConns)
+	db.SetConnMaxLifetime(appCfg.DB.ConnMaxLifetime)
+	db.SetConnMaxIdleTime(appCfg.DB.ConnMaxIdleTime)
+
+	metrics.RegisterDBPoolCollector(db, nil)
 
 	// Startup validation: verify DB connectivity with a 10-second timeout before
 	// the HTTP server starts accepting traffic. This ensures the container/process
@@ -304,13 +244,23 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 		}
 	}
 
-	// Run database migrations automatically on startup with meaningful logs
-	mr := postgres.NewMigrationRunner(cfg.Dsn)
+	// Run database migrations using the direct PostgreSQL connection (not through
+	// PgBouncer). Migrations use pg_advisory_lock which is session-level and
+	// incompatible with PgBouncer Transaction mode.
+	//
+	// Production DSN format (DigitalOcean):
+	//   DSN (app, via PgBouncer):      ...host:25061/pool?sslmode=verify-full&sslrootcert=/etc/brezel/secrets/do-ca.crt&default_query_exec_mode=simple_protocol
+	//   MIGRATION_DSN (direct to PG):  ...host:25060/db?sslmode=verify-full&sslrootcert=/etc/brezel/secrets/do-ca.crt
+	migrationDSN := appCfg.MigrationDSN
+	if migrationDSN == "" {
+		migrationDSN = cfg.Dsn
+	}
+	mr := postgres.NewMigrationRunner(migrationDSN, logger)
 	if err := mr.RunMigrations(); err != nil {
 		return nil, fmt.Errorf("failed to run database migrations: %w", err)
 	}
 
-	repo, err = postgres.NewRepository(db)
+	repo, err = postgres.NewRepository(db, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PostgreSQL repository: %w", err)
 	}
@@ -321,7 +271,7 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 
 	// Build server config (enforces Clerk, applies Stripe if present)
 
-	serverCfg, err := buildServerConfig(cfg, db, svc)
+	serverCfg, err := buildServerConfig(cfg, db, svc, appCfg, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -339,7 +289,7 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 	// shared, so we wire a real repo rather than nil.
 	cfgSvc := config.New(db)
 	billUserRepo := postgres.NewUserRepository(db)
-	billSvc := billing.New(db, cfgSvc, "", nil, billUserRepo)
+	billSvc := billing.New(db, cfgSvc, "", nil, billUserRepo, logger)
 	if billSvc != nil {
 		slog.Info("billing_service_initialized")
 	} else {
@@ -363,28 +313,37 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 	var s3Upload *s3uploader.Uploader
 	var s3BucketName string
 
-	awsAccessKey := os.Getenv("AWS_ACCESS_KEY_ID")
-	awsSecretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
-	awsRegion := os.Getenv("AWS_REGION")
-	s3BucketName = os.Getenv("S3_BUCKET_NAME")
+	s3BucketName = appCfg.S3BucketName
 
-	if awsAccessKey != "" && awsSecretKey != "" && awsRegion != "" && s3BucketName != "" {
+	if appCfg.AWS.AccessKeyID != "" && appCfg.AWS.SecretAccessKey != "" && appCfg.AWS.Region != "" && s3BucketName != "" {
 		var s3Err error
-		s3Upload, s3Err = s3uploader.New(awsAccessKey, awsSecretKey, awsRegion)
+		s3Upload, s3Err = s3uploader.New(
+			s3uploader.WithCredentials(appCfg.AWS.AccessKeyID, appCfg.AWS.SecretAccessKey),
+			s3uploader.WithRegion(appCfg.AWS.Region),
+			s3uploader.WithEndpoint(appCfg.AWS.Endpoint),
+			s3uploader.WithForcePathStyle(appCfg.AWS.ForcePathStyle),
+			s3uploader.WithServerSideEncryption(appCfg.AWS.SSEEnabled),
+			s3uploader.WithChecksumMode(s3uploader.ParseChecksumMode(appCfg.AWS.ChecksumMode)),
+			s3uploader.WithLogger(logger),
+			// Mirrors pkg/metrics/billing.go callers: nil registerer →
+			// prometheus.DefaultRegisterer; AlreadyRegisteredError is
+			// tolerated so repeated construction is safe.
+			s3uploader.WithMetrics(s3uploader.NewMetrics(nil)),
+		)
 		if s3Err != nil {
 			slog.Warn("s3_uploader_init_failed", slog.String("detail", "files will only be stored locally"), slog.Any("error", s3Err))
 		} else {
-			slog.Info("s3_uploader_initialized", slog.String("bucket", s3BucketName), slog.String("region", awsRegion))
+			slog.Info("s3_uploader_initialized", slog.String("bucket", s3BucketName), slog.String("region", appCfg.AWS.Region))
 		}
 	} else {
 		slog.Info("s3_not_configured", slog.String("detail", "files will only be stored locally"))
-		if awsAccessKey == "" {
+		if appCfg.AWS.AccessKeyID == "" {
 			slog.Info("s3_missing_env", slog.String("var", "AWS_ACCESS_KEY_ID"))
 		}
-		if awsSecretKey == "" {
+		if appCfg.AWS.SecretAccessKey == "" {
 			slog.Info("s3_missing_env", slog.String("var", "AWS_SECRET_ACCESS_KEY"))
 		}
-		if awsRegion == "" {
+		if appCfg.AWS.Region == "" {
 			slog.Info("s3_missing_env", slog.String("var", "AWS_REGION"))
 		}
 		if s3BucketName == "" {
@@ -392,13 +351,29 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 		}
 	}
 
-	if strings.TrimSpace(os.Getenv("APP_ENV")) == "production" && s3Upload == nil {
+	if appCfg.AppEnv.IsProduction() && s3Upload == nil {
 		return nil, fmt.Errorf("S3 credentials are required when APP_ENV=production")
+	}
+
+	// HeadBucket preflight: fail fast on bad creds, typo'd bucket, or wrong
+	// endpoint. In production this is fatal; in dev/staging we warn so local
+	// runs without working S3 don't fail-loop on startup.
+	if s3Upload != nil && s3BucketName != "" {
+		preflightCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := s3Upload.VerifyBucket(preflightCtx, s3BucketName); err != nil {
+			if appCfg.AppEnv.IsProduction() {
+				return nil, fmt.Errorf("S3 preflight failed: %w", err)
+			}
+			slog.Warn("s3_preflight_failed_dev_continuing", slog.Any("error", err))
+		} else {
+			slog.Info("s3_preflight_ok", slog.String("bucket", s3BucketName))
+		}
 	}
 
 	slog.Info("startup_feature_summary",
 		slog.Bool("s3_enabled", s3Upload != nil),
-		slog.String("app_env", os.Getenv("APP_ENV")),
+		slog.String("app_env", appCfg.AppEnv.String()),
 	)
 
 	// Initialize job file repository
@@ -416,7 +391,7 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 	// Initialize Google cookies for authenticated scraping (reviews access)
 	cookiesFile := cfg.CookiesFile
 	if cookiesFile == "" {
-		cookiesFile = os.Getenv("GOOGLE_COOKIES_FILE")
+		cookiesFile = appCfg.Google.CookiesFile
 	}
 	if cookiesFile != "" {
 		gmaps.SetCookiesFile(cookiesFile)
@@ -429,6 +404,7 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 		srv:                 srv,
 		svc:                 svc,
 		cfg:                 cfg,
+		appCfg:              appCfg,
 		db:                  db,
 		billingSvc:          billSvc,
 		proxyPool:           proxyPool,
@@ -447,12 +423,9 @@ func New(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
 func (w *webrunner) Run(ctx context.Context) error {
 	egroup, ctx := errgroup.WithContext(ctx)
 
-	// Start stuck-job reaper in its own goroutine. Reads interval and timeout
-	// from env vars STUCK_JOB_CHECK_INTERVAL_MINUTES (default 10) and
-	// STUCK_JOB_TIMEOUT_HOURS (default 4).
-	stuckCheckMins := envInt("STUCK_JOB_CHECK_INTERVAL_MINUTES", 10)
-	stuckTimeoutHours := envInt("STUCK_JOB_TIMEOUT_HOURS", 4)
-	checkInterval := time.Duration(stuckCheckMins) * time.Minute
+	// Start stuck-job reaper in its own goroutine.
+	checkInterval := time.Duration(w.appCfg.StuckJobCheckIntervalMinutes) * time.Minute
+	stuckTimeoutHours := w.appCfg.StuckJobTimeoutHours
 	w.lc.bgWg.Add(1)
 	go func() {
 		defer w.lc.bgWg.Done()
@@ -462,7 +435,7 @@ func (w *webrunner) Run(ctx context.Context) error {
 	// Start webhook delivery worker goroutine: polls for pending webhook
 	// deliveries and sends HTTP callbacks to user-registered endpoints.
 	if w.webhookDeliveryRepo != nil && w.webhookConfigRepo != nil {
-		jobRepo, repoErr := postgres.NewRepository(w.db)
+		jobRepo, repoErr := postgres.NewRepository(w.db, w.logger)
 		if repoErr != nil {
 			w.logger.Error("webhook_worker_repo_init_failed", slog.Any("error", repoErr))
 		} else {
@@ -485,9 +458,9 @@ func (w *webrunner) Run(ctx context.Context) error {
 	}
 
 	// Webhook event cleanup goroutine: removes processed_webhook_events older than
-	// WEBHOOK_EVENT_RETENTION_DAYS (default 90) in daily batches.
+	// WebhookEventRetentionDays in daily batches.
 	if w.billingSvc != nil {
-		retentionDays := envInt("WEBHOOK_EVENT_RETENTION_DAYS", 90)
+		retentionDays := w.appCfg.WebhookEventRetentionDays
 		w.lc.bgWg.Add(1)
 		go func() {
 			defer w.lc.bgWg.Done()
@@ -888,27 +861,27 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		coords = job.Data.Lat + "," + job.Data.Lon
 	}
 
-	// Per-job total image budget. When ImagesMax > 0, every PlaceJob in
+	// Per-job total image budget. When MaxImages > 0, every PlaceJob in
 	// this scrape job shares this counter; once exhausted, image extraction
 	// is skipped for the remaining places (place metadata, reviews, and
 	// contact details continue to scrape — only image extraction stops).
 	// See gmaps.PlaceJob.extractImages for the enforcement logic.
 	var imageBudget *atomic.Int64
-	if job.Data.ImagesMax > 0 {
+	if job.Data.MaxImages > 0 {
 		imageBudget = &atomic.Int64{}
-		imageBudget.Store(int64(job.Data.ImagesMax))
+		imageBudget.Store(int64(job.Data.MaxImages))
 	}
 
 	seedJobs, err := runner.CreateSeedJobs(runner.SeedJobConfig{
 		FastMode:       job.Data.FastMode,
-		LangCode:       job.Data.Lang,
+		LangCode:       job.Data.Language,
 		Input:          strings.NewReader(strings.Join(job.Data.Keywords, "\n")),
 		MaxDepth:       job.Data.Depth,
-		Email:          job.Data.Email,
-		Images:         job.Data.ImagesMax > 0,
+		IncludeEmails:  job.Data.IncludeEmails,
+		Images:         job.Data.MaxImages > 0,
 		ImageBudget:    imageBudget,
 		Debug:          w.cfg.Debug,
-		ReviewsMax:     job.Data.ReviewsMax,
+		ReviewsMax:     job.Data.MaxReviews,
 		GeoCoordinates: coords,
 		Zoom:           job.Data.Zoom,
 		Radius: func() float64 {
@@ -919,7 +892,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		}(),
 		Dedup:        dedup,
 		ExitMonitor:  exitMonitor,
-		ExtraReviews: job.Data.ReviewsMax > 0,
+		ExtraReviews: job.Data.MaxReviews > 0,
 		MaxResults:   job.Data.MaxResults,
 	})
 	if err != nil {
@@ -1311,10 +1284,17 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		job.Status = web.StatusCompleted
 		w.logger.Debug("status_set_ok", slog.String("job_id", job.ID))
 
-		// Upload CSV to S3 and save metadata if S3 is configured
-		// File is now fully closed and flushed to disk, safe to upload
+		// Upload CSV to S3 and save metadata if S3 is configured.
+		// File is now fully closed and flushed to disk, safe to upload.
+		// uploadToS3AndSaveMetadata logs the specific failure mode
+		// (s3_upload_failed / s3_db_record_creation_failed) at Error with
+		// bucket+object_key context. Per the single-handling-rule we do
+		// NOT re-log the wrapped error here — emit a Warn audit line so
+		// operators can still query "jobs kept successful despite S3
+		// failure" without duplicating the Error.
 		if err := w.uploadToS3AndSaveMetadata(ctx, job, outpath); err != nil {
-			w.logger.Error("s3_upload_failed", slog.String("job_id", job.ID), slog.Any("error", err), slog.String("detail", "job still marked as successful"))
+			_ = err // already logged at Error inside uploadToS3AndSaveMetadata
+			w.logger.Warn("s3_upload_skipped_job_kept_successful", slog.String("job_id", job.ID))
 			// Don't fail the job due to S3 upload failure - the scraping was successful
 			// The CSV file will remain on local storage
 		}
@@ -1479,16 +1459,25 @@ func (w *webrunner) uploadToS3AndSaveMetadata(ctx context.Context, job *web.Job,
 	// Construct S3 object key: users/{user_id}/jobs/{job_id}.csv
 	objectKey := fmt.Sprintf("users/%s/jobs/%s.csv", job.UserID, job.ID)
 
-	// Upload to S3 with proper Content-Type (including charset) and capture response
-	// CRITICAL: Upload FIRST, then create database record only if upload succeeds
-	result, err := w.s3Uploader.Upload(ctx, w.s3Bucket, objectKey, file, "text/csv; charset=utf-8")
+	// Upload to S3 with proper Content-Type (including charset) and capture response.
+	// CRITICAL: Upload FIRST, then create database record only if upload succeeds.
+	// 2-minute per-call timeout caps the worst case for hung S3 connections so a
+	// single bad request can't tie up a goroutine indefinitely (CSVs are MB-scale).
+	uploadCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	result, err := w.s3Uploader.Upload(uploadCtx, w.s3Bucket, objectKey, file, "text/csv; charset=utf-8")
 	if err != nil {
-		w.logger.Error("s3_upload_failed", slog.String("job_id", job.ID), slog.Any("error", err))
+		w.logger.Error("s3_upload_failed",
+			slog.String("job_id", job.ID),
+			slog.String("bucket", w.s3Bucket),
+			slog.String("object_key", objectKey),
+			slog.Any("error", err))
 		return fmt.Errorf("S3 upload failed: %w", err)
 	}
 
-	// Capture ETag from S3 response
-	w.logger.Info("s3_upload_successful", slog.String("job_id", job.ID), slog.String("bucket", w.s3Bucket), slog.String("key", objectKey), slog.Int64("size_bytes", fileSize))
+	// Capture ETag from S3 response. Debug-level: s3uploader already logs at
+	// debug, this carries job_id for correlation. Net: zero Info per success.
+	w.logger.Debug("s3_upload_successful", slog.String("job_id", job.ID), slog.String("bucket", w.s3Bucket), slog.String("key", objectKey), slog.Int64("size_bytes", fileSize))
 
 	// Only NOW create database record after confirmed S3 upload success
 	// This prevents orphaned "uploading" records if upload fails
@@ -1526,25 +1515,4 @@ func (w *webrunner) uploadToS3AndSaveMetadata(ctx context.Context, job *web.Job,
 	}
 
 	return nil
-}
-
-// envInt reads an integer env var, returning defaultVal if unset or invalid.
-func envInt(key string, defaultVal int) int {
-	if s := os.Getenv(key); s != "" {
-		if v, err := strconv.Atoi(s); err == nil {
-			return v
-		}
-	}
-	return defaultVal
-}
-
-// envDuration reads a time.Duration env var (e.g. "5m", "30s"), returning
-// defaultVal if unset or invalid.
-func envDuration(key string, defaultVal time.Duration) time.Duration {
-	if s := os.Getenv(key); s != "" {
-		if d, err := time.ParseDuration(s); err == nil {
-			return d
-		}
-	}
-	return defaultVal
 }

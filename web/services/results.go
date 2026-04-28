@@ -6,11 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
 	"strconv"
 
 	"github.com/gosom/google-maps-scraper/models"
-	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 )
 
 type ResultsService struct {
@@ -18,10 +16,10 @@ type ResultsService struct {
 	log *slog.Logger
 }
 
-func NewResultsService(db *sql.DB) *ResultsService {
+func NewResultsService(db *sql.DB, logger *slog.Logger) *ResultsService {
 	return &ResultsService{
 		db:  db,
-		log: pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "results"),
+		log: logger.With(slog.String("component", "results")),
 	}
 }
 

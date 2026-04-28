@@ -48,3 +48,41 @@ jobs:
       
       - name: Go Build
         run: go build -o brezel-api .
+
+      - name: Enforce env-config boundary
+        run: |
+          set -e
+          # Strategy A path-based exclusion:
+          #   pkg/config/          — canonical env reader (caarlos0/env)
+          #   config/config.go     — DB-backed dynamic config with env override (deliberate design)
+          #   pkg/appenv/appenv.go — appenv docstring references literal strings
+          #   runner/runner.go     — CLI flag-driven path (DSN, CONCURRENCY, PROXIES, …)
+          #   web/handlers/version.go — build metadata helper (GIT_COMMIT, BUILD_DATE, …)
+          #   web/scrape.go        — parallel-scraper getEnv helper for live Config fields
+          # Inline comment lines (: //) are excluded to avoid false positives from explanatory comments.
+          direct=$(grep -rn 'os\.Getenv\|os\.LookupEnv' --include='*.go' --exclude-dir='.claude' . \
+            | grep -v '_test.go' \
+            | grep -v ':[[:space:]]*//' \
+            | grep -v 'pkg/config/' \
+            | grep -v 'pkg/appenv/appenv\.go' \
+            | grep -v 'runner/runner\.go' \
+            | grep -v 'web/handlers/version\.go' \
+            | grep -v 'config/config\.go' \
+            | grep -v 'web/scrape\.go' \
+            || true)
+
+          helpers=$(grep -rnE '\b(getEnv|getEnvOrDefault|envInt|envDuration|dbEnvInt|dbEnvDuration|parseCSVEnv|stripeWebhookSecretsFromEnv)\(' --include='*.go' --exclude-dir='.claude' . \
+            | grep -v '_test.go' \
+            | grep -v 'pkg/config/' \
+            | grep -v 'web/scrape\.go' \
+            | grep -v 'web/handlers/version\.go' \
+            || true)
+
+          if [ -n "$direct" ] || [ -n "$helpers" ]; then
+            echo "::error::Env access found outside pkg/config boundary:"
+            echo "DIRECT:"; echo "$direct"
+            echo "HELPERS:"; echo "$helpers"
+            exit 1
+          fi
+
+          echo "✅ env-config boundary intact"

@@ -9,8 +9,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -18,9 +16,10 @@ import (
 	"github.com/gosom/google-maps-scraper/config"
 	"github.com/gosom/google-maps-scraper/internal/crypto/aesutil"
 	"github.com/gosom/google-maps-scraper/models"
+	"github.com/gosom/google-maps-scraper/pkg/appenv"
+	pkgconfig "github.com/gosom/google-maps-scraper/pkg/config"
 	"github.com/gosom/google-maps-scraper/pkg/encryption"
 	"github.com/gosom/google-maps-scraper/pkg/googlesheets"
-	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	"github.com/gosom/google-maps-scraper/pkg/notify"
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/web/auth"
@@ -71,15 +70,35 @@ type ServerConfig struct {
 	// Example: ":9090". If empty, no internal listener is created.
 	InternalAddr string
 	ResendAPIKey string // Optional; if empty, support requests are logged instead of emailed
+	// Environment is parsed once from APP_ENV at startup (see pkg/appenv)
+	// and propagated through Dependencies into handlers. Replaces the
+	// previous APP_ENV / IS_PRODUCTION env-read pattern at handler layer.
+	Environment appenv.Environment
+	// Logger is the root structured logger injected from main via pkglogger.New.
+	// New() derives a per-component child via logger.With("component", "api").
+	Logger *slog.Logger
+	// GoogleConfig holds Google OAuth credentials read once at startup.
+	// Passed through to IntegrationHandler so per-request os.Getenv is eliminated.
+	GoogleConfig pkgconfig.GoogleConfig
+	// EncryptionKey is read once from pkg/config at startup. Eliminates
+	// the direct os.Getenv("ENCRYPTION_KEY") call inside web.New.
+	EncryptionKey string
+	// AllowedOrigins is read once from pkg/config at startup. Eliminates
+	// the direct os.Getenv("ALLOWED_ORIGINS") call inside web.New.
+	AllowedOrigins []string
 }
 
 func New(cfg ServerConfig) (*Server, error) {
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	ans := Server{
 		svc:      cfg.Service,
 		tmpl:     make(map[string]*template.Template),
 		db:       cfg.PgDB,
 		userRepo: cfg.UserRepo,
-		logger:   pkglogger.NewWithComponent(os.Getenv("LOG_LEVEL"), "api"),
+		logger:   logger.With(slog.String("component", "api")),
 		srv: &http.Server{
 			Addr:              cfg.Addr,
 			ReadHeaderTimeout: 10 * time.Second,
@@ -97,7 +116,7 @@ func New(cfg ServerConfig) (*Server, error) {
 	// Stripe Customer creation (the next checkout will lazy-create).
 	if cfg.StripeAPIKey != "" && cfg.PgDB != nil {
 		cfgSvc := config.New(cfg.PgDB)
-		ans.billingSvc = billing.New(cfg.PgDB, cfgSvc, cfg.StripeAPIKey, cfg.StripeWebhookSecrets, cfg.UserRepo)
+		ans.billingSvc = billing.New(cfg.PgDB, cfgSvc, cfg.StripeAPIKey, cfg.StripeWebhookSecrets, cfg.UserRepo, ans.logger)
 	}
 
 	// Initialize authentication middleware if Clerk secret key is provided
@@ -117,8 +136,8 @@ func New(cfg ServerConfig) (*Server, error) {
 	fileServer := http.FileServer(http.FS(staticFS))
 	router := mux.NewRouter()
 
-	// Initialize encryption once at startup
-	enc, err := encryption.New(os.Getenv("ENCRYPTION_KEY"))
+	// Initialize encryption once at startup (key injected via ServerConfig, not os.Getenv)
+	enc, err := encryption.New(cfg.EncryptionKey)
 	if err != nil {
 		return nil, fmt.Errorf("encryption init failed: %w", err)
 	}
@@ -141,11 +160,13 @@ func New(cfg ServerConfig) (*Server, error) {
 		ServerSecret:        cfg.ServerSecret,
 		WebhookKEK:          aesutil.DeriveKey(cfg.ServerSecret, "webhook-signing-key-encryption"),
 		PricingRuleRepo:     postgres.NewPricingRuleRepository(ans.db),
-		ResultsSvc:          webservices.NewResultsService(ans.db),
+		ResultsSvc:          webservices.NewResultsService(ans.db, ans.logger),
 		Encryptor:           enc,
 		IntegrationRepo:     postgres.NewIntegrationRepository(ans.db, enc),
 		GoogleSheetsSvc:     googlesheets.NewService(),
 		Version:             cfg.Version,
+		Environment:         cfg.Environment,
+		GoogleConfig:        cfg.GoogleConfig,
 	}
 	if ans.db != nil {
 		deps.ConcurrentLimitSvc = webservices.NewConcurrentLimitService(ans.db)
@@ -263,10 +284,11 @@ func New(cfg ServerConfig) (*Server, error) {
 	apiRouter.HandleFunc("/jobs/{id}", hg.API.DeleteJob).Methods(http.MethodDelete)
 	apiRouter.HandleFunc("/jobs/{id}/cancel", hg.API.CancelJob).Methods(http.MethodPost)
 	apiRouter.HandleFunc("/jobs/{id}/download", hg.Web.Download).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/jobs/{id}/download-url", hg.Web.DownloadURL).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/{id}/results", hg.API.GetJobResults).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/{id}/costs", hg.API.GetJobCosts).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/costs/batch", hg.API.GetBatchJobCosts).Methods(http.MethodPost)
-	apiRouter.HandleFunc("/jobs/estimate", hg.API.EstimateJobCost).Methods(http.MethodPost)
+	apiRouter.HandleFunc("/jobs/estimates", hg.API.EstimateJobCost).Methods(http.MethodPost)
 	apiRouter.HandleFunc("/results", hg.API.GetUserResults).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/dashboard", hg.API.GetDashboard).Methods(http.MethodGet)
 
@@ -356,18 +378,10 @@ func New(cfg ServerConfig) (*Server, error) {
 	}
 
 	// Apply security headers and CORS to all routes via middleware chain.
-	// ALLOWED_ORIGINS is a comma-separated list of permitted origins (e.g.
-	// "https://brezel.ai,https://www.brezel.ai"). If unset, only localhost
-	// origins are allowed (safe development default).
-	var allowedOrigins []string
-	if raw := os.Getenv("ALLOWED_ORIGINS"); raw != "" {
-		for _, o := range strings.Split(raw, ",") {
-			if trimmed := strings.TrimSpace(o); trimmed != "" {
-				allowedOrigins = append(allowedOrigins, trimmed)
-			}
-		}
-	}
-	handler := webmiddleware.Chain(router, webmiddleware.Recovery(ans.logger), webmiddleware.SecurityHeaders, webmiddleware.NewCORS(allowedOrigins))
+	// AllowedOrigins is injected via ServerConfig (parsed once at startup from
+	// ALLOWED_ORIGINS by pkg/config). If empty, only localhost origins are allowed
+	// (safe development default).
+	handler := webmiddleware.Chain(router, webmiddleware.Recovery(ans.logger), webmiddleware.SecurityHeaders, webmiddleware.NewCORS(cfg.AllowedOrigins))
 	ans.srv.Handler = handler
 
 	tmplsKeys := []string{

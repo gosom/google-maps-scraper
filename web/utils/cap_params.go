@@ -26,7 +26,7 @@ package utils
 // Cap parameter constants. Most caps are per-job (the value is a job-wide
 // limit on the request body). Two exceptions:
 //
-//   - CapReviewsMax is PER PLACE (a job with 100 places at reviews_max=500
+//   - CapReviewsMax is PER PLACE (a job with 100 places at max_reviews=500
 //     produces up to 50,000 reviews). The cap shape matches how reviews
 //     naturally cluster around individual businesses.
 //

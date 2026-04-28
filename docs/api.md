@@ -279,23 +279,34 @@ Returns the cost breakdown for a job.
 
 ### Estimate job cost
 
-`POST /api/v1/jobs/estimate`
+`POST /api/v1/jobs/estimates`
 
-Estimate cost before creating a job. Same request body as `POST /jobs`.
+Check how much a scraping job will cost before you create it. The request body only needs the
+parameters that affect cost (keywords, depth, enrichment toggles). Language is not needed.
+
+See `docs/api-reference/jobs.mdx` for the full parameter and response field reference.
 
 **Response:** `200 OK`
 
 ```json
 {
   "estimate": {
-    "total_estimated_cost": 0.21,
-    "estimated_places": 20,
-    "estimated_reviews": 0,
-    "estimated_images": 0,
-    ...
+    "object": "job_estimate",
+    "currency": "credits",
+    "places": 40,
+    "places_min": 20,
+    "places_max": 48,
+    "total": 0.127,
+    "total_min": 0.067,
+    "total_max": 0.151,
+    "breakdown": { "job_start_cost": 0.007, "places_cost": 0.12, "..." : "..." },
+    "unit_prices": { "job_start": 0.007, "place_scraped": 0.003, "..." : "..." },
+    "description": "Estimated ~40 places for 1 keyword at depth 5 (range: 20 to 48)."
   },
-  "current_credit_balance": 4.50,
-  "sufficient_balance": true
+  "balance": {
+    "current": 4.50,
+    "sufficient": true
+  }
 }
 ```
 
@@ -431,7 +442,7 @@ All errors return a JSON body:
 
 - **Concurrent job limit.** You can only run a limited number of jobs simultaneously. If you hit the limit, the API returns `429` with a `Retry-After: 60` header.
 
-- **Cost estimation.** Always call `POST /jobs/estimate` first to check if you have sufficient credits before creating a job.
+- **Cost estimation.** Always call `POST /jobs/estimates` first to check if you have sufficient credits before creating a job.
 
 - **Health check.** `GET /health` is unauthenticated and returns `{"status": "ok", "db": "ok", "version": "dev"}`.
 

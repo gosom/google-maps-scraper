@@ -6,11 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
-	"strconv"
 	"time"
 
 	"github.com/gosom/google-maps-scraper/models"
+	"github.com/shopspring/decimal"
 )
 
 // DefaultMaxConcurrentJobs is the cap applied when no per-user override exists.
@@ -108,13 +107,14 @@ func (s *ConcurrentLimitService) CreateJobWithLimit(ctx context.Context, job *mo
 	// Atomic credit balance check under the FOR UPDATE lock.
 	// Parse balance as string -> micro-credits for precise integer comparison.
 	if opts != nil && opts.EstimatedCost > 0 {
-		balanceFloat, parseErr := strconv.ParseFloat(balanceStr, 64)
+		balanceDec, parseErr := decimal.NewFromString(balanceStr)
 		if parseErr != nil {
 			return fmt.Errorf("concurrent_limit: parse credit balance: %w", parseErr)
 		}
-		balanceMicro := int64(math.Round(balanceFloat * models.MicroUnit))
-		costMicro := int64(math.Round(opts.EstimatedCost * models.MicroUnit))
+		balanceMicro := balanceDec.Mul(decimal.NewFromInt(models.MicroUnit)).IntPart()
+		costMicro := decimal.NewFromFloat(opts.EstimatedCost).Mul(decimal.NewFromInt(models.MicroUnit)).IntPart()
 		if balanceMicro < costMicro {
+			balanceFloat, _ := balanceDec.Float64()
 			return ErrInsufficientBalance{
 				Balance:        balanceFloat,
 				RequiredCost:   opts.EstimatedCost,

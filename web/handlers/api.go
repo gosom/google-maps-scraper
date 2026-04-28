@@ -5,19 +5,17 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"net/http"
-	"strconv"
 	"time"
 
+	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/web/auth"
 	webservices "github.com/gosom/google-maps-scraper/web/services"
 	webutils "github.com/gosom/google-maps-scraper/web/utils"
-
-	"github.com/go-playground/validator/v10"
+	"github.com/shopspring/decimal"
 )
 
 var validate = validator.New()
@@ -44,11 +42,28 @@ type apiScrapeRequest struct {
 	models.JobData
 }
 
-// jobEstimateResponse is the typed response for EstimateJobCost.
-type jobEstimateResponse struct {
-	Estimate             *webservices.CostEstimate `json:"estimate"`
-	CurrentCreditBalance float64                   `json:"current_credit_balance"`
-	SufficientBalance    bool                      `json:"sufficient_balance"`
+// estimateRequest is the request body for POST /api/v1/jobs/estimates.
+// MaxResults is a pointer so nil means "not set by user" (use depth-based
+// estimation), while a positive value means "user-provided hard cap".
+type estimateRequest struct {
+	Keywords      []string `json:"keywords" validate:"required,min=1,max=5,dive,min=1,max=200"`
+	Depth         int      `json:"depth" validate:"min=0,max=20"`
+	IncludeEmails bool     `json:"include_emails"`
+	MaxImages     *int     `json:"max_images,omitempty" validate:"omitempty,min=0,max=40000"`
+	MaxReviews    *int     `json:"max_reviews,omitempty" validate:"omitempty,min=0,max=500"`
+	MaxResults    *int     `json:"max_results,omitempty" validate:"omitempty,min=1,max=500"`
+}
+
+// estimateBalance is the nested balance sub-object in the estimate response.
+type estimateBalance struct {
+	Current    float64 `json:"current"`
+	Sufficient bool    `json:"sufficient"`
+}
+
+// estimateResponse is the typed response for EstimateJobCost.
+type estimateResponse struct {
+	Estimate *webservices.CostEstimate `json:"estimate"`
+	Balance  estimateBalance           `json:"balance"`
 }
 
 // apiScrape mirrors Server.apiScrape behavior
@@ -90,11 +105,11 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 			slog.String("user_id", userID),
 			slog.String("name", req.Name),
 			slog.Int("keywords", len(req.JobData.Keywords)),
-			slog.String("lang", req.JobData.Lang),
+			slog.String("language", req.JobData.Language),
 			slog.Int("depth", req.JobData.Depth),
-			slog.Bool("email", req.JobData.Email),
-			slog.Int("images_max", req.JobData.ImagesMax),
-			slog.Int("reviews_max", req.JobData.ReviewsMax),
+			slog.Bool("include_emails", req.JobData.IncludeEmails),
+			slog.Int("max_images", req.JobData.MaxImages),
+			slog.Int("max_reviews", req.JobData.MaxReviews),
 			slog.Int("max_results", req.JobData.MaxResults),
 			slog.String("lat", req.JobData.Lat),
 			slog.String("lon", req.JobData.Lon),
@@ -123,10 +138,29 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 	// a SELECT ... FOR UPDATE lock (see concurrent_limit.go).
 	var estimateOpts *webservices.JobLimitOpts
 	if h.Deps.DB != nil {
-		estimationSvc := webservices.NewEstimationService(h.Deps.DB, h.Deps.PricingRuleRepo)
+		estimationSvc := webservices.NewEstimationService(h.Deps.DB, h.Deps.PricingRuleRepo, h.Deps.Logger)
 
-		// Estimate job cost
-		estimate, err := estimationSvc.EstimateJobCost(r.Context(), &newJob.Data)
+		// Estimate job cost. 0 means "no cap" — pass nil so the
+		// estimator uses depth-based calculation.
+		var mrPtr, rvPtr, imPtr *int
+		if v := newJob.Data.MaxResults; v > 0 {
+			mrPtr = &v
+		}
+		if v := newJob.Data.MaxReviews; v > 0 {
+			rvPtr = &v
+		}
+		if v := newJob.Data.MaxImages; v > 0 {
+			imPtr = &v
+		}
+		estimate, err := estimationSvc.EstimateJobCost(
+			r.Context(),
+			newJob.Data.Keywords,
+			newJob.Data.Depth,
+			mrPtr,
+			newJob.Data.IncludeEmails,
+			rvPtr,
+			imPtr,
+		)
 		if err != nil {
 			if h.Deps.Logger != nil {
 				h.Deps.Logger.Error("job_cost_estimation_failed",
@@ -140,10 +174,10 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 		if h.Deps.Logger != nil {
 			h.Deps.Logger.Info("job_cost_estimate",
 				slog.String("user_id", userID),
-				slog.Float64("total_estimated_cost", estimate.TotalEstimatedCost),
-				slog.Int("estimated_places", estimate.EstimatedPlaces),
-				slog.Int("estimated_reviews", estimate.EstimatedReviews),
-				slog.Int("estimated_images", estimate.EstimatedImages),
+				slog.Float64("total", estimate.Total),
+				slog.Int("places", estimate.Places),
+				slog.Int("reviews", estimate.Reviews),
+				slog.Int("images", estimate.Images),
 			)
 		}
 
@@ -155,15 +189,15 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 			}
 			renderJSON(w, http.StatusPaymentRequired, models.APIError{
 				Code:    http.StatusPaymentRequired,
-				Message: "Failed to check balance",
+				Message: err.Error(),
 			})
 			return
 		}
 
 		// Pass the estimate to createJob for the authoritative transactional check.
 		estimateOpts = &webservices.JobLimitOpts{
-			EstimatedCost:   estimate.TotalEstimatedCost,
-			EstimatedPlaces: estimate.EstimatedPlaces,
+			EstimatedCost:   estimate.Total,
+			EstimatedPlaces: estimate.Places,
 		}
 	} else {
 		// If database is not available, log warning but allow job creation
@@ -508,7 +542,7 @@ func (h *APIHandlers) GetJobCosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cs := webservices.NewCostsService(h.Deps.DB)
+	cs := webservices.NewCostsService(h.Deps.DB, h.Deps.Logger)
 	resp, err := cs.GetJobCosts(r.Context(), jobID, userID)
 	if err != nil {
 		internalError(w, h.Deps.Logger, err, "failed to retrieve job costs",
@@ -588,7 +622,7 @@ func (h *APIHandlers) GetBatchJobCosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cs := webservices.NewCostsService(h.Deps.DB)
+	cs := webservices.NewCostsService(h.Deps.DB, h.Deps.Logger)
 	costs, err := cs.GetBatchJobCosts(r.Context(), validIDs)
 	if err != nil {
 		internalError(w, h.Deps.Logger, err, "failed to retrieve batch job costs",
@@ -622,9 +656,9 @@ func (h *APIHandlers) GetUserResults(w http.ResponseWriter, r *http.Request) {
 	renderJSON(w, http.StatusOK, results)
 }
 
-// EstimateJobCost returns the estimated cost for a job without creating it
+// EstimateJobCost returns the estimated cost for a job without creating it.
 func (h *APIHandlers) EstimateJobCost(w http.ResponseWriter, r *http.Request) {
-	var req apiScrapeRequest
+	var req estimateRequest
 	if err := decodeStrict(r, &req); err != nil {
 		if h.Deps.Logger != nil {
 			h.Deps.Logger.Error("json_decode_failed", slog.String("path", r.URL.Path), slog.Any("error", err))
@@ -633,10 +667,10 @@ func (h *APIHandlers) EstimateJobCost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Same default-fill semantic as Scrape — keep estimate and create
-	// behavior aligned so a user's estimated cost matches the cost they
-	// see if they submit the same payload as a real job.
-	webutils.ApplyJobDataDefaults(&req.JobData)
+	// Apply defaults for zero-valued optional fields.
+	if req.Depth == 0 {
+		req.Depth = webutils.DefaultDepth
+	}
 
 	if err := validate.Struct(req); err != nil {
 		renderJSON(w, http.StatusBadRequest, models.APIError{Code: http.StatusBadRequest, Message: formatValidationErrors(err)})
@@ -659,50 +693,58 @@ func (h *APIHandlers) EstimateJobCost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create estimation service
-	estimationSvc := webservices.NewEstimationService(h.Deps.DB, h.Deps.PricingRuleRepo)
-
-	// Estimate job cost
-	estimate, err := estimationSvc.EstimateJobCost(r.Context(), &req.JobData)
+	// Estimate cost.
+	estimationSvc := webservices.NewEstimationService(h.Deps.DB, h.Deps.PricingRuleRepo, h.Deps.Logger)
+	estimate, err := estimationSvc.EstimateJobCost(
+		r.Context(),
+		req.Keywords,
+		req.Depth,
+		req.MaxResults,
+		req.IncludeEmails,
+		req.MaxReviews,
+		req.MaxImages,
+	)
 	if err != nil {
 		if h.Deps.Logger != nil {
 			h.Deps.Logger.Error("job_cost_estimation_failed",
-				slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+				slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.Any("error", err))
 		}
 		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: "failed to estimate job cost"})
 		return
 	}
 
-	// Get user's current balance — scan as text and convert to micro-credits
-	// for precise integer comparison, avoiding IEEE 754 float rounding errors.
+	// Get user's current balance.
 	var balanceStr string
 	const query = `SELECT COALESCE(credit_balance, 0)::text FROM users WHERE id = $1`
 	if err := h.Deps.DB.QueryRowContext(r.Context(), query, userID).Scan(&balanceStr); err != nil {
 		if h.Deps.Logger != nil {
 			h.Deps.Logger.Error("credit_balance_fetch_failed",
-				slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+				slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.Any("error", err))
 		}
 		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: "failed to retrieve credit balance"})
 		return
 	}
-	balanceFloat, err := strconv.ParseFloat(balanceStr, 64)
+	balanceDec, err := decimal.NewFromString(balanceStr)
 	if err != nil {
 		if h.Deps.Logger != nil {
 			h.Deps.Logger.Error("credit_balance_parse_failed",
-				slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+				slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.Any("error", err))
 		}
 		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: "failed to parse credit balance"})
 		return
 	}
-	balanceMicro := int64(math.Round(balanceFloat * models.MicroUnit))
+	balanceFloat, _ := balanceDec.Float64()
+	balanceMicro := balanceDec.Mul(decimal.NewFromInt(models.MicroUnit)).IntPart()
 
-	// Build response with estimate and balance info
-	response := jobEstimateResponse{
-		Estimate:             estimate,
-		CurrentCreditBalance: balanceFloat,
-		SufficientBalance:    balanceMicro >= estimate.TotalMicro(),
+	response := estimateResponse{
+		Estimate: estimate,
+		Balance: estimateBalance{
+			Current:    balanceFloat,
+			Sufficient: balanceMicro >= estimate.TotalMicro(),
+		},
 	}
 
+	w.Header().Set("Cache-Control", "no-store")
 	renderJSON(w, http.StatusOK, response)
 }
 

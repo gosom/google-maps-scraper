@@ -171,7 +171,10 @@ func (r *jobFileRepository) Update(ctx context.Context, jobFile *models.JobFile)
 		return fmt.Errorf("failed to update job file: %w", err)
 	}
 
-	rowsAffected, _ := result.RowsAffected()
+	rowsAffected, raErr := result.RowsAffected()
+	if raErr != nil {
+		return fmt.Errorf("rows affected: %w", raErr)
+	}
 	if rowsAffected == 0 {
 		return fmt.Errorf("job file with id %s not found", jobFile.ID)
 	}
@@ -188,7 +191,10 @@ func (r *jobFileRepository) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("failed to delete job file: %w", err)
 	}
 
-	rowsAffected, _ := result.RowsAffected()
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
 	if rowsAffected == 0 {
 		return fmt.Errorf("job file with id %s not found", id)
 	}

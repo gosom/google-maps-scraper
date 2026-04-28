@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	pkgconfig "github.com/gosom/google-maps-scraper/pkg/config"
 	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	"github.com/gosom/google-maps-scraper/runner"
 	"github.com/gosom/google-maps-scraper/runner/databaserunner"
@@ -29,17 +30,47 @@ var version = "dev"
 func main() {
 	_ = godotenv.Load() // Load .env file if present
 
-	// Create structured JSON logger and set as global default (fallback for
-	// code that doesn't yet receive the logger via injection).
-	logger := pkglogger.New(os.Getenv("LOG_LEVEL"))
+	// Load typed env config first so the logger can be built from validated,
+	// typed values rather than raw os.Getenv calls.
+	// Use a temporary stderr logger for any config-load failures.
+	appCfg, err := pkgconfig.Load()
+	if err != nil {
+		slog.Error("config_load_failed", slog.Any("error", err))
+		os.Exit(1)
+	}
+
+	// Build the single root logger from typed config. All downstream code
+	// receives this logger via constructor injection — no further os.Getenv
+	// calls for LOG_LEVEL or log rotation settings.
+	logger := pkglogger.New(appCfg.LogLevel, pkglogger.LogConfig{
+		Output:        appCfg.Log.Output,
+		FilePath:      appCfg.Log.FilePath,
+		Dir:           appCfg.Log.Dir,
+		FileName:      appCfg.Log.FileName,
+		MaxSizeMB:     appCfg.Log.MaxSizeMB,
+		RetentionDays: appCfg.Log.RetentionDays,
+	})
 	slog.SetDefault(logger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Parse config first so banner can reflect debug mode
+	// Parse CLI-flag config (separate from env config).
 	cfg, err := runner.ParseConfig()
 	if err != nil {
 		slog.Error("invalid_configuration", slog.Any("error", err))
+		cancel()
+		os.Exit(1)
+	}
+
+	// Merge standard AWS_* env values into the CLI-flag config.
+	// CLI flags take precedence; env values from pkg/config fill in the gaps.
+	runner.MergeAWSDefaults(cfg, appCfg)
+
+	// Build the S3 uploader now that AWS credentials are fully resolved.
+	// This must run after MergeAWSDefaults so that env-only deployments
+	// (credentials supplied via AWS_ACCESS_KEY_ID etc.) get an uploader.
+	if err := runner.BuildS3Uploader(cfg, logger); err != nil {
+		slog.Error("s3_uploader_init_failed", slog.Any("error", err))
 		cancel()
 		os.Exit(1)
 	}
@@ -60,7 +91,7 @@ func main() {
 		cancel()
 	}()
 
-	runnerInstance, err := runnerFactory(cfg, logger)
+	runnerInstance, err := runnerFactory(cfg, appCfg, logger)
 	if err != nil {
 		cancel()
 		os.Stderr.WriteString(err.Error() + "\n")
@@ -93,16 +124,16 @@ func main() {
 	os.Exit(0)
 }
 
-func runnerFactory(cfg *runner.Config, logger *slog.Logger) (runner.Runner, error) {
+func runnerFactory(cfg *runner.Config, appCfg *pkgconfig.Config, logger *slog.Logger) (runner.Runner, error) {
 	switch cfg.RunMode {
 	case runner.RunModeFile:
 		return filerunner.New(cfg, logger.With(slog.String("component", "filerunner")))
 	case runner.RunModeDatabase, runner.RunModeDatabaseProduce:
-		return databaserunner.New(cfg, logger.With(slog.String("component", "databaserunner")))
+		return databaserunner.New(cfg, appCfg, logger.With(slog.String("component", "databaserunner")))
 	case runner.RunModeInstallPlaywright:
 		return installplaywright.New(cfg)
 	case runner.RunModeWeb:
-		return webrunner.New(cfg, logger.With(slog.String("component", "webrunner")))
+		return webrunner.New(cfg, appCfg, logger.With(slog.String("component", "webrunner")))
 	case runner.RunModeAwsLambda:
 		return lambdaaws.New(cfg, logger.With(slog.String("component", "lambdaaws")))
 	case runner.RunModeAwsLambdaInvoker:

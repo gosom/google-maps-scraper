@@ -43,21 +43,21 @@ func (d DurationSec) Duration() time.Duration {
 // multiple jobs.
 type JobData struct {
 	Keywords []string `json:"keywords" validate:"required,min=1,max=5,dive,min=1,max=200"`
-	Lang     string   `json:"lang"     validate:"required,len=2"`
+	Language string   `json:"language" validate:"required,len=2"`
 	// Depth, MaxResults, and MaxTime are optional — ApplyJobDataDefaults
 	// fills in safe defaults (5, 50, and 30 minutes respectively) when
 	// the client omits them.
-	Depth int  `json:"depth" validate:"min=1,max=20"`
-	Email bool `json:"email"`
-	// ImagesMax is the TOTAL number of images across all places in the job
+	Depth         int  `json:"depth" validate:"min=1,max=20"`
+	IncludeEmails bool `json:"include_emails"`
+	// MaxImages is the TOTAL number of images across all places in the job
 	// — NOT per place. The literal 40000 here mirrors utils.CapImagesMaxTotal.
 	// 0 means "skip image scraping" (the billing-safe default). Any positive
 	// value enables image scraping with a per-job total budget enforced by
 	// the runner via a shared atomic counter (cross-place). The legacy
 	// `images` boolean was dropped in migration 000033.
-	ImagesMax  int    `json:"images_max"  validate:"omitempty,min=0,max=40000"`
-	ReviewsMax int    `json:"reviews_max" validate:"omitempty,min=0,max=500"`
-	MaxResults int    `json:"max_results" validate:"min=1,max=500"`
+	MaxImages  int    `json:"max_images"  validate:"omitempty,min=0,max=40000"`
+	MaxReviews int    `json:"max_reviews" validate:"omitempty,min=0,max=500"`
+	MaxResults int    `json:"max_results" validate:"omitempty,min=0,max=500"`
 	Lat        string `json:"lat"         validate:"omitempty,latitude"`
 	Lon        string `json:"lon"         validate:"omitempty,longitude"`
 	Zoom       int    `json:"zoom"        validate:"omitempty,min=0,max=21"`

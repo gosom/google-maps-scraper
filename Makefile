@@ -45,3 +45,29 @@ sec-critical: ## runs gosec showing only critical issues
 
 sec-html: ## generates gosec HTML report
 	gosec -conf .gosec.json -fmt html -out gosec-report.html ./...
+
+check-env: ## enforce env-config boundary: no os.Getenv outside pkg/config and allowed exceptions
+	@set -e; \
+	direct=$$(grep -rn 'os\.Getenv\|os\.LookupEnv' --include='*.go' --exclude-dir='.claude' . \
+	  | grep -v '_test.go' \
+	  | grep -v ':[[:space:]]*//' \
+	  | grep -v 'pkg/config/' \
+	  | grep -v 'pkg/appenv/appenv\.go' \
+	  | grep -v 'runner/runner\.go' \
+	  | grep -v 'web/handlers/version\.go' \
+	  | grep -v 'config/config\.go' \
+	  | grep -v 'web/scrape\.go' \
+	  || true); \
+	helpers=$$(grep -rnE '\b(getEnv|getEnvOrDefault|envInt|envDuration|dbEnvInt|dbEnvDuration|parseCSVEnv|stripeWebhookSecretsFromEnv)\(' --include='*.go' --exclude-dir='.claude' . \
+	  | grep -v '_test.go' \
+	  | grep -v 'pkg/config/' \
+	  | grep -v 'web/scrape\.go' \
+	  | grep -v 'web/handlers/version\.go' \
+	  || true); \
+	if [ -n "$$direct" ] || [ -n "$$helpers" ]; then \
+	  echo "FAIL: Env access found outside pkg/config boundary:"; \
+	  echo "DIRECT:"; echo "$$direct"; \
+	  echo "HELPERS:"; echo "$$helpers"; \
+	  exit 1; \
+	fi; \
+	echo "✅ env-config boundary intact"
