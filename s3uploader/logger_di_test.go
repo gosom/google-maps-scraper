@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // TestS3Uploader_LoggerDI asserts that s3uploader.New accepts a *slog.Logger
@@ -15,13 +17,13 @@ func TestS3Uploader_LoggerDI(t *testing.T) {
 
 	// New will attempt to load AWS config; with dummy creds it will succeed
 	// (static credentials provider doesn't validate at construction time).
-	u, err := New("dummy-key", "dummy-secret", "us-east-1", logger)
-	if err != nil {
-		t.Skipf("s3uploader.New failed (expected in CI without AWS): %v", err)
-	}
-	if u == nil {
-		t.Fatal("s3uploader.New returned nil uploader")
-	}
+	u, err := New(
+		WithCredentials("dummy-key", "dummy-secret"),
+		WithRegion("us-east-1"),
+		WithLogger(logger),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, u)
 
 	// Emit a line through the injected logger to check the component attr.
 	u.log.Info("test_s3_logger")

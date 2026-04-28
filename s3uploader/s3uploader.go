@@ -2,6 +2,7 @@ package s3uploader
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -9,14 +10,31 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
+// s3API is the subset of *s3.Client we use for normal upload/download.
+type s3API interface {
+	PutObject(ctx context.Context, in *s3.PutObjectInput, opts ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+	GetObject(ctx context.Context, in *s3.GetObjectInput, opts ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+	HeadBucket(ctx context.Context, in *s3.HeadBucketInput, opts ...func(*s3.Options)) (*s3.HeadBucketOutput, error)
+}
+
+// presigner is the subset of *s3.PresignClient we use.
+type presigner interface {
+	PresignGetObject(ctx context.Context, in *s3.GetObjectInput, opts ...func(*s3.PresignOptions)) (*v4.PresignedHTTPRequest, error)
+}
+
+// Uploader holds the configured S3 client (and presigner) plus the
+// resolved per-Uploader options. Construct via New(opts...).
 type Uploader struct {
-	client *s3.Client
-	log    *slog.Logger
+	client     s3API
+	presigner  presigner
+	log        *slog.Logger
+	sseEnabled bool
 
 	// retryerMode and retryerMaxBackoff are set during construction and
 	// exposed via test-only accessors so we can verify retry config without
@@ -37,42 +55,66 @@ type UploadResult struct {
 	VersionID *string // S3 version ID if bucket versioning is enabled
 }
 
-func New(accessKey, secretKey, region string, logger *slog.Logger) (*Uploader, error) {
-	if logger == nil {
-		logger = slog.Default()
+// New constructs an Uploader from functional options. WithCredentials is
+// required; all other options have sensible defaults. WithEndpoint is
+// validated (must be https://, no user-info).
+func New(opts ...Option) (*Uploader, error) {
+	c := defaultConfig()
+	for _, opt := range opts {
+		opt(c)
 	}
-	creds := credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")
+
+	if c.accessKey == "" || c.secretKey == "" {
+		return nil, errors.New("s3uploader: access key and secret key are required")
+	}
+	if err := validateEndpoint(c.endpoint); err != nil {
+		return nil, fmt.Errorf("s3uploader: %w", err)
+	}
+
+	creds := credentials.NewStaticCredentialsProvider(c.accessKey, c.secretKey, "")
 
 	cfg, err := config.LoadDefaultConfig(context.Background(),
 		config.WithCredentialsProvider(creds),
-		config.WithRegion(region),
-		// NOTE: retry config lives on the s3.Options retryer below — keeping it
-		// in one place avoids the previous bug where WithRetryMode(Adaptive)
-		// was silently overridden by retry.NewStandard at client construction.
+		config.WithRegion(c.region),
+		config.WithRequestChecksumCalculation(c.checksumMode),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("loading AWS config: %w", err)
+		return nil, fmt.Errorf("s3uploader: loading AWS config: %w", err)
 	}
 
-	const maxBackoff = 20 * time.Second
-	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
-		// Configure additional retry behavior
+	realClient := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		if c.endpoint != "" {
+			o.BaseEndpoint = aws.String(c.endpoint)
+		}
+		o.UsePathStyle = c.forcePathStyle
 		o.Retryer = retry.NewStandard(func(so *retry.StandardOptions) {
-			so.MaxAttempts = 3
-			so.MaxBackoff = maxBackoff // was: 20 (which is 20ns — MaxBackoff is a time.Duration)
+			so.MaxAttempts = c.maxAttempts
+			so.MaxBackoff = c.maxBackoff
 		})
 	})
 
 	return &Uploader{
-		client:            client,
-		log:               logger.With(slog.String("component", "s3uploader")),
+		client:            realClient,
+		presigner:         s3.NewPresignClient(realClient),
+		log:               c.logger.With(slog.String("component", "s3uploader")),
+		sseEnabled:        c.sseEnabled,
 		retryerMode:       "standard",
-		retryerMaxBackoff: maxBackoff,
+		retryerMaxBackoff: c.maxBackoff,
 	}, nil
 }
 
-// Upload uploads a file to S3 with proper Content-Type and retry logic
-// Returns UploadResult containing ETag and VersionID from S3 response
+// VerifyBucket runs HeadBucket to confirm credentials and bucket access.
+// Returns nil if reachable, a wrapped error otherwise.
+func (u *Uploader) VerifyBucket(ctx context.Context, bucket string) error {
+	_, err := u.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(bucket)})
+	if err != nil {
+		return fmt.Errorf("s3 head bucket %s: %w", bucket, err)
+	}
+	return nil
+}
+
+// Upload uploads a file to S3 with proper Content-Type and retry logic.
+// Returns UploadResult containing ETag and VersionID from S3 response.
 func (u *Uploader) Upload(ctx context.Context, bucketName, key string, body io.Reader, contentType string) (*UploadResult, error) {
 	input := &s3.PutObjectInput{
 		Bucket:      aws.String(bucketName),
@@ -101,8 +143,8 @@ func (u *Uploader) Upload(ctx context.Context, bucketName, key string, body io.R
 	}, nil
 }
 
-// Download retrieves a file from S3 and returns an io.ReadCloser
-// The caller is responsible for closing the returned ReadCloser
+// Download retrieves a file from S3 and returns an io.ReadCloser.
+// The caller is responsible for closing the returned ReadCloser.
 func (u *Uploader) Download(ctx context.Context, bucketName, key string) (io.ReadCloser, error) {
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(bucketName),
@@ -119,3 +161,9 @@ func (u *Uploader) Download(ctx context.Context, bucketName, key string) (io.Rea
 	u.log.Debug("s3_download_success", slog.String("bucket", bucketName), slog.String("object_key", key))
 	return output.Body, nil
 }
+
+// Compile-time check that *Uploader satisfies the runner.S3Uploader contract.
+// We can't import runner here (cycle), so we restate the minimal shape locally.
+var _ interface {
+	Upload(ctx context.Context, bucket, key string, body io.Reader, contentType string) (*UploadResult, error)
+} = (*Uploader)(nil)

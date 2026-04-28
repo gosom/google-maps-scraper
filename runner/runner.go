@@ -394,7 +394,11 @@ func BuildS3Uploader(cfg *Config, logger *slog.Logger) error {
 	if cfg.AWS.AccessKey == "" || cfg.AWS.SecretKey == "" || cfg.AWS.Region == "" {
 		return nil
 	}
-	uploader, err := s3uploader.New(cfg.AWS.AccessKey, cfg.AWS.SecretKey, cfg.AWS.Region, logger)
+	uploader, err := s3uploader.New(
+		s3uploader.WithCredentials(cfg.AWS.AccessKey, cfg.AWS.SecretKey),
+		s3uploader.WithRegion(cfg.AWS.Region),
+		s3uploader.WithLogger(logger),
+	)
 	if err != nil {
 		return fmt.Errorf("creating S3 uploader: %w", err)
 	}

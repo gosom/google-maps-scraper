@@ -317,7 +317,11 @@ func New(cfg *runner.Config, appCfg *pkgconfig.Config, logger *slog.Logger) (run
 
 	if appCfg.AWS.AccessKeyID != "" && appCfg.AWS.SecretAccessKey != "" && appCfg.AWS.Region != "" && s3BucketName != "" {
 		var s3Err error
-		s3Upload, s3Err = s3uploader.New(appCfg.AWS.AccessKeyID, appCfg.AWS.SecretAccessKey, appCfg.AWS.Region, logger)
+		s3Upload, s3Err = s3uploader.New(
+			s3uploader.WithCredentials(appCfg.AWS.AccessKeyID, appCfg.AWS.SecretAccessKey),
+			s3uploader.WithRegion(appCfg.AWS.Region),
+			s3uploader.WithLogger(logger),
+		)
 		if s3Err != nil {
 			slog.Warn("s3_uploader_init_failed", slog.String("detail", "files will only be stored locally"), slog.Any("error", s3Err))
 		} else {
