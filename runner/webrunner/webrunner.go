@@ -1284,10 +1284,17 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		job.Status = web.StatusCompleted
 		w.logger.Debug("status_set_ok", slog.String("job_id", job.ID))
 
-		// Upload CSV to S3 and save metadata if S3 is configured
-		// File is now fully closed and flushed to disk, safe to upload
+		// Upload CSV to S3 and save metadata if S3 is configured.
+		// File is now fully closed and flushed to disk, safe to upload.
+		// uploadToS3AndSaveMetadata logs the specific failure mode
+		// (s3_upload_failed / s3_db_record_creation_failed) at Error with
+		// bucket+object_key context. Per the single-handling-rule we do
+		// NOT re-log the wrapped error here — emit a Warn audit line so
+		// operators can still query "jobs kept successful despite S3
+		// failure" without duplicating the Error.
 		if err := w.uploadToS3AndSaveMetadata(ctx, job, outpath); err != nil {
-			w.logger.Error("s3_upload_failed", slog.String("job_id", job.ID), slog.Any("error", err), slog.String("detail", "job still marked as successful"))
+			_ = err // already logged at Error inside uploadToS3AndSaveMetadata
+			w.logger.Warn("s3_upload_skipped_job_kept_successful", slog.String("job_id", job.ID))
 			// Don't fail the job due to S3 upload failure - the scraping was successful
 			// The CSV file will remain on local storage
 		}
