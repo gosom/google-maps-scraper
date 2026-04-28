@@ -57,6 +57,7 @@ type Review struct {
 	When              string
 	OwnerResponse     string
 	OwnerResponseTime string
+	ReviewId          string
 }
 
 type Entry struct {
@@ -467,6 +468,33 @@ func parseReviews(reviewsI []any) []Review {
 			}
 		}
 
+		// Extract Review ID - Google stores contribution IDs at various paths.
+		// The ID is a base64-encoded string starting with "Ch" (e.g., ChZDSUhNMG9nS0VJQ0FnSURzekpXdGNREAE).
+		reviewId := ""
+		reviewIdCandidatePaths := [][]int{
+			{4},              // [el][4] - common location
+			{0, 4},           // [el][0][4]
+			{1, 0, 4},        // author info area
+			{1, 4, 0},        // [1][4][0]
+			{1, 4, 6},        // [1][4][6]
+			{1, 4, 3},        // [1][4][3]
+			{1, 0},           // contribution reference
+			{2, 2, 0, 1, 0},  // timestamp/metadata area
+		}
+		for _, path := range reviewIdCandidatePaths {
+			candidate := getNthElementAndCast[string](el, path...)
+			if strings.HasPrefix(candidate, "Ch") {
+				reviewId = candidate
+				break
+			}
+		}
+		if reviewId == "" {
+			candidate := getNthElementAndCast[string](reviewsI, i, 4)
+			if strings.HasPrefix(candidate, "Ch") {
+				reviewId = candidate
+			}
+		}
+
 		// Try multiple paths for the timestamp
 		time := getNthElementAndCast[[]any](el, 2, 2, 0, 1, 21, 6, 8)
 		if len(time) == 0 {
@@ -528,6 +556,7 @@ func parseReviews(reviewsI []any) []Review {
 			Description:       description,
 			OwnerResponse:     ownerResponse,
 			OwnerResponseTime: ownerResponseTime,
+			ReviewId:          reviewId,
 		}
 
 		if review.Name == "" {

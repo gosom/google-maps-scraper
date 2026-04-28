@@ -431,19 +431,31 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 		}
 
 		// Extract reviews from the DOM - updated for Dec 2025 Google Maps structure
-		reviewsJSON, err := page.Eval(`() => {
+		reviewsJSON, err := page.Eval(`async () => {
 			try {
 				const reviews = [];
 
-				// Try multiple selectors for review container elements
-				// Google Maps uses various class names that change over time
+				// Pre-pass: click EVERY "More"/"Voir plus"/"Mehr"/etc. button across
+				// the reviews panel to expand both review text AND owner responses.
+				// Google's expansion is animated/async — clicking and reading in the
+				// same synchronous tick reads the still-truncated text. We click all
+				// expanders first, then await one frame + a short timeout, then read.
+				document.querySelectorAll(
+					'button[aria-expanded="false"], button[aria-label*="More" i], button[jsaction*="expand"], .w8nwRe'
+				).forEach(b => { try { b.click(); } catch(e) {} });
+				await new Promise(r => setTimeout(r, 800));
+
+				// Selector priority: stable structural/semantic anchors first
+				// (data-attributes, aria-*, role) then class names as fallback,
+				// since Google's obfuscated class names rotate frequently.
 				const reviewSelectors = [
-					'.jftiEf',                           // Common review container
-					'div[data-review-id]',               // Review with ID attribute
-					'.gws-localreviews__google-review',  // Alternative format
+					'div[data-review-id]',               // STABLE: review id attribute
+					'[jsaction*="review"]',              // STABLE: jsaction-bound review block
+					'.jftiEf',                           // Class fallback
+					'.gws-localreviews__google-review',  // Class fallback
 					'[data-hveid] .review-dialog-list > div', // Search results reviews
-					'.WMbnJf',                           // Another review container
-					'.bwb7ce',                           // New review format
+					'.WMbnJf',                           // Class fallback
+					'.bwb7ce',                           // Class fallback
 				];
 
 				let reviewElements = [];
@@ -451,7 +463,18 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 					const elements = document.querySelectorAll(selector);
 					if (elements && elements.length > 0) {
 						reviewElements = Array.from(elements);
-						console.log('Found reviews with selector:', selector, 'count:', elements.length);
+						// Dedupe: Google nests an empty <div data-review-id="..."> inside
+						// each outer review wrapper, which double-counts. Drop any element
+						// whose ancestor matches the same selector.
+						reviewElements = reviewElements.filter(el => {
+							let p = el.parentElement;
+							while (p) {
+								if (p.matches && p.matches(selector)) return false;
+								p = p.parentElement;
+							}
+							return true;
+						});
+						console.log('Found reviews with selector:', selector, 'count:', reviewElements.length);
 						break;
 					}
 				}
@@ -473,14 +496,18 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 
 				for (const element of reviewElements) {
 					try {
-						// Author name - comprehensive selectors
+						// Author name - lead with semantic anchors (contributor links,
+						// aria-label on buttons), fall back to class names.
 						const userSelectors = [
-							'.d4r55',           // Primary name class
-							'.WNxzHc',          // Alternative name
-							'.TSUbDb a',        // Link with name
-							'.review-author',   // Generic
-							'button.al6Kxe',    // Clickable name
-							'.bHrnEe',          // Another name container
+							'a[href*="/maps/contrib/"]',           // STABLE: Maps contributor profile URL
+							'button[data-href*="/contrib/"]',      // STABLE: contributor button
+							'[aria-label*="Photo of"]',            // STABLE: localized "Photo of <name>"
+							'.d4r55',                              // Class fallback
+							'.WNxzHc',                             // Class fallback
+							'.TSUbDb a',                           // Class fallback
+							'.review-author',
+							'button.al6Kxe',
+							'.bHrnEe',
 						];
 						let userName = '';
 						let userUrl = '';
@@ -488,18 +515,26 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 							const el = element.querySelector(sel);
 							if (el) {
 								userName = el.textContent?.trim() || '';
+								// Strip localized "Photo of " prefix if pulled from aria-label.
+								const aria = el.getAttribute('aria-label') || '';
+								if (!userName && aria) {
+									userName = aria.replace(/^[^:]*\s+(?:of|de|von|di|do|da)\s+/i, '').trim();
+								}
 								if (el.tagName?.toLowerCase() === 'a') {
 									userUrl = el.getAttribute('href') || '';
+								} else if (el.getAttribute('data-href')) {
+									userUrl = el.getAttribute('data-href') || '';
 								}
 								if (userName) break;
 							}
 						}
 
-						// Profile picture - multiple patterns
+						// Profile picture - lead with src host (stable hostnames)
+						// before class names.
 						const profilePicSelectors = [
-							'.NBa7we',
-							'img[src*="googleusercontent"]',
-							'img[src*="lh3.google"]',
+							'img[src*="googleusercontent"]', // STABLE: Google CDN host
+							'img[src*="lh3.google"]',        // STABLE: Google CDN host
+							'.NBa7we',                       // Class fallback
 							'.review-author-photo img',
 						];
 						let profilePic = '';
@@ -511,12 +546,19 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 							}
 						}
 
-						// Rating - try multiple approaches
+						// Rating - try aria-label first (older format / a11y tools),
+						// then text pattern N/5 which Google now renders as plain text
+						// inside the metadata block (e.g. "4/5", "5/5").
 						let rating = 0;
 						const ratingSelectors = [
+							'[role="img"][aria-label*="star" i]',
+							'[role="img"][aria-label*="étoile" i]',
+							'[role="img"][aria-label*="estrella" i]',
+							'[role="img"][aria-label*="stern" i]',
+							'[role="img"][aria-label]',
+							'span[aria-label*="star" i]',
 							'.kvMYJc',
 							'.DU9Pgb span[aria-label]',
-							'[role="img"][aria-label*="star"]',
 							'.pjemBf span',
 							'.review-score',
 						];
@@ -524,53 +566,67 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 							const ratingEl = element.querySelector(sel);
 							if (ratingEl) {
 								const ariaLabel = ratingEl.getAttribute('aria-label') || '';
-								// Match patterns like "5 stars", "Rated 4 out of 5", "4.5 étoiles"
 								const match = ariaLabel.match(/(\d+(?:\.\d+)?)/);
-								if (match) {
-									rating = Math.round(parseFloat(match[1])) || 0;
-									break;
-								}
-								// Also try counting filled stars
-								const filledStars = element.querySelectorAll('.hCCjke.vzX5Ic, [aria-label*="star"][style*="color"]').length;
-								if (filledStars > 0) {
-									rating = filledStars;
-									break;
-								}
+								if (match) { rating = Math.round(parseFloat(match[1])) || 0; break; }
+							}
+						}
+						// Text-format fallback: the modern review card renders the rating
+						// as "4/5" in plain text. Scan short text nodes for that pattern.
+						if (rating === 0) {
+							const textNodes = element.querySelectorAll('span, div');
+							for (const n of textNodes) {
+								const t = (n.textContent || '').trim();
+								if (t.length > 8) continue;
+								const m = t.match(/^(\d+(?:\.\d+)?)\s*\/\s*5$/);
+								if (m) { rating = Math.round(parseFloat(m[1])) || 0; break; }
 							}
 						}
 
-						// Time/date - multiple selectors
-						const timeSelectors = ['.rsqaWe', '.DU9Pgb', '.tTVLSc', '.review-date', '.dehysf'];
+						// Time/date: extract a relative-time substring like "3 months ago"
+						// from anywhere in the review's text content. Using a regex
+						// extract (not a node-text match) sidesteps the problem that
+						// Google's rating + time render as sibling spans inside one
+						// parent whose concatenated textContent looks like
+						// "4/53 months ago on Google" with no separator.
+						// Negative lookbehind rejects digits/slash before the number,
+						// otherwise "4/53 months ago" (rating concatenated with time)
+						// would match "53 months ago". Also covers French ("il y a 2 mois").
+						const timeExtractRegex = /(?<![\d\/])(\d+\s+(?:year|month|week|day|hour|minute)s?\s+ago|a\s+(?:year|month|week|day|hour|minute)\s+ago|just\s+now|yesterday|today|il\s+y\s+a\s+(?:un|une|\d+)\s+(?:an|mois|semaine|jour|heure|minute)s?)\b/i;
 						let relativeTime = '';
-						for (const sel of timeSelectors) {
-							const el = element.querySelector(sel);
-							if (el) {
-								const text = el.textContent?.trim() || '';
-								// Look for time-related text (ago, month, year, etc)
-								if (text && (text.includes('ago') || text.includes('week') || text.includes('month') ||
-								    text.includes('year') || text.includes('day') || text.match(/\d{4}/))) {
-									relativeTime = text;
-									break;
+						const timeNodes = element.querySelectorAll('span, div');
+						for (const n of timeNodes) {
+							const text = (n.textContent || '').trim();
+							if (!text || text.length > 200) continue;
+							const m = text.match(timeExtractRegex);
+							if (m) { relativeTime = m[0]; break; }
+						}
+						// Class-based fallbacks if text scan missed it.
+						if (!relativeTime) {
+							const timeSelectors = ['.rsqaWe', '.DU9Pgb', '.tTVLSc', '.review-date', '.dehysf'];
+							for (const sel of timeSelectors) {
+								const el = element.querySelector(sel);
+								if (el) {
+									const text = (el.textContent || '').trim();
+									const m = text.match(timeExtractRegex);
+									if (m) { relativeTime = m[0]; break; }
 								}
 							}
 						}
 
-						// Review text - try to expand and get full text
+						// Review text - try to expand and get full text. Lead with
+						// data-* anchors then class names.
 						const textSelectors = [
-							'.wiI7pd',
+							'[data-expandable-section] span', // STABLE: data attribute
+							'span[jsname]',                   // STABLE: jsname binding
+							'.wiI7pd',                        // Class fallback (long-lived)
 							'.MyEned span',
 							'.review-full-text',
 							'.Jtu6Td span',
-							'[data-expandable-section] span',
 						];
 						let text = '';
 
-						// First try to click "More" button to expand text
-						const moreButtons = element.querySelectorAll('.w8nwRe, button[aria-label*="More"], button[aria-expanded="false"]');
-						for (const btn of moreButtons) {
-							try { btn.click(); } catch(e) {}
-						}
-
+						// "More" buttons were already clicked + awaited in the pre-pass
+						// at the top of this function, so text is already expanded.
 						for (const sel of textSelectors) {
 							const textEl = element.querySelector(sel);
 							if (textEl) {
@@ -589,26 +645,76 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 							}
 						}
 
-						// Owner response - look for response container within the review
+						// Owner response - prefer text-content / aria detection
+						// over class names (most fragile selectors in this script).
+						// Google localizes the "Response from the owner" header
+						// across languages but always renders it as a header element
+						// inside the review block.
 						let ownerResponse = '';
 						let ownerResponseTime = '';
-						const responseSelectors = [
-							'.CDe7pd',           // Owner response container
-							'.wiI7pd.xwPlne',    // Alternative response text
-							'.review-response',  // Generic
-							'.owner-response',   // Generic
-						];
-						for (const sel of responseSelectors) {
-							const responseEl = element.querySelector(sel);
-							if (responseEl) {
-								ownerResponse = responseEl.textContent?.trim() || '';
-								// Try to find response time nearby
-								const responseTimeEl = responseEl.closest('.review-response-container')?.querySelector('.rsqaWe') ||
-								                       responseEl.parentElement?.querySelector('.rsqaWe, .dehysf');
-								if (responseTimeEl) {
-									ownerResponseTime = responseTimeEl.textContent?.trim() || '';
+
+						// Strategy 1 (semantic): find a header-like element whose text
+						// matches a localized "Response from the owner" prefix, then
+						// the response body is its sibling/next text node.
+						const ownerHeaderRegex = /^(response from the owner|owner['']s reply|response from owner|réponse du propriétaire|respuesta del propietario|antwort des inhabers|risposta del proprietario|resposta do proprietário|antwoord van de eigenaar|odpowiedź właściciela|svar fra ejeren|ägarens svar|sahibinden yanıt)/i;
+						const candidateHeaders = element.querySelectorAll('div, span');
+						for (const h of candidateHeaders) {
+							const t = (h.textContent || '').trim();
+							// Header is short — full reply is in a different element.
+							if (t.length > 0 && t.length < 80 && ownerHeaderRegex.test(t)) {
+								// The response body is a sibling text container after the header.
+								const container = h.parentElement;
+								if (container) {
+									// Pick the longest text descendant of the container that
+									// isn't the header itself — that's the response body.
+									let best = '';
+									container.querySelectorAll('span, div').forEach(c => {
+										if (c === h) return;
+										const tt = (c.textContent || '').trim();
+										if (tt.length > best.length && !ownerHeaderRegex.test(tt) && tt !== text) {
+											best = tt;
+										}
+									});
+									ownerResponse = best;
+								}
+								// Response time: extract via regex anywhere in the header
+								// or its sibling nodes. The header text often looks like
+								// "Response from the owner 3 months ago".
+								const respTimeExtract = /(?<![\d\/])(\d+\s+(?:year|month|week|day|hour|minute)s?\s+ago|a\s+(?:year|month|week|day|hour|minute)\s+ago|il\s+y\s+a\s+(?:un|une|\d+)\s+(?:an|mois|semaine|jour|heure|minute)s?)\b/i;
+								const headerText = (h.textContent || '').trim();
+								const headerMatch = headerText.match(respTimeExtract);
+								if (headerMatch) ownerResponseTime = headerMatch[0];
+								if (!ownerResponseTime && h.parentElement) {
+									for (const c of h.parentElement.children) {
+										if (c === h) continue;
+										const tt = (c.textContent || '').trim();
+										const m = tt.match(respTimeExtract);
+										if (m) { ownerResponseTime = m[0]; break; }
+									}
 								}
 								if (ownerResponse) break;
+							}
+						}
+
+						// Strategy 2 (class fallback): class-based selectors.
+						if (!ownerResponse) {
+							const responseSelectors = [
+								'.CDe7pd',           // Owner response container
+								'.wiI7pd.xwPlne',    // Alternative response text
+								'.review-response',
+								'.owner-response',
+							];
+							for (const sel of responseSelectors) {
+								const responseEl = element.querySelector(sel);
+								if (responseEl) {
+									ownerResponse = responseEl.textContent?.trim() || '';
+									const responseTimeEl = responseEl.closest('.review-response-container')?.querySelector('.rsqaWe') ||
+									                       responseEl.parentElement?.querySelector('.rsqaWe, .dehysf');
+									if (responseTimeEl) {
+										ownerResponseTime = responseTimeEl.textContent?.trim() || '';
+									}
+									if (ownerResponse) break;
+								}
 							}
 						}
 
