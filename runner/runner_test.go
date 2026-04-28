@@ -131,3 +131,36 @@ func TestBuildS3Uploader_SkipsWhenOnlySomeCredsSet(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, cfg.S3Uploader, "S3Uploader should be nil when not all creds are provided")
 }
+
+// TestBuildS3Uploader_PassesEndpointToUploader verifies that the new
+// endpoint/SSE/checksum fields flow into the constructed uploader.
+// We can't easily inspect the resulting client's BaseEndpoint without
+// unsafe, so the smoke test is: construction succeeds and the uploader
+// is non-nil. Functional behaviour is covered by stub-client tests in
+// later chunks.
+func TestBuildS3Uploader_PassesEndpointToUploader(t *testing.T) {
+	cfg := &Config{AWS: AWSConfig{
+		AccessKey: "k",
+		SecretKey: "s",
+		Region:    "nyc3",
+		Endpoint:  "https://nyc3.digitaloceanspaces.com",
+	}}
+	err := BuildS3Uploader(cfg, slog.Default())
+	require.NoError(t, err)
+	require.NotNil(t, cfg.S3Uploader)
+}
+
+// TestBuildS3Uploader_PartialConfigRejected verifies the partial-config
+// guard: if AWS_ENDPOINT is set but creds are missing, the function
+// returns a clear error rather than silently no-op'ing.
+func TestBuildS3Uploader_PartialConfigRejected(t *testing.T) {
+	cfg := &Config{AWS: AWSConfig{
+		AccessKey: "",
+		SecretKey: "",
+		Region:    "",
+		Endpoint:  "https://nyc3.digitaloceanspaces.com",
+	}}
+	err := BuildS3Uploader(cfg, slog.Default())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "AWS_ENDPOINT")
+}

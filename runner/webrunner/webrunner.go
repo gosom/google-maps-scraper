@@ -347,6 +347,23 @@ func New(cfg *runner.Config, appCfg *pkgconfig.Config, logger *slog.Logger) (run
 		return nil, fmt.Errorf("S3 credentials are required when APP_ENV=production")
 	}
 
+	// HeadBucket preflight: fail fast on bad creds, typo'd bucket, or wrong
+	// endpoint. In production this is fatal; in dev/staging we warn so local
+	// runs without working S3 don't fail-loop on startup.
+	if s3Upload != nil && s3BucketName != "" {
+		preflightCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := s3Upload.VerifyBucket(preflightCtx, s3BucketName); err != nil {
+			cancel()
+			if appCfg.AppEnv.IsProduction() {
+				return nil, fmt.Errorf("S3 preflight failed: %w", err)
+			}
+			slog.Warn("s3_preflight_failed_dev_continuing", slog.Any("error", err))
+		} else {
+			cancel()
+			slog.Info("s3_preflight_ok", slog.String("bucket", s3BucketName))
+		}
+	}
+
 	slog.Info("startup_feature_summary",
 		slog.Bool("s3_enabled", s3Upload != nil),
 		slog.String("app_env", appCfg.AppEnv.String()),

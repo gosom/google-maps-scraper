@@ -147,6 +147,10 @@ type AWSConfig struct {
 	AccessKey       string
 	SecretKey       string
 	Region          string
+	Endpoint        string
+	ForcePathStyle  bool
+	SSEEnabled      bool
+	ChecksumMode    string
 	S3Bucket        string
 	LambdaRunner    bool
 	LambdaInvoker   bool
@@ -381,6 +385,18 @@ func MergeAWSDefaults(cfg *Config, appCfg *pkgconfig.Config) {
 	if cfg.AWS.Region == "" {
 		cfg.AWS.Region = appCfg.AWS.Region
 	}
+	if cfg.AWS.Endpoint == "" {
+		cfg.AWS.Endpoint = appCfg.AWS.Endpoint
+	}
+	if !cfg.AWS.ForcePathStyle {
+		cfg.AWS.ForcePathStyle = appCfg.AWS.ForcePathStyle
+	}
+	if !cfg.AWS.SSEEnabled {
+		cfg.AWS.SSEEnabled = appCfg.AWS.SSEEnabled
+	}
+	if cfg.AWS.ChecksumMode == "" {
+		cfg.AWS.ChecksumMode = appCfg.AWS.ChecksumMode
+	}
 }
 
 // BuildS3Uploader constructs the S3 uploader from cfg.AWS credentials and
@@ -392,11 +408,20 @@ func MergeAWSDefaults(cfg *Config, appCfg *pkgconfig.Config) {
 // credentials populated before the uploader is constructed.
 func BuildS3Uploader(cfg *Config, logger *slog.Logger) error {
 	if cfg.AWS.AccessKey == "" || cfg.AWS.SecretKey == "" || cfg.AWS.Region == "" {
+		// Sanity guard for partial-config: if the operator set an endpoint
+		// but forgot creds, surface a clear error rather than silently no-op.
+		if cfg.AWS.Endpoint != "" {
+			return fmt.Errorf("AWS_ENDPOINT is set but AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY/AWS_REGION are missing")
+		}
 		return nil
 	}
 	uploader, err := s3uploader.New(
 		s3uploader.WithCredentials(cfg.AWS.AccessKey, cfg.AWS.SecretKey),
 		s3uploader.WithRegion(cfg.AWS.Region),
+		s3uploader.WithEndpoint(cfg.AWS.Endpoint),
+		s3uploader.WithForcePathStyle(cfg.AWS.ForcePathStyle),
+		s3uploader.WithServerSideEncryption(cfg.AWS.SSEEnabled),
+		s3uploader.WithChecksumMode(s3uploader.ParseChecksumMode(cfg.AWS.ChecksumMode)),
 		s3uploader.WithLogger(logger),
 	)
 	if err != nil {
