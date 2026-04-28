@@ -1,3 +1,17 @@
+// Package s3uploader provides upload AND download of objects against any
+// S3-compatible store (AWS S3, DigitalOcean Spaces, MinIO). The package
+// name predates the addition of Download; renaming is deferred to avoid
+// churn in callers.
+//
+// Logging discipline: success operations are logged at Debug, errors are
+// returned wrapped (caller logs at its own boundary). Loki ingestion cost
+// scales with line count; Info is reserved for state transitions
+// (preflight ok, init, shutdown) per the project's logging discipline.
+//
+// Privacy: S3 object keys are of the form users/{user_id}/jobs/{job_id}.csv
+// and surface in logs via the object_key field. user_id is the Clerk opaque
+// identifier (already logged elsewhere in this codebase); no new PII is
+// introduced. See docs/s3-do-spaces.md "Privacy note".
 package s3uploader
 
 import (
@@ -15,6 +29,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+
+	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 )
 
 // s3API is the subset of *s3.Client we use for normal upload/download.
@@ -53,7 +69,17 @@ func (u *Uploader) retryerMaxBackoffForTest() time.Duration { return u.retryerMa
 // UploadResult contains the response metadata from S3 upload
 type UploadResult struct {
 	ETag      string  // Entity tag (MD5 hash for non-multipart uploads)
-	VersionID *string // S3 version ID if bucket versioning is enabled
+	VersionID *string // nil unless the bucket has versioning enabled
+}
+
+// loggerFor returns the per-request logger from ctx if one is attached,
+// otherwise the constructor-injected u.log. Both already carry the
+// component=s3uploader attr.
+func (u *Uploader) loggerFor(ctx context.Context) *slog.Logger {
+	if l := pkglogger.FromContext(ctx); l != nil && l != slog.Default() {
+		return l.With(slog.String("component", "s3uploader"))
+	}
+	return u.log
 }
 
 // New constructs an Uploader from functional options. WithCredentials is
@@ -130,11 +156,13 @@ func (u *Uploader) Upload(ctx context.Context, bucketName, key string, body io.R
 		input.ServerSideEncryption = types.ServerSideEncryptionAes256
 	}
 
-	u.log.Debug("s3_upload_started", slog.String("bucket", bucketName), slog.String("object_key", key), slog.String("content_type", contentType))
+	log := u.loggerFor(ctx)
+	log.Debug("s3_upload_started", slog.String("bucket", bucketName), slog.String("object_key", key), slog.String("content_type", contentType))
 	output, err := u.client.PutObject(ctx, input)
 	if err != nil {
-		u.log.Error("s3_upload_failed", slog.String("bucket", bucketName), slog.String("object_key", key), slog.Any("error", err))
-		return nil, err
+		// Wrap with low-cardinality message; bucket/key go on the error chain
+		// via the caller's structured logger if it logs.
+		return nil, fmt.Errorf("s3 put object %s/%s: %w", bucketName, key, err)
 	}
 
 	// Extract ETag from response (remove quotes if present)
@@ -143,10 +171,13 @@ func (u *Uploader) Upload(ctx context.Context, bucketName, key string, body io.R
 		etag = aws.ToString(output.ETag)
 	}
 
-	u.log.Info("s3_upload_success", slog.String("bucket", bucketName), slog.String("object_key", key), slog.String("etag", etag))
+	// Debug, not Info: success runs once per job and Loki ingestion cost
+	// scales with line count. Info is reserved for state transitions
+	// (preflight ok, init, shutdown) per the project's logging discipline.
+	log.Debug("s3_upload_success", slog.String("bucket", bucketName), slog.String("object_key", key), slog.String("etag", etag))
 	return &UploadResult{
 		ETag:      etag,
-		VersionID: output.VersionId, // May be nil if versioning not enabled
+		VersionID: output.VersionId, // nil unless the bucket has versioning enabled
 	}, nil
 }
 
@@ -158,14 +189,14 @@ func (u *Uploader) Download(ctx context.Context, bucketName, key string) (io.Rea
 		Key:    aws.String(key),
 	}
 
-	u.log.Debug("s3_download_started", slog.String("bucket", bucketName), slog.String("object_key", key))
+	log := u.loggerFor(ctx)
+	log.Debug("s3_download_started", slog.String("bucket", bucketName), slog.String("object_key", key))
 	output, err := u.client.GetObject(ctx, input)
 	if err != nil {
-		u.log.Error("s3_download_failed", slog.String("bucket", bucketName), slog.String("object_key", key), slog.Any("error", err))
-		return nil, err
+		return nil, fmt.Errorf("s3 get object %s/%s: %w", bucketName, key, err)
 	}
 
-	u.log.Debug("s3_download_success", slog.String("bucket", bucketName), slog.String("object_key", key))
+	log.Debug("s3_download_success", slog.String("bucket", bucketName), slog.String("object_key", key))
 	return output.Body, nil
 }
 

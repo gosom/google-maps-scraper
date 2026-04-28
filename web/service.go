@@ -148,9 +148,13 @@ func (s *Service) GetCSVReader(ctx context.Context, id string) (io.ReadCloser, s
 					log.Debug("get_csv_reader_s3_download_success", slog.String("job_id", id))
 					return reader, fileName, nil
 				}
-				// If S3 download fails, fall through to local filesystem
+				// If S3 download fails, fall through to local filesystem.
+				// s3uploader no longer logs on error (single-handling rule);
+				// this is the only place the failure surfaces.
 				log.Warn("get_csv_reader_s3_download_failed",
 					slog.String("job_id", id),
+					slog.String("bucket", jobFile.BucketName),
+					slog.String("object_key", jobFile.ObjectKey),
 					slog.Any("error", err),
 				)
 			} else {

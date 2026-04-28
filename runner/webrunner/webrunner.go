@@ -1453,12 +1453,17 @@ func (w *webrunner) uploadToS3AndSaveMetadata(ctx context.Context, job *web.Job,
 	// CRITICAL: Upload FIRST, then create database record only if upload succeeds
 	result, err := w.s3Uploader.Upload(ctx, w.s3Bucket, objectKey, file, "text/csv; charset=utf-8")
 	if err != nil {
-		w.logger.Error("s3_upload_failed", slog.String("job_id", job.ID), slog.Any("error", err))
+		w.logger.Error("s3_upload_failed",
+			slog.String("job_id", job.ID),
+			slog.String("bucket", w.s3Bucket),
+			slog.String("object_key", objectKey),
+			slog.Any("error", err))
 		return fmt.Errorf("S3 upload failed: %w", err)
 	}
 
-	// Capture ETag from S3 response
-	w.logger.Info("s3_upload_successful", slog.String("job_id", job.ID), slog.String("bucket", w.s3Bucket), slog.String("key", objectKey), slog.Int64("size_bytes", fileSize))
+	// Capture ETag from S3 response. Debug-level: s3uploader already logs at
+	// debug, this carries job_id for correlation. Net: zero Info per success.
+	w.logger.Debug("s3_upload_successful", slog.String("job_id", job.ID), slog.String("bucket", w.s3Bucket), slog.String("key", objectKey), slog.Int64("size_bytes", fileSize))
 
 	// Only NOW create database record after confirmed S3 upload success
 	// This prevents orphaned "uploading" records if upload fails
