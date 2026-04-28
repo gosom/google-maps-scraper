@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
@@ -16,7 +17,19 @@ import (
 type Uploader struct {
 	client *s3.Client
 	log    *slog.Logger
+
+	// retryerMode and retryerMaxBackoff are set during construction and
+	// exposed via test-only accessors so we can verify retry config without
+	// reaching into the SDK's private retryer state.
+	retryerMode       string
+	retryerMaxBackoff time.Duration
 }
+
+// retryerModeForTest exposes the configured retry mode for tests only.
+func (u *Uploader) retryerModeForTest() string { return u.retryerMode }
+
+// retryerMaxBackoffForTest exposes the configured retry max-backoff for tests only.
+func (u *Uploader) retryerMaxBackoffForTest() time.Duration { return u.retryerMaxBackoff }
 
 // UploadResult contains the response metadata from S3 upload
 type UploadResult struct {
@@ -40,17 +53,20 @@ func New(accessKey, secretKey, region string, logger *slog.Logger) (*Uploader, e
 		return nil, fmt.Errorf("loading AWS config: %w", err)
 	}
 
+	const maxBackoff = 20 * time.Second
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
 		// Configure additional retry behavior
 		o.Retryer = retry.NewStandard(func(so *retry.StandardOptions) {
 			so.MaxAttempts = 3
-			so.MaxBackoff = 20 // Maximum backoff time in seconds
+			so.MaxBackoff = maxBackoff // was: 20 (which is 20ns — MaxBackoff is a time.Duration)
 		})
 	})
 
 	return &Uploader{
-		client: client,
-		log:    logger.With(slog.String("component", "s3uploader")),
+		client:            client,
+		log:               logger.With(slog.String("component", "s3uploader")),
+		retryerMode:       "adaptive", // updated to "standard" in Task 2 once adaptive is removed
+		retryerMaxBackoff: maxBackoff,
 	}, nil
 }
 
