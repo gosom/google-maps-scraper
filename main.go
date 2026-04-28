@@ -30,6 +30,16 @@ var version = "dev"
 func main() {
 	_ = godotenv.Load() // Load .env file if present
 
+	// Build-time short-circuit: when invoked with PLAYWRIGHT_INSTALL_ONLY=1
+	// (Docker image build step), skip env-config validation entirely. The
+	// install-playwright path only invokes playwright.Install and needs no
+	// runtime env vars; without this guard pkgconfig.Load() would fail on
+	// missing required vars (DSN, CLERK_SECRET_KEY, etc.) at build time.
+	if os.Getenv("PLAYWRIGHT_INSTALL_ONLY") == "1" {
+		runInstallPlaywrightOnly()
+		return
+	}
+
 	// Load typed env config first so the logger can be built from validated,
 	// typed values rather than raw os.Getenv calls.
 	// Use a temporary stderr logger for any config-load failures.
@@ -141,4 +151,26 @@ func runnerFactory(cfg *runner.Config, appCfg *pkgconfig.Config, logger *slog.Lo
 	default:
 		return nil, fmt.Errorf("%w: %d", runner.ErrInvalidRunMode, cfg.RunMode)
 	}
+}
+
+// runInstallPlaywrightOnly is the Docker build-time entry point. It bypasses
+// pkgconfig.Load() (which would fail on missing required env vars) and runs
+// only playwright.Install. Triggered by PLAYWRIGHT_INSTALL_ONLY=1.
+func runInstallPlaywrightOnly() {
+	cfg := &runner.Config{RunMode: runner.RunModeInstallPlaywright}
+	r, err := installplaywright.New(cfg)
+	if err != nil {
+		slog.Error("playwright_install_init_failed", slog.Any("error", err))
+		os.Exit(1)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := r.Run(ctx); err != nil {
+		slog.Error("playwright_install_failed", slog.Any("error", err))
+		os.Exit(1)
+	}
+	if err := r.Close(ctx); err != nil {
+		slog.Error("playwright_install_close_failed", slog.Any("error", err))
+	}
+	slog.Info("playwright_install_complete")
 }
