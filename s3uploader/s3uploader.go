@@ -46,8 +46,9 @@ func New(accessKey, secretKey, region string, logger *slog.Logger) (*Uploader, e
 	cfg, err := config.LoadDefaultConfig(context.Background(),
 		config.WithCredentialsProvider(creds),
 		config.WithRegion(region),
-		config.WithRetryMaxAttempts(3),              // Retry up to 3 times for transient failures
-		config.WithRetryMode(aws.RetryModeAdaptive), // Use adaptive retry mode
+		// NOTE: retry config lives on the s3.Options retryer below — keeping it
+		// in one place avoids the previous bug where WithRetryMode(Adaptive)
+		// was silently overridden by retry.NewStandard at client construction.
 	)
 	if err != nil {
 		return nil, fmt.Errorf("loading AWS config: %w", err)
@@ -65,7 +66,7 @@ func New(accessKey, secretKey, region string, logger *slog.Logger) (*Uploader, e
 	return &Uploader{
 		client:            client,
 		log:               logger.With(slog.String("component", "s3uploader")),
-		retryerMode:       "adaptive", // updated to "standard" in Task 2 once adaptive is removed
+		retryerMode:       "standard",
 		retryerMaxBackoff: maxBackoff,
 	}, nil
 }

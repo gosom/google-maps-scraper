@@ -22,3 +22,16 @@ func TestNew_RetryerHasReasonableMaxBackoff(t *testing.T) {
 	got := u.retryerMaxBackoffForTest()
 	assert.GreaterOrEqual(t, got, 1*time.Second, "MaxBackoff must be at least 1s, got %s", got)
 }
+
+// TestNew_UsesStandardRetryerNotAdaptive guards against the contradictory
+// retry config where config.WithRetryMode(Adaptive) was silently overridden
+// by retry.NewStandard. We pick the standard retryer explicitly because
+// adaptive mode's client-side throttle handling is tuned for AWS S3 and
+// not reliable against S3-compatible stores like DigitalOcean Spaces.
+func TestNew_UsesStandardRetryerNotAdaptive(t *testing.T) {
+	u, err := New("dummy-key", "dummy-secret", "us-east-1", nil)
+	require.NoError(t, err)
+	require.NotNil(t, u)
+
+	assert.Equal(t, "standard", u.retryerModeForTest())
+}
