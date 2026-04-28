@@ -23,6 +23,7 @@ type uploaderConfig struct {
 	logger               *slog.Logger
 	maxAttempts          int
 	maxBackoff           time.Duration
+	metrics              *Metrics
 }
 
 func defaultConfig() *uploaderConfig {
@@ -103,6 +104,12 @@ func WithLogger(logger *slog.Logger) Option {
 			c.logger = logger
 		}
 	}
+}
+
+// WithMetrics installs the provided Prometheus collectors. nil disables
+// metric recording (the Uploader checks for nil before every observation).
+func WithMetrics(m *Metrics) Option {
+	return func(c *uploaderConfig) { c.metrics = m }
 }
 
 // WithRetry overrides the default retry attempts and max backoff. Pass

@@ -423,6 +423,11 @@ func BuildS3Uploader(cfg *Config, logger *slog.Logger) error {
 		s3uploader.WithServerSideEncryption(cfg.AWS.SSEEnabled),
 		s3uploader.WithChecksumMode(s3uploader.ParseChecksumMode(cfg.AWS.ChecksumMode)),
 		s3uploader.WithLogger(logger),
+		// Mirrors the pkg/metrics/billing.go callers: passing nil to
+		// NewMetrics uses prometheus.DefaultRegisterer. The constructor
+		// tolerates double-registration (AlreadyRegisteredError) so
+		// repeated BuildS3Uploader calls within one process are safe.
+		s3uploader.WithMetrics(s3uploader.NewMetrics(nil)),
 	)
 	if err != nil {
 		return fmt.Errorf("creating S3 uploader: %w", err)

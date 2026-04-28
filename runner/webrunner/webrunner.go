@@ -325,6 +325,10 @@ func New(cfg *runner.Config, appCfg *pkgconfig.Config, logger *slog.Logger) (run
 			s3uploader.WithServerSideEncryption(appCfg.AWS.SSEEnabled),
 			s3uploader.WithChecksumMode(s3uploader.ParseChecksumMode(appCfg.AWS.ChecksumMode)),
 			s3uploader.WithLogger(logger),
+			// Mirrors pkg/metrics/billing.go callers: nil registerer →
+			// prometheus.DefaultRegisterer; AlreadyRegisteredError is
+			// tolerated so repeated construction is safe.
+			s3uploader.WithMetrics(s3uploader.NewMetrics(nil)),
 		)
 		if s3Err != nil {
 			slog.Warn("s3_uploader_init_failed", slog.String("detail", "files will only be stored locally"), slog.Any("error", s3Err))
