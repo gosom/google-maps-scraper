@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -89,7 +88,7 @@ func (m *MigrationRunner) RunMigrations() error {
 	// Acquire an advisory lock to prevent concurrent migrations from multiple pods.
 	// We pin to a single *sql.Conn so the lock stays on one connection for
 	// the entire duration of the migration.
-	lockPool, err := sql.Open("pgx", m.formatDSN())
+	lockPool, err := sql.Open("pgx", m.dsn)
 	if err != nil {
 		return fmt.Errorf("failed to open lock connection pool: %w", err)
 	}
@@ -170,9 +169,7 @@ func (m *MigrationRunner) releaseAdvisoryLock(conn *sql.Conn) {
 }
 
 func (m *MigrationRunner) createMigrator(ctx context.Context, migrationsDir string) (*migrate.Migrate, error) {
-	migrateDSN := m.formatDSN()
-
-	db, err := sql.Open("pgx", migrateDSN)
+	db, err := sql.Open("pgx", m.dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
@@ -205,13 +202,6 @@ func (m *MigrationRunner) createMigrator(ctx context.Context, migrationsDir stri
 	}
 
 	return migrator, nil
-}
-
-func (m *MigrationRunner) formatDSN() string {
-	if !strings.HasPrefix(m.dsn, "postgres://") {
-		return "postgres://" + m.dsn
-	}
-	return m.dsn
 }
 
 func (m *MigrationRunner) findMigrationsDir() (string, error) {
