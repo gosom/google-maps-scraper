@@ -118,12 +118,20 @@ func (s StripeConfig) WebhookSecrets() []string {
 	return out
 }
 
-// AWSConfig holds AWS/S3 credentials. Variables share the AWS_ prefix.
-// S3_BUCKET_NAME stays at the top level (no AWS_ prefix on the bucket var).
+// AWSConfig holds AWS / S3-compatible storage credentials. Variables share
+// the AWS_ prefix. S3_BUCKET_NAME stays at the top level (no AWS_ prefix).
+//
+// To target DigitalOcean Spaces (or any S3-compatible store), set
+// AWS_ENDPOINT to the regional host, e.g. https://nyc3.digitaloceanspaces.com.
+// Leave it empty for AWS S3.
 type AWSConfig struct {
 	AccessKeyID     string `env:"ACCESS_KEY_ID"`
 	SecretAccessKey string `env:"SECRET_ACCESS_KEY"`
-	Region          string `env:"REGION" envDefault:"us-east-1"`
+	Region          string `env:"REGION"            envDefault:"us-east-1"`
+	Endpoint        string `env:"ENDPOINT"` // "" => AWS; set for DO Spaces
+	ForcePathStyle  bool   `env:"FORCE_PATH_STYLE"  envDefault:"false"`
+	SSEEnabled      bool   `env:"SSE_ENABLED"       envDefault:"false"` // AES256 SSE on PutObject; default off for Spaces compatibility
+	ChecksumMode    string `env:"CHECKSUM_MODE"`                        // "" or "supported" => SDK default; "required" => only when needed (S3-compat fallback)
 }
 
 // GoogleConfig holds Google OAuth credentials. Variables share the GOOGLE_ prefix.

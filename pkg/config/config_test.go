@@ -88,6 +88,10 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, "", cfg.AWS.AccessKeyID)
 	assert.Equal(t, "", cfg.AWS.SecretAccessKey)
 	assert.Equal(t, "us-east-1", cfg.AWS.Region)
+	assert.Equal(t, "", cfg.AWS.Endpoint)
+	assert.False(t, cfg.AWS.ForcePathStyle)
+	assert.False(t, cfg.AWS.SSEEnabled)
+	assert.Equal(t, "", cfg.AWS.ChecksumMode)
 	assert.Equal(t, "", cfg.S3BucketName)
 
 	// Google defaults
@@ -388,6 +392,41 @@ func TestLoad_TrimsCSVWhitespace(t *testing.T) {
 		"WebhookAllowedCIDRs must be trimmed per element")
 	assert.Equal(t, []string{"http://p1", "http://p2"}, cfg.Proxies,
 		"Proxies must be trimmed per element")
+}
+
+// TestAWSConfig_DOSpaces verifies that DO Spaces env vars (AWS_ENDPOINT, etc.)
+// are parsed correctly and round-trip through Load.
+func TestAWSConfig_DOSpaces(t *testing.T) {
+	withMinimumEnv(t)
+	t.Setenv("AWS_ACCESS_KEY_ID", "DO_KEY")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "DO_SECRET")
+	t.Setenv("AWS_REGION", "nyc3")
+	t.Setenv("AWS_ENDPOINT", "https://nyc3.digitaloceanspaces.com")
+	t.Setenv("S3_BUCKET_NAME", "brezel-csv")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "DO_KEY", cfg.AWS.AccessKeyID)
+	assert.Equal(t, "nyc3", cfg.AWS.Region)
+	assert.Equal(t, "https://nyc3.digitaloceanspaces.com", cfg.AWS.Endpoint)
+	assert.False(t, cfg.AWS.ForcePathStyle)
+	assert.False(t, cfg.AWS.SSEEnabled)
+	assert.Equal(t, "brezel-csv", cfg.S3BucketName)
+}
+
+// TestAWSConfig_AWSDefaults verifies the no-endpoint AWS-default path is unchanged.
+func TestAWSConfig_AWSDefaults(t *testing.T) {
+	withMinimumEnv(t)
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIA...")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
+	t.Setenv("S3_BUCKET_NAME", "brezel-csv")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "us-east-1", cfg.AWS.Region) // default
+	assert.Empty(t, cfg.AWS.Endpoint)            // empty => AWS
+	assert.False(t, cfg.AWS.ForcePathStyle)
+	assert.False(t, cfg.AWS.SSEEnabled)
 }
 
 // TestLoad_DropsEmptyCSVElements covers a related edge case where consecutive
