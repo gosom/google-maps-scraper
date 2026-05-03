@@ -6,10 +6,17 @@ import (
 	"iter"
 	"math"
 	"net/url"
+	"regexp"
 	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
+)
+
+var (
+	removedReviewNumericRangeRe = regexp.MustCompile(`([0-9][0-9,.]*)[[:space:]]*(to|-|bis)[[:space:]]*([0-9][0-9,.]*)`)
+	removedReviewOpenEndedRe    = regexp.MustCompile(`(über|ueber|mehr als|over|more than|above)[[:space:]]+([0-9][0-9,.]*)`)
+	removedReviewSingleRe       = regexp.MustCompile(`(^|\b)(one|1|eine)[[:space:]]+(review|bewertung|rezension)`)
 )
 
 type Image struct {
@@ -75,6 +82,8 @@ type Entry struct {
 	ReviewCount         int                    `json:"review_count"`
 	ReviewRating        float64                `json:"review_rating"`
 	ReviewsPerRating    map[int]int            `json:"reviews_per_rating"`
+	RemovedReviewsMin   int                    `json:"removed_reviews_min"`
+	RemovedReviewsMax   int                    `json:"removed_reviews_max"`
 	Latitude            float64                `json:"latitude"`
 	Longtitude          float64                `json:"longtitude"`
 	Status              string                 `json:"status"`
@@ -171,6 +180,13 @@ func (e *Entry) CsvHeaders() []string {
 		"review_count",
 		"review_rating",
 		"reviews_per_rating",
+		"reviews_1_star",
+		"reviews_2_star",
+		"reviews_3_star",
+		"reviews_4_star",
+		"reviews_5_star",
+		"removed_reviews_min",
+		"removed_reviews_max",
 		"latitude",
 		"longitude",
 		"cid",
@@ -210,6 +226,13 @@ func (e *Entry) CsvRow() []string {
 		stringify(e.ReviewCount),
 		stringify(e.ReviewRating),
 		stringify(e.ReviewsPerRating),
+		stringify(e.ReviewsPerRating[1]),
+		stringify(e.ReviewsPerRating[2]),
+		stringify(e.ReviewsPerRating[3]),
+		stringify(e.ReviewsPerRating[4]),
+		stringify(e.ReviewsPerRating[5]),
+		stringify(e.RemovedReviewsMin),
+		stringify(e.RemovedReviewsMax),
 		stringify(e.Latitude),
 		stringify(e.Longtitude),
 		e.Cid,
@@ -434,6 +457,7 @@ func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error)
 		4: int(getNthElementAndCast[float64](darray, 175, 3, 3)),
 		5: int(getNthElementAndCast[float64](darray, 175, 3, 4)),
 	}
+	entry.RemovedReviewsMin, entry.RemovedReviewsMax = getRemovedReviewsRange(darray)
 
 	// Parse inline reviews from the page data
 	reviewsI := getNthElementAndCast[[]any](darray, 175, 9, 0, 0)
@@ -450,6 +474,92 @@ func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error)
 	}
 
 	return entry, nil
+}
+
+func getRemovedReviewsRange(darray []any) (int, int) {
+	noticesI := getNthElementAndCast[[]any](darray, 241, 0)
+	if len(noticesI) == 0 {
+		return 0, 0
+	}
+
+	for i := range noticesI {
+		noticeI := getNthElementAndCast[[]any](noticesI, i)
+		if int(getNthElementAndCast[float64](noticeI, 0)) != 3 {
+			continue
+		}
+
+		noticeBody := getNthElementAndCast[[]any](noticeI, 1)
+		for _, textIndex := range []int{0, 3} {
+			minReviews, maxReviews := parseRemovedReviewsRange(getNthElementAndCast[string](noticeBody, textIndex))
+			if minReviews != 0 || maxReviews != 0 {
+				return minReviews, maxReviews
+			}
+		}
+	}
+
+	return 0, 0
+}
+
+func parseRemovedReviewsRange(text string) (int, int) {
+	lower := strings.ToLower(text)
+	if matches := removedReviewNumericRangeRe.FindStringSubmatch(lower); len(matches) == 4 {
+		minReviews, minOK := parseReviewRangeNumber(matches[1])
+		maxReviews, maxOK := parseReviewRangeNumber(matches[3])
+		if minOK && maxOK {
+			return minReviews, maxReviews
+		}
+	}
+
+	if matches := removedReviewOpenEndedRe.FindStringSubmatch(lower); len(matches) == 3 {
+		minReviews, ok := parseReviewRangeNumber(matches[2])
+		if ok {
+			return minReviews + 1, 0
+		}
+	}
+
+	if removedReviewSingleRe.MatchString(lower) {
+		return 1, 1
+	}
+
+	fields := strings.Fields(lower)
+	for i := 0; i+2 < len(fields); i++ {
+		if fields[i+1] != "to" {
+			continue
+		}
+
+		minReviews, minOK := parseReviewRangeNumber(fields[i])
+		maxReviews, maxOK := parseReviewRangeNumber(fields[i+2])
+		if minOK && maxOK {
+			return minReviews, maxReviews
+		}
+	}
+
+	return 0, 0
+}
+
+func parseReviewRangeNumber(s string) (int, bool) {
+	s = strings.Trim(s, " ,.;:")
+	s = strings.NewReplacer(",", "", ".", "").Replace(s)
+
+	if n, err := strconv.Atoi(s); err == nil {
+		return n, true
+	}
+
+	words := map[string]int{
+		"one":   1,
+		"two":   2,
+		"three": 3,
+		"four":  4,
+		"five":  5,
+		"six":   6,
+		"seven": 7,
+		"eight": 8,
+		"nine":  9,
+		"ten":   10,
+	}
+	n, ok := words[s]
+
+	return n, ok
 }
 
 func parseReviews(reviewsI []any) []Review {
