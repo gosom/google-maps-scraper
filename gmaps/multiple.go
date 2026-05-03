@@ -47,6 +47,7 @@ func ParseSearchResults(raw []byte) ([]*Entry, error) {
 
 		entry.ReviewRating = getNthElementAndCast[float64](business, 4, 7)
 		entry.ReviewCount = int(getNthElementAndCast[float64](business, 4, 8))
+		entry.RemovedReviewsMin, entry.RemovedReviewsMax = getRemovedReviewsRange(business)
 
 		fullAddress := getNthElementAndCast[[]any](business, 2)
 

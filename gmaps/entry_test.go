@@ -1,6 +1,7 @@
 package gmaps_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"testing"
@@ -189,6 +190,132 @@ func Test_EntryFromJSON2(t *testing.T) {
 		_, err = gmaps.EntryFromJSON(raw)
 		require.NoError(t, err)
 	}
+}
+
+func Test_EntryFromJSONReviewRemovalNotices(t *testing.T) {
+	jd := make([]any, 7)
+	darray := make([]any, 242)
+	darray[11] = "TÜRKITCH Köfte & Kebap"
+	darray[13] = []any{"Turkish restaurant"}
+	darray[241] = []any{
+		[]any{
+			[]any{
+				float64(3),
+				[]any{
+					"201 to 250 reviews were removed in the past year due to defamation complaints under German law.",
+					"Reviews have been removed from this place",
+					[]any{
+						[]any{"https://support.google.com/contributionpolicy/answer/16997273"},
+						"More about defamation removal notices in Germany",
+					},
+					"201 to 250 reviews removed due to defamation complaints.",
+					float64(1),
+					nil,
+					float64(2),
+					"en-GB",
+				},
+			},
+			[]any{
+				float64(3),
+				[]any{
+					"Six to ten reviews were removed in the past year due to defamation complaints under German law.",
+					"Reviews have been removed from this place",
+					[]any{
+						[]any{"https://support.google.com/contributionpolicy/answer/16997273"},
+						"More about defamation removal notices in Germany",
+					},
+					"Six to ten reviews removed due to defamation complaints.",
+					float64(1),
+					nil,
+					float64(2),
+					"en-GB",
+				},
+			},
+		},
+	}
+	jd[6] = darray
+
+	raw, err := json.Marshal(jd)
+	require.NoError(t, err)
+
+	entry, err := gmaps.EntryFromJSON(raw)
+	require.NoError(t, err)
+	require.Equal(t, 201, entry.RemovedReviewsMin)
+	require.Equal(t, 250, entry.RemovedReviewsMax)
+
+	darray[241] = []any{
+		[]any{
+			[]any{
+				float64(3),
+				[]any{
+					"Six to ten reviews were removed in the past year due to defamation complaints under German law.",
+				},
+			},
+		},
+	}
+
+	raw, err = json.Marshal(jd)
+	require.NoError(t, err)
+
+	entry, err = gmaps.EntryFromJSON(raw)
+	require.NoError(t, err)
+	require.Equal(t, 6, entry.RemovedReviewsMin)
+	require.Equal(t, 10, entry.RemovedReviewsMax)
+
+	darray[241] = []any{
+		[]any{
+			[]any{
+				float64(3),
+				[]any{
+					"Unseren Richtlinien sind Beiträge zu dieser Art von Ort nicht zulässig.",
+					"Das Posten ist derzeit deaktiviert",
+				},
+			},
+			[]any{
+				float64(3),
+				[]any{
+					"Im vergangenen Jahr wurden über 250 Bewertungen aufgrund einer Beschwerde wegen Diffamierung nach deutschem Recht entfernt.",
+					"Es wurden Rezensionen zu diesem Ort entfernt",
+					[]any{
+						[]any{"https://support.google.com/contributionpolicy/answer/16997273"},
+						"Weitere Informationen zu Hinweisen zur Entfernung von Bewertungen wegen Diffamierungen in Deutschland",
+					},
+					"Über 250 Bewertungen aufgrund von Beschwerden wegen Diffamierung entfernt.",
+					float64(1),
+					nil,
+					float64(2),
+					"de",
+				},
+			},
+		},
+	}
+
+	raw, err = json.Marshal(jd)
+	require.NoError(t, err)
+
+	entry, err = gmaps.EntryFromJSON(raw)
+	require.NoError(t, err)
+	require.Equal(t, 251, entry.RemovedReviewsMin)
+	require.Equal(t, 0, entry.RemovedReviewsMax)
+
+	darray[241] = []any{
+		[]any{
+			[]any{
+				float64(3),
+				[]any{
+					"One review was removed in the past year due to a defamation complaint under German law.",
+				},
+			},
+		},
+	}
+
+	raw, err = json.Marshal(jd)
+	require.NoError(t, err)
+
+	entry, err = gmaps.EntryFromJSON(raw)
+	require.NoError(t, err)
+	require.Equal(t, 1, entry.RemovedReviewsMin)
+	require.Equal(t, 1, entry.RemovedReviewsMax)
 }
 
 func Test_EntryFromJSONRaw2(t *testing.T) {
