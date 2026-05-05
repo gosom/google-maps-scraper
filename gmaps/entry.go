@@ -49,12 +49,15 @@ type About struct {
 }
 
 type Review struct {
-	Name           string
-	ProfilePicture string
-	Rating         int
-	Description    string
-	Images         []string
-	When           string
+	Name              string
+	ProfilePicture    string
+	Rating            int
+	Description       string
+	Images            []string
+	When              string
+	OwnerResponse     string
+	OwnerResponseTime string
+	ReviewId          string
 }
 
 type Entry struct {
@@ -465,6 +468,33 @@ func parseReviews(reviewsI []any) []Review {
 			}
 		}
 
+		// Extract Review ID - Google stores contribution IDs at various paths.
+		// The ID is a base64-encoded string starting with "Ch" (e.g., ChZDSUhNMG9nS0VJQ0FnSURzekpXdGNREAE).
+		reviewId := ""
+		reviewIdCandidatePaths := [][]int{
+			{4},              // [el][4] - common location
+			{0, 4},           // [el][0][4]
+			{1, 0, 4},        // author info area
+			{1, 4, 0},        // [1][4][0]
+			{1, 4, 6},        // [1][4][6]
+			{1, 4, 3},        // [1][4][3]
+			{1, 0},           // contribution reference
+			{2, 2, 0, 1, 0},  // timestamp/metadata area
+		}
+		for _, path := range reviewIdCandidatePaths {
+			candidate := getNthElementAndCast[string](el, path...)
+			if strings.HasPrefix(candidate, "Ch") {
+				reviewId = candidate
+				break
+			}
+		}
+		if reviewId == "" {
+			candidate := getNthElementAndCast[string](reviewsI, i, 4)
+			if strings.HasPrefix(candidate, "Ch") {
+				reviewId = candidate
+			}
+		}
+
 		// Try multiple paths for the timestamp
 		time := getNthElementAndCast[[]any](el, 2, 2, 0, 1, 21, 6, 8)
 		if len(time) == 0 {
@@ -507,6 +537,11 @@ func parseReviews(reviewsI []any) []Review {
 			}
 		}
 
+		// Extract owner response if present
+		// Owner response text is at [3][14][0][0], time at [3][3]
+		ownerResponse := getNthElementAndCast[string](el, 3, 14, 0, 0)
+		ownerResponseTime := getNthElementAndCast[string](el, 3, 3)
+
 		review := Review{
 			Name:           authorName,
 			ProfilePicture: profilePic,
@@ -517,8 +552,11 @@ func parseReviews(reviewsI []any) []Review {
 
 				return fmt.Sprintf("%v-%v-%v", time[0], time[1], time[2])
 			}(),
-			Rating:      rating,
-			Description: description,
+			Rating:            rating,
+			Description:       description,
+			OwnerResponse:     ownerResponse,
+			OwnerResponseTime: ownerResponseTime,
+			ReviewId:          reviewId,
 		}
 
 		if review.Name == "" {
