@@ -54,7 +54,7 @@ This spec finishes that one deferral. It does not revisit the prior plan's "don'
 |---|---|---|
 | `web/service.go:100` | `filepath.Join(s.dataFolder, id+".csv")` | CSV-by-ID lookup (current API path) |
 | `web/service.go:189` | same | Legacy `GetCSV` method |
-| `web/service.go:235` | same | Third lookup site (legacy `GetCSV` deprecated path; do not remove in this spec — call sites may still exist) |
+| `web/service.go:235` | same | Same legacy `GetCSV` path as :189, just the inner `filepath.Join` after a `filepath.Clean(s.dataFolder)` at :234. Counted because it textually references the data folder; do not remove in this spec — callers may still exist. |
 
 The `web.Service` receives `dataFolder` via constructor (`web.NewService(repo, cfg.DataFolder)` at `runner/webrunner/webrunner.go:268`), so it inherits whichever value the webrunner uses — not an independent reader.
 
@@ -67,7 +67,9 @@ A **per-job CSV staging buffer for S3 uploads, used only by `RunModeWeb`.** Stre
 - `RunModeDatabase` → no disk writes, results go straight to Postgres
 - `RunModeInstallPlaywright` → does not run any of this code
 
-### Why the prior plan's "don't merge them" was correct in general but wrong for this field
+### Why this field warrants the exception to the prior plan's "don't merge them" note
+
+The prior plan's "Don't merge them" line is a brief heads-up about `runner.Config` being flag-driven, not a reasoned blanket policy applied per-field. For most fields the heuristic is fine (different defaults, different lifecycles, no real conflict). DataFolder is the structural exception:
 
 | Field | Both configs have it? | Both have a default? | Merge needed? |
 |---|---|---|---|
@@ -109,7 +111,7 @@ Resolved in `main.go` after `pkgconfig.Load()` and before `runnerFactory()`. Imp
 In `main.go`, the order becomes:
 
 1. `appCfg, err := pkgconfig.Load()` — single read of `DATA_FOLDER` env var
-2. `cfg, dataFolderFlag, err := runner.ParseConfig()` — CLI flags parsed; `-data-folder` lands in a returned local string with default `""`
+2. `cfg, dataFolderFlag, err := runner.ParseConfig()` — CLI flags parsed; `-data-folder` lands in a returned local string with default `""`. Signature change from `(*Config, error)` to `(*Config, string, error)`. Verified caller surface: `main.go:68` is the only caller in the repo (`grep -rn 'runner.ParseConfig'`); no test files call it directly. One-line update.
 3. `runner.MergeAWSDefaults(cfg, appCfg)` — unchanged
 4. **New:** `if dataFolderFlag != "" { appCfg.DataFolder = dataFolderFlag }`
 5. `runnerFactory(cfg, appCfg, logger)` — webrunner reads `appCfg.DataFolder`
@@ -161,7 +163,7 @@ New tests required:
    - both set → flag wins
    - flag set to `""`, env set → env wins (empty flag must not override; this is what `dataFolderFlag != ""` guards)
    - env set to `""`, flag unset → `caarlos0/env` treats empty as "use default" → `"./webdata"`
-2. **webrunner integration**: `webrunner_startup_test.go` assertion that `os.MkdirAll` is called with `appCfg.DataFolder`, not `cfg.DataFolder`. (May already implicitly test this via the constructor signature.)
+2. **No new webrunner integration test required.** Deleting `runner.Config.DataFolder` makes any miswiring (`cfg.DataFolder` instead of `appCfg.DataFolder`) fail at compile time — the type system is the test. Existing `webrunner_startup_test.go` cases continue to pass once they construct `*pkgconfig.Config` directly (already the prior-plan pattern).
 3. **CI grep gate stays green**: `.github/workflows/build.yml:52-86` env-boundary check still passes. The check matches `os.Getenv` / `os.LookupEnv` calls; the override resolution this spec adds is a plain string assignment in `main.go`, not an env read, so the gate is not relevant. The only env-access change is the *deletion* of `web/scrape.go:36`'s `getEnv("DATA_FOLDER", …)` call, which strictly reduces matches.
 
 Manual verification:
@@ -181,15 +183,19 @@ Manual verification:
 | Compile errors in unknown call sites still using `runner.Config.DataFolder` | Medium | Low | `go build ./...` will catch all of them; the field deletion is the tripwire |
 | Local dev workflows that rely on `-data-folder webdata` default | Low | Low | Default unchanged (`./webdata` via `envDefault`); explicit flag still works |
 | Test using `t.Setenv("DATA_FOLDER", ...)` in webrunner tests breaks because the read site moved | Low | Low | Update affected tests to construct `*config.Config` directly (matches Chunk 2 pattern already in use) |
-| Production `DATA_FOLDER=/gmapsdata` starts being honored on next deploy; CSV staging path moves from `/webdata` (bug) to `/gmapsdata` (intended) | High (the brezel production deploy already sets `DATA_FOLDER`, so this fires on first deploy after merge) | Medium (any in-flight job CSV not yet uploaded to S3 at deploy time would be left behind in the old `/webdata` path) | (a) Document the path change explicitly in the PR description and the deploy runbook; (b) deploy-time check before swap: `docker compose exec backend sh -c "ls /webdata/*.csv 2>/dev/null"` — if non-empty, drain in-flight jobs before cutover; (c) the local CSV is only the S3-upload buffer — once uploaded, the canonical artifact is in S3 and Postgres metadata, so the worst case is "rare in-flight job needs to be re-run," not data loss |
+| Production `DATA_FOLDER=/gmapsdata` starts being honored on next deploy; CSV staging path moves from `/webdata` (bug) to `/gmapsdata` (intended) | High (the brezel production deploy already sets `DATA_FOLDER`, so this fires on first deploy after merge) | Medium | Per `runner/webrunner/webrunner.go:1485-1510`, the `JobFile` Postgres row is created **only after** S3 upload succeeds, and `os.Remove(csvFilePath)` then deletes the local file. Any job whose CSV write straddles the deploy cutover therefore loses its partial file on the old path with no Postgres metadata trail — the new container starts a fresh write at `/gmapsdata/{job_id}.csv` and never sees the orphaned `/webdata/{job_id}.csv`. **Mitigations, all required, not optional:** (a) deploy runbook MUST include a brief job-pause window (set the worker to drain via `JOB_INTAKE_PAUSED=1` or equivalent, wait for `SELECT count(*) FROM jobs WHERE status='running'` to reach 0, then cut over); (b) deploy-time pre-check: `docker compose exec backend sh -c "ls /webdata/*.csv 2>/dev/null"` — if non-empty, abort the deploy and drain first; (c) document the path change in the PR description and link the runbook |
 | Field rename leaves a fossil reference in `web/scrape.go`'s parallel `Config` struct | Medium | Low | Spec explicitly deletes `web/scrape.go:36` reader; review checklist must verify |
 
 ---
 
+## Decisions (resolved during spec writing — listed for transparency)
+
+1. **No Validate-time invariant on empty `DataFolder`.** `envDefault:"./webdata"` is the only safety. The prior plan kept production validation focused on secrets, and an empty `DataFolder` is recoverable: `mkdir-of-empty` is the CWD, which fails fast on read-only rootfs and on the existing `os.MkdirAll` call anyway.
+2. **`web/scrape.go`'s parallel `Config` struct keeps its `DataFolder` field** (line 14); only the `getEnv("DATA_FOLDER", …)` reader at line 36 is removed. The field is populated by the constructor (whichever site builds the parallel `Config`), which now takes `appCfg.DataFolder` as a parameter. Other readers in `web/scrape.go` (e.g. `SERVER_PORT`, `CLERK_SECRET_KEY`) stay — out of scope per the prior plan.
+
 ## Open questions for the reviewer
 
-1. **Should `pkg/config.Config.DataFolder` get a Validate-time invariant** (e.g., reject empty string in production)? Lean: no, keep `envDefault` as the only safety; the prior plan kept production validation focused on secrets, and an empty DataFolder is recoverable (mkdir-of-empty is the CWD, which fails fast on read-only rootfs anyway).
-2. **`web/scrape.go` parallel `Config` struct still has `getEnv(...)` for other fields.** This spec deletes only the `DATA_FOLDER` reader. The rest stays as future cleanup, consistent with the 2026-04-27 plan's "out of scope" note for `web/scrape.go`. Confirm.
+*(none — all decisions above are resolved; flag any disagreement during review)*
 
 ---
 
