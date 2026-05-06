@@ -87,7 +87,7 @@ DataFolder is the only field where both configs (a) have a default, (b) point at
 
 ### One sentence
 
-`pkg/config.Config.DataFolder` becomes the single source of truth; the `-data-folder` CLI flag stays but acts as a runtime override applied to `appCfg.DataFolder` before runner construction; the legacy `web/scrape.go:36` reader is deleted.
+`pkg/config.Config.DataFolder` becomes the single source of truth; the `-data-folder` CLI flag stays but is parsed *before* `pkgconfig.Load()` and passed in as a functional option (`pkgconfig.Load(pkgconfig.WithDataFolderOverride(s))`); the legacy `web/scrape.go:36` reader is deleted; `appCfg` is immutable after `Load()` returns.
 
 ### Precedence (explicit, single arbitration point)
 
@@ -95,28 +95,33 @@ DataFolder is the only field where both configs (a) have a default, (b) point at
 explicit -data-folder flag  >  DATA_FOLDER env var  >  envDefault "./webdata"
 ```
 
-Resolved in `main.go` after `pkgconfig.Load()` and before `runnerFactory()`. Implemented manually (no Viper) since the project does not use Viper — but the resulting precedence matches the standard Cobra+Viper convention so the rule is familiar.
+Resolved **inside `pkgconfig.Load`** via a functional option, so the override is applied during config construction rather than by mutating `appCfg` post-Load. Implemented manually (no Viper) since the project does not use Viper — but the resulting precedence matches the standard Cobra+Viper convention so the rule is familiar. Keeping `appCfg` immutable post-Load aligns with the project's existing dependency-injection pattern (the prior plan's Chunk 2.1 plumbed `*config.Config` through every runner; nothing else mutates it after construction).
 
 ### Field changes
 
 | Field | Before | After |
 |---|---|---|
-| `pkg/config.Config.DataFolder` | exists, `env:"DATA_FOLDER" envDefault:"./webdata"`, never read by webrunner | exists, same tag, **read by webrunner** |
+| `pkg/config.Config.DataFolder` | exists, `env:"DATA_FOLDER" envDefault:"./webdata"`, never read by webrunner | exists, same tag, **read by webrunner**; value can be replaced at construction time by `WithDataFolderOverride` option |
 | `runner.Config.DataFolder` | exists as primary | **deleted** — webrunner reads from `appCfg.DataFolder` |
-| `-data-folder` CLI flag | binds to `runner.Config.DataFolder` with default `"webdata"` | binds to a local `string` declared at flag-parse time, default `""` (empty = "flag not set"); not stored on `runner.Config` |
+| `-data-folder` CLI flag | binds to `runner.Config.DataFolder` with default `"webdata"` | binds to `runner.FlagOverrides.DataFolder` field with default `""` (empty = "flag not set"); the typed `FlagOverrides` struct is returned alongside `*runner.Config` from `runner.ParseConfig` |
+| `pkg/config.Load` signature | `Load() (*Config, error)` | `Load(opts ...LoadOption) (*Config, error)` — variadic, non-breaking for existing callers |
+| `pkg/config.WithDataFolderOverride` | does not exist | new functional option: `func WithDataFolderOverride(s string) LoadOption`; if `s != ""`, replaces the parsed `cfg.DataFolder` value |
 | `web/scrape.go:36` `getEnv("DATA_FOLDER", "./webdata")` | active reader for parallel scraper Config | **deleted**; parallel scraper Config reads from injected `appCfg.DataFolder` |
 
 ### Composition root (sketch, for shape only — actual code in implementation plan)
 
 In `main.go`, the order becomes:
 
-1. `appCfg, err := pkgconfig.Load()` — single read of `DATA_FOLDER` env var
-2. `cfg, dataFolderFlag, err := runner.ParseConfig()` — CLI flags parsed; `-data-folder` lands in a returned local string with default `""`. Signature change from `(*Config, error)` to `(*Config, string, error)`. Verified caller surface: `main.go:68` is the only caller in the repo (`grep -rn 'runner.ParseConfig'`); no test files call it directly. One-line update.
+1. `cfg, overrides, err := runner.ParseConfig()` — CLI flags parsed first; `-data-folder` lands in `overrides.DataFolder` (empty when flag is unset). Signature change from `(*Config, error)` to `(*Config, FlagOverrides, error)`. Verified caller surface: `main.go:68` is the only caller in the repo (`grep -rn 'runner.ParseConfig'`); no test files call it directly. One-line update.
+2. `appCfg, err := pkgconfig.Load(pkgconfig.WithDataFolderOverride(overrides.DataFolder))` — env-config parsed; the option is applied during construction. If `overrides.DataFolder == ""`, the option is a no-op and `cfg.DataFolder` keeps its env-or-default value. Otherwise the option replaces it. **`appCfg` is immutable after this call returns.**
 3. `runner.MergeAWSDefaults(cfg, appCfg)` — unchanged
-4. **New:** `if dataFolderFlag != "" { appCfg.DataFolder = dataFolderFlag }`
-5. `runnerFactory(cfg, appCfg, logger)` — webrunner reads `appCfg.DataFolder`
+4. `runnerFactory(cfg, appCfg, logger)` — webrunner reads `appCfg.DataFolder`
 
-The flag value lives only as a local variable in `main.go`'s startup sequence — it is never stored on `runner.Config`. This intentionally avoids resurrecting the dual-storage problem the spec is removing: there is exactly one resolved value (`appCfg.DataFolder`), and the override is a transient applied at composition time.
+The flag value lives only on the `FlagOverrides` struct returned from `ParseConfig` — it is never stored on `runner.Config`. The override is consumed exactly once when constructing `appCfg`, then discarded. There is one resolved value (`appCfg.DataFolder`), one source of truth, no post-construction mutation.
+
+**Why a `FlagOverrides` struct rather than a bare string return.** Today there is one override; tomorrow there may be two or three (`Concurrency`, similar latent gaps from the prior plan). A struct with one field today scales without breaking the `ParseConfig` signature; a `(*Config, string, error)` return would need to grow into `(*Config, string, int, error)` and so on. The struct also documents intent: callers see `overrides.DataFolder` instead of an unnamed string.
+
+**Why a functional option on `Load` rather than mutating `appCfg`.** `pkgconfig.Load` is the typed-config construction boundary; functional options are the idiomatic Go pattern for "construction-time configurable values" (see `golang-design-patterns`: *"Constructors SHOULD use functional options — they scale better as APIs evolve"*). Mutating `appCfg.DataFolder` in main.go after `Load` returns would introduce a precedent — *"appCfg is mutable during startup"* — that would calcify into "appCfg is mutable, period," which would silently break dependency-injection guarantees the prior plan's Chunk 2.1 established.
 
 Webrunner constructor at `runner/webrunner/webrunner.go:199` (`func New(cfg *runner.Config, appCfg *pkgconfig.Config, logger *slog.Logger) (runner.Runner, error)`) already accepts `*config.Config` — the prior plan's Chunk 2.1 plumbed this through. So the change in webrunner is just: `cfg.DataFolder` → `appCfg.DataFolder` at the four call sites listed above.
 
@@ -156,15 +161,23 @@ Existing tests that must continue passing:
 
 New tests required:
 
-1. **Precedence test** (new file in `runner/`, e.g. `runner/datafolder_resolution_test.go` — package `runner` avoids the `package main` test-build complications):
-   - flag set, env unset → flag wins
-   - flag unset, env set → env wins
-   - both unset → default `"./webdata"` (from `pkg/config` `envDefault`)
-   - both set → flag wins
-   - flag set to `""`, env set → env wins (empty flag must not override; this is what `dataFolderFlag != ""` guards). Note: Go's `flag.StringVar` cannot distinguish "user typed `-data-folder ""`" from "user didn't pass the flag at all" without `flag.Visit`. This collapse is intentional — there is no semantic for "explicitly clear" via the flag, only "override with a non-empty path."
-   - env set to `""`, flag unset → `caarlos0/env` treats empty as "use default" → `"./webdata"`
-2. **No new webrunner integration test required.** Deleting `runner.Config.DataFolder` makes any miswiring (`cfg.DataFolder` instead of `appCfg.DataFolder`) fail at compile time — the type system is the test. Existing `webrunner_startup_test.go` cases continue to pass once they construct `*pkgconfig.Config` directly (already the prior-plan pattern).
-3. **CI grep gate stays green**: `.github/workflows/build.yml:52-86` env-boundary check still passes. The check matches `os.Getenv`/`os.LookupEnv` (lines 63-72) and helper functions including `getEnv` (lines 74-79); both grep blocks already path-exclude `web/scrape.go` (lines 71 and 77), so the deletion at `web/scrape.go:36` is silently green either way. The override resolution this spec adds is a plain string assignment in `main.go`, not an env read, so the gate is not triggered.
+1. **Functional-option unit test** in `pkg/config/config_test.go` exercising `WithDataFolderOverride` directly. Function under test: `pkgconfig.WithDataFolderOverride(s string) LoadOption`. Cases (table-driven, named subtests per `golang-testing` skill):
+   - `flag set, env unset` — `Load(WithDataFolderOverride("/custom"))` with no `DATA_FOLDER` set → `cfg.DataFolder == "/custom"`
+   - `flag unset, env set` — `Load(WithDataFolderOverride(""))` with `DATA_FOLDER=/from-env` → `cfg.DataFolder == "/from-env"`
+   - `both unset` — `Load()` (no options, no env) → `cfg.DataFolder == "./webdata"` (envDefault)
+   - `both set` — `Load(WithDataFolderOverride("/custom"))` with `DATA_FOLDER=/from-env` → `cfg.DataFolder == "/custom"` (flag wins)
+   - `flag empty, env empty` — `Load(WithDataFolderOverride(""))` with `DATA_FOLDER=""` → `cfg.DataFolder == "./webdata"` (caarlos0/env treats empty env as "use default")
+   - `flag empty, env set` — already covered by case 2
+   - `flag empty, env set to default value` — `Load(WithDataFolderOverride(""))` with `DATA_FOLDER=./webdata` → `cfg.DataFolder == "./webdata"` (sanity case; locks behavior even if envDefault later changes)
+
+   **Test must NOT use `t.Parallel()`.** The test cases set/unset `DATA_FOLDER` via `t.Setenv`, which mutates process-global state. `t.Parallel()` would race with any other test that touches env vars. The `golang-testing` skill rule *"Independent tests SHOULD use t.Parallel() when possible"* explicitly says "when possible" — this is a case where it isn't. A `// Note: tests serialize on env var; do not add t.Parallel()` comment must accompany the test function.
+
+   Why this test lives in `pkg/config_test`: the function under test (`WithDataFolderOverride`) is exported from `pkg/config`, and the option's effect is observable on the returned `*Config`. Per `golang-testing` *"Co-locate _test.go files with the code they test"*.
+
+2. **No `runner.ParseConfig` test for `FlagOverrides.DataFolder` required for this PR.** The flag-binding code is a single `flag.StringVar` call; testing it would test `flag.StringVar` itself. If a future change adds non-trivial logic around flag parsing, that's when a test is justified.
+
+3. **No new webrunner integration test required.** Deleting `runner.Config.DataFolder` makes any miswiring (`cfg.DataFolder` instead of `appCfg.DataFolder`) fail at compile time — the type system is the test. Existing `webrunner_startup_test.go` cases continue to pass once they construct `*pkgconfig.Config` directly (already the prior-plan pattern).
+**CI grep gate stays green**: `.github/workflows/build.yml:52-86` env-boundary check still passes. The check matches `os.Getenv`/`os.LookupEnv` (lines 63-72) and helper functions including `getEnv` (lines 74-79); both grep blocks already path-exclude `web/scrape.go` (lines 71 and 77), so the deletion at `web/scrape.go:36` is silently green either way. The new `WithDataFolderOverride` option lives in `pkg/config` (allow-listed), and contains no env access — it is a pure value-replacement function. The gate is not triggered.
 
 Manual verification:
 
@@ -192,6 +205,8 @@ Manual verification:
 
 1. **No Validate-time invariant on empty `DataFolder`.** `envDefault:"./webdata"` is the only safety. The prior plan kept production validation focused on secrets, and an empty `DataFolder` is recoverable: `mkdir-of-empty` is the CWD, which fails fast on read-only rootfs and on the existing `os.MkdirAll` call anyway.
 2. **`web/scrape.go`'s parallel `Config` struct keeps its `DataFolder` field** (line 14); only the `getEnv("DATA_FOLDER", …)` reader at line 36 is removed. The field is populated by the constructor (whichever site builds the parallel `Config`), which now takes `appCfg.DataFolder` as a parameter. Other readers in `web/scrape.go` (e.g. `SERVER_PORT`, `CLERK_SECRET_KEY`) stay — out of scope per the prior plan.
+3. **Functional option on `Load` rather than post-Load mutation.** Initial draft of this spec mutated `appCfg.DataFolder` in `main.go` after `Load()` returned. Reviewed against `golang-design-patterns` (*"Constructors SHOULD use functional options — they scale better as APIs evolve"*) and `golang-dependency-injection` (immutable injected config) and revised: `pkg/config.Load` now accepts variadic `LoadOption`s, the override is applied during construction, and `appCfg` is immutable post-`Load`. The cost is one new exported function (`WithDataFolderOverride`); the benefit is preserving the dependency-injection guarantee the prior plan's Chunk 2.1 established.
+4. **Typed `FlagOverrides` struct rather than a bare-string `ParseConfig` return.** Initial draft returned `(*Config, string, error)` from `ParseConfig`. Reviewed against `golang-cli` (functional options scale better as concerns grow) and revised: a `runner.FlagOverrides` struct holds the override field. With one field today the struct is overkill, but adding a second override (`Concurrency`, the leading next candidate) becomes a non-breaking field addition rather than a `(_, _, _, _, error)` signature growth. The struct also makes the call site self-documenting (`overrides.DataFolder` instead of an unnamed string).
 
 ## Open questions for the reviewer
 
@@ -201,13 +216,14 @@ Manual verification:
 
 ## Sequencing
 
-Single PR, three logical commits:
+Single PR, four logical commits:
 
-1. **`refactor(config): make pkg/config.Config.DataFolder the canonical source`** — webrunner switches reads from `cfg.DataFolder` to `appCfg.DataFolder`; delete `runner.Config.DataFolder`; `-data-folder` flag binds to a local string in `runner.ParseConfig` (returned alongside `*runner.Config`, not stored on it); `main.go` applies the override to `appCfg.DataFolder` post-Load.
-2. **`refactor(web/scrape): drop legacy DATA_FOLDER getEnv reader`** — `web/scrape.go:36` reads from injected config instead.
-3. **`test(config): cover DataFolder precedence resolution`** — new precedence test plus updated webrunner startup test.
+1. **`feat(config): add WithDataFolderOverride functional option to Load`** — extends `pkg/config.Load` to accept variadic `LoadOption`s; introduces `pkgconfig.WithDataFolderOverride(s string) LoadOption` (no-op when `s == ""`, replaces `cfg.DataFolder` otherwise). Existing callers of `Load()` are unaffected (variadic). Includes the table-driven test from §test plan item 1.
+2. **`refactor(runner): return FlagOverrides from ParseConfig`** — introduces `runner.FlagOverrides` struct with `DataFolder string` field; `-data-folder` flag now binds to that field; `ParseConfig` signature changes to `(*Config, FlagOverrides, error)`; `main.go:68` updated to capture the third return value.
+3. **`refactor(webrunner): read DataFolder from appCfg; delete runner.Config.DataFolder`** — webrunner switches the four read sites from `cfg.DataFolder` to `appCfg.DataFolder`; `runner.Config.DataFolder` field deleted; `runner/runner.go:256` flag binding moved to `FlagOverrides`; `main.go` calls `pkgconfig.Load(pkgconfig.WithDataFolderOverride(overrides.DataFolder))`. The compile-time tripwire ensures every stale reference is found.
+4. **`refactor(web/scrape): drop legacy DATA_FOLDER getEnv reader`** — `web/scrape.go:36` reads from injected `appCfg.DataFolder` instead. The struct field at `web/scrape.go:14` stays; the constructor (whichever site builds the parallel `Config`) takes `appCfg.DataFolder` as a parameter.
 
-Estimated diff: ~150 lines including tests. No new dependencies.
+Estimated diff: ~180 lines including tests. No new dependencies. Commits 1 and 2 are independently reviewable; commit 3 is the load-bearing migration; commit 4 cleans up the residual.
 
 ---
 
