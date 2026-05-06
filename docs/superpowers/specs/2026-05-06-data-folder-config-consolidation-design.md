@@ -148,7 +148,7 @@ These are real issues but each is its own change. Bundling them dilutes blast ra
 - **Lambda mode's hardcoded `/tmp/output.csv`** at `runner/lambdaaws/lambdaaws.go:65`. Different code path, different runtime, not affected by this fix. Could be tidied later.
 - **Other `getEnv(...)` readers in `web/scrape.go`** (e.g. `SERVER_PORT`, `CLERK_SECRET_KEY`, parallel scraper-only fields). Only the `DATA_FOLDER` reader at line 36 is removed in this spec. Remaining readers stay as future cleanup, consistent with the 2026-04-27 plan's "out of scope" note for `web/scrape.go`.
 - **The Dockerfile chown question.** After this lands, set `DATA_FOLDER=/gmapsdata` in `/etc/brezel/secrets/backend.env` and the existing chowned directory just works. No Dockerfile change needed.
-- **CWD-relative `./webdata` default.** The default stays `./webdata` to preserve local-dev semantics. Production explicitly sets `DATA_FOLDER`.
+- **CWD-relative default.** The unified default is `./webdata` (from `envDefault` in `pkg/config.Config`). The legacy CLI-flag default of `"webdata"` (no leading dot) is dropped — same directory on Unix, different string. See risk register. Production explicitly sets `DATA_FOLDER`.
 
 ---
 
@@ -162,13 +162,14 @@ Existing tests that must continue passing:
 New tests required:
 
 1. **Functional-option unit test** in `pkg/config/config_test.go` exercising `WithDataFolderOverride` directly. Function under test: `pkgconfig.WithDataFolderOverride(s string) LoadOption`. Cases (table-driven, named subtests per `golang-testing` skill):
-   - `flag set, env unset` — `Load(WithDataFolderOverride("/custom"))` with no `DATA_FOLDER` set → `cfg.DataFolder == "/custom"`
-   - `flag unset, env set` — `Load(WithDataFolderOverride(""))` with `DATA_FOLDER=/from-env` → `cfg.DataFolder == "/from-env"`
-   - `both unset` — `Load()` (no options, no env) → `cfg.DataFolder == "./webdata"` (envDefault)
-   - `both set` — `Load(WithDataFolderOverride("/custom"))` with `DATA_FOLDER=/from-env` → `cfg.DataFolder == "/custom"` (flag wins)
-   - `flag empty, env empty` — `Load(WithDataFolderOverride(""))` with `DATA_FOLDER=""` → `cfg.DataFolder == "./webdata"` (caarlos0/env treats empty env as "use default")
-   - `flag empty, env set` — already covered by case 2
-   - `flag empty, env set to default value` — `Load(WithDataFolderOverride(""))` with `DATA_FOLDER=./webdata` → `cfg.DataFolder == "./webdata"` (sanity case; locks behavior even if envDefault later changes)
+   - `flag set, env unset` — `Load(WithDataFolderOverride("/custom"))` with `os.Unsetenv("DATA_FOLDER")` → `cfg.DataFolder == "/custom"`
+   - `flag unset, env set` — `Load(WithDataFolderOverride(""))` with `t.Setenv("DATA_FOLDER", "/from-env")` → `cfg.DataFolder == "/from-env"`
+   - `both unset` — `Load()` with `os.Unsetenv("DATA_FOLDER")` → `cfg.DataFolder == "./webdata"` (envDefault fires when var is unset)
+   - `both set` — `Load(WithDataFolderOverride("/custom"))` with `t.Setenv("DATA_FOLDER", "/from-env")` → `cfg.DataFolder == "/custom"` (flag wins)
+   - `flag empty, env set to default value` — `Load(WithDataFolderOverride(""))` with `t.Setenv("DATA_FOLDER", "./webdata")` → `cfg.DataFolder == "./webdata"` (sanity case; locks behavior even if envDefault later changes)
+   - `flag empty, env set to empty string` — `Load(WithDataFolderOverride(""))` with `t.Setenv("DATA_FOLDER", "")` → assertion to be **discovered during implementation**: caarlos0/env's behavior on a set-but-empty env var (does `envDefault` fire, or does the empty string win?) is library-defined and not documented in `pkg/config/config.go`. The test exists to lock whatever the actual behavior is; if the behavior is "empty wins" and that's surprising, raise it during implementation review and decide whether to add a post-parse `if cfg.DataFolder == "" { cfg.DataFolder = "./webdata" }` guard. This is the only case where the spec genuinely doesn't know the answer.
+
+   **Note on `-data-folder ""` from the CLI side.** Because Go's `flag.StringVar` cannot distinguish "user passed `-data-folder ""`" from "user did not pass the flag," and because `WithDataFolderOverride("")` is a no-op by design, there is no semantic for "explicitly clear via CLI flag." The collapse is intentional and matches the precedence rule (flag overrides env *only* when non-empty).
 
    **Test must NOT use `t.Parallel()`.** The test cases set/unset `DATA_FOLDER` via `t.Setenv`, which mutates process-global state. `t.Parallel()` would race with any other test that touches env vars. The `golang-testing` skill rule *"Independent tests SHOULD use t.Parallel() when possible"* explicitly says "when possible" — this is a case where it isn't. A `// Note: tests serialize on env var; do not add t.Parallel()` comment must accompany the test function.
 
@@ -194,9 +195,9 @@ Manual verification:
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
 | Compile errors in unknown call sites still using `runner.Config.DataFolder` | Medium | Low | `go build ./...` will catch all of them; the field deletion is the tripwire |
-| Local dev workflows that rely on `-data-folder webdata` default | Low | Low | Default unchanged (`./webdata` via `envDefault`); explicit flag still works |
+| Default-value string changes from `"webdata"` (old CLI flag default) to `"./webdata"` (envDefault) when neither flag nor env is set. Explicit `-data-folder` still works. | Low (rare path — production sets `DATA_FOLDER`; local dev usually inherits CWD) | Low (resolves to the same on-disk directory on Unix, `os.Stat`/`os.MkdirAll` semantics identical) | Documented behavior change. The only observable difference is in log lines or error messages that quote the path string verbatim — anyone string-comparing the path would need to update to match `"./webdata"`. No behavior depends on the bare-vs-leading-dot form. |
 | Test using `t.Setenv("DATA_FOLDER", ...)` in webrunner tests breaks because the read site moved | Low | Low | Update affected tests to construct `*config.Config` directly (matches Chunk 2 pattern already in use) |
-| Production `DATA_FOLDER=/gmapsdata` starts being honored on next deploy; CSV staging path moves from `/webdata` (bug) to `/gmapsdata` (intended) | High (the brezel production deploy already sets `DATA_FOLDER`, so this fires on first deploy after merge) | Medium | Per `runner/webrunner/webrunner.go:1485-1510`, the `JobFile` Postgres row is created **only after** S3 upload succeeds, and `os.Remove(csvFilePath)` then deletes the local file. Any job whose CSV write straddles the deploy cutover therefore loses its partial file on the old path with no Postgres metadata trail — the new container starts a fresh write at `/gmapsdata/{job_id}.csv` and never sees the orphaned `/webdata/{job_id}.csv`. **Mitigations, all required, not optional:** (a) deploy runbook MUST include a brief job-pause window: pause new-job intake (`JOB_INTAKE_PAUSED=1` or equivalent), wait for `SELECT count(*) FROM jobs WHERE status='running'` to reach 0 **AND** wait for any in-flight S3 multipart uploads to complete (a `JobFile` row with `status='uploaded'` is the signal — running-jobs at zero is necessary but not sufficient because the worker takes a few seconds between the last row write and the S3 upload finishing), then cut over; (b) deploy-time pre-check: `docker compose exec backend sh -c "ls /webdata/*.csv 2>/dev/null"` — if non-empty, abort the deploy and drain first; (c) document the path change in the PR description and link the runbook |
+| Production `DATA_FOLDER=/gmapsdata` starts being honored on next deploy; CSV staging path moves from `/webdata` (bug) to `/gmapsdata` (intended) | High (the brezel production deploy already sets `DATA_FOLDER`, so this fires on first deploy after merge) | Medium | Per `runner/webrunner/webrunner.go:1485-1510`, the `JobFile` Postgres row is created **only after** S3 upload succeeds, and `os.Remove(csvFilePath)` then deletes the local file. Any job whose CSV write straddles the deploy cutover therefore loses its partial file on the old path with no Postgres metadata trail — the new container starts a fresh write at `/gmapsdata/{job_id}.csv` and never sees the orphaned `/webdata/{job_id}.csv`. **Mitigations, all required, not optional:** (a) deploy runbook MUST include a brief downtime window. There is no job-intake pause flag in the codebase today (verified by `grep -rn 'JOB_INTAKE_PAUSED\|intake.*pause' --include='*.go'` → no matches), so the runbook MUST either: (i) `docker compose stop backend` and wait for `SELECT count(*) FROM jobs WHERE status='running' AND updated_at > now() - interval '5 minutes'` to reach 0 AND for any `JobFile` rows still in upload state to settle (running-jobs=0 is necessary but not sufficient because the worker takes a few seconds between the last row write at `runner/webrunner/webrunner.go:809-811` and the S3 upload finishing at `:1468`); or (ii) deploy an intake-pause flag in a preceding commit and use that. The simpler (i) path is acceptable given a brief planned-maintenance window; (b) deploy-time pre-check: `docker compose exec backend sh -c "ls /webdata/*.csv 2>/dev/null"` — if non-empty, abort the deploy and drain first; (c) document the path change in the PR description and link the runbook |
 | Field rename leaves a fossil reference in `web/scrape.go`'s parallel `Config` struct | Medium | Low | Spec explicitly deletes `web/scrape.go:36` reader; review checklist must verify |
 
 ---
@@ -216,14 +217,36 @@ Manual verification:
 
 ## Sequencing
 
-Single PR, four logical commits:
+Single PR, three logical commits. **Each commit individually compiles AND runs in isolation** — no commit leaves the binary in a runtime-broken state where `git bisect` would land on a non-startable build:
 
-1. **`feat(config): add WithDataFolderOverride functional option to Load`** — extends `pkg/config.Load` to accept variadic `LoadOption`s; introduces `pkgconfig.WithDataFolderOverride(s string) LoadOption` (no-op when `s == ""`, replaces `cfg.DataFolder` otherwise). Existing callers of `Load()` are unaffected (variadic). Includes the table-driven test from §test plan item 1.
-2. **`refactor(runner): return FlagOverrides from ParseConfig`** — introduces `runner.FlagOverrides` struct with `DataFolder string` field; `-data-folder` flag now binds to that field; `ParseConfig` signature changes to `(*Config, FlagOverrides, error)`; `main.go:68` updated to capture the third return value.
-3. **`refactor(webrunner): read DataFolder from appCfg; delete runner.Config.DataFolder`** — webrunner switches the four read sites from `cfg.DataFolder` to `appCfg.DataFolder`; `runner.Config.DataFolder` field deleted; `runner/runner.go:256` flag binding moved to `FlagOverrides`; `main.go` calls `pkgconfig.Load(pkgconfig.WithDataFolderOverride(overrides.DataFolder))`. The compile-time tripwire ensures every stale reference is found.
-4. **`refactor(web/scrape): drop legacy DATA_FOLDER getEnv reader`** — `web/scrape.go:36` reads from injected `appCfg.DataFolder` instead. The struct field at `web/scrape.go:14` stays; the constructor (whichever site builds the parallel `Config`) takes `appCfg.DataFolder` as a parameter.
+1. **`feat(config): add WithDataFolderOverride functional option to Load`** — extends `pkg/config.Load` to accept variadic `LoadOption`s; introduces `pkgconfig.WithDataFolderOverride(s string) LoadOption` (no-op when `s == ""`, replaces `cfg.DataFolder` otherwise). Existing `Load()` callers are unaffected (variadic). Includes the table-driven test from §test plan item 1. **No production-code call sites change** — the option is dormant until commit 2 wires it.
 
-Estimated diff: ~180 lines including tests. No new dependencies. Commits 1 and 2 are independently reviewable; commit 3 is the load-bearing migration; commit 4 cleans up the residual.
+2. **`refactor: make pkg/config.DataFolder canonical; delete runner.Config.DataFolder`** — single atomic migration:
+   - introduce `runner.FlagOverrides{ DataFolder string }` struct
+   - change `runner.ParseConfig` signature to `(*Config, FlagOverrides, error)`
+   - move `-data-folder` flag binding from `runner.Config.DataFolder` to `FlagOverrides.DataFolder` (default `""`)
+   - delete `runner.Config.DataFolder` field
+   - reorder `main.go` startup: parse flags first, then `pkgconfig.Load(pkgconfig.WithDataFolderOverride(overrides.DataFolder))` (see "Startup-sequence reordering" subsection below)
+   - flip the four webrunner read sites from `cfg.DataFolder` to `appCfg.DataFolder`
+   The compile-time tripwire ensures every stale reference is found at build time. Splitting this into separate commits would either (a) leave one commit with `runner.Config.DataFolder` deleted but webrunner still reading it (compile error), or (b) leave one commit with both fields existing and the old field stale-but-still-read at runtime (zero string defeats the `cfg.DataFolder == ""` guard at `runner/webrunner/webrunner.go:200`). Atomic commit avoids both.
+
+3. **`refactor(web/scrape): drop legacy DATA_FOLDER getEnv reader`** — `web/scrape.go:36` reads from injected `appCfg.DataFolder` instead. The struct field at `web/scrape.go:14` stays; the constructor (whichever site builds the parallel `Config`) takes `appCfg.DataFolder` as a parameter. Independent of commit 2 — runs after to keep the migration's diff focused.
+
+Estimated diff: ~180 lines including tests. No new dependencies.
+
+### Startup-sequence reordering (load-bearing detail of commit 2)
+
+The current `main.go` calls `pkgconfig.Load()` (line 46) **before** `runner.ParseConfig()` (line 68). The new design needs the flag override available **at** `Load` call time, so the order flips:
+
+| Step | Before (`main.go` today) | After |
+|---|---|---|
+| 1 | `pkgconfig.Load()` (line 46) | `runner.ParseConfig()` |
+| 2 | build slog logger from `appCfg.Log*` (line 55) | `pkgconfig.Load(pkgconfig.WithDataFolderOverride(overrides.DataFolder))` |
+| 3 | `runner.ParseConfig()` (line 68) | build slog logger from `appCfg.Log*` |
+| 4 | `runner.MergeAWSDefaults` (line 77) | `runner.MergeAWSDefaults` |
+| 5 | `runnerFactory(...)` | `runnerFactory(...)` |
+
+Consequence: if `runner.ParseConfig` fails (bad CLI flags), the custom slog handler is not yet constructed when the error is logged. This is *not* a regression: today, if `pkgconfig.Load` fails (missing required env vars), the same situation already obtains — the error at `main.go:48` uses `slog.Error` against the default handler (stderr, before `slog.SetDefault`). The new order makes both startup-failure paths use the same fallback, which is symmetric and acceptable.
 
 ---
 
