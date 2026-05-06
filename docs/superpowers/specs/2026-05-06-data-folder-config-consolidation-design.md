@@ -54,7 +54,7 @@ This spec finishes that one deferral. It does not revisit the prior plan's "don'
 |---|---|---|
 | `web/service.go:100` | `filepath.Join(s.dataFolder, id+".csv")` | CSV-by-ID lookup (current API path) |
 | `web/service.go:189` | same | Legacy `GetCSV` method |
-| `web/service.go:235` | same | Third lookup site |
+| `web/service.go:235` | same | Third lookup site (legacy `GetCSV` deprecated path; do not remove in this spec — call sites may still exist) |
 
 The `web.Service` receives `dataFolder` via constructor (`web.NewService(repo, cfg.DataFolder)` at `runner/webrunner/webrunner.go:268`), so it inherits whichever value the webrunner uses — not an independent reader.
 
@@ -101,24 +101,26 @@ Resolved in `main.go` after `pkgconfig.Load()` and before `runnerFactory()`. Imp
 |---|---|---|
 | `pkg/config.Config.DataFolder` | exists, `env:"DATA_FOLDER" envDefault:"./webdata"`, never read by webrunner | exists, same tag, **read by webrunner** |
 | `runner.Config.DataFolder` | exists as primary | **deleted** — webrunner reads from `appCfg.DataFolder` |
-| `-data-folder` CLI flag | binds to `runner.Config.DataFolder` with default `"webdata"` | binds to a local string with default `""` (empty = "not set"); if non-empty, overrides `appCfg.DataFolder` post-Load |
-| `web/scrape.go:36` `getEnv("DATA_FOLDER", "./webdata")` | active reader for parallel scraper Config | **deleted**; parallel scraper Config also reads from `appCfg.DataFolder` |
+| `-data-folder` CLI flag | binds to `runner.Config.DataFolder` with default `"webdata"` | binds to a local `string` declared at flag-parse time, default `""` (empty = "flag not set"); not stored on `runner.Config` |
+| `web/scrape.go:36` `getEnv("DATA_FOLDER", "./webdata")` | active reader for parallel scraper Config | **deleted**; parallel scraper Config reads from injected `appCfg.DataFolder` |
 
 ### Composition root (sketch, for shape only — actual code in implementation plan)
 
 In `main.go`, the order becomes:
 
 1. `appCfg, err := pkgconfig.Load()` — single read of `DATA_FOLDER` env var
-2. `cfg, err := runner.ParseConfig()` — CLI flags parsed; `-data-folder` if set lands in a new `cfg.DataFolderOverride string` (empty default)
+2. `cfg, dataFolderFlag, err := runner.ParseConfig()` — CLI flags parsed; `-data-folder` lands in a returned local string with default `""`
 3. `runner.MergeAWSDefaults(cfg, appCfg)` — unchanged
-4. **New:** `if cfg.DataFolderOverride != "" { appCfg.DataFolder = cfg.DataFolderOverride }`
+4. **New:** `if dataFolderFlag != "" { appCfg.DataFolder = dataFolderFlag }`
 5. `runnerFactory(cfg, appCfg, logger)` — webrunner reads `appCfg.DataFolder`
 
-Webrunner constructor at `runner/webrunner/webrunner.go:269` already accepts `*config.Config` (Chunk 2.1 already plumbed it through). So the change in webrunner is just: `cfg.DataFolder` → `appCfg.DataFolder` at the four call sites listed above.
+The flag value lives only as a local variable in `main.go`'s startup sequence — it is never stored on `runner.Config`. This intentionally avoids resurrecting the dual-storage problem the spec is removing: there is exactly one resolved value (`appCfg.DataFolder`), and the override is a transient applied at composition time.
 
-### Why a `DataFolderOverride` field instead of mutating the existing `runner.Config.DataFolder`
+Webrunner constructor at `runner/webrunner/webrunner.go:269` already accepts `*config.Config` (the prior plan's Chunk 2.1 plumbed this through). So the change in webrunner is just: `cfg.DataFolder` → `appCfg.DataFolder` at the four call sites listed above.
 
-The prior plan explicitly kept `runner.Config` and `pkg/config.Config` as separate types with separate ownership. This design preserves that separation: the CLI flag's job is to *capture an override intent*, not to hold the resolved value. The override is applied to the typed config (the canonical source) and `runner.Config` no longer carries this field at all. After this change, anyone reading `cfg.DataFolder` from `runner.Config` will get a compile error — a useful tripwire for catching residual stale references.
+### Why delete `runner.Config.DataFolder` rather than keep it as the "resolved" value
+
+`runner.Config` and `pkg/config.Config` are separate types with separate ownership per the prior plan. Once `appCfg.DataFolder` becomes canonical, leaving the field on `runner.Config` (even renamed) would re-create the duplication this spec is removing. Deleting it makes any stale `cfg.DataFolder` reference fail at compile time — a useful tripwire for catching residual references that survived the migration.
 
 ### What this fixes downstream
 
@@ -137,6 +139,7 @@ These are real issues but each is its own change. Bundling them dilutes blast ra
 - **`Concurrency`, `Debug`, and other duplicated fields.** They have different semantics across run modes; the "don't merge them" rule from the 2026-04-27 plan still holds for those.
 - **Storage abstraction (`JobArtifactStore` interface).** Considered in the brainstorming session as option C. Rejected as premature: only one real implementation exists, and the trigger that would justify a second (read-only rootfs hardening) is not yet on the roadmap. Re-evaluate when `read_only: true` is enabled on the backend service.
 - **Lambda mode's hardcoded `/tmp/output.csv`** at `runner/lambdaaws/lambdaaws.go:65`. Different code path, different runtime, not affected by this fix. Could be tidied later.
+- **Other `getEnv(...)` readers in `web/scrape.go`** (e.g. `SERVER_PORT`, `CLERK_SECRET_KEY`, parallel scraper-only fields). Only the `DATA_FOLDER` reader at line 36 is removed in this spec. Remaining readers stay as future cleanup, consistent with the 2026-04-27 plan's "out of scope" note for `web/scrape.go`.
 - **The Dockerfile chown question.** After this lands, set `DATA_FOLDER=/gmapsdata` in `/etc/brezel/secrets/backend.env` and the existing chowned directory just works. No Dockerfile change needed.
 - **CWD-relative `./webdata` default.** The default stays `./webdata` to preserve local-dev semantics. Production explicitly sets `DATA_FOLDER`.
 
@@ -151,13 +154,15 @@ Existing tests that must continue passing:
 
 New tests required:
 
-1. **Precedence test** (new file, e.g. `main_datafolder_resolution_test.go` or in `runner/`):
+1. **Precedence test** (new file in `runner/`, e.g. `runner/datafolder_resolution_test.go` — package `runner` avoids the `package main` test-build complications):
    - flag set, env unset → flag wins
    - flag unset, env set → env wins
-   - both unset → default `"./webdata"`
+   - both unset → default `"./webdata"` (from `pkg/config` `envDefault`)
    - both set → flag wins
+   - flag set to `""`, env set → env wins (empty flag must not override; this is what `dataFolderFlag != ""` guards)
+   - env set to `""`, flag unset → `caarlos0/env` treats empty as "use default" → `"./webdata"`
 2. **webrunner integration**: `webrunner_startup_test.go` assertion that `os.MkdirAll` is called with `appCfg.DataFolder`, not `cfg.DataFolder`. (May already implicitly test this via the constructor signature.)
-3. **CI grep gate stays green**: `.github/workflows/build.yml:52-86` env-boundary check still passes — `web/scrape.go` no longer reads `DATA_FOLDER`, and the new override resolution lives in `main.go` which is allow-listed (or, if not yet allow-listed, route the override through a `pkg/config` helper similarly to `LoadCLIBootstrap`).
+3. **CI grep gate stays green**: `.github/workflows/build.yml:52-86` env-boundary check still passes. The check matches `os.Getenv` / `os.LookupEnv` calls; the override resolution this spec adds is a plain string assignment in `main.go`, not an env read, so the gate is not relevant. The only env-access change is the *deletion* of `web/scrape.go:36`'s `getEnv("DATA_FOLDER", …)` call, which strictly reduces matches.
 
 Manual verification:
 
@@ -176,7 +181,6 @@ Manual verification:
 | Compile errors in unknown call sites still using `runner.Config.DataFolder` | Medium | Low | `go build ./...` will catch all of them; the field deletion is the tripwire |
 | Local dev workflows that rely on `-data-folder webdata` default | Low | Low | Default unchanged (`./webdata` via `envDefault`); explicit flag still works |
 | Test using `t.Setenv("DATA_FOLDER", ...)` in webrunner tests breaks because the read site moved | Low | Low | Update affected tests to construct `*config.Config` directly (matches Chunk 2 pattern already in use) |
-| CI env-boundary check fails on the new override resolution code in `main.go` | Medium | Low | Route the override through `pkg/config` (e.g., add `Config.ApplyDataFolderOverride(s string)` method) so the env access — there is none, the flag value is just a string — happens inside the allowed boundary |
 | Anyone setting `DATA_FOLDER` in production has been getting silent misconfiguration; fixing it changes their on-disk path on next deploy | Low | Low | Production `compose.yaml` already sets `DATA_FOLDER=/gmapsdata` and a named volume mount waits at `/gmapsdata`; this PR merely makes that mount actually used. Document in PR description. |
 | Field rename leaves a fossil reference in `web/scrape.go`'s parallel `Config` struct | Medium | Low | Spec explicitly deletes `web/scrape.go:36` reader; review checklist must verify |
 
