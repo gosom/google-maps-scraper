@@ -35,7 +35,7 @@ func main() {
 	// install-playwright path only invokes playwright.Install and needs no
 	// runtime env vars; without this guard pkgconfig.Load() would fail on
 	// missing required vars (DSN, CLERK_SECRET_KEY, etc.) at build time.
-	if os.Getenv("PLAYWRIGHT_INSTALL_ONLY") == "1" {
+	if pkgconfig.LoadCLIBootstrap().InstallPlaywrightOnly {
 		runInstallPlaywrightOnly()
 		return
 	}
