@@ -19,7 +19,7 @@ The 2026-04-27 env-config-consolidation plan (`docs/superpowers/plans/2026-04-27
 | Chunk 4.2 (consolidate `MY_AWS_*` aliases) | Done | commit `dcf0c26 refactor: consolidate AWS_* aliases; drop MY_AWS_* fallbacks` |
 | Chunk 5.1 (CI grep gate) | Done | `.github/workflows/build.yml:52-86` |
 
-**The prior plan deliberately deferred DataFolder.** Line 22 of the plan reads:
+**The prior plan's blanket "don't merge" rule covers DataFolder by default; this spec carves out the structural exception.** Line 22 of the plan reads:
 
 > `runner.Config` (existing struct) is **flag-driven** for the CLI runner. Coexists with our new `pkg/config.Config` (env-driven for the web server). Don't merge them.
 
@@ -161,10 +161,10 @@ New tests required:
    - flag unset, env set → env wins
    - both unset → default `"./webdata"` (from `pkg/config` `envDefault`)
    - both set → flag wins
-   - flag set to `""`, env set → env wins (empty flag must not override; this is what `dataFolderFlag != ""` guards)
+   - flag set to `""`, env set → env wins (empty flag must not override; this is what `dataFolderFlag != ""` guards). Note: Go's `flag.StringVar` cannot distinguish "user typed `-data-folder ""`" from "user didn't pass the flag at all" without `flag.Visit`. This collapse is intentional — there is no semantic for "explicitly clear" via the flag, only "override with a non-empty path."
    - env set to `""`, flag unset → `caarlos0/env` treats empty as "use default" → `"./webdata"`
 2. **No new webrunner integration test required.** Deleting `runner.Config.DataFolder` makes any miswiring (`cfg.DataFolder` instead of `appCfg.DataFolder`) fail at compile time — the type system is the test. Existing `webrunner_startup_test.go` cases continue to pass once they construct `*pkgconfig.Config` directly (already the prior-plan pattern).
-3. **CI grep gate stays green**: `.github/workflows/build.yml:52-86` env-boundary check still passes. The check matches `os.Getenv` / `os.LookupEnv` calls; the override resolution this spec adds is a plain string assignment in `main.go`, not an env read, so the gate is not relevant. The only env-access change is the *deletion* of `web/scrape.go:36`'s `getEnv("DATA_FOLDER", …)` call, which strictly reduces matches.
+3. **CI grep gate stays green**: `.github/workflows/build.yml:52-86` env-boundary check still passes. The check matches `os.Getenv`/`os.LookupEnv` (lines 63-72) and helper functions including `getEnv` (lines 74-79); both grep blocks already path-exclude `web/scrape.go` (lines 71 and 77), so the deletion at `web/scrape.go:36` is silently green either way. The override resolution this spec adds is a plain string assignment in `main.go`, not an env read, so the gate is not triggered.
 
 Manual verification:
 
@@ -183,7 +183,7 @@ Manual verification:
 | Compile errors in unknown call sites still using `runner.Config.DataFolder` | Medium | Low | `go build ./...` will catch all of them; the field deletion is the tripwire |
 | Local dev workflows that rely on `-data-folder webdata` default | Low | Low | Default unchanged (`./webdata` via `envDefault`); explicit flag still works |
 | Test using `t.Setenv("DATA_FOLDER", ...)` in webrunner tests breaks because the read site moved | Low | Low | Update affected tests to construct `*config.Config` directly (matches Chunk 2 pattern already in use) |
-| Production `DATA_FOLDER=/gmapsdata` starts being honored on next deploy; CSV staging path moves from `/webdata` (bug) to `/gmapsdata` (intended) | High (the brezel production deploy already sets `DATA_FOLDER`, so this fires on first deploy after merge) | Medium | Per `runner/webrunner/webrunner.go:1485-1510`, the `JobFile` Postgres row is created **only after** S3 upload succeeds, and `os.Remove(csvFilePath)` then deletes the local file. Any job whose CSV write straddles the deploy cutover therefore loses its partial file on the old path with no Postgres metadata trail — the new container starts a fresh write at `/gmapsdata/{job_id}.csv` and never sees the orphaned `/webdata/{job_id}.csv`. **Mitigations, all required, not optional:** (a) deploy runbook MUST include a brief job-pause window (set the worker to drain via `JOB_INTAKE_PAUSED=1` or equivalent, wait for `SELECT count(*) FROM jobs WHERE status='running'` to reach 0, then cut over); (b) deploy-time pre-check: `docker compose exec backend sh -c "ls /webdata/*.csv 2>/dev/null"` — if non-empty, abort the deploy and drain first; (c) document the path change in the PR description and link the runbook |
+| Production `DATA_FOLDER=/gmapsdata` starts being honored on next deploy; CSV staging path moves from `/webdata` (bug) to `/gmapsdata` (intended) | High (the brezel production deploy already sets `DATA_FOLDER`, so this fires on first deploy after merge) | Medium | Per `runner/webrunner/webrunner.go:1485-1510`, the `JobFile` Postgres row is created **only after** S3 upload succeeds, and `os.Remove(csvFilePath)` then deletes the local file. Any job whose CSV write straddles the deploy cutover therefore loses its partial file on the old path with no Postgres metadata trail — the new container starts a fresh write at `/gmapsdata/{job_id}.csv` and never sees the orphaned `/webdata/{job_id}.csv`. **Mitigations, all required, not optional:** (a) deploy runbook MUST include a brief job-pause window: pause new-job intake (`JOB_INTAKE_PAUSED=1` or equivalent), wait for `SELECT count(*) FROM jobs WHERE status='running'` to reach 0 **AND** wait for any in-flight S3 multipart uploads to complete (a `JobFile` row with `status='uploaded'` is the signal — running-jobs at zero is necessary but not sufficient because the worker takes a few seconds between the last row write and the S3 upload finishing), then cut over; (b) deploy-time pre-check: `docker compose exec backend sh -c "ls /webdata/*.csv 2>/dev/null"` — if non-empty, abort the deploy and drain first; (c) document the path change in the PR description and link the runbook |
 | Field rename leaves a fossil reference in `web/scrape.go`'s parallel `Config` struct | Medium | Low | Spec explicitly deletes `web/scrape.go:36` reader; review checklist must verify |
 
 ---
