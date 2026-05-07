@@ -710,7 +710,20 @@ git commit -m "config: plumb CLERK_WEBHOOK_SIGNING_SECRET through Config"
 
 ---
 
-## Task 7: Implement the Clerk webhook handler
+## ~~Task 7: Implement the Clerk webhook handler~~ ✅ DONE
+
+**Commits:** `c57e174` (initial — 596 lines across handler + test), `251933a` (review fixes).
+
+**Tests:** 7/7 pass, race-clean. 2 pure-unit (sig + headers); 5 integration (gated on `PG_TEST_DSN`, all use `t.Cleanup` to drop dedupe rows).
+
+**Review notes:**
+- Reviewer flagged 3 Important issues; all fixed in `251933a`:
+  1. **413 vs 400 on body-too-large** — `MaxBytesReader` now distinguished via `errors.As(err, &http.MaxBytesError)`. Diagnostic value for ops dashboards; both still trigger Svix retry, so no correctness delta.
+  2. **`claimEvent` hardcodes `event_type='clerk.user.created'`** even for unknown event types. Fixed by adding a comment block explaining the trade-off (we claim before parse, the Dashboard only sends user.created, so unknown events are at most a labeling imprecision).
+  3. **`fakeProvisioner` data race** between `atomic.AddInt32` callCount and unprotected string fields — replaced with mutex-guarded struct + `snapshot()` method; race detector clean.
+- Reviewer noted minor concerns (fragility of `Verify` vs `VerifyIgnoringTimestamp` in tests if a debugger pauses >5min; missing comment on silent-return contract in `handleUserCreated`) — accepted as noise, not addressed.
+- Verified API surface against `~/go/pkg/mod/github.com/svix/svix-webhooks@v1.93.0/go/webhook.go`: `NewWebhook(secret) (*Webhook, error)`, `Verify(payload []byte, headers http.Header) error`, `Sign(msgId, time.Time, []byte) (string, error)` — all consumed correctly.
+
 
 **Files:**
 - Create: `web/handlers/clerk_webhook.go`
