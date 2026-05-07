@@ -239,17 +239,6 @@ func ParseConfig() (*Config, FlagOverrides, error) {
 	cfg := Config{}
 	var overrides FlagOverrides
 
-	// Defensive short-circuit. main.go intercepts PLAYWRIGHT_INSTALL_ONLY=1
-	// and runs runInstallPlaywrightOnly() before ParseConfig is called, so
-	// this branch is unreachable from the production entry point. It remains
-	// for the case of a library/test caller invoking ParseConfig directly
-	// with PLAYWRIGHT_INSTALL_ONLY set.
-	if os.Getenv("PLAYWRIGHT_INSTALL_ONLY") == "1" {
-		cfg.RunMode = RunModeInstallPlaywright
-
-		return &cfg, overrides, nil
-	}
-
 	var (
 		proxies string
 	)
