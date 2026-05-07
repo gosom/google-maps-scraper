@@ -57,7 +57,8 @@ func (s *UserProvisioning) Provision(ctx context.Context, userID, email string) 
 		return postgres.User{}, errors.New("user_provisioning: userID and email are required")
 	}
 
-	// Step 1 — idempotent insert. ON CONFLICT (id) DO NOTHING (postgres/user.go)
+	// Step 1 — idempotent insert. ON CONFLICT DO NOTHING (postgres/user.go,
+	// untargeted so it suppresses both users_pkey AND users_email_key races)
 	// means concurrent callers all return nil; the loser simply does not insert.
 	newUser := postgres.User{ID: userID, Email: email}
 	if err := s.userRepo.Create(ctx, &newUser); err != nil {
