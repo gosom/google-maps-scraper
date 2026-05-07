@@ -537,8 +537,15 @@ Make `pkg/config.Config.DataFolder` canonical. Move the flag binding to `runner.
 
 ### Task 4.1 — Pre-merge verification
 
-- **Status:** ☐ not started
-- **All checks green:** _(yes/no, with any deviation noted)_
+- **Status:** ✅ complete (with documented pre-existing issues)
+- **`go test ./...`:** FAIL — but only on the pre-existing `gmaps/entry_internal_test.go:38` panic (`Test_getNthElementAndCast_DoesNotPanicOnNegativeIndex`). Verified pre-existing on `develop` during the security PR work; unrelated to this PR.
+- **`go test -race ./pkg/config/... ./runner/... ./web/...`:** clean (one cosmetic macOS linker warning about `LC_DYSYMTAB` — known Apple-toolchain quirk, not a real issue).
+- **`gofmt -s -l .`:** clean (no output).
+- **`go vet ./...`:** clean.
+- **`go mod tidy`:** clean (`go.mod`, `go.sum` unchanged).
+- **Env-boundary CI gate:** FAIL on `main.go:38` (`os.Getenv("PLAYWRIGHT_INSTALL_ONLY")`). **Pre-existing**, not introduced by this PR. Fix is on `security/p1-cve-remediation` branch (commit `db78617` routes the call through `pkgconfig.LoadCLIBootstrap`). Will resolve automatically when that PR merges to develop and this branch rebases.
+- **`govulncheck ./...`:** reports 12 stdlib vulnerabilities (Go 1.25.4 → fix at 1.25.5/1.25.9). **Pre-existing**, not introduced by this PR. Same security PR (`security/p1-cve-remediation`) bumps the Go builder image to 1.25.9 and resolves these.
+- **Branch ahead of develop:** 18 commits (6 spec doc rounds + 1 plan + 3 functional + 3 review-doc + 2 nit-fix follow-ups + 1 caarlos0 doc fix + 2 plan-update commits). Master reviewer must validate that the **functional** commits (`169eddc`, `7860bf7`, `4fd01f5`, `75699fd`, `3f73ee9`) are clean and self-consistent.
 
 ### Task 4.2 — Master review (Opus 4.7)
 
