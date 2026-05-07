@@ -558,7 +558,7 @@ Make `pkg/config.Config.DataFolder` canonical. Move the flag binding to `runner.
   - Reviewer flagged the `web/scrape.go:LoadConfig` zero-callers discovery as correctly deferred to a follow-up PR — Staff-Eng-level call.
   - Reviewer's standout praise: doc comment on `LoadOption` ("Use sparingly — the canonical source of truth..."), the atomicity rationale for commit 2, and the comment locking caarlos0/env's empirical behavior.
 - **Fixes applied during master review:** none required.
-- **PR URL:** _(to fill after `gh pr create`)_
+- **PR URL:** https://github.com/brezel-ai/brezelscraper-backend/pull/50
 
 ---
 
