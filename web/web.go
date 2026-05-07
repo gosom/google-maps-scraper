@@ -46,17 +46,23 @@ type Server struct {
 }
 
 type ServerConfig struct {
-	Service              *Service
-	Addr                 string
-	PgDB                 *sql.DB // Optional PostgreSQL connection
-	UserRepo             postgres.UserRepository
-	APIKeyRepo           models.APIKeyRepository             // Optional; enables API key auth when set
-	WebhookConfigRepo    models.WebhookConfigRepository      // Optional; enables webhook config management
-	WebhookDeliveryRepo  models.JobWebhookDeliveryRepository // Optional; enables webhook delivery tracking
-	ServerSecret         []byte                              // HMAC secret for API key HMAC (from API_KEY_SERVER_SECRET env)
-	ClerkSecretKey       string                              // Clerk server-side secret key for authentication
-	StripeAPIKey         string                              // Optional Stripe API key for subscriptions
-	StripeWebhookSecrets []string                            // Active first, then previous webhook secrets during rotation
+	Service             *Service
+	Addr                string
+	PgDB                *sql.DB // Optional PostgreSQL connection
+	UserRepo            postgres.UserRepository
+	APIKeyRepo          models.APIKeyRepository             // Optional; enables API key auth when set
+	WebhookConfigRepo   models.WebhookConfigRepository      // Optional; enables webhook config management
+	WebhookDeliveryRepo models.JobWebhookDeliveryRepository // Optional; enables webhook delivery tracking
+	ServerSecret        []byte                              // HMAC secret for API key HMAC (from API_KEY_SERVER_SECRET env)
+	ClerkSecretKey      string                              // Clerk server-side secret key for authentication
+	// ClerkWebhookSigningSecret is the Svix-format signing secret for the
+	// Clerk Dashboard webhook endpoint. Empty disables /webhooks/clerk
+	// (the route is not mounted); required in production for eager user
+	// provisioning. Per-environment — Clerk test and prod instances each
+	// have their own signing secret.
+	ClerkWebhookSigningSecret string
+	StripeAPIKey              string   // Optional Stripe API key for subscriptions
+	StripeWebhookSecrets      []string // Active first, then previous webhook secrets during rotation
 	// StripeWebhookAllowedCIDRs is an optional defense-in-depth allowlist for
 	// the Stripe webhook receiver. This should complement, not replace, edge
 	// firewall allowlisting because reverse proxies may mask the original peer IP.

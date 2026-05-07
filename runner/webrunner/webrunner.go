@@ -163,6 +163,7 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service, appCfg 
 		WebhookDeliveryRepo:       webhookDeliveryRepo,
 		ServerSecret:              appCfg.APIKeyServerSecret,
 		ClerkSecretKey:            appCfg.ClerkSecretKey,
+		ClerkWebhookSigningSecret: appCfg.ClerkWebhookSigningSecret,
 		StripeAPIKey:              appCfg.Stripe.SecretKey,
 		StripeWebhookSecrets:      stripeWebhookSecrets,
 		StripeWebhookAllowedCIDRs: stripeWebhookAllowedCIDRs,

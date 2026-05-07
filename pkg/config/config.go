@@ -37,9 +37,10 @@ type Config struct {
 	DB DBConfig `envPrefix:"DB_"`
 
 	// ── Auth & crypto ────────────────────────────────────────────────
-	ClerkSecretKey     string `env:"CLERK_SECRET_KEY,required"`
-	APIKeyServerSecret []byte `env:"API_KEY_SERVER_SECRET"`
-	EncryptionKey      string `env:"ENCRYPTION_KEY"`
+	ClerkSecretKey            string `env:"CLERK_SECRET_KEY,required"`
+	ClerkWebhookSigningSecret string `env:"CLERK_WEBHOOK_SIGNING_SECRET"`
+	APIKeyServerSecret        []byte `env:"API_KEY_SERVER_SECRET"`
+	EncryptionKey             string `env:"ENCRYPTION_KEY"`
 
 	// ── Stripe ──────────────────────────────────────────────────────
 	Stripe StripeConfig `envPrefix:"STRIPE_"`
