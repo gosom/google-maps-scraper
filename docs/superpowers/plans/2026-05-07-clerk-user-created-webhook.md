@@ -15,7 +15,7 @@
 Two **blocking** issues and three over-engineering tightens were applied after re-checking the plan against current `pkg.go.dev/github.com/svix/svix-webhooks/go` and the actual `processed_webhook_events` schema:
 
 1. **BLOCKER → fixed:** Migration `000018` adds `CHECK (event_id ~ '^evt_[a-zA-Z0-9]+$')` on `processed_webhook_events.event_id`. Clerk's Svix `msg_*` IDs would have failed the check on every insert. Added Task 1 (1-line migration to drop the constraint) and updated D5.
-2. **BLOCKER → fixed:** Sketched Svix Go API was wrong. The current canonical signatures are `NewWebhook(secret) *Webhook` (no error), `(*Webhook).Verify(payload string, headers map[string]string) error` (string + map, not `[]byte` + `http.Header`), `(*Webhook).Sign(msgId, timestamp, payload string) string` (no error, string timestamp). Handler and test helper code in Task 7 updated; added a `flattenHeaders` helper for the `http.Header` → `map[string]string` conversion. A note prompts the implementer to re-confirm signatures on pkg.go.dev at write-time (small detail churn has happened in past versions of this lib).
+2. **BLOCKER (initial thinko, then re-corrected):** A first verification agent claimed Svix's Go API was `NewWebhook(secret) *Webhook` / `Verify(payload string, headers map[string]string)` / `Sign(...) string`. After installing svix-webhooks v1.93.0 in Task 5, **the actual signatures match the original plan, not the agent's claims**: `NewWebhook(secret) (*Webhook, error)`, `Verify(payload []byte, headers http.Header) error`, `Sign(msgId string, timestamp time.Time, payload []byte) (string, error)`. The plan was re-corrected accordingly: `flattenHeaders` helper deleted (no flattening needed), constructor restored to error-returning form, test `signedRequest` reverted to take `time.Time` + `[]byte` and check both errors. Lesson: when a research agent contradicts the original plan on a library's API, install the library and read the source before believing the agent.
 3. **YAGNI:** Dropped `Object` and `Timestamp` from the `clerkEvent` JSON struct — neither is read anywhere. Svix already validates the timestamp via signature.
 4. **YAGNI:** `claimEvent` SQL no longer sets `processed_at` explicitly — the column has `DEFAULT NOW()`.
 5. **Naming clarity:** Dedupe row's `event_type` is now `'clerk.user.created'` (matches the Clerk event-type taxonomy) instead of the generic `'clerk.webhook'`. Future provider-neutral queries on this table are easier to read.
@@ -625,7 +625,12 @@ git commit -m "refactor(auth): delegate user provisioning to services.UserProvis
 
 ---
 
-## Task 5: Add Svix dependency
+## ~~Task 5: Add Svix dependency~~ ✅ DONE
+
+**Commit:** `6e3042f` — `go get github.com/svix/svix-webhooks/go@latest` brought in v1.93.0. Skipped `go mod tidy` (it would strip the `// indirect` dep until Task 7 actually imports it).
+
+**Discovery:** verified the actual library signatures by reading source at `~/go/pkg/mod/github.com/svix/svix-webhooks@v1.93.0/go/webhook.go`. Real signatures are `NewWebhook(secret) (*Webhook, error)`, `Verify(payload []byte, headers http.Header) error`, `Sign(msgId, timestamp time.Time, payload []byte) (string, error)`. Plan code blocks for Task 7 corrected accordingly (the prior verification agent had been wrong). See updated Review changelog at the top of this plan.
+
 
 **Files:**
 - Modify: `go.mod`, `go.sum`
@@ -726,21 +731,26 @@ import (
 const testSigningSecret = "whsec_dGVzdHNlY3JldGZvcnVuaXR0ZXN0cw=="
 
 // signedRequest forges a Svix-signed POST against the handler under test.
-// Verify the live svix-webhooks/go signatures of NewWebhook and Sign on
-// pkg.go.dev before relying on these exact lines — at the time of writing
-// they are: NewWebhook(secret) *Webhook (no error), Sign(msgId, timestamp,
-// payload string) string (no error).
+// Uses the actual svix-webhooks v1.93.0 API: NewWebhook(secret) returns
+// (*Webhook, error); Sign(msgId, timestamp time.Time, payload []byte) returns
+// (string, error). Both errors are checked for hygiene.
 func signedRequest(t *testing.T, body []byte, secret string) *http.Request {
     t.Helper()
     msgID := "msg_" + uuid.NewString()
-    ts := strconv.FormatInt(time.Now().Unix(), 10)
+    ts := time.Now()
 
-    wh := svix.NewWebhook(secret)
-    sig := wh.Sign(msgID, ts, string(body))
+    wh, err := svix.NewWebhook(secret)
+    if err != nil {
+        t.Fatalf("svix.NewWebhook: %v", err)
+    }
+    sig, err := wh.Sign(msgID, ts, body)
+    if err != nil {
+        t.Fatalf("svix.Sign: %v", err)
+    }
 
     req := httptest.NewRequest(http.MethodPost, "/webhooks/clerk", bytes.NewReader(body))
     req.Header.Set("svix-id", msgID)
-    req.Header.Set("svix-timestamp", ts)
+    req.Header.Set("svix-timestamp", strconv.FormatInt(ts.Unix(), 10))
     req.Header.Set("svix-signature", sig)
     return req
 }
@@ -814,25 +824,27 @@ type ClerkWebhookHandler struct {
     logger       *slog.Logger
 }
 
-// NOTE on Svix Go API: at the time of writing the canonical signatures from
-// pkg.go.dev/github.com/svix/svix-webhooks/go are:
+// Svix Go API (verified against svix-webhooks v1.93.0 source — the actual
+// installed version):
 //
-//   func NewWebhook(secret string) *Webhook                    // no error return
-//   func (*Webhook) Verify(payload string, headers map[string]string) error
-//   func (*Webhook) Sign(msgId, timestamp, payload string) string
+//   func NewWebhook(secret string) (*Webhook, error)
+//   func (*Webhook) Verify(payload []byte, headers http.Header) error
+//   func (*Webhook) Sign(msgId string, timestamp time.Time, payload []byte) (string, error)
 //
-// Verify the current signatures on pkg.go.dev before writing — the library
-// has been stable but small detail churn (e.g. byte-vs-string payload) has
-// happened in past versions. Adjust the conversions in ServeHTTP / the test
-// helper accordingly.
+// Pass the raw body bytes and the http.Header directly — no flattening
+// required.
 
 func NewClerkWebhookHandler(db *sql.DB, signingSecret string, provisioning Provisioner, logger *slog.Logger) (*ClerkWebhookHandler, error) {
     if signingSecret == "" {
         return nil, errors.New("clerk_webhook: signing secret is empty")
     }
+    wh, err := svix.NewWebhook(signingSecret)
+    if err != nil {
+        return nil, fmt.Errorf("clerk_webhook: %w", err)
+    }
     return &ClerkWebhookHandler{
         db:           db,
-        verifier:     svix.NewWebhook(signingSecret),
+        verifier:     wh,
         provisioning: provisioning,
         logger:       logger,
     }, nil
@@ -876,11 +888,9 @@ func (h *ClerkWebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
         return
     }
 
-    // 2. Verify signature. Svix's Go API takes payload as string and headers
-    // as map[string]string (single-valued). The three svix-* headers we care
-    // about are all single-valued, so flattening http.Header is lossless.
-    hdrs := flattenHeaders(r.Header)
-    if err := h.verifier.Verify(string(body), hdrs); err != nil {
+    // 2. Verify signature. svix-webhooks v1.93.0 takes raw payload bytes and
+    // the original http.Header — no flattening needed.
+    if err := h.verifier.Verify(body, r.Header); err != nil {
         h.logger.Warn("clerk_webhook_signature_invalid",
             slog.String("source_ip", r.RemoteAddr),
             slog.Any("error", err))
@@ -1001,19 +1011,6 @@ func primaryEmailFromClerkPayload(d clerkUserCreatedData) string {
     return ""
 }
 
-// flattenHeaders converts http.Header (map[string][]string) to the
-// map[string]string shape the svix-webhooks/go Verify method expects. The
-// three svix-* headers are all single-valued in practice; if a key has
-// multiple values we keep the first.
-func flattenHeaders(h http.Header) map[string]string {
-    out := make(map[string]string, len(h))
-    for k, v := range h {
-        if len(v) > 0 {
-            out[k] = v[0]
-        }
-    }
-    return out
-}
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
