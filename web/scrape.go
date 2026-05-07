@@ -25,12 +25,14 @@ type Config struct {
 	S3BucketName string
 }
 
-// LoadConfig loads configuration from environment variables.
+// LoadConfig loads configuration from environment variables and an injected dataFolder.
 //
 // dataFolder is sourced from the typed pkg/config.Config (appCfg.DataFolder)
-// and injected by the caller, so this function does not read DATA_FOLDER
-// directly. Other env reads here remain pending the 2026-04-27 env-config
-// consolidation plan.
+// by the caller, so this function does not read DATA_FOLDER directly. Other
+// env reads here remain pending the 2026-04-27 env-config consolidation plan.
+//
+// Note: this function currently has zero callers in the repo. The struct
+// and constructor are vestigial and should be deleted in a follow-up PR.
 func LoadConfig(dataFolder string) Config {
 	// Load .env file if it exists
 	_ = godotenv.Load()
