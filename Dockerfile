@@ -1,5 +1,5 @@
 # Build stage for Playwright dependencies
-FROM golang:1.25.4-alpine AS builder
+FROM golang:1.25.9-alpine AS builder
 
 # Set up Go environment
 ENV PATH="/usr/local/go/bin:${PATH}"
@@ -33,7 +33,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -ldflags="-w -s" -o /usr/bin/brezel-api .
 
 # Final stage - optimized for API + scraping
-FROM debian:bullseye-slim
+FROM debian:bookworm-slim
 
 # Runtime environment variables for version tracking (required from CI/CD)
 ARG GIT_COMMIT
@@ -75,22 +75,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
 
-# Install Playwright and browsers
-# We do this in the final stage or a separate stage to keep the image size optimized, 
-# but we need the go binary to install playwright driver if we use the go library's install command.
-# Alternatively, we can install the driver and browsers directly.
+# Non-root runtime user. Created before Playwright install so the browser cache
+# is owned by uid 1001 — Playwright fails opaquely when the cache UID differs
+# from the running process. /opt is the PLAYWRIGHT_DRIVER_PATH, /opt/browsers
+# is the PLAYWRIGHT_BROWSERS_PATH, /gmapsdata is the runtime data volume mount.
+RUN groupadd --system --gid 1001 brezel \
+  && useradd --system --uid 1001 --gid 1001 --no-create-home --shell /usr/sbin/nologin brezel \
+  && mkdir -p /opt/browsers /gmapsdata /webdata /logs \
+  && chown -R brezel:brezel /opt /gmapsdata /webdata /logs
 
-# Let's use the builder to install playwright driver and browsers to a temporary location, then copy them.
-# Actually, it's easier to install them in the final image or a dedicated deps stage.
-# Let's stick to the original multi-stage approach but fix the base image.
+COPY --from=builder --chown=brezel:brezel /usr/bin/brezel-api /usr/bin/
 
-COPY --from=builder /usr/bin/brezel-api /usr/bin/
-
-# Install Playwright driver and browsers
-RUN PLAYWRIGHT_INSTALL_ONLY=1 brezel-api
-
-# Copy migrations directory
+# Copy migrations directory (root-owned, world-readable — fine for the brezel runtime user)
 COPY scripts/migrations /scripts/migrations
+
+USER brezel:brezel
+
+# Install Playwright driver and browsers as the brezel user so the cache UID
+# matches the runtime UID.
+RUN PLAYWRIGHT_INSTALL_ONLY=1 brezel-api
 
 # Expose the web server port
 EXPOSE 8080
