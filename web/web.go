@@ -109,11 +109,12 @@ func New(cfg ServerConfig) (*Server, error) {
 		},
 	}
 
-	// Initialize billing service first so the auth middleware can receive
-	// it as a dependency for lazy Stripe Customer creation on signup.
-	// billingSvc may remain nil when no Stripe API key is configured;
-	// NewAuthMiddleware tolerates nil and the signup path then skips
-	// Stripe Customer creation (the next checkout will lazy-create).
+	// Initialize billing service first so the user-provisioning service
+	// (which the auth middleware now uses for signup) can receive it as a
+	// dependency for lazy Stripe Customer creation. billingSvc may remain
+	// nil when no Stripe API key is configured; UserProvisioning tolerates
+	// nil and skips Stripe Customer creation (the next checkout will
+	// lazy-create via CreateCheckoutSession instead).
 	if cfg.StripeAPIKey != "" && cfg.PgDB != nil {
 		cfgSvc := config.New(cfg.PgDB)
 		ans.billingSvc = billing.New(cfg.PgDB, cfgSvc, cfg.StripeAPIKey, cfg.StripeWebhookSecrets, cfg.UserRepo, ans.logger)

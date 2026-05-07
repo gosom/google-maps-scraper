@@ -20,8 +20,6 @@ import (
 )
 
 // SignupBonusAmount is the credit amount granted to new users on signup ($2.00).
-// (A duplicate const lives temporarily in web/auth/auth.go until Task 4 deletes
-// the inline lazy-provisioning chain there; see the implementation plan.)
 const SignupBonusAmount = 2.0
 
 // UserProvisioning is a service that ensures a users row exists for a given
