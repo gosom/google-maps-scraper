@@ -170,7 +170,7 @@ var byteSliceType = reflect.TypeOf([]byte{})
 //   - appenv.Environment: delegates to appenv.Parse for whitelist validation.
 //   - []byte: treats the raw string value as bytes (not comma-separated ints).
 func Load() (*Config, error) {
-	opts := env.Options{
+	envOpts := env.Options{
 		FuncMap: map[reflect.Type]env.ParserFunc{
 			appEnvType: func(v string) (interface{}, error) {
 				return appenv.Parse(v)
@@ -181,7 +181,7 @@ func Load() (*Config, error) {
 		},
 	}
 
-	cfg, err := env.ParseAsWithOptions[Config](opts)
+	cfg, err := env.ParseAsWithOptions[Config](envOpts)
 	if err != nil {
 		return nil, fmt.Errorf("config: parse env: %w", err)
 	}

@@ -197,14 +197,14 @@ func buildServerConfig(cfg *runner.Config, db *sql.DB, svc *web.Service, appCfg 
 }
 
 func New(cfg *runner.Config, appCfg *pkgconfig.Config, logger *slog.Logger) (runner.Runner, error) {
-	if cfg.DataFolder == "" {
+	if appCfg.DataFolder == "" {
 		return nil, fmt.Errorf("data folder is required")
 	}
 	if cfg.Dsn == "" {
 		return nil, fmt.Errorf("PostgreSQL DSN is required")
 	}
 
-	if err := os.MkdirAll(cfg.DataFolder, os.ModePerm); err != nil {
+	if err := os.MkdirAll(appCfg.DataFolder, os.ModePerm); err != nil {
 		return nil, err
 	}
 
@@ -265,7 +265,7 @@ func New(cfg *runner.Config, appCfg *pkgconfig.Config, logger *slog.Logger) (run
 		return nil, fmt.Errorf("failed to create PostgreSQL repository: %w", err)
 	}
 
-	svc := web.NewService(repo, cfg.DataFolder)
+	svc := web.NewService(repo, appCfg.DataFolder)
 
 	// Initialize server configuration (built below by buildServerConfig)
 
@@ -806,7 +806,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		return err
 	}
 
-	outpath := filepath.Join(w.cfg.DataFolder, job.ID+".csv")
+	outpath := filepath.Join(w.appCfg.DataFolder, job.ID+".csv")
 
 	outfile, err := os.Create(outpath)
 	if err != nil {

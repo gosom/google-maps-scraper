@@ -211,7 +211,6 @@ type Config struct {
 	RunMode                  int
 	DisableTelemetry         bool
 	WebRunner                bool
-	DataFolder               string
 	S3Uploader               S3Uploader
 	CookiesFile              string
 	Addr                     string
@@ -220,17 +219,15 @@ type Config struct {
 	Version string
 }
 
-func ParseConfig() (*Config, error) {
+// ParseConfig parses CLI flags into *Config. The returned dataFolder is the
+// raw value of -data-folder; main.go applies it as an override to the typed
+// pkg/config.Config when non-empty.
+func ParseConfig() (*Config, string, error) {
 	cfg := Config{}
 
-	if os.Getenv("PLAYWRIGHT_INSTALL_ONLY") == "1" {
-		cfg.RunMode = RunModeInstallPlaywright
-
-		return &cfg, nil
-	}
-
 	var (
-		proxies string
+		proxies    string
+		dataFolder string
 	)
 
 	defaultConcurrency := runtime.NumCPU() / 2
@@ -253,7 +250,7 @@ func ParseConfig() (*Config, error) {
 	flag.StringVar(&cfg.Scraping.GeoCoordinates, "geo", "", "set geo coordinates for search (e.g., '37.7749,-122.4194')")
 	flag.IntVar(&cfg.Scraping.Zoom, "zoom", 15, "set zoom level (0-21) for search")
 	flag.BoolVar(&cfg.WebRunner, "web", false, "run web server instead of crawling")
-	flag.StringVar(&cfg.DataFolder, "data-folder", "webdata", "data folder for web runner")
+	flag.StringVar(&dataFolder, "data-folder", "", "data folder for web runner; overrides $DATA_FOLDER (default: ./webdata)")
 	flag.StringVar(&proxies, "proxies", "", "comma separated list of proxies to use in the format protocol://user:pass@host:port example: socks5://localhost:9050 or http://user:pass@localhost:9050")
 	flag.BoolVar(&cfg.AWS.LambdaRunner, "aws-lambda", false, "run as AWS Lambda function")
 	flag.BoolVar(&cfg.AWS.LambdaInvoker, "aws-lambda-invoker", false, "run as AWS Lambda invoker")
@@ -292,31 +289,31 @@ func ParseConfig() (*Config, error) {
 	// Do not force concurrency in debug mode; keep user/provider choice intact
 
 	if cfg.AWS.LambdaInvoker && cfg.AWS.FunctionName == "" {
-		return nil, fmt.Errorf("FunctionName must be provided when using AwsLambdaInvoker")
+		return nil, dataFolder, fmt.Errorf("FunctionName must be provided when using AwsLambdaInvoker")
 	}
 
 	if cfg.AWS.LambdaInvoker && cfg.AWS.S3Bucket == "" {
-		return nil, fmt.Errorf("S3Bucket must be provided when using AwsLambdaInvoker")
+		return nil, dataFolder, fmt.Errorf("S3Bucket must be provided when using AwsLambdaInvoker")
 	}
 
 	if cfg.AWS.LambdaInvoker && cfg.InputFile == "" {
-		return nil, fmt.Errorf("InputFile must be provided when using AwsLambdaInvoker")
+		return nil, dataFolder, fmt.Errorf("InputFile must be provided when using AwsLambdaInvoker")
 	}
 
 	if cfg.Concurrency < 1 {
-		return nil, fmt.Errorf("Concurrency must be greater than 0, got %d", cfg.Concurrency)
+		return nil, dataFolder, fmt.Errorf("Concurrency must be greater than 0, got %d", cfg.Concurrency)
 	}
 
 	if cfg.Scraping.MaxDepth < 1 {
-		return nil, fmt.Errorf("MaxDepth must be greater than 0, got %d", cfg.Scraping.MaxDepth)
+		return nil, dataFolder, fmt.Errorf("MaxDepth must be greater than 0, got %d", cfg.Scraping.MaxDepth)
 	}
 
 	if cfg.Scraping.Zoom < 0 || cfg.Scraping.Zoom > 21 {
-		return nil, fmt.Errorf("Zoom must be between 0 and 21, got %d", cfg.Scraping.Zoom)
+		return nil, dataFolder, fmt.Errorf("Zoom must be between 0 and 21, got %d", cfg.Scraping.Zoom)
 	}
 
 	if cfg.Dsn == "" && cfg.ProduceOnly {
-		return nil, fmt.Errorf("Dsn must be provided when using ProduceOnly")
+		return nil, dataFolder, fmt.Errorf("Dsn must be provided when using ProduceOnly")
 	}
 
 	slog.Debug("proxy_config", slog.String("proxies_env", os.Getenv("PROXIES")), slog.String("cli_proxies_flag", proxies))
@@ -380,10 +377,10 @@ func ParseConfig() (*Config, error) {
 	case cfg.Dsn != "":
 		cfg.RunMode = RunModeDatabase
 	default:
-		return nil, fmt.Errorf("invalid configuration: unable to determine run mode")
+		return nil, dataFolder, fmt.Errorf("invalid configuration: unable to determine run mode")
 	}
 
-	return &cfg, nil
+	return &cfg, dataFolder, nil
 }
 
 // MergeAWSDefaults fills empty AWS credential fields in cfg from the standard
