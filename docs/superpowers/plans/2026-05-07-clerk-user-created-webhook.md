@@ -1051,7 +1051,21 @@ git commit -m "feat(handlers): add Clerk user.created webhook with Svix verifica
 
 ---
 
-## Task 8: Mount the route in `web/web.go`
+## ~~Task 8: Mount the route in `web/web.go`~~ ✅ DONE
+
+**Commits:** `09bd2c7` (initial mount), `bc7c080` (review fixes — explicit slice copy + Warn on missed-mount).
+
+**Changes:**
+- Hoisted `provisioningSvc` from inside the auth-middleware `if` to function scope so both surfaces share one instance.
+- Refactored `webhookMws` into `baseWebhookMws` (4 shared middlewares: RequestID / InjectLogger / RequestLogger / MaxBodySize 64KB) + `stripeWebhookMws` (base + optional CIDR). Clerk handler uses base only — no CIDR allowlist (Clerk uses Cloudflare, not fixed CIDRs).
+- Mounted `POST /webhooks/clerk` on the root router, gated on `ClerkWebhookSigningSecret != "" && provisioningSvc != nil`. NewClerkWebhookHandler error aborts startup.
+- When secret is set but provisioning is nil (DB/repo missing), `slog.Warn("clerk_webhook_route_not_mounted")` fires at startup so the gap is operationally visible.
+
+**Review notes:**
+- Reviewer caught a latent slice-aliasing hazard (`stripeWebhookMws := baseWebhookMws` is a slice-header copy; safe at cap 4 today but would silently bleed CIDR onto `baseWebhookMws` if `base` ever grows past cap). Fixed by `append([]func(http.Handler) http.Handler{}, baseWebhookMws...)` for an explicit copy.
+- Reviewer recommended a startup `Warn` for the silent-non-mount case; applied.
+- All package tests green; no regressions on the existing Stripe webhook path.
+
 
 **Files:**
 - Modify: `web/web.go` (mirror the Stripe webhook wiring at line 363/372)
