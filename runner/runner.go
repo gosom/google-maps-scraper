@@ -239,6 +239,11 @@ func ParseConfig() (*Config, FlagOverrides, error) {
 	cfg := Config{}
 	var overrides FlagOverrides
 
+	// Defensive short-circuit. main.go intercepts PLAYWRIGHT_INSTALL_ONLY=1
+	// and runs runInstallPlaywrightOnly() before ParseConfig is called, so
+	// this branch is unreachable from the production entry point. It remains
+	// for the case of a library/test caller invoking ParseConfig directly
+	// with PLAYWRIGHT_INSTALL_ONLY set.
 	if os.Getenv("PLAYWRIGHT_INSTALL_ONLY") == "1" {
 		cfg.RunMode = RunModeInstallPlaywright
 
@@ -269,7 +274,7 @@ func ParseConfig() (*Config, FlagOverrides, error) {
 	flag.StringVar(&cfg.Scraping.GeoCoordinates, "geo", "", "set geo coordinates for search (e.g., '37.7749,-122.4194')")
 	flag.IntVar(&cfg.Scraping.Zoom, "zoom", 15, "set zoom level (0-21) for search")
 	flag.BoolVar(&cfg.WebRunner, "web", false, "run web server instead of crawling")
-	flag.StringVar(&overrides.DataFolder, "data-folder", "", "data folder for web runner (overrides DATA_FOLDER env var; empty = use env or envDefault)")
+	flag.StringVar(&overrides.DataFolder, "data-folder", "", "data folder for web runner; overrides $DATA_FOLDER (default: ./webdata)")
 	flag.StringVar(&proxies, "proxies", "", "comma separated list of proxies to use in the format protocol://user:pass@host:port example: socks5://localhost:9050 or http://user:pass@localhost:9050")
 	flag.BoolVar(&cfg.AWS.LambdaRunner, "aws-lambda", false, "run as AWS Lambda function")
 	flag.BoolVar(&cfg.AWS.LambdaInvoker, "aws-lambda-invoker", false, "run as AWS Lambda invoker")
