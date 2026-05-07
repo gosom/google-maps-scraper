@@ -517,17 +517,23 @@ Make `pkg/config.Config.DataFolder` canonical. Move the flag binding to `runner.
 
 ### Task 3.1 — web/scrape.go cleanup
 
-- **Status:** ☐ not started
-- **Commit SHA:** _(to fill)_
-- **Constructor caller sites updated:** _(list file:line)_
+- **Status:** ✅ implementation complete
+- **Commit SHA:** `75699fd`
+- **Files modified:** `web/scrape.go` (only)
+- **Constructor:** `web.LoadConfig` — signature changed from `LoadConfig() Config` to `LoadConfig(dataFolder string) Config`.
+- **Constructor caller sites updated:** **none.** Repo-wide grep confirmed `web.LoadConfig` has zero callers. The change is declarative-only — the parameter exists to document the new injection contract for any future caller. The `web.Config` struct (in `web/scrape.go`, distinct from `web.Config` in `web/web.go`) and `web.LoadConfig` are vestigial dead code.
+- **Architectural finding (out of scope for this PR):** the entire `web/scrape.go` file (the parallel `Config` struct + `LoadConfig` + the `getEnv` helper inside it) appears to be unused. Recommend a follow-up PR to delete it; not done here per anti-pattern guardrail "don't refactor unrelated code." Master review (Chunk 4) should validate this finding doesn't change the consolidation story.
 
 ### Task 3.2 — Code review for Chunk 3
 
-- **Status:** ☐ not started
-- **Review iterations:** _(N)_
-- **Findings:** _(list)_
-- **Fixes applied:** _(list)_
-- **Final verdict:** _(Approved / blocked)_
+- **Status:** ✅ complete
+- **Review iterations:** 1 round of spec-compliance + 1 round of code-quality + 1 round of nit fix (`3f73ee9`)
+- **Spec-compliance verdict:** Approved (8/8). All required shapes present: line-36 `getEnv("DATA_FOLDER", …)` removed; struct field at line 14 retained; constructor takes `dataFolder string`; no new env reads; other readers (`SERVER_PORT`, `CLERK_SECRET_KEY`, AWS_*) unchanged; scope clean (only `web/scrape.go` modified).
+- **Code-quality verdict:** Approved-with-nits.
+  - **Nit (fixed in `3f73ee9`):** lead sentence of `LoadConfig` godoc said "loads configuration from environment variables" — slightly inaccurate now that `DataFolder` is injected. Reworded; also added a note that the function has zero callers and is slated for follow-up deletion.
+  - **Observation (not addressed; correctly deferred):** entire `web/scrape.go` is dead code. Out of scope per anti-pattern guardrails.
+  - **Pre-existing lint diagnostics (not addressed):** `web/services/results.go:107,398` (unused methods `getEnhancedJobResults`, `getEnhancedJobResultsPaginated`) and `web/job.go:10` (unused var `jobs`). All in different files; not touched by this commit; pre-existing.
+- **Final verdict:** Approved. Chunk 3 cleared to advance to Chunk 4 (final verification + master review).
 
 ### Task 4.1 — Pre-merge verification
 
