@@ -1186,7 +1186,27 @@ Expected: user row exists, dedupe row exists, signup bonus transaction exists.
 
 ---
 
-## Task 10: Open the PR
+## ~~Task 10: Open the PR + master code review~~ ✅ DONE
+
+**PR:** [#52 — fix(auth): eager Clerk user provisioning + race-safe lazy fallback](https://github.com/brezel-ai/brezelscraper-backend/pull/52)
+
+**Final commit on branch:** `1056622` (alignment of `Provision` doc-comment with the actual `ON CONFLICT DO NOTHING` clause — caught by the master reviewer).
+
+**Master review verdict (Opus):** **ready to merge**. No critical or important issues. Five strengths called out (defense-in-depth design, webhook hygiene, no PII in logs, correct route-mount placement outside auth middleware, safe migration). Seven minor follow-ups identified — all post-merge:
+1. ✅ FIXED: doc-comment drift in `Provision` (commit `1056622`).
+2. Pre-existing: `userRepo.GetByID` flattens DB errors into "user not found" — switch to `errors.Is(err, sql.ErrNoRows)` sentinel in a follow-up.
+3. Inconsistency: webhook handler accepts a narrow `Provisioner` interface; auth middleware accepts the concrete `*services.UserProvisioning`. Hoist the interface in a follow-up if reusable.
+4. `CLERK_WEBHOOK_SIGNING_SECRET` is silently optional even in prod — consider making it required when `AppEnv.IsProduction()`.
+5. No automated test of the auth-middleware lazy fallback end-to-end (covered transitively by the services concurrency test).
+6. No test asserting empty signing secret leaves the route unmounted.
+7. No test for "webhook + auth fallback both fire concurrently for the same user" cross-surface race (concurrency test already covers in-process contention on `Provision`, which is the actual contention point).
+
+**Plan executed in this branch:**
+- 9 implementation tasks (1 deferred — Task 9 manual smoke).
+- 26 commits total (10 feature/fix commits, 7 doc/plan commits, 1 dep, 1 master-review fix, 6 plan-marker commits).
+- Per-task ping-pong: spec compliance reviewer → code-quality reviewer → fix-implementer cycles. Every flagged Critical/Important issue addressed before moving on.
+- Master reviewer dispatched against the full branch diff.
+
 
 - [ ] **Step 1: Push and open PR against `develop`**
 
