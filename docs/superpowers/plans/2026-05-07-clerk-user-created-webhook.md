@@ -1,0 +1,1106 @@
+# Clerk `user.created` Webhook — Eager User Provisioning Implementation Plan
+
+> **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Eliminate the race-on-first-API-call user-provisioning bug surfaced as a brief "Failed to load dashboard" toast on first sign-up. Add a Clerk `user.created` webhook that eagerly inserts the `users` row before the frontend ever fetches; keep the existing lazy auth-middleware path as a concurrency-safe fallback for webhook delays/outages.
+
+**Architecture:** Receive Svix-signed `user.created` POSTs at `/webhooks/clerk`. Verify with `github.com/svix/svix-webhooks/go`. Inside one Postgres transaction: claim the `svix-id` in the existing `processed_webhook_events` dedupe table; insert the user row with `ON CONFLICT DO NOTHING`; commit. After commit (idempotently): `EnsureStripeCustomer` and `grantSignupBonus`. The same provisioning chain — extracted into `web/services/user_provisioning.go` — is invoked by both the webhook handler and the existing auth middleware. Both surfaces converge on the same idempotent Postgres state regardless of which arrives first.
+
+**Tech Stack:** Go (existing toolchain), `github.com/svix/svix-webhooks/go` (new dep), `gorilla/mux` (existing), `database/sql` + `pgx` (existing), `slog` (existing), `samber/oops` (existing). No frontend changes.
+
+---
+
+## Review changelog (2026-05-07, post-Clerk-docs verification)
+
+Two **blocking** issues and three over-engineering tightens were applied after re-checking the plan against current `pkg.go.dev/github.com/svix/svix-webhooks/go` and the actual `processed_webhook_events` schema:
+
+1. **BLOCKER → fixed:** Migration `000018` adds `CHECK (event_id ~ '^evt_[a-zA-Z0-9]+$')` on `processed_webhook_events.event_id`. Clerk's Svix `msg_*` IDs would have failed the check on every insert. Added Task 1 (1-line migration to drop the constraint) and updated D5.
+2. **BLOCKER → fixed:** Sketched Svix Go API was wrong. The current canonical signatures are `NewWebhook(secret) *Webhook` (no error), `(*Webhook).Verify(payload string, headers map[string]string) error` (string + map, not `[]byte` + `http.Header`), `(*Webhook).Sign(msgId, timestamp, payload string) string` (no error, string timestamp). Handler and test helper code in Task 7 updated; added a `flattenHeaders` helper for the `http.Header` → `map[string]string` conversion. A note prompts the implementer to re-confirm signatures on pkg.go.dev at write-time (small detail churn has happened in past versions of this lib).
+3. **YAGNI:** Dropped `Object` and `Timestamp` from the `clerkEvent` JSON struct — neither is read anywhere. Svix already validates the timestamp via signature.
+4. **YAGNI:** `claimEvent` SQL no longer sets `processed_at` explicitly — the column has `DEFAULT NOW()`.
+5. **Naming clarity:** Dedupe row's `event_type` is now `'clerk.user.created'` (matches the Clerk event-type taxonomy) instead of the generic `'clerk.webhook'`. Future provider-neutral queries on this table are easier to read.
+
+---
+
+## Decisions (and YAGNI cuts)
+
+| # | Decision | Rationale |
+|---|---|---|
+| D1 | Subscribe to `user.created` **only**. | Only `user.created` fixes the reported bug. `user.updated` (email staleness) and `user.deleted` (account deletion) are real but separate concerns — ship when there is a concrete need. |
+| D2 | Keep the lazy-provisioning path in auth middleware as a fallback. | Webhooks can fail silently for >24h before Svix gives up. Without a fallback, any Clerk/Svix outage locks newly-signed-up users out of the API entirely — strictly worse than the bug we're fixing. With idempotency on both surfaces (D3, D4) the fallback is free. |
+| D3 | Make `userRepo.Create` idempotent via `ON CONFLICT (id) DO NOTHING`. | Defense in depth. Even without the webhook, this single-line change kills the race in the auth middleware. The webhook is *belt*; this is *suspenders*. |
+| D4 | Extract provisioning into `services.UserProvisioning.Provision(ctx, id, email)` called from both the webhook and the auth middleware. | DRY. Eliminates the duplicate Clerk-fetch / Create / EnsureStripeCustomer / grantSignupBonus chain. |
+| D5 | Reuse the existing `processed_webhook_events` table; **drop the over-defensive `chk_event_id_format` regex CHECK** in a 1-line migration so non-`evt_*` IDs (Svix `msg_*`) are accepted. | **DRY on the table** — Svix `msg_*` (Clerk) and Stripe `evt_*` (Stripe) IDs cannot collide. **Verification surfaced** that migration `000018` line 60-61 enforces `event_id ~ '^evt_[a-zA-Z0-9]+$'`, which would reject every Clerk insert. The CHECK never carried real safety value (the column is text either way) and dropping it is smaller than adding a `provider` column or maintaining a parallel `processed_clerk_events` table. |
+| D6 | Use `github.com/svix/svix-webhooks/go` for signature verification. Do not hand-roll HMAC. | Both research streams independently recommended it. Constant-time compare, ±5min replay window, multi-key rotation are built in. |
+| D7 | Synchronous handler with a 10s `context.WithTimeout`. No async queue. | Per-signup volume is trivial, post-commit Stripe call is ~500ms. Adding a queue is YAGNI. |
+| D8 | Mount `POST /webhooks/clerk` on the root router (next to `/webhooks/stripe`), outside the auth middleware. | Mirrors the Stripe precedent in `web/web.go:372`. Cleaner than per-route auth opt-outs. |
+| D9 | Status codes: **401** bad/missing signature; **400** malformed JSON post-verify; **200** for everything else (dedupe hit, unknown event type, processed, post-commit Stripe failure). | Aligns with Svix retry semantics — 2xx means "stop retrying." Returning 4xx on dedupe makes Svix retry forever. Post-commit Stripe failure returns 200 because the user is already created and `EnsureStripeCustomer` is idempotent on Stripe's side via the per-user idempotency key — Svix re-delivery would re-enter the dedupe path anyway. |
+| D10 | No frontend changes. | The bug is server-side; once eager provisioning lands, the symptom disappears with zero client work. |
+
+**Explicitly NOT in this plan (YAGNI):**
+- ❌ `user.updated` / `user.deleted` event handling
+- ❌ A `provider` column on `processed_webhook_events`
+- ❌ Async/queued processing of side effects
+- ❌ Prometheus metrics for the new endpoint (existing observability is sufficient until we have an SLO)
+- ❌ Frontend hook gating on a "user provisioned" flag
+- ❌ Granular per-route auth-middleware opt-outs
+
+---
+
+## File Structure
+
+| File | Status | Responsibility |
+|---|---|---|
+| `scripts/migrations/000035_relax_processed_webhook_events_event_id_check.up.sql` | **Create** | `ALTER TABLE processed_webhook_events DROP CONSTRAINT chk_event_id_format;` (down: re-create the constraint). Required so Clerk `msg_*` IDs can be inserted into the existing dedupe table. |
+| `postgres/user.go` | Modify (~3 LOC) | Make `Create` idempotent with `ON CONFLICT (id) DO NOTHING`. |
+| `postgres/user_test.go` | Modify (+1 test) | Cover concurrent `Create` calls for the same ID. |
+| `web/services/user_provisioning.go` | **Create** | `UserProvisioning` service: single source of truth for the provisioning chain. Owns `grantSignupBonus` (moved here from `auth.go`). |
+| `web/services/user_provisioning_test.go` | **Create** | Concurrency + idempotency tests for `Provision`. |
+| `web/auth/auth.go` | Modify (~40 LOC removed, ~5 added) | Replace inlined chain (lines 126–185) with `provisioning.Provision`. Delete `grantSignupBonus` (moved). |
+| `web/auth/auth_test.go` (or existing) | Modify | Adjust if any assertion targeted the inlined chain shape. |
+| `web/handlers/clerk_webhook.go` | **Create** | HTTP handler: read raw body → verify Svix → dedupe in tx → call provisioning service → 200/401/400. |
+| `web/handlers/clerk_webhook_test.go` | **Create** | Verification, dedupe, malformed body, unknown event type, happy path. |
+| `web/web.go` | Modify (~10 LOC) | Add `ClerkWebhookSigningSecret` to `Config`; wire the handler; mount `POST /webhooks/clerk`. |
+| `go.mod` / `go.sum` | Modify | Add `github.com/svix/svix-webhooks/go`. |
+| `.env.example` (or equivalent) | Modify (1 line) | Document `CLERK_WEBHOOK_SIGNING_SECRET=`. |
+
+**One small migration.** No frontend changes.
+
+---
+
+## Task 1: Migration — relax `processed_webhook_events.event_id` CHECK constraint
+
+**Files:**
+- Create: `scripts/migrations/000035_relax_processed_webhook_events_event_id_check.up.sql`
+- Create: `scripts/migrations/000035_relax_processed_webhook_events_event_id_check.down.sql`
+
+The existing constraint at migration `000018` line 60-61 (`CHECK (event_id ~ '^evt_[a-zA-Z0-9]+$')`) was a Stripe-specific defensive check; it would reject every Clerk `svix-id` (`msg_*`). Since the column is already free-text and provider mixing is safe (Svix `msg_*` and Stripe `evt_*` cannot collide), drop the constraint. No data migration needed.
+
+- [ ] **Step 1: Write the up migration**
+
+```sql
+-- 000035_relax_processed_webhook_events_event_id_check.up.sql
+-- Drop the Stripe-specific CHECK constraint so Clerk's Svix msg_* IDs can be
+-- inserted into the same dedupe table. The constraint added no real safety
+-- (the column is text either way); the trade is zero — we gain table reuse
+-- across providers.
+BEGIN;
+
+ALTER TABLE processed_webhook_events
+    DROP CONSTRAINT IF EXISTS chk_event_id_format;
+
+COMMIT;
+```
+
+- [ ] **Step 2: Write the down migration**
+
+```sql
+-- 000035_relax_processed_webhook_events_event_id_check.down.sql
+-- Restore the Stripe-only CHECK constraint. Note: this will fail if any
+-- non-evt_* rows exist (e.g., Clerk msg_* rows from after the up migration).
+BEGIN;
+
+ALTER TABLE processed_webhook_events
+    ADD CONSTRAINT chk_event_id_format
+    CHECK (event_id ~ '^evt_[a-zA-Z0-9]+$');
+
+COMMIT;
+```
+
+- [ ] **Step 3: Apply locally and verify**
+
+```bash
+DSN="postgres://scraper:strongpassword@localhost:5432/google_maps_scraper?sslmode=disable" \
+  go run . -web   # migrations apply on startup; check logs for 000035
+```
+
+Then sanity-check:
+
+```bash
+psql -d google_maps_scraper -c "
+SELECT conname FROM pg_constraint
+WHERE conrelid = 'processed_webhook_events'::regclass
+  AND conname = 'chk_event_id_format';
+"
+```
+Expected: zero rows.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add scripts/migrations/000035_*.sql
+git commit -m "chore(db): drop Stripe-specific event_id format CHECK on processed_webhook_events"
+```
+
+---
+
+## Task 2: Make `userRepo.Create` idempotent (the smallest fix on its own)
+
+**Files:**
+- Modify: `postgres/user.go:68-82`
+- Test: `postgres/user_test.go` (add one test)
+
+- [ ] **Step 1: Write the failing test** in `postgres/user_test.go`
+
+```go
+// TestCreate_IsIdempotent_OnDuplicateID verifies that calling Create twice
+// with the same user ID does NOT return an error. This is required because
+// the Clerk webhook and the lazy auth-middleware provisioning path can both
+// race to insert the same user; both must succeed silently.
+func TestCreate_IsIdempotent_OnDuplicateID(t *testing.T) {
+    t.Parallel()
+    ctx, db := newTestDB(t) // existing helper in this file
+    repo := NewUserRepository(db)
+
+    user := User{ID: "user_idempotency_test", Email: "idem@example.com"}
+    if err := repo.Create(ctx, &user); err != nil {
+        t.Fatalf("first Create: %v", err)
+    }
+    // Second call with same ID must succeed (no error, no panic).
+    user2 := User{ID: user.ID, Email: "different@example.com"}
+    if err := repo.Create(ctx, &user2); err != nil {
+        t.Fatalf("second Create (idempotent): %v", err)
+    }
+
+    // The original row must be preserved (DO NOTHING semantics — not DO UPDATE).
+    got, err := repo.GetByID(ctx, user.ID)
+    if err != nil {
+        t.Fatalf("GetByID: %v", err)
+    }
+    if got.Email != "idem@example.com" {
+        t.Errorf("email: want %q, got %q (DO NOTHING must not overwrite)", "idem@example.com", got.Email)
+    }
+}
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+```bash
+go test ./postgres/ -run TestCreate_IsIdempotent_OnDuplicateID -count=1 -v
+```
+Expected: FAIL with `pq: duplicate key value violates unique constraint "users_pkey"`.
+
+- [ ] **Step 3: Implement** — change the SQL in `postgres/user.go:68-82`
+
+```go
+func (repo *userRepository) Create(ctx context.Context, user *User) error {
+    const q = `INSERT INTO users (id, email, created_at, updated_at)
+               VALUES ($1, $2, $3, $4)
+               ON CONFLICT (id) DO NOTHING`
+
+    now := time.Now().UTC()
+    if user.CreatedAt.IsZero() {
+        user.CreatedAt = now
+    }
+    if user.UpdatedAt.IsZero() {
+        user.UpdatedAt = now
+    }
+
+    _, err := repo.db.ExecContext(ctx, q, user.ID, user.Email, user.CreatedAt, user.UpdatedAt)
+    return err
+}
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+```bash
+go test ./postgres/ -count=1
+```
+Expected: all tests pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add postgres/user.go postgres/user_test.go
+git commit -m "fix(postgres): make user Create idempotent via ON CONFLICT DO NOTHING"
+```
+
+---
+
+## Task 3: Extract `UserProvisioning` service
+
+**Files:**
+- Create: `web/services/user_provisioning.go`
+- Create: `web/services/user_provisioning_test.go`
+
+- [ ] **Step 1: Write the failing test** in `web/services/user_provisioning_test.go`
+
+```go
+package services
+
+import (
+    "context"
+    "sync"
+    "testing"
+    // (test helpers and fakes already present in services/ for other tests)
+)
+
+// TestProvision_Concurrent_DoesNotErrorOrDuplicate spawns N goroutines that
+// all call Provision for the same Clerk user ID at the same time. Reproduces
+// the original race that caused "Failed to load dashboard" toasts on first
+// sign-up: three parallel /api/v1/* requests all hitting auth-middleware lazy
+// provisioning concurrently. Post-fix, all goroutines must succeed and the
+// users table must contain exactly one row.
+func TestProvision_Concurrent_DoesNotErrorOrDuplicate(t *testing.T) {
+    t.Parallel()
+    svc, db := newTestProvisioningService(t)
+
+    const N = 8
+    var wg sync.WaitGroup
+    errs := make(chan error, N)
+    for i := 0; i < N; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            _, err := svc.Provision(context.Background(), "user_concurrent_test", "race@example.com")
+            errs <- err
+        }()
+    }
+    wg.Wait()
+    close(errs)
+    for err := range errs {
+        if err != nil {
+            t.Fatalf("Provision returned error: %v", err)
+        }
+    }
+
+    var count int
+    if err := db.QueryRow(`SELECT COUNT(*) FROM users WHERE id=$1`, "user_concurrent_test").Scan(&count); err != nil {
+        t.Fatalf("count: %v", err)
+    }
+    if count != 1 {
+        t.Errorf("users row count: want 1, got %d", count)
+    }
+}
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+```bash
+go test ./web/services/ -run TestProvision_Concurrent -count=1 -v
+```
+Expected: FAIL — `Provision` does not exist yet.
+
+- [ ] **Step 3: Implement** `web/services/user_provisioning.go`
+
+```go
+// Package services hosts cross-cutting orchestration that is reused by
+// multiple HTTP handlers. UserProvisioning is the single source of truth
+// for "make sure a Postgres users row exists for this Clerk user, with
+// any one-time signup side effects applied," called by both the
+// /webhooks/clerk handler and the auth middleware's lazy-provisioning
+// fallback.
+package services
+
+import (
+    "context"
+    "database/sql"
+    "errors"
+    "log/slog"
+
+    "github.com/google/uuid"
+    "github.com/gosom/google-maps-scraper/billing"
+    "github.com/gosom/google-maps-scraper/models"
+    "github.com/gosom/google-maps-scraper/postgres"
+)
+
+// SignupBonusAmount is the credit amount granted to new users on signup ($2.00).
+// Sourced previously from web/auth/auth.go; centralized here because this is
+// now the only place that grants it.
+const SignupBonusAmount = 2.0
+
+type UserProvisioning struct {
+    db         *sql.DB
+    userRepo   postgres.UserRepository
+    billingSvc *billing.Service // nil-safe (test/no-Stripe builds)
+    logger     *slog.Logger
+}
+
+func NewUserProvisioning(
+    db *sql.DB,
+    userRepo postgres.UserRepository,
+    billingSvc *billing.Service,
+    logger *slog.Logger,
+) *UserProvisioning {
+    return &UserProvisioning{db: db, userRepo: userRepo, billingSvc: billingSvc, logger: logger}
+}
+
+// Provision ensures a users row exists for the given Clerk user ID and email,
+// and grants one-time signup side effects (signup bonus, lazy Stripe customer
+// creation). Safe to call concurrently and repeatedly: every step is
+// idempotent. Returns the canonical user row.
+//
+// Order is intentional: insert user row first (atomic, fast); then non-fatal
+// best-effort calls to Stripe + bonus grant. A failure in Stripe/bonus does
+// NOT roll back the user row — same contract as the prior auth.go logic.
+func (s *UserProvisioning) Provision(ctx context.Context, userID, email string) (postgres.User, error) {
+    if userID == "" || email == "" {
+        return postgres.User{}, errors.New("user_provisioning: userID and email are required")
+    }
+
+    // Step 1: idempotent insert. ON CONFLICT DO NOTHING means concurrent
+    // callers all succeed; the loser simply does not insert.
+    newUser := postgres.User{ID: userID, Email: email}
+    if err := s.userRepo.Create(ctx, &newUser); err != nil {
+        return postgres.User{}, err
+    }
+
+    // Step 2: re-read to get the canonical row regardless of which caller
+    // actually inserted it. Cheap (PK lookup) and avoids subtle "did I or
+    // did the other goroutine win?" branching.
+    dbUser, err := s.userRepo.GetByID(ctx, userID)
+    if err != nil {
+        return postgres.User{}, err
+    }
+
+    // Step 3: lazy Stripe customer creation (idempotent — guarded by
+    // existing stripe_customer_id check in EnsureStripeCustomer + Stripe
+    // idempotency key). Non-fatal: log and continue.
+    if s.billingSvc != nil {
+        if _, err := s.billingSvc.EnsureStripeCustomer(ctx, dbUser.ID, dbUser.Email, dbUser.StripeCustomerID, s.userRepo); err != nil {
+            s.logger.Error("stripe_customer_ensure_failed_on_provision",
+                slog.String("user_id", dbUser.ID), slog.Any("error", err))
+        }
+    }
+
+    // Step 4: signup bonus (idempotent — guarded by reference_id='signup_bonus'
+    // unique check inside the function). Non-fatal: log and continue.
+    if err := s.grantSignupBonus(ctx, dbUser.ID); err != nil {
+        s.logger.Error("failed_to_grant_signup_bonus",
+            slog.String("user_id", dbUser.ID), slog.Any("error", err))
+    } else {
+        s.logger.Info("signup_bonus_granted",
+            slog.Float64("amount", SignupBonusAmount), slog.String("user_id", dbUser.ID))
+    }
+
+    // Newly created users get the default role; align in-memory struct with
+    // the DB default so callers don't need a second GetByID.
+    if dbUser.Role == "" {
+        dbUser.Role = models.RoleUser
+    }
+    return dbUser, nil
+}
+
+// grantSignupBonus is moved verbatim from web/auth/auth.go:287-336 (no logic
+// change). It uses an idempotency check on credit_transactions so concurrent
+// callers see at most one bonus credit.
+func (s *UserProvisioning) grantSignupBonus(ctx context.Context, userID string) error {
+    tx, err := s.db.BeginTx(ctx, nil)
+    if err != nil {
+        return err
+    }
+    defer func() {
+        if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+            s.logger.Error("rollback_failed", slog.Any("error", rbErr))
+        }
+    }()
+
+    var alreadyGranted bool
+    err = tx.QueryRowContext(ctx,
+        "SELECT EXISTS(SELECT 1 FROM credit_transactions WHERE user_id = $1 AND reference_id = 'signup_bonus' AND reference_type = 'system' FOR UPDATE)",
+        userID).Scan(&alreadyGranted)
+    if err != nil {
+        return err
+    }
+    if alreadyGranted {
+        s.logger.Info("signup_bonus_already_granted", slog.String("user_id", userID))
+        return nil
+    }
+
+    var currentBalance float64
+    if err = tx.QueryRowContext(ctx, "SELECT COALESCE(credit_balance, 0) FROM users WHERE id = $1 FOR UPDATE", userID).Scan(&currentBalance); err != nil {
+        return err
+    }
+    newBalance := currentBalance + SignupBonusAmount
+
+    if _, err = tx.ExecContext(ctx, `
+        UPDATE users
+        SET credit_balance = COALESCE(credit_balance, 0) + $1::numeric,
+            updated_at = NOW()
+        WHERE id = $2`, SignupBonusAmount, userID); err != nil {
+        return err
+    }
+
+    if _, err = tx.ExecContext(ctx, `
+        INSERT INTO credit_transactions (id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
+        VALUES ($1, $2, 'bonus', $3, $4, $5, 'Signup bonus', 'signup_bonus', 'system')`,
+        uuid.Must(uuid.NewV7()).String(), userID, SignupBonusAmount, currentBalance, newBalance); err != nil {
+        return err
+    }
+
+    return tx.Commit()
+}
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+```bash
+go test ./web/services/ -run TestProvision_Concurrent -count=1 -v
+```
+Expected: PASS, exactly 1 row.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add web/services/user_provisioning.go web/services/user_provisioning_test.go
+git commit -m "feat(services): extract UserProvisioning as single source of truth"
+```
+
+---
+
+## Task 4: Refactor auth middleware to use the service (DRY cleanup)
+
+**Files:**
+- Modify: `web/auth/auth.go:118-185` (the inlined chain) and `:287-336` (delete `grantSignupBonus`)
+- Modify: `web/auth/auth.go:64-80` (constructor — accept `*services.UserProvisioning` instead of `db`+`billingSvc` for the provisioning concern)
+- Modify: `web/web.go` constructor wiring
+- Modify: `web/auth/auth.go` — delete unused imports (`uuid`, `billing`)
+
+- [ ] **Step 1: Verify existing auth middleware tests still cover the lazy path** (read-only check)
+
+```bash
+go test ./web/auth/ -run "Provision|Lazy|FirstRequest" -count=1 -v
+```
+If no tests target the lazy provisioning path, that is fine — the new `web/services` test covers it. Proceed.
+
+- [ ] **Step 2: Modify the constructor signature** — `AuthMiddleware` should take a `*services.UserProvisioning` instead of (or in addition to) `db`+`billingSvc`. Rationale: middleware no longer needs a DB connection of its own for provisioning; the service owns that.
+
+In `web/auth/auth.go`:
+
+```go
+type AuthMiddleware struct {
+    userAPI      *user.Client
+    userRepo     postgres.UserRepository
+    apiKeyRepo   models.APIKeyRepository
+    serverSecret []byte
+    provisioning *services.UserProvisioning  // NEW — replaces db + billingSvc
+    logger       *slog.Logger
+}
+
+func NewAuthMiddleware(
+    clerkAPIKey string,
+    userRepo postgres.UserRepository,
+    apiKeyRepo models.APIKeyRepository,
+    serverSecret []byte,
+    provisioning *services.UserProvisioning,
+    logger *slog.Logger,
+) (*AuthMiddleware, error) {
+    clerk.SetKey(clerkAPIKey)
+    return &AuthMiddleware{
+        userAPI: user.NewClient(&clerk.ClientConfig{
+            BackendConfig: clerk.BackendConfig{Key: clerk.String(clerkAPIKey)},
+        }),
+        userRepo:     userRepo,
+        apiKeyRepo:   apiKeyRepo,
+        serverSecret: serverSecret,
+        provisioning: provisioning,
+        logger:       logger,
+    }, nil
+}
+```
+
+- [ ] **Step 3: Replace the inlined chain** in `Authenticate`'s "user not found" branch (the body of the `if err != nil` at line 127) with:
+
+```go
+// User not found — auto-provision from Clerk. Defense-in-depth fallback
+// for the Clerk user.created webhook (handlers/clerk_webhook.go); both
+// paths converge on the same idempotent UserProvisioning.Provision call.
+clerkUser, err := m.userAPI.Get(r.Context(), userID)
+if err != nil {
+    m.logger.Error("failed_to_retrieve_user_from_clerk", slog.String("user_id", userID), slog.Any("error", err))
+    http.Error(w, "Failed to retrieve user information", http.StatusInternalServerError)
+    return
+}
+
+email := primaryEmailFromClerkUser(clerkUser) // small helper extracted from old lines 136-147
+if email == "" {
+    m.logger.Error("user_has_no_email", slog.String("user_id", userID))
+    http.Error(w, "User has no email address", http.StatusBadRequest)
+    return
+}
+
+dbUser, err = m.provisioning.Provision(r.Context(), userID, email)
+if err != nil {
+    m.logger.Error("user_provisioning_failed",
+        slog.String("user_id", userID),
+        slog.String("path", r.URL.Path),
+        slog.String("method", r.Method),
+        slog.Any("error", err))
+    http.Error(w, "Failed to create user record", http.StatusInternalServerError)
+    return
+}
+```
+
+Then **delete** the entire `grantSignupBonus` function from `auth.go` (lines 287-336). It now lives in the service.
+
+- [ ] **Step 4: Add the small helper** at the bottom of `auth.go` (or factored to a separate file if `auth.go` is too long):
+
+```go
+// primaryEmailFromClerkUser returns the primary email address from a Clerk
+// user record, falling back to the first email if no primary is set.
+// Returns "" if the user has no email addresses at all.
+func primaryEmailFromClerkUser(u *clerkuser.User) string {
+    if u.PrimaryEmailAddressID != nil {
+        primaryID := *u.PrimaryEmailAddressID
+        for _, ea := range u.EmailAddresses {
+            if ea.ID == primaryID {
+                return ea.EmailAddress
+            }
+        }
+    }
+    if len(u.EmailAddresses) > 0 {
+        return u.EmailAddresses[0].EmailAddress
+    }
+    return ""
+}
+```
+
+- [ ] **Step 5: Update the wire-up** in `web/web.go` where `NewAuthMiddleware` is called. Construct `services.UserProvisioning` first (it depends on `db`, `userRepo`, `billingSvc`, `logger`), pass it in.
+
+```go
+provisioningSvc := services.NewUserProvisioning(cfg.PgDB, cfg.UserRepo, ans.billingSvc, ans.logger)
+authMW, err := auth.NewAuthMiddleware(
+    cfg.ClerkAPIKey,
+    cfg.UserRepo,
+    cfg.APIKeyRepo,
+    cfg.ServerSecret,
+    provisioningSvc,
+    ans.logger,
+)
+```
+
+- [ ] **Step 6: Verify the build and the existing test suite**
+
+```bash
+go build ./...
+go test ./web/... ./postgres/... -count=1
+```
+Expected: green.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add web/auth/auth.go web/web.go
+git commit -m "refactor(auth): delegate user provisioning to services.UserProvisioning"
+```
+
+---
+
+## Task 5: Add Svix dependency
+
+**Files:**
+- Modify: `go.mod`, `go.sum`
+
+- [ ] **Step 1: Add the dependency**
+
+```bash
+go get github.com/svix/svix-webhooks/go@latest
+go mod tidy
+```
+
+- [ ] **Step 2: Verify it builds**
+
+```bash
+go build ./...
+```
+Expected: green.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add go.mod go.sum
+git commit -m "chore(deps): add svix-webhooks/go for Clerk webhook signature verification"
+```
+
+---
+
+## Task 6: Add `ClerkWebhookSigningSecret` to config
+
+**Files:**
+- Modify: `web/web.go` — add to `Config` struct (next to `StripeWebhookSecrets` at line 59)
+- Modify: `runner/` config loader where `StripeWebhookSecrets` is loaded — load `CLERK_WEBHOOK_SIGNING_SECRET` the same way
+- Modify: `.env.example` (or whatever the project uses for documenting env vars)
+
+- [ ] **Step 1: Add field to `Config`** in `web/web.go`:
+
+```go
+// ClerkWebhookSigningSecret is the Svix signing secret for the Clerk
+// webhook endpoint configured in the Clerk Dashboard. Empty string disables
+// the /webhooks/clerk endpoint (route still mounts but returns 503).
+// Required in production; optional locally.
+ClerkWebhookSigningSecret string
+```
+
+- [ ] **Step 2: Plumb the env var** in the runner/config loader. Find the line that reads `STRIPE_WEBHOOK_SECRET` (or similar) and add a sibling read for `CLERK_WEBHOOK_SIGNING_SECRET`.
+
+- [ ] **Step 3: Document** in `.env.example` (or equivalent):
+
+```
+# Clerk webhook signing secret (Svix-format). Get from the Clerk Dashboard
+# → Webhooks → your endpoint → Signing Secret. Per-environment (test vs prod
+# Clerk instances each have their own).
+CLERK_WEBHOOK_SIGNING_SECRET=
+```
+
+- [ ] **Step 4: Build verification**
+
+```bash
+go build ./...
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add web/web.go runner/ .env.example
+git commit -m "config: plumb CLERK_WEBHOOK_SIGNING_SECRET through Config"
+```
+
+---
+
+## Task 7: Implement the Clerk webhook handler
+
+**Files:**
+- Create: `web/handlers/clerk_webhook.go`
+- Create: `web/handlers/clerk_webhook_test.go`
+
+- [ ] **Step 1: Write the failing tests** in `web/handlers/clerk_webhook_test.go`. Use a fake `UserProvisioning` (interface, see step 2 below) to keep tests hermetic.
+
+```go
+package handlers_test
+
+import (
+    "bytes"
+    "context"
+    "encoding/json"
+    "net/http"
+    "net/http/httptest"
+    "strings"
+    "sync/atomic"
+    "testing"
+    "time"
+
+    svix "github.com/svix/svix-webhooks/go"
+    // package under test
+)
+
+// shared helpers
+const testSigningSecret = "whsec_dGVzdHNlY3JldGZvcnVuaXR0ZXN0cw=="
+
+// signedRequest forges a Svix-signed POST against the handler under test.
+// Verify the live svix-webhooks/go signatures of NewWebhook and Sign on
+// pkg.go.dev before relying on these exact lines — at the time of writing
+// they are: NewWebhook(secret) *Webhook (no error), Sign(msgId, timestamp,
+// payload string) string (no error).
+func signedRequest(t *testing.T, body []byte, secret string) *http.Request {
+    t.Helper()
+    msgID := "msg_" + uuid.NewString()
+    ts := strconv.FormatInt(time.Now().Unix(), 10)
+
+    wh := svix.NewWebhook(secret)
+    sig := wh.Sign(msgID, ts, string(body))
+
+    req := httptest.NewRequest(http.MethodPost, "/webhooks/clerk", bytes.NewReader(body))
+    req.Header.Set("svix-id", msgID)
+    req.Header.Set("svix-timestamp", ts)
+    req.Header.Set("svix-signature", sig)
+    return req
+}
+
+// 1) Happy path: valid user.created → 200, provisioning called once.
+func TestClerkWebhook_UserCreated_Provisions(t *testing.T) { /* ... */ }
+
+// 2) Bad signature → 401, provisioning NOT called.
+func TestClerkWebhook_BadSignature_401(t *testing.T) { /* ... */ }
+
+// 3) Missing svix-* headers → 401.
+func TestClerkWebhook_MissingHeaders_401(t *testing.T) { /* ... */ }
+
+// 4) Malformed JSON post-verify → 400.
+func TestClerkWebhook_MalformedJSON_400(t *testing.T) { /* ... */ }
+
+// 5) Dedup: same svix-id delivered twice → first 200 + provisioning called;
+//    second 200 + provisioning NOT called again.
+func TestClerkWebhook_DedupesByMessageID(t *testing.T) {
+    // Use atomic counter on the fake provisioner to assert exactly one call.
+}
+
+// 6) Unknown event type (e.g., "session.created") → 200, provisioning NOT called.
+func TestClerkWebhook_UnknownEventType_200_NoOp(t *testing.T) { /* ... */ }
+
+// 7) user.created with no email addresses → 200 (acknowledge), log + skip.
+//    Returning 4xx would make Svix retry forever.
+func TestClerkWebhook_UserCreatedNoEmail_200_NoOp(t *testing.T) { /* ... */ }
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+```bash
+go test ./web/handlers/ -run TestClerkWebhook -count=1 -v
+```
+Expected: all FAIL — handler does not exist.
+
+- [ ] **Step 3: Implement** `web/handlers/clerk_webhook.go`
+
+```go
+package handlers
+
+import (
+    "context"
+    "database/sql"
+    "encoding/json"
+    "errors"
+    "io"
+    "log/slog"
+    "net/http"
+    "time"
+
+    svix "github.com/svix/svix-webhooks/go"
+
+    "github.com/gosom/google-maps-scraper/postgres"
+    "github.com/gosom/google-maps-scraper/web/services"
+)
+
+// Provisioner is the narrow interface the webhook handler depends on. Lets
+// tests inject a fake without spinning up Postgres.
+type Provisioner interface {
+    Provision(ctx context.Context, userID, email string) (postgres.User, error)
+}
+
+// ClerkWebhookHandler verifies and dispatches Svix-signed Clerk webhooks.
+// Routed at POST /webhooks/clerk in web/web.go (outside the auth middleware).
+type ClerkWebhookHandler struct {
+    db           *sql.DB
+    verifier     *svix.Webhook
+    provisioning Provisioner
+    logger       *slog.Logger
+}
+
+// NOTE on Svix Go API: at the time of writing the canonical signatures from
+// pkg.go.dev/github.com/svix/svix-webhooks/go are:
+//
+//   func NewWebhook(secret string) *Webhook                    // no error return
+//   func (*Webhook) Verify(payload string, headers map[string]string) error
+//   func (*Webhook) Sign(msgId, timestamp, payload string) string
+//
+// Verify the current signatures on pkg.go.dev before writing — the library
+// has been stable but small detail churn (e.g. byte-vs-string payload) has
+// happened in past versions. Adjust the conversions in ServeHTTP / the test
+// helper accordingly.
+
+func NewClerkWebhookHandler(db *sql.DB, signingSecret string, provisioning Provisioner, logger *slog.Logger) (*ClerkWebhookHandler, error) {
+    if signingSecret == "" {
+        return nil, errors.New("clerk_webhook: signing secret is empty")
+    }
+    return &ClerkWebhookHandler{
+        db:           db,
+        verifier:     svix.NewWebhook(signingSecret),
+        provisioning: provisioning,
+        logger:       logger,
+    }, nil
+}
+
+// Maximum body size for an inbound Clerk webhook (defensive). Clerk payloads
+// for user.created are ~2KB; 32KB is generous.
+const clerkWebhookMaxBody = 32 * 1024
+
+// Maximum total time we allow the handler to spend; well under Svix's 15s
+// timeout. Stripe customer create is ~500ms p99, so 10s is comfortable.
+const clerkWebhookTimeout = 10 * time.Second
+
+// clerkEvent is the minimal envelope we read from the verified body. Other
+// envelope fields (object, timestamp, instance_id) exist but we don't read
+// them — Svix has already enforced the timestamp via signature verification,
+// and we rely on Type for dispatch and Data for the typed payload.
+type clerkEvent struct {
+    Type string          `json:"type"`
+    Data json.RawMessage `json:"data"`
+}
+
+type clerkUserCreatedData struct {
+    ID                     string `json:"id"`
+    PrimaryEmailAddressID  string `json:"primary_email_address_id"`
+    EmailAddresses         []struct {
+        ID           string `json:"id"`
+        EmailAddress string `json:"email_address"`
+    } `json:"email_addresses"`
+}
+
+func (h *ClerkWebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+    ctx, cancel := context.WithTimeout(r.Context(), clerkWebhookTimeout)
+    defer cancel()
+
+    // 1. Read raw body BEFORE any parsing — signature is computed over bytes.
+    body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, clerkWebhookMaxBody))
+    if err != nil {
+        h.logger.Warn("clerk_webhook_body_read_failed", slog.Any("error", err))
+        http.Error(w, "body read", http.StatusBadRequest)
+        return
+    }
+
+    // 2. Verify signature. Svix's Go API takes payload as string and headers
+    // as map[string]string (single-valued). The three svix-* headers we care
+    // about are all single-valued, so flattening http.Header is lossless.
+    hdrs := flattenHeaders(r.Header)
+    if err := h.verifier.Verify(string(body), hdrs); err != nil {
+        h.logger.Warn("clerk_webhook_signature_invalid",
+            slog.String("source_ip", r.RemoteAddr),
+            slog.Any("error", err))
+        http.Error(w, "unauthorized", http.StatusUnauthorized)
+        return
+    }
+
+    msgID := r.Header.Get("svix-id")
+    if msgID == "" {
+        // Svix verify already requires this header; defensive.
+        http.Error(w, "missing svix-id", http.StatusUnauthorized)
+        return
+    }
+
+    // 3. Claim the event in the dedupe table. If the row already exists,
+    // this is a redelivery — return 200 without re-processing.
+    claimed, err := h.claimEvent(ctx, msgID)
+    if err != nil {
+        h.logger.Error("clerk_webhook_dedupe_failed", slog.String("svix_id", msgID), slog.Any("error", err))
+        http.Error(w, "transient", http.StatusServiceUnavailable)
+        return
+    }
+    if !claimed {
+        h.logger.Info("clerk_webhook_duplicate_ignored", slog.String("svix_id", msgID))
+        w.WriteHeader(http.StatusOK)
+        return
+    }
+
+    // 4. Parse the event envelope.
+    var evt clerkEvent
+    if err := json.Unmarshal(body, &evt); err != nil {
+        h.logger.Warn("clerk_webhook_malformed_json", slog.String("svix_id", msgID), slog.Any("error", err))
+        http.Error(w, "malformed", http.StatusBadRequest)
+        return
+    }
+
+    // 5. Dispatch on event type. We only handle user.created today.
+    switch evt.Type {
+    case "user.created":
+        h.handleUserCreated(ctx, msgID, evt.Data)
+    default:
+        // Acknowledge and ignore — returning 4xx would make Svix retry
+        // forever for events we don't subscribe to.
+        h.logger.Info("clerk_webhook_event_ignored",
+            slog.String("svix_id", msgID), slog.String("type", evt.Type))
+    }
+
+    w.WriteHeader(http.StatusOK)
+}
+
+func (h *ClerkWebhookHandler) handleUserCreated(ctx context.Context, msgID string, raw json.RawMessage) {
+    var data clerkUserCreatedData
+    if err := json.Unmarshal(raw, &data); err != nil {
+        h.logger.Warn("clerk_webhook_user_created_data_invalid",
+            slog.String("svix_id", msgID), slog.Any("error", err))
+        return
+    }
+
+    email := primaryEmailFromClerkPayload(data)
+    if data.ID == "" || email == "" {
+        h.logger.Warn("clerk_webhook_user_created_missing_fields",
+            slog.String("svix_id", msgID),
+            slog.String("user_id", data.ID),
+            slog.Bool("has_email", email != ""))
+        return
+    }
+
+    if _, err := h.provisioning.Provision(ctx, data.ID, email); err != nil {
+        // Provisioning failed AFTER we claimed the event — log and let the
+        // next user request hit the auth-middleware fallback. Returning 5xx
+        // here would make Svix redeliver, but the dedupe row is already
+        // present so the redelivery would also no-op. Returning 200 +
+        // logging is the right call.
+        h.logger.Error("clerk_webhook_provisioning_failed",
+            slog.String("svix_id", msgID),
+            slog.String("user_id", data.ID),
+            slog.Any("error", err))
+        return
+    }
+
+    h.logger.Info("clerk_webhook_user_provisioned",
+        slog.String("svix_id", msgID), slog.String("user_id", data.ID))
+}
+
+// claimEvent inserts a row into processed_webhook_events and returns true if
+// this caller is the first to see the message ID. Reuses the existing dedupe
+// table from migration 000018; the table's processed_at, processing_result,
+// and metadata columns all have DB defaults so we only set the two columns
+// that are provider-specific.
+func (h *ClerkWebhookHandler) claimEvent(ctx context.Context, msgID string) (bool, error) {
+    const q = `
+        INSERT INTO processed_webhook_events (event_id, event_type)
+        VALUES ($1, 'clerk.user.created')
+        ON CONFLICT (event_id) DO NOTHING
+    `
+    res, err := h.db.ExecContext(ctx, q, msgID)
+    if err != nil {
+        return false, err
+    }
+    n, err := res.RowsAffected()
+    if err != nil {
+        return false, err
+    }
+    return n == 1, nil
+}
+
+func primaryEmailFromClerkPayload(d clerkUserCreatedData) string {
+    if d.PrimaryEmailAddressID != "" {
+        for _, ea := range d.EmailAddresses {
+            if ea.ID == d.PrimaryEmailAddressID {
+                return ea.EmailAddress
+            }
+        }
+    }
+    if len(d.EmailAddresses) > 0 {
+        return d.EmailAddresses[0].EmailAddress
+    }
+    return ""
+}
+
+// flattenHeaders converts http.Header (map[string][]string) to the
+// map[string]string shape the svix-webhooks/go Verify method expects. The
+// three svix-* headers are all single-valued in practice; if a key has
+// multiple values we keep the first.
+func flattenHeaders(h http.Header) map[string]string {
+    out := make(map[string]string, len(h))
+    for k, v := range h {
+        if len(v) > 0 {
+            out[k] = v[0]
+        }
+    }
+    return out
+}
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+```bash
+go test ./web/handlers/ -run TestClerkWebhook -count=1 -v
+```
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add web/handlers/clerk_webhook.go web/handlers/clerk_webhook_test.go
+git commit -m "feat(handlers): add Clerk user.created webhook with Svix verification + dedupe"
+```
+
+---
+
+## Task 8: Mount the route in `web/web.go`
+
+**Files:**
+- Modify: `web/web.go` (mirror the Stripe webhook wiring at line 363/372)
+
+- [ ] **Step 1: Construct the handler and mount it**, immediately after the Stripe webhook lines (~web/web.go:372). Use the same `webhookMws` middleware chain (request ID, logger injection, body size — but DO NOT apply the auth middleware).
+
+```go
+// Clerk user.created webhook — eager user provisioning. Mounted on the root
+// router (not under /api/v1) and exempt from auth middleware; authentication
+// is via Svix signature.
+if cfg.ClerkWebhookSigningSecret != "" {
+    clerkHandler, err := handlers.NewClerkWebhookHandler(cfg.PgDB, cfg.ClerkWebhookSigningSecret, provisioningSvc, ans.logger)
+    if err != nil {
+        return nil, fmt.Errorf("clerk webhook handler: %w", err)
+    }
+    clerkWebhookHandler := webmiddleware.Chain(clerkHandler, webhookMws...)
+    router.Handle("/webhooks/clerk", clerkWebhookHandler).Methods(http.MethodPost)
+}
+```
+
+- [ ] **Step 2: Build + run unit tests**
+
+```bash
+go build ./...
+go test ./... -count=1
+```
+Expected: green.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add web/web.go
+git commit -m "feat(web): mount POST /webhooks/clerk route"
+```
+
+---
+
+## Task 9: Smoke test against a running server
+
+**No code change.** Use Clerk's webhook test feature.
+
+- [ ] **Step 1: Start the backend locally** with `CLERK_WEBHOOK_SIGNING_SECRET` set to a Clerk *test instance* signing secret.
+
+```bash
+CLERK_WEBHOOK_SIGNING_SECRET="whsec_..." \
+DSN="postgres://scraper:strongpassword@localhost:5432/google_maps_scraper?sslmode=disable" \
+  go run . -web
+```
+
+- [ ] **Step 2: Expose the local server** (e.g., via `cloudflared` or `ngrok`) and configure the test-instance Clerk Dashboard webhook to point at `<tunnel>/webhooks/clerk` with `user.created` selected.
+
+- [ ] **Step 3: Trigger a `user.created` event** from the Clerk Dashboard's "Send test event" button OR by signing up a fresh test user.
+
+- [ ] **Step 4: Verify in Postgres**
+
+```bash
+psql -d google_maps_scraper -c "SELECT id, email FROM users WHERE id = 'user_<test_id>';"
+psql -d google_maps_scraper -c "SELECT event_id, event_type FROM processed_webhook_events WHERE event_type = 'clerk.webhook' ORDER BY processed_at DESC LIMIT 5;"
+psql -d google_maps_scraper -c "SELECT user_id, type, amount FROM credit_transactions WHERE reference_id = 'signup_bonus' ORDER BY created_at DESC LIMIT 5;"
+```
+
+Expected: user row exists, dedupe row exists, signup bonus transaction exists.
+
+- [ ] **Step 5: Re-send the same event** from the Clerk Dashboard. Verify it returns 200 quickly and does NOT create a second user row or a second bonus transaction (counts unchanged).
+
+- [ ] **Step 6: End-to-end UX test** — sign up a fresh user via the staging frontend → land on `/dashboard` → confirm there is **no flash** of "Failed to load dashboard."
+
+- [ ] **Step 7: No commit** — this task is verification only.
+
+---
+
+## Task 10: Open the PR
+
+- [ ] **Step 1: Push and open PR against `develop`**
+
+```bash
+git push -u origin fix/clerk-webhook-eager-provisioning
+gh pr create --repo brezel-ai/brezelscraper-backend --base develop \
+  --title "fix(auth): add Clerk user.created webhook + idempotent provisioning to fix dashboard race" \
+  --body "..."
+```
+
+PR body checklist:
+- Root cause summary (link to debugging analysis)
+- Decision matrix (D1–D10) with one-sentence rationale each
+- Test plan: concurrent-Provision unit test, Clerk Dashboard "Send test event" smoke test, fresh-signup UX test on staging
+- Rollout: deploy backend → configure Clerk Dashboard webhook for **production** Clerk instance with prod `CLERK_WEBHOOK_SIGNING_SECRET` → monitor logs for `clerk_webhook_user_provisioned` and `clerk_webhook_provisioning_failed`
+- Rollback: leaving `CLERK_WEBHOOK_SIGNING_SECRET` unset disables the route; the existing lazy-provisioning fallback (now race-safe via Task 1's `ON CONFLICT`) continues to work standalone
+
+---
+
+## Risk register
+
+| Risk | Mitigation |
+|---|---|
+| Webhook misconfigured in Clerk Dashboard (wrong secret, wrong URL) | Lazy-provisioning fallback (D2) keeps users functional. Logs `clerk_webhook_signature_invalid` will spike — alert on this. |
+| Postgres `processed_webhook_events` table grows unbounded | Existing concern shared with Stripe webhooks. Out of scope for this PR. File a follow-up issue for retention. |
+| Clerk renames event type or payload schema | Today: `user.created` is stable per the Clerk research brief. We dispatch on `evt.Type` so unknown types are silently 200-ed; a schema change would surface as `clerk_webhook_user_created_missing_fields` log alarms, not user-visible breakage (lazy fallback covers). |
+| Stripe customer create fails inside `Provision` | Already non-fatal (logs + continues). User row exists; `CreateCheckoutSession` lazy-creates on first checkout. Same behavior as today. |
+| Two parallel Clerk webhook deliveries for the same `svix-id` | Dedupe row's PK conflict makes only one of them claim → other returns 200 immediately. |
+
+---
+
+## Definition of Done
+
+- [ ] All unit tests green (`go test ./... -count=1`).
+- [ ] Smoke test on staging Clerk instance: fresh signup → no toast flash on `/dashboard`.
+- [ ] PR merged to `develop`.
+- [ ] Production Clerk Dashboard webhook configured with prod signing secret.
+- [ ] One follow-up issue filed: "Add retention sweep for `processed_webhook_events`" (out of scope here).
