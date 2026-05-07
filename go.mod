@@ -33,6 +33,7 @@ require (
 	github.com/shopspring/decimal v1.2.0
 	github.com/stretchr/testify v1.11.1
 	github.com/stripe/stripe-go/v82 v82.5.0
+	github.com/svix/svix-webhooks v1.93.0
 	golang.org/x/crypto v0.46.0
 	golang.org/x/oauth2 v0.34.0
 	golang.org/x/sync v0.20.0
@@ -238,7 +239,6 @@ require (
 	github.com/stbenjam/no-sprintf-host-port v0.2.0 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/subosito/gotenv v1.4.1 // indirect
-	github.com/svix/svix-webhooks v1.93.0 // indirect
 	github.com/syndtr/goleveldb v1.0.0 // indirect
 	github.com/tdakkota/asciicheck v0.4.1 // indirect
 	github.com/tetafro/godot v1.5.0 // indirect
