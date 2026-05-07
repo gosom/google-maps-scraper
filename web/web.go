@@ -373,17 +373,27 @@ func New(cfg ServerConfig) (*Server, error) {
 	// service is available. The handler verifies signatures itself and is
 	// intentionally NOT behind any CIDR allowlist (Clerk uses Cloudflare, not
 	// fixed CIDRs); Svix signature is the auth.
-	if cfg.ClerkWebhookSigningSecret != "" && provisioningSvc != nil {
+	switch {
+	case cfg.ClerkWebhookSigningSecret != "" && provisioningSvc != nil:
 		clerkHandler, err := webhandlers.NewClerkWebhookHandler(cfg.PgDB, cfg.ClerkWebhookSigningSecret, provisioningSvc, ans.logger)
 		if err != nil {
 			return nil, fmt.Errorf("clerk webhook handler init: %w", err)
 		}
 		clerkWebhookHandler := webmiddleware.Chain(clerkHandler, baseWebhookMws...)
 		router.Handle("/webhooks/clerk", clerkWebhookHandler).Methods(http.MethodPost)
+	case cfg.ClerkWebhookSigningSecret != "":
+		// Secret configured but provisioning unavailable (DB or user repo
+		// nil) — surface this loudly so operators don't silently lose
+		// webhook deliveries waiting for a route that was never mounted.
+		ans.logger.Warn("clerk_webhook_route_not_mounted",
+			slog.String("reason", "provisioning service unavailable (db or user repo is nil)"))
 	}
 
-	// Stripe webhook chain layers an optional CIDR allowlist on top of the base.
-	stripeWebhookMws := baseWebhookMws
+	// Stripe webhook chain layers an optional CIDR allowlist on top of the
+	// base. Use an explicit copy (NOT slice-header aliasing) so a future
+	// append into stripeWebhookMws cannot bleed into baseWebhookMws if the
+	// base ever grows past its initial capacity.
+	stripeWebhookMws := append([]func(http.Handler) http.Handler{}, baseWebhookMws...)
 	if len(cfg.StripeWebhookAllowedCIDRs) > 0 {
 		cidrMW, err := webmiddleware.AllowCIDRs(cfg.StripeWebhookAllowedCIDRs)
 		if err != nil {
