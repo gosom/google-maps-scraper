@@ -68,7 +68,15 @@ Two **blocking** issues and three over-engineering tightens were applied after r
 
 ---
 
-## Task 1: Migration — relax `processed_webhook_events.event_id` CHECK constraint
+## ~~Task 1: Migration — relax `processed_webhook_events.event_id` CHECK constraint~~ ✅ DONE
+
+**Commits:** `e1a6ef6` (initial), `fcbb157` (review fixes — added provider-neutral COMMENTs, clarified down-migration warning, updated stale `chk_event_id_format` references in `billing/service_test.go`)
+
+**Review notes:**
+- Code-quality reviewer flagged stale comments in `billing/service_test.go` referencing the dropped constraint as the *reason* for `evt_*` fixture prefixes — fixed in `fcbb157` (now phrased as Stripe convention).
+- Reviewer suggested `ADD CONSTRAINT IF NOT EXISTS` for idempotent down — **rejected:** PostgreSQL does not support that clause for CHECK constraints; `golang-migrate` runs each down at most once, so non-idempotent down is acceptable.
+- Reviewer suggested noting the `ACCESS EXCLUSIVE` lock — applied to the down warning where it matters (the full-table re-scan); skipped on the up because the up is metadata-only.
+
 
 **Files:**
 - Create: `scripts/migrations/000035_relax_processed_webhook_events_event_id_check.up.sql`
