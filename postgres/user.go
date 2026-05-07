@@ -67,7 +67,8 @@ func (repo *userRepository) GetByEmail(ctx context.Context, email string) (User,
 // DB access via scripts/promote_admin.sh — there is no API for self-promotion.
 func (repo *userRepository) Create(ctx context.Context, user *User) error {
 	const q = `INSERT INTO users (id, email, created_at, updated_at)
-	           VALUES ($1, $2, $3, $4)`
+	           VALUES ($1, $2, $3, $4)
+	           ON CONFLICT (id) DO NOTHING`
 
 	now := time.Now().UTC()
 	if user.CreatedAt.IsZero() {

@@ -180,3 +180,41 @@ func TestGetByID_IncludesStripeCustomerID(t *testing.T) {
 		t.Errorf("expected StripeCustomerID=%q, got %q", stripeCustomerID, *user.StripeCustomerID)
 	}
 }
+
+// TestCreate_IsIdempotent_OnDuplicateID locks in the contract that Create may
+// be called multiple times with the same user ID without error and without
+// overwriting the original row. Required so the Clerk webhook and the
+// auth-middleware lazy-provisioning path can both call Create concurrently
+// for the same brand-new user (the case that produced the "Failed to load
+// dashboard" toast on first sign-up).
+func TestCreate_IsIdempotent_OnDuplicateID(t *testing.T) {
+	db := openUserTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	repo := NewUserRepository(db)
+	userID := "user_test_idem_" + fmt.Sprintf("%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, userID)
+	})
+
+	first := User{ID: userID, Email: userID + "@test.invalid"}
+	if err := repo.Create(ctx, &first); err != nil {
+		t.Fatalf("first Create: %v", err)
+	}
+
+	// Second call with the same ID must succeed (no error, no panic).
+	second := User{ID: userID, Email: "different-email@test.invalid"}
+	if err := repo.Create(ctx, &second); err != nil {
+		t.Fatalf("second Create (must be idempotent): %v", err)
+	}
+
+	// ON CONFLICT DO NOTHING semantics: original row preserved, NOT updated.
+	got, err := repo.GetByID(ctx, userID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.Email != first.Email {
+		t.Errorf("email overwritten: want %q, got %q (DO NOTHING must preserve)", first.Email, got.Email)
+	}
+}
