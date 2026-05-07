@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -427,6 +428,87 @@ func TestAWSConfig_AWSDefaults(t *testing.T) {
 	assert.Empty(t, cfg.AWS.Endpoint)            // empty => AWS
 	assert.False(t, cfg.AWS.ForcePathStyle)
 	assert.False(t, cfg.AWS.SSEEnabled)
+}
+
+// Note: tests serialize on env var; do not add t.Parallel().
+func TestLoad_WithDataFolderOverride(t *testing.T) {
+	tests := []struct {
+		name     string
+		setupEnv func(t *testing.T)
+		opts     []config.LoadOption
+		expected string
+	}{
+		{
+			name: "flag set, env unset",
+			setupEnv: func(t *testing.T) {
+				t.Helper()
+				require.NoError(t, os.Unsetenv("DATA_FOLDER"))
+			},
+			opts:     []config.LoadOption{config.WithDataFolderOverride("/custom")},
+			expected: "/custom",
+		},
+		{
+			name: "flag unset, env set",
+			setupEnv: func(t *testing.T) {
+				t.Helper()
+				t.Setenv("DATA_FOLDER", "/from-env")
+			},
+			opts:     nil,
+			expected: "/from-env",
+		},
+		{
+			name: "both unset",
+			setupEnv: func(t *testing.T) {
+				t.Helper()
+				require.NoError(t, os.Unsetenv("DATA_FOLDER"))
+			},
+			opts:     nil,
+			expected: "./webdata",
+		},
+		{
+			name: "both set",
+			setupEnv: func(t *testing.T) {
+				t.Helper()
+				t.Setenv("DATA_FOLDER", "/from-env")
+			},
+			opts:     []config.LoadOption{config.WithDataFolderOverride("/custom")},
+			expected: "/custom",
+		},
+		{
+			name: "flag empty, env set to default value",
+			setupEnv: func(t *testing.T) {
+				t.Helper()
+				t.Setenv("DATA_FOLDER", "./webdata")
+			},
+			opts:     []config.LoadOption{config.WithDataFolderOverride("")},
+			expected: "./webdata",
+		},
+		{
+			// caarlos0/env v11: when an env var is set to an empty string,
+			// envDefault DOES fire and the default value wins. This locks the
+			// observed library behavior so a future env-lib upgrade that flips
+			// the semantics (set-but-empty winning over envDefault) breaks
+			// this test loudly rather than silently.
+			name: "flag empty, env set to empty string",
+			setupEnv: func(t *testing.T) {
+				t.Helper()
+				t.Setenv("DATA_FOLDER", "")
+			},
+			opts:     []config.LoadOption{config.WithDataFolderOverride("")},
+			expected: "./webdata",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withMinimumEnv(t)
+			tt.setupEnv(t)
+
+			cfg, err := config.Load(tt.opts...)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, cfg.DataFolder)
+		})
+	}
 }
 
 // TestLoad_DropsEmptyCSVElements covers a related edge case where consecutive
