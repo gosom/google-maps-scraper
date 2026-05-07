@@ -119,10 +119,11 @@ func New(cfg ServerConfig) (*Server, error) {
 		ans.billingSvc = billing.New(cfg.PgDB, cfgSvc, cfg.StripeAPIKey, cfg.StripeWebhookSecrets, cfg.UserRepo, ans.logger)
 	}
 
-	// Initialize authentication middleware if Clerk secret key is provided
+	// Initialize authentication middleware if Clerk secret key is provided.
 	if cfg.ClerkSecretKey != "" && cfg.UserRepo != nil {
+		provisioningSvc := webservices.NewUserProvisioning(cfg.PgDB, cfg.UserRepo, ans.billingSvc, ans.logger)
 		var err error
-		ans.authMiddleware, err = auth.NewAuthMiddleware(cfg.ClerkSecretKey, cfg.PgDB, cfg.UserRepo, cfg.APIKeyRepo, cfg.ServerSecret, ans.logger, ans.billingSvc)
+		ans.authMiddleware, err = auth.NewAuthMiddleware(cfg.ClerkSecretKey, cfg.UserRepo, cfg.APIKeyRepo, cfg.ServerSecret, provisioningSvc, ans.logger)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize authentication: %w", err)
 		}
