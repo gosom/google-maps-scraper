@@ -90,7 +90,14 @@ func (h *ClerkWebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, clerkWebhookMaxBody))
 	if err != nil {
 		h.logger.Warn("clerk_webhook_body_read_failed", slog.Any("error", err))
-		http.Error(w, "body read", http.StatusBadRequest)
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			// 413 Request Entity Too Large — distinct from a malformed read so
+			// alerting/dashboards that watch for "payload too large" can fire.
+			http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
+		} else {
+			http.Error(w, "body read", http.StatusBadRequest)
+		}
 		return
 	}
 
@@ -188,6 +195,13 @@ func (h *ClerkWebhookHandler) handleUserCreated(ctx context.Context, msgID strin
 // processing_result, and metadata columns all have DB defaults so we only
 // set the two columns that are provider-specific.
 func (h *ClerkWebhookHandler) claimEvent(ctx context.Context, msgID string) (bool, error) {
+	// event_type is hardcoded rather than derived from the parsed body
+	// because we claim BEFORE parsing JSON (so a redelivery of the same
+	// svix-id sees a dedupe hit even if the first parse failed). The Clerk
+	// Dashboard webhook is configured to send only user.created events, so
+	// any other event type that slips through (e.g., manual replay of an
+	// ignored event) gets deduped under this label — a harmless operational
+	// imprecision rather than a correctness issue.
 	const q = `
 		INSERT INTO processed_webhook_events (event_id, event_type)
 		VALUES ($1, 'clerk.user.created')

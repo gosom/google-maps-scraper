@@ -10,7 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strconv"
-	"sync/atomic"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,16 +31,26 @@ const testClerkSecret = "whsec_dGVzdHNlY3JldA=="
 // ---------------------------------------------------------------------------
 
 type fakeProvisioner struct {
-	callCount int32
+	mu        sync.Mutex
+	callCount int
 	lastID    string
 	lastEmail string
 }
 
 func (f *fakeProvisioner) Provision(_ context.Context, userID, email string) (postgres.User, error) {
-	atomic.AddInt32(&f.callCount, 1)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.callCount++
 	f.lastID = userID
 	f.lastEmail = email
 	return postgres.User{ID: userID, Email: email}, nil
+}
+
+// snapshot returns a consistent copy of the recorded call state for assertions.
+func (f *fakeProvisioner) snapshot() (count int, id, email string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.callCount, f.lastID, f.lastEmail
 }
 
 // ---------------------------------------------------------------------------
@@ -120,8 +130,9 @@ func TestClerkWebhook_BadSignature_401(t *testing.T) {
 	if rr.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", rr.Code)
 	}
-	if prov.callCount != 0 {
-		t.Errorf("expected provisioner not called, got %d calls", prov.callCount)
+	count, _, _ := prov.snapshot()
+	if count != 0 {
+		t.Errorf("expected provisioner not called, got %d calls", count)
 	}
 }
 
@@ -143,8 +154,9 @@ func TestClerkWebhook_MissingSvixHeaders_401(t *testing.T) {
 	if rr.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", rr.Code)
 	}
-	if prov.callCount != 0 {
-		t.Errorf("expected provisioner not called, got %d calls", prov.callCount)
+	count, _, _ := prov.snapshot()
+	if count != 0 {
+		t.Errorf("expected provisioner not called, got %d calls", count)
 	}
 }
 
@@ -175,18 +187,19 @@ func TestClerkWebhook_MalformedJSON_400_AfterVerify(t *testing.T) {
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", rr.Code)
 	}
-	if prov.callCount != 0 {
-		t.Errorf("expected provisioner not called, got %d calls", prov.callCount)
+	callCount, _, _ := prov.snapshot()
+	if callCount != 0 {
+		t.Errorf("expected provisioner not called, got %d calls", callCount)
 	}
 
 	// Verify the dedupe row IS persisted (a redelivery would be a no-op 200).
-	var count int
-	err := db.QueryRow("SELECT COUNT(*) FROM processed_webhook_events WHERE event_id = $1", msgID).Scan(&count)
+	var rowCount int
+	err := db.QueryRow("SELECT COUNT(*) FROM processed_webhook_events WHERE event_id = $1", msgID).Scan(&rowCount)
 	if err != nil {
 		t.Fatalf("query dedupe row: %v", err)
 	}
-	if count != 1 {
-		t.Errorf("expected dedupe row to be persisted (count=1), got %d", count)
+	if rowCount != 1 {
+		t.Errorf("expected dedupe row to be persisted (count=1), got %d", rowCount)
 	}
 }
 
@@ -225,14 +238,15 @@ func TestClerkWebhook_UserCreated_HappyPath_200(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", rr.Code)
 	}
-	if prov.callCount != 1 {
-		t.Errorf("expected provisioner called once, got %d", prov.callCount)
+	count, lastID, lastEmail := prov.snapshot()
+	if count != 1 {
+		t.Errorf("expected provisioner called once, got %d", count)
 	}
-	if prov.lastID != userID {
-		t.Errorf("expected provisioner called with userID=%q, got %q", userID, prov.lastID)
+	if lastID != userID {
+		t.Errorf("expected provisioner called with userID=%q, got %q", userID, lastID)
 	}
-	if prov.lastEmail != email {
-		t.Errorf("expected provisioner called with email=%q, got %q", email, prov.lastEmail)
+	if lastEmail != email {
+		t.Errorf("expected provisioner called with email=%q, got %q", email, lastEmail)
 	}
 }
 
@@ -291,8 +305,9 @@ func TestClerkWebhook_DedupesByMessageID(t *testing.T) {
 	if rr1.Code != http.StatusOK {
 		t.Errorf("first request: expected 200, got %d", rr1.Code)
 	}
-	if prov.callCount != 1 {
-		t.Errorf("first request: expected provisioner called once, got %d", prov.callCount)
+	count, _, _ := prov.snapshot()
+	if count != 1 {
+		t.Errorf("first request: expected provisioner called once, got %d", count)
 	}
 
 	// Second delivery (redelivery of same message).
@@ -301,8 +316,9 @@ func TestClerkWebhook_DedupesByMessageID(t *testing.T) {
 	if rr2.Code != http.StatusOK {
 		t.Errorf("second request: expected 200, got %d", rr2.Code)
 	}
-	if prov.callCount != 1 {
-		t.Errorf("second request: provisioner should not be called again, got %d total calls", prov.callCount)
+	count, _, _ = prov.snapshot()
+	if count != 1 {
+		t.Errorf("second request: provisioner should not be called again, got %d total calls", count)
 	}
 }
 
@@ -331,8 +347,9 @@ func TestClerkWebhook_UnknownEventType_200_NoOp(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", rr.Code)
 	}
-	if prov.callCount != 0 {
-		t.Errorf("expected provisioner not called for unknown event type, got %d calls", prov.callCount)
+	count, _, _ := prov.snapshot()
+	if count != 0 {
+		t.Errorf("expected provisioner not called for unknown event type, got %d calls", count)
 	}
 }
 
@@ -365,7 +382,8 @@ func TestClerkWebhook_UserCreatedNoEmail_200_NoOp(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", rr.Code)
 	}
-	if prov.callCount != 0 {
-		t.Errorf("expected provisioner not called when no email, got %d calls", prov.callCount)
+	count, _, _ := prov.snapshot()
+	if count != 0 {
+		t.Errorf("expected provisioner not called when no email, got %d calls", count)
 	}
 }
