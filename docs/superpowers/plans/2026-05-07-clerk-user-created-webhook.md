@@ -234,7 +234,19 @@ git commit -m "fix(postgres): make user Create idempotent via ON CONFLICT DO NOT
 
 ---
 
-## Task 3: Extract `UserProvisioning` service
+## ~~Task 3: Extract `UserProvisioning` service~~ ✅ DONE
+
+**Commits:** `bc454ab` (initial), `b3aca4f` (review fixes), `d7504c7` (Task 2 amendment surfaced by Task 3's stress test)
+
+**Review notes:**
+- Code-quality reviewer flagged 3 Important issues; all fixed in `b3aca4f`:
+  1. **Lock-order inversion vs `billing/service.go`** — swapped to `users FOR UPDATE` first, dropped `FOR UPDATE` from EXISTS check (relies on `idx_unique_signup_bonus` partial unique index from migration `000022`).
+  2. **`grantSignupBonus` returning `nil` on no-op caused `signup_bonus_granted` log spam** on every steady-state request — changed signature to `(granted bool, err error)`; caller's `switch` only logs the success case when actually granted.
+  3. **Bare error returns** — wrapped every DB call site with `fmt.Errorf("user_provisioning: <op>: %w", err)` to match `dashboard.go` / `credit.go` conventions.
+- Stress test ran 8 goroutines and intermittently failed with `users_email_key` violation. Root cause: Task 2's `ON CONFLICT (id) DO NOTHING` only suppresses `users_pkey`. Fixed in `d7504c7` by dropping the conflict target — both call sites derive id+email from the same Clerk user object, so `ON CONFLICT DO NOTHING` (no target) is safe and complete. **10/10 stress runs pass** post-fix.
+- One minor observation deferred to Task 4: `BeginTx` error path in `grantSignupBonus` doesn't wrap (pre-existing behavior; will surface as a follow-up if it ever fires).
+- Reviewer noted that `Provision` returns `dbUser` without re-reading after `EnsureStripeCustomer` writes `stripe_customer_id`. Acceptable today (no caller needs it); not fixing.
+
 
 **Files:**
 - Create: `web/services/user_provisioning.go`
