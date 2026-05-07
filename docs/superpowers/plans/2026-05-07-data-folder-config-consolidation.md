@@ -465,9 +465,21 @@ Make `pkg/config.Config.DataFolder` canonical. Move the flag binding to `runner.
 
 ### Task 1.1 — Add functional option
 
-- **Status:** ☐ not started
-- **Commit SHA:** _(to fill)_
-- **Test cases verified:** _(list which of the six pass first-try; which needed iteration)_
+- **Status:** ✅ implementation complete; awaiting code review
+- **Commit SHA:** `169eddc`
+- **Files modified:** `pkg/config/config.go`, `pkg/config/config_test.go` (only)
+- **Watched-it-fail output (TDD red):**
+  ```
+  pkg/config/config_test.go:438:21: undefined: config.LoadOption
+  pkg/config/config_test.go:447:41: undefined: config.WithDataFolderOverride
+  pkg/config/config_test.go:504:16: cannot use ... in call to non-variadic config.Load
+  ```
+- **Test cases:** all six subtests of `TestLoad_WithDataFolderOverride` pass on first run after implementation. Full `pkg/config` suite passes. `go build ./...` and `go vet ./pkg/config/...` clean.
+- **Implementer concerns (validated by controller):**
+  1. **Spec inversion on the sixth test case (caarlos0/env behavior):** spec claimed `t.Setenv("DATA_FOLDER", "")` produces `cfg.DataFolder == ""` (set-but-empty wins). Empirical observation against `caarlos0/env/v11 v11.4.0` is the opposite: `envDefault` DOES fire, producing `"./webdata"`. Implementer changed the test's expected value to match observed library behavior. **Resolution:** controller updated the spec's test-plan item 1 to match reality (commit follows). The test still serves its locking purpose — if a future env-lib upgrade flips the semantics, the test breaks loudly.
+  2. Local var `opts` in existing `Load` body collided with new variadic `opts ...LoadOption`. Renamed local to `envOpts`. No behavior change.
+  3. Option-application loop placed before `cfg.Validate()` rather than between Validate and `return`. Reasonable — options can affect validated values, though `DataFolder` is not currently validated. All tests pass.
+- **Pre-existing lint diagnostics (not addressed):** `pkg/config/config.go:196,199` — `interface{}` could be `any` (modernize). These are in the FuncMap signature mandated by `env.ParserFunc`, predate this PR, and are out of scope per anti-pattern guardrails ("don't refactor unrelated code").
 
 ### Task 1.2 — Code review for Chunk 1
 
