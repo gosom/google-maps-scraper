@@ -219,28 +219,15 @@ type Config struct {
 	Version string
 }
 
-// FlagOverrides holds CLI-flag values that override the canonical typed
-// env-config (pkg/config.Config). Each field's zero value means "flag not
-// set"; non-zero values are passed into pkgconfig.Load via functional
-// options so the override is applied during config construction rather
-// than by mutating *config.Config post-Load.
-//
-// Today this struct holds only DataFolder. Adding a second override is a
-// non-breaking field addition; the alternative — returning a (*Config,
-// string, error) tuple from ParseConfig — would require a signature break
-// every time a new override appears.
-type FlagOverrides struct {
-	// DataFolder, if non-empty, overrides pkg/config.Config.DataFolder via
-	// pkgconfig.WithDataFolderOverride. Bound to the -data-folder CLI flag.
-	DataFolder string
-}
-
-func ParseConfig() (*Config, FlagOverrides, error) {
+// ParseConfig parses CLI flags into *Config. The returned dataFolder is the
+// raw value of -data-folder; main.go applies it as an override to the typed
+// pkg/config.Config when non-empty.
+func ParseConfig() (*Config, string, error) {
 	cfg := Config{}
-	var overrides FlagOverrides
 
 	var (
-		proxies string
+		proxies    string
+		dataFolder string
 	)
 
 	defaultConcurrency := runtime.NumCPU() / 2
@@ -263,7 +250,7 @@ func ParseConfig() (*Config, FlagOverrides, error) {
 	flag.StringVar(&cfg.Scraping.GeoCoordinates, "geo", "", "set geo coordinates for search (e.g., '37.7749,-122.4194')")
 	flag.IntVar(&cfg.Scraping.Zoom, "zoom", 15, "set zoom level (0-21) for search")
 	flag.BoolVar(&cfg.WebRunner, "web", false, "run web server instead of crawling")
-	flag.StringVar(&overrides.DataFolder, "data-folder", "", "data folder for web runner; overrides $DATA_FOLDER (default: ./webdata)")
+	flag.StringVar(&dataFolder, "data-folder", "", "data folder for web runner; overrides $DATA_FOLDER (default: ./webdata)")
 	flag.StringVar(&proxies, "proxies", "", "comma separated list of proxies to use in the format protocol://user:pass@host:port example: socks5://localhost:9050 or http://user:pass@localhost:9050")
 	flag.BoolVar(&cfg.AWS.LambdaRunner, "aws-lambda", false, "run as AWS Lambda function")
 	flag.BoolVar(&cfg.AWS.LambdaInvoker, "aws-lambda-invoker", false, "run as AWS Lambda invoker")
@@ -302,31 +289,31 @@ func ParseConfig() (*Config, FlagOverrides, error) {
 	// Do not force concurrency in debug mode; keep user/provider choice intact
 
 	if cfg.AWS.LambdaInvoker && cfg.AWS.FunctionName == "" {
-		return nil, overrides, fmt.Errorf("FunctionName must be provided when using AwsLambdaInvoker")
+		return nil, dataFolder, fmt.Errorf("FunctionName must be provided when using AwsLambdaInvoker")
 	}
 
 	if cfg.AWS.LambdaInvoker && cfg.AWS.S3Bucket == "" {
-		return nil, overrides, fmt.Errorf("S3Bucket must be provided when using AwsLambdaInvoker")
+		return nil, dataFolder, fmt.Errorf("S3Bucket must be provided when using AwsLambdaInvoker")
 	}
 
 	if cfg.AWS.LambdaInvoker && cfg.InputFile == "" {
-		return nil, overrides, fmt.Errorf("InputFile must be provided when using AwsLambdaInvoker")
+		return nil, dataFolder, fmt.Errorf("InputFile must be provided when using AwsLambdaInvoker")
 	}
 
 	if cfg.Concurrency < 1 {
-		return nil, overrides, fmt.Errorf("Concurrency must be greater than 0, got %d", cfg.Concurrency)
+		return nil, dataFolder, fmt.Errorf("Concurrency must be greater than 0, got %d", cfg.Concurrency)
 	}
 
 	if cfg.Scraping.MaxDepth < 1 {
-		return nil, overrides, fmt.Errorf("MaxDepth must be greater than 0, got %d", cfg.Scraping.MaxDepth)
+		return nil, dataFolder, fmt.Errorf("MaxDepth must be greater than 0, got %d", cfg.Scraping.MaxDepth)
 	}
 
 	if cfg.Scraping.Zoom < 0 || cfg.Scraping.Zoom > 21 {
-		return nil, overrides, fmt.Errorf("Zoom must be between 0 and 21, got %d", cfg.Scraping.Zoom)
+		return nil, dataFolder, fmt.Errorf("Zoom must be between 0 and 21, got %d", cfg.Scraping.Zoom)
 	}
 
 	if cfg.Dsn == "" && cfg.ProduceOnly {
-		return nil, overrides, fmt.Errorf("Dsn must be provided when using ProduceOnly")
+		return nil, dataFolder, fmt.Errorf("Dsn must be provided when using ProduceOnly")
 	}
 
 	slog.Debug("proxy_config", slog.String("proxies_env", os.Getenv("PROXIES")), slog.String("cli_proxies_flag", proxies))
@@ -390,10 +377,10 @@ func ParseConfig() (*Config, FlagOverrides, error) {
 	case cfg.Dsn != "":
 		cfg.RunMode = RunModeDatabase
 	default:
-		return nil, overrides, fmt.Errorf("invalid configuration: unable to determine run mode")
+		return nil, dataFolder, fmt.Errorf("invalid configuration: unable to determine run mode")
 	}
 
-	return &cfg, overrides, nil
+	return &cfg, dataFolder, nil
 }
 
 // MergeAWSDefaults fills empty AWS credential fields in cfg from the standard

@@ -161,36 +161,15 @@ var appEnvType = reflect.TypeOf(appenv.Environment(0))
 // raw env-var string as bytes directly.
 var byteSliceType = reflect.TypeOf([]byte{})
 
-// LoadOption mutates a Config during construction. Options are applied AFTER
-// env parsing so they can override env-derived values. Use sparingly — the
-// canonical source of truth for runtime config is environment variables; an
-// option exists only when a CLI flag must take precedence over an env var.
-type LoadOption func(*Config)
-
-// WithDataFolderOverride replaces cfg.DataFolder with s if s != "". An empty
-// s is a no-op so that Load(WithDataFolderOverride(unsetFlagValue)) is safe
-// when the caller cannot easily distinguish "flag unset" from "flag explicitly
-// empty" (Go's flag package collapses these without flag.Visit).
-func WithDataFolderOverride(s string) LoadOption {
-	return func(c *Config) {
-		if s != "" {
-			c.DataFolder = s
-		}
-	}
-}
-
 // Load reads all environment variables once and returns a fully populated
 // *Config. Required fields (DSN, CLERK_SECRET_KEY) cause an immediate
 // error if absent. After parsing, Validate() is called; production
 // deployments get additional secret-presence checks.
 //
-// Optional LoadOptions are applied after env parsing so they can override
-// env-derived values (e.g. a CLI flag taking precedence over DATA_FOLDER).
-//
 // Custom FuncMap entries:
 //   - appenv.Environment: delegates to appenv.Parse for whitelist validation.
 //   - []byte: treats the raw string value as bytes (not comma-separated ints).
-func Load(opts ...LoadOption) (*Config, error) {
+func Load() (*Config, error) {
 	envOpts := env.Options{
 		FuncMap: map[reflect.Type]env.ParserFunc{
 			appEnvType: func(v string) (interface{}, error) {
@@ -216,10 +195,6 @@ func Load(opts ...LoadOption) (*Config, error) {
 	cfg.AllowedOrigins = trimAndDropEmpty(cfg.AllowedOrigins)
 	cfg.Proxies = trimAndDropEmpty(cfg.Proxies)
 	cfg.Stripe.WebhookAllowedCIDRs = trimAndDropEmpty(cfg.Stripe.WebhookAllowedCIDRs)
-
-	for _, opt := range opts {
-		opt(&cfg)
-	}
 
 	if validateErr := cfg.Validate(); validateErr != nil {
 		return nil, validateErr
