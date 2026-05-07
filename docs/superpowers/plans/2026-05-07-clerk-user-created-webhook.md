@@ -142,7 +142,16 @@ git commit -m "chore(db): drop Stripe-specific event_id format CHECK on processe
 
 ---
 
-## Task 2: Make `userRepo.Create` idempotent (the smallest fix on its own)
+## ~~Task 2: Make `userRepo.Create` idempotent (the smallest fix on its own)~~ ✅ DONE
+
+**Commit:** `95d9485` — added `ON CONFLICT (id) DO NOTHING` to `Create` in `postgres/user.go`; added `TestCreate_IsIdempotent_OnDuplicateID` to `postgres/user_test.go`. Test verified passing against local Postgres.
+
+**Review notes:**
+- Reviewer: approved. Production fix is minimal and correct; test pins `DO NOTHING` semantics (original row preserved, NOT overwritten).
+- **Carry into Task 3:** the auth middleware's lazy path currently uses the in-memory `newUser` struct after `Create`. With `DO NOTHING`, the *loser* of a race gets `nil` error but no insert; in-memory `newUser` happens to match the canonical DB row only because both callers build it from the same Clerk user object. Task 3's `Provision` must `GetByID` after `Create` to fetch the canonical row regardless of who won — this closes the latent divergence.
+- **Known limitation (acceptable):** `ON CONFLICT (id)` does not catch a hypothetical race where two callers insert different IDs with the same email (`users_email_key` would still violate). Both surfaces use the Clerk user ID, so id and email are correlated — not a real-world path.
+- Pre-existing local test failure on `TestPostgresRepository/*` (jobs CHECK constraint, unrelated to this change) noted but not blocking this PR.
+
 
 **Files:**
 - Modify: `postgres/user.go:68-82`
