@@ -10,6 +10,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/google/uuid"
@@ -19,7 +20,8 @@ import (
 )
 
 // SignupBonusAmount is the credit amount granted to new users on signup ($2.00).
-// Centralized here because this is now the only place that grants it.
+// (A duplicate const lives temporarily in web/auth/auth.go until Task 4 deletes
+// the inline lazy-provisioning chain there; see the implementation plan.)
 const SignupBonusAmount = 2.0
 
 // UserProvisioning is a service that ensures a users row exists for a given
@@ -61,7 +63,7 @@ func (s *UserProvisioning) Provision(ctx context.Context, userID, email string) 
 	// means concurrent callers all return nil; the loser simply does not insert.
 	newUser := postgres.User{ID: userID, Email: email}
 	if err := s.userRepo.Create(ctx, &newUser); err != nil {
-		return postgres.User{}, err
+		return postgres.User{}, fmt.Errorf("user_provisioning: create user: %w", err)
 	}
 
 	// Step 2 — re-read to get the canonical row regardless of which caller
@@ -70,7 +72,7 @@ func (s *UserProvisioning) Provision(ctx context.Context, userID, email string) 
 	// from the same Clerk user object today, but that may diverge later).
 	dbUser, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
-		return postgres.User{}, err
+		return postgres.User{}, fmt.Errorf("user_provisioning: re-read after create: %w", err)
 	}
 
 	// Step 3 — lazy Stripe customer creation. Idempotent: short-circuits
@@ -89,12 +91,15 @@ func (s *UserProvisioning) Provision(ctx context.Context, userID, email string) 
 
 	// Step 4 — signup bonus. Idempotent via reference_id='signup_bonus'
 	// unique check inside the function. Non-fatal: log and continue.
-	if err := s.grantSignupBonus(ctx, dbUser.ID); err != nil {
+	granted, err := s.grantSignupBonus(ctx, dbUser.ID)
+	switch {
+	case err != nil:
 		s.logger.Error("failed_to_grant_signup_bonus",
 			slog.String("user_id", dbUser.ID), slog.Any("error", err))
-	} else {
+	case granted:
 		s.logger.Info("signup_bonus_granted",
 			slog.Float64("amount", SignupBonusAmount), slog.String("user_id", dbUser.ID))
+		// No log on the false/nil path — grantSignupBonus already logged signup_bonus_already_granted internally if it wants to.
 	}
 
 	// Newly created users always default to RoleUser; align in-memory struct
@@ -105,15 +110,13 @@ func (s *UserProvisioning) Provision(ctx context.Context, userID, email string) 
 	return dbUser, nil
 }
 
-// grantSignupBonus is the same logic that previously lived at
-// web/auth/auth.go:287-336. Moved here so it shares a home with its only
-// caller (Provision). Idempotent: the EXISTS check on
-// reference_id='signup_bonus' under FOR UPDATE means concurrent callers
-// see at most one bonus credit.
-func (s *UserProvisioning) grantSignupBonus(ctx context.Context, userID string) error {
+// grantSignupBonus grants a one-time signup credit bonus to the user.
+// Returns (true, nil) when the bonus was actually granted, (false, nil) when
+// it was already granted (idempotent no-op), and (false, err) on any failure.
+func (s *UserProvisioning) grantSignupBonus(ctx context.Context, userID string) (granted bool, err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer func() {
 		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
@@ -121,38 +124,47 @@ func (s *UserProvisioning) grantSignupBonus(ctx context.Context, userID string) 
 		}
 	}()
 
+	// Step 1: lock the user row first. Matches the lock order used by billing/
+	// payment paths (users → credit_transactions), avoiding lock-order inversion
+	// deadlocks if a concurrent payment touches both tables.
+	var currentBalance float64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(credit_balance, 0) FROM users WHERE id = $1 FOR UPDATE`,
+		userID).Scan(&currentBalance); err != nil {
+		return false, fmt.Errorf("user_provisioning: lock user balance: %w", err)
+	}
+
+	// Step 2: idempotency check. The partial unique index idx_unique_signup_bonus
+	// (migration 000022) is the real correctness guarantee; this EXISTS just
+	// short-circuits the no-op case so we don't UPDATE the balance to the same
+	// value and INSERT a doomed row.
 	var alreadyGranted bool
-	err = tx.QueryRowContext(ctx,
-		"SELECT EXISTS(SELECT 1 FROM credit_transactions WHERE user_id = $1 AND reference_id = 'signup_bonus' AND reference_type = 'system' FOR UPDATE)",
-		userID).Scan(&alreadyGranted)
-	if err != nil {
-		return err
+	if err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM credit_transactions WHERE user_id = $1 AND reference_id = 'signup_bonus' AND reference_type = 'system')`,
+		userID).Scan(&alreadyGranted); err != nil {
+		return false, fmt.Errorf("user_provisioning: check existing bonus: %w", err)
 	}
 	if alreadyGranted {
-		s.logger.Info("signup_bonus_already_granted", slog.String("user_id", userID))
-		return nil
+		return false, nil // not granted (already had one) — no error
 	}
 
-	var currentBalance float64
-	if err = tx.QueryRowContext(ctx, "SELECT COALESCE(credit_balance, 0) FROM users WHERE id = $1 FOR UPDATE", userID).Scan(&currentBalance); err != nil {
-		return err
-	}
+	// Step 3: UPDATE balance and INSERT bonus tx.
 	newBalance := currentBalance + SignupBonusAmount
-
-	if _, err = tx.ExecContext(ctx, `
-		UPDATE users
-		SET credit_balance = COALESCE(credit_balance, 0) + $1::numeric,
-		    updated_at = NOW()
-		WHERE id = $2`, SignupBonusAmount, userID); err != nil {
-		return err
+	if _, err := tx.ExecContext(ctx, `
+    UPDATE users
+    SET credit_balance = COALESCE(credit_balance, 0) + $1::numeric,
+        updated_at = NOW()
+    WHERE id = $2`, SignupBonusAmount, userID); err != nil {
+		return false, fmt.Errorf("user_provisioning: update balance: %w", err)
 	}
-
-	if _, err = tx.ExecContext(ctx, `
-		INSERT INTO credit_transactions (id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
-		VALUES ($1, $2, 'bonus', $3, $4, $5, 'Signup bonus', 'signup_bonus', 'system')`,
+	if _, err := tx.ExecContext(ctx, `
+    INSERT INTO credit_transactions (id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
+    VALUES ($1, $2, 'bonus', $3, $4, $5, 'Signup bonus', 'signup_bonus', 'system')`,
 		uuid.Must(uuid.NewV7()).String(), userID, SignupBonusAmount, currentBalance, newBalance); err != nil {
-		return err
+		return false, fmt.Errorf("user_provisioning: insert bonus tx: %w", err)
 	}
-
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("user_provisioning: commit bonus tx: %w", err)
+	}
+	return true, nil
 }
