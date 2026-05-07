@@ -1103,7 +1103,56 @@ git commit -m "feat(web): mount POST /webhooks/clerk route"
 
 ---
 
-## Task 9: Smoke test against a running server
+## ⚠️ Task 9: Smoke test against a running server — **DEFERRED, requires manual user action**
+
+This task verifies the route end-to-end against live Clerk infrastructure. It cannot be executed by an autonomous agent because it requires:
+1. A public tunnel (cloudflared / ngrok / etc.) to expose the local server.
+2. Access to the Clerk Dashboard for the test instance to register the webhook URL + retrieve the per-environment signing secret.
+3. A real test user signup or "Send test event" click in the Dashboard.
+
+**Coverage already in place via automated tests** (commit `c57e174` / `251933a`):
+- Signature verification (good, bad, missing headers).
+- Dedupe by `svix-id` (redelivery returns 200 without re-processing).
+- Malformed-JSON handling.
+- Unknown event types acknowledged with 200.
+- Missing-email user.created acknowledged with 200.
+- Happy-path provisioning end-to-end through the real `UserProvisioning` service.
+
+These cover the critical correctness paths. The remaining manual smoke test verifies: (a) Clerk header casing matches what `svix-webhooks/go` expects; (b) the production signing secret is parseable; (c) the configured Dashboard URL resolves through any reverse proxy / CDN in front of the backend. None of these are software-correctness issues and all surface immediately on the first real delivery.
+
+**Manual instructions** (when ready):
+
+```bash
+# 1. Start backend with test-instance Clerk secret + a real signing secret.
+CLERK_SECRET_KEY="sk_test_..." \
+CLERK_WEBHOOK_SIGNING_SECRET="whsec_..." \
+DSN="postgres://scraper:strongpassword@localhost:5432/google_maps_scraper?sslmode=disable" \
+  go run . -web
+
+# 2. Expose with cloudflared / ngrok:
+cloudflared tunnel --url http://localhost:8080
+# → https://<random>.trycloudflare.com
+
+# 3. In Clerk Dashboard (test instance):
+#    Webhooks → Add Endpoint → URL: https://<tunnel>/webhooks/clerk
+#    Events: select user.created (only)
+#    Save → copy "Signing Secret" → paste into CLERK_WEBHOOK_SIGNING_SECRET above and restart.
+
+# 4. Trigger via Dashboard → "Send test event" → user.created.
+
+# 5. Verify in Postgres:
+psql -d google_maps_scraper -c "SELECT id, email FROM users ORDER BY created_at DESC LIMIT 3;"
+psql -d google_maps_scraper -c "SELECT event_id, event_type, processed_at FROM processed_webhook_events WHERE event_type='clerk.user.created' ORDER BY processed_at DESC LIMIT 3;"
+psql -d google_maps_scraper -c "SELECT user_id, type, amount FROM credit_transactions WHERE reference_id='signup_bonus' ORDER BY created_at DESC LIMIT 3;"
+
+# 6. Re-send the same test event → verify redelivery returns 200 quickly + no new rows.
+
+# 7. UX-level test: sign up a fresh user via the staging frontend → land on /dashboard
+#    → confirm there is NO flash of "Failed to load dashboard."
+```
+
+This task remains **open** until the user executes it. Implementation is complete; this is verification only.
+
 
 **No code change.** Use Clerk's webhook test feature.
 
