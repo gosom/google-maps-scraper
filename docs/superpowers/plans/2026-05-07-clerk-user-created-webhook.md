@@ -658,7 +658,16 @@ git commit -m "chore(deps): add svix-webhooks/go for Clerk webhook signature ver
 
 ---
 
-## Task 6: Add `ClerkWebhookSigningSecret` to config
+## ~~Task 6: Add `ClerkWebhookSigningSecret` to config~~ ✅ DONE
+
+**Commits:** `8fec8f8` (config plumbing), `50ed9a7` (restore svix dep dropped by go-tooling during build/test).
+
+**Files touched:** `pkg/config/config.go` (env-tagged struct field), `web/web.go` (`ServerConfig.ClerkWebhookSigningSecret`), `runner/webrunner/webrunner.go` (literal init), `.env.example` (doc).
+
+**Review notes:**
+- Reviewer caught that `go build`/`go test` invocations during the task run silently stripped the `svix-webhooks` dep from `go.mod`/`go.sum` (it was added as `// indirect` in Task 5 because no source file imports it yet, so any module-graph tidy treats it as removable). Restored in `50ed9a7`. Task 7's import will pin it as a direct dep.
+- Field `ClerkWebhookSigningSecret` is **not required** in config — empty string disables `/webhooks/clerk` route mounting (per D9 / D2). The auth-middleware lazy-provisioning fallback handles signups when the route is disabled.
+
 
 **Files:**
 - Modify: `web/web.go` — add to `Config` struct (next to `StripeWebhookSecrets` at line 59)
