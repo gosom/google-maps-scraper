@@ -40,18 +40,22 @@ func main() {
 		return
 	}
 
-	// Load typed env config first so the logger can be built from validated,
-	// typed values rather than raw os.Getenv calls.
-	// Use a temporary stderr logger for any config-load failures.
-	appCfg, err := pkgconfig.Load()
+	// Parse CLI flags first so we can pass overrides into pkgconfig.Load.
+	cfg, overrides, err := runner.ParseConfig()
+	if err != nil {
+		slog.Error("invalid_configuration", slog.Any("error", err))
+		os.Exit(1)
+	}
+
+	// Load typed env config, applying any CLI-flag overrides at construction.
+	// appCfg is immutable from this point on.
+	appCfg, err := pkgconfig.Load(pkgconfig.WithDataFolderOverride(overrides.DataFolder))
 	if err != nil {
 		slog.Error("config_load_failed", slog.Any("error", err))
 		os.Exit(1)
 	}
 
-	// Build the single root logger from typed config. All downstream code
-	// receives this logger via constructor injection — no further os.Getenv
-	// calls for LOG_LEVEL or log rotation settings.
+	// Build the single root logger from typed config.
 	logger := pkglogger.New(appCfg.LogLevel, pkglogger.LogConfig{
 		Output:        appCfg.Log.Output,
 		FilePath:      appCfg.Log.FilePath,
@@ -63,14 +67,6 @@ func main() {
 	slog.SetDefault(logger)
 
 	ctx, cancel := context.WithCancel(context.Background())
-
-	// Parse CLI-flag config (separate from env config).
-	cfg, err := runner.ParseConfig()
-	if err != nil {
-		slog.Error("invalid_configuration", slog.Any("error", err))
-		cancel()
-		os.Exit(1)
-	}
 
 	// Merge standard AWS_* env values into the CLI-flag config.
 	// CLI flags take precedence; env values from pkg/config fill in the gaps.
