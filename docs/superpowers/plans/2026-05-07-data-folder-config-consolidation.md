@@ -562,6 +562,41 @@ Make `pkg/config.Config.DataFolder` canonical. Move the flag binding to `runner.
 
 ---
 
+## Post-master-review cleanup (2026-05-07, after self-audit)
+
+After the master review approved, I did a self-audit applying Clean Code + YAGNI lenses and found three real issues. User authorized cleanup on the same branch (PR #50 picks up the new commits).
+
+### Cleanup commits
+
+1. **`ff068f2`** — `chore(web): delete vestigial scrape.go`
+   - Deleted `web/scrape.go` entirely (65 lines). Zero callers in repo, confirmed by grep. The earlier "delete in follow-up PR" godoc comment was a Clean Code antipattern (TODO comments justifying dead code rot in the codebase).
+
+2. **`6555498`** — `refactor(runner): delete unreachable PLAYWRIGHT_INSTALL_ONLY guard in ParseConfig`
+   - Deleted the dead `if os.Getenv("PLAYWRIGHT_INSTALL_ONLY") == "1"` block inside `ParseConfig` (11 lines). main.go intercepts the env var earlier; the guard had zero production callers and zero test callers. The prior "kept defensively for library callers" comment (added in `4fd01f5`) was justifying nothing — there are no library callers. Deleting wins over commenting.
+
+3. **`0e2b2c6`** — `refactor: revert LoadOption/FlagOverrides over-engineering to direct mutation`
+   - Architectural reversal:
+     - Deleted `pkg/config.LoadOption` type + `pkg/config.WithDataFolderOverride` function. `Load` is back to `func Load() (*Config, error)` (no variadic).
+     - Deleted `runner.FlagOverrides` struct. `ParseConfig` returns `(*Config, string, error)` — bare flag value.
+     - main.go applies the override with three lines: `if dataFolderFlag != "" { appCfg.DataFolder = dataFolderFlag }`.
+     - Deleted `TestLoad_WithDataFolderOverride` (78 lines testing one line of logic, including a case that tested caarlos0/env library behavior rather than our code).
+   - Net: **-121 lines.** Behavior unchanged (single source of truth, flag-wins precedence, envDefault default, four webrunner sites still read `appCfg.DataFolder`).
+   - The "post-Load mutation breaks immutability" argument from the spec is academic: the mutation happens once in main.go startup before any goroutine or handler runs. When a second override appears (Concurrency), the migration is trivial (one signature change in one caller).
+
+### Why the spec text isn't being updated
+
+The spec at `docs/superpowers/specs/2026-05-06-data-folder-config-consolidation-design.md` retains the functional-option discussion as the original architectural exploration. The implementation diverges from the spec on this one design decision; the divergence is recorded here in the plan's Implementation Notes so it's recoverable.
+
+This is honest evolution: spec → architectural exploration → implementation → self-audit → simplification. The spec isn't truth-for-eternity; it's a snapshot of the design conversation that produced this PR.
+
+### Final shape
+
+- **Functional commits on the branch:** `169eddc`, `7860bf7`, `4fd01f5`, `75699fd`, `3f73ee9`, `ff068f2`, `6555498`, `0e2b2c6` (8 functional + many doc commits).
+- **Final code change:** ~30 lines of new production Go (down from ~80 pre-cleanup) + 0 new lines of tests (down from 82). Compile-time tripwire approach preserved (deleting `runner.Config.DataFolder`).
+- **All gates green** except pre-existing `main.go:38` env-boundary CI gate FAIL (fixed on `security/p1-cve-remediation`).
+
+---
+
 ## Anti-pattern guardrails (do not violate)
 
 - Do **NOT** restore `runner.Config.DataFolder` as a "resolved value" field — the deletion is the compile-time tripwire that ensures the migration is complete.
