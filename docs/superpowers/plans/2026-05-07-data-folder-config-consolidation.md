@@ -483,11 +483,15 @@ Make `pkg/config.Config.DataFolder` canonical. Move the flag binding to `runner.
 
 ### Task 1.2 — Code review for Chunk 1
 
-- **Status:** ☐ not started
-- **Review iterations:** _(N rounds)_
-- **Findings:** _(list)_
-- **Fixes applied:** _(list, with new commit SHAs if any)_
-- **Final verdict:** _(Approved / blocked)_
+- **Status:** ✅ complete
+- **Review iterations:** 1 round of spec-compliance + 1 round of code-quality (no fixes needed beyond the spec drift already corrected pre-review)
+- **Spec-compliance verdict:** Approved. All 10 checklist items pass. File:line evidence: `LoadOption` at `pkg/config/config.go:164-168`; `WithDataFolderOverride` at `:170-180`; variadic `Load` at `:193`; option loop at `:220-222` (post-parse, post-trim, pre-Validate); 6 named subtests at `pkg/config/config_test.go:431-516`; case-6 expected `"./webdata"` at `:498`; no `t.Parallel()` (comment at `:433`); only the two intended files modified.
+- **Code-quality verdict:** Approved-with-nits. No critical, no important. Nits:
+  1. Inline test comment vs commit-message wording on caarlos0/env behavior — comment is correct, commit message is stale. **Not fixed** (commit message is historical; spec was already corrected in `f0313eb`).
+  2. Document multiplicity contract on `LoadOption` ("last-write-wins"). **Deferred** — useful when a second option is added; YAGNI for one option today.
+  3. `t.Cleanup(os.Unsetenv)` for belt-and-braces test isolation. **Deferred** — current `t.Setenv`-based pattern is safe in practice; no leakage in this file today.
+- **Notable positives flagged by reviewer:** functional-options pattern textbook-correct; doc comments capture genuine "why" not "what"; six-case table covers the precedence matrix thoroughly including the subtle "flag empty, env set to default value" case; closure capture is by-value (no aliasing risk); multiple `WithDataFolderOverride` calls are last-wins per Go convention.
+- **Final verdict:** Approved. Chunk 1 cleared to advance.
 
 ### Task 2.1 — Atomic migration
 
