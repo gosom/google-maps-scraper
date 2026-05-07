@@ -74,7 +74,7 @@ func TestBuildCheckoutSessionParams_SetsPaymentIntentDataDescription(t *testing.
 	if params.PaymentIntentData == nil || params.PaymentIntentData.Description == nil {
 		t.Fatal("PaymentIntentData.Description must be set, got nil")
 	}
-	want := "Brezel Credits x42"
+	want := "BrezelScraper Credits x42"
 	if *params.PaymentIntentData.Description != want {
 		t.Errorf("Description: want %q, got %q", want, *params.PaymentIntentData.Description)
 	}

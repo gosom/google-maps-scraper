@@ -189,7 +189,7 @@ func buildCheckoutSessionParams(
 				PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
 					Currency: stripe.String(req.Currency),
 					ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
-						Name: stripe.String("Brezel Credits"),
+						Name: stripe.String("BrezelScraper Credits"),
 					},
 					UnitAmount: stripe.Int64(int64(unitPriceCents)),
 				},
@@ -216,7 +216,7 @@ func buildCheckoutSessionParams(
 		// by both charge.refunded AND charge.dispute.created webhooks, enabling
 		// direct user lookups without joining through stripe_payments. (S-H4)
 		PaymentIntentData: &stripe.CheckoutSessionPaymentIntentDataParams{
-			Description: stripe.String(fmt.Sprintf("Brezel Credits x%d", creditsInt)),
+			Description: stripe.String(fmt.Sprintf("BrezelScraper Credits x%d", creditsInt)),
 			Metadata: map[string]string{
 				"brezel_user_id": req.UserID,
 				"credits":        fmt.Sprintf("%d", creditsInt),
