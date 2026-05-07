@@ -115,20 +115,26 @@ func New(cfg ServerConfig) (*Server, error) {
 		},
 	}
 
-	// Initialize billing service first so the user-provisioning service
-	// (which the auth middleware now uses for signup) can receive it as a
-	// dependency for lazy Stripe Customer creation. billingSvc may remain
-	// nil when no Stripe API key is configured; UserProvisioning tolerates
-	// nil and skips Stripe Customer creation (the next checkout will
+	// Initialize billing service first so the user-provisioning service can
+	// receive it as a dependency for lazy Stripe Customer creation. billingSvc
+	// may remain nil when no Stripe API key is configured; UserProvisioning
+	// tolerates nil and skips Stripe Customer creation (the next checkout will
 	// lazy-create via CreateCheckoutSession instead).
 	if cfg.StripeAPIKey != "" && cfg.PgDB != nil {
 		cfgSvc := config.New(cfg.PgDB)
 		ans.billingSvc = billing.New(cfg.PgDB, cfgSvc, cfg.StripeAPIKey, cfg.StripeWebhookSecrets, cfg.UserRepo, ans.logger)
 	}
 
+	// Initialize the user-provisioning service if we have the DB + user repo.
+	// Used by both the auth-middleware lazy fallback and the Clerk webhook
+	// handler — kept at function scope so both surfaces share one instance.
+	var provisioningSvc *webservices.UserProvisioning
+	if cfg.PgDB != nil && cfg.UserRepo != nil {
+		provisioningSvc = webservices.NewUserProvisioning(cfg.PgDB, cfg.UserRepo, ans.billingSvc, ans.logger)
+	}
+
 	// Initialize authentication middleware if Clerk secret key is provided.
 	if cfg.ClerkSecretKey != "" && cfg.UserRepo != nil {
-		provisioningSvc := webservices.NewUserProvisioning(cfg.PgDB, cfg.UserRepo, ans.billingSvc, ans.logger)
 		var err error
 		ans.authMiddleware, err = auth.NewAuthMiddleware(cfg.ClerkSecretKey, cfg.UserRepo, cfg.APIKeyRepo, cfg.ServerSecret, provisioningSvc, ans.logger)
 		if err != nil {
@@ -355,20 +361,37 @@ func New(cfg ServerConfig) (*Server, error) {
 	// Webhook endpoints are public provider callbacks, not customer API routes.
 	// Keep them out of the /api/v1 customer namespace and give them a dedicated
 	// middleware chain rather than inheriting generic public API rate limits.
-	webhookMws := []func(http.Handler) http.Handler{
+	baseWebhookMws := []func(http.Handler) http.Handler{
 		webmiddleware.RequestID,
 		webmiddleware.InjectLogger(ans.logger),
 		webmiddleware.RequestLogger(ans.logger),
-		webmiddleware.MaxBodySize(64 << 10), // Stripe payloads are small; cap memory use.
+		webmiddleware.MaxBodySize(64 << 10), // Webhook payloads are small; cap memory use.
 	}
+
+	// Build the Clerk webhook handler from the base middleware chain. Mounted
+	// only when the Svix signing secret is configured AND the provisioning
+	// service is available. The handler verifies signatures itself and is
+	// intentionally NOT behind any CIDR allowlist (Clerk uses Cloudflare, not
+	// fixed CIDRs); Svix signature is the auth.
+	if cfg.ClerkWebhookSigningSecret != "" && provisioningSvc != nil {
+		clerkHandler, err := webhandlers.NewClerkWebhookHandler(cfg.PgDB, cfg.ClerkWebhookSigningSecret, provisioningSvc, ans.logger)
+		if err != nil {
+			return nil, fmt.Errorf("clerk webhook handler init: %w", err)
+		}
+		clerkWebhookHandler := webmiddleware.Chain(clerkHandler, baseWebhookMws...)
+		router.Handle("/webhooks/clerk", clerkWebhookHandler).Methods(http.MethodPost)
+	}
+
+	// Stripe webhook chain layers an optional CIDR allowlist on top of the base.
+	stripeWebhookMws := baseWebhookMws
 	if len(cfg.StripeWebhookAllowedCIDRs) > 0 {
 		cidrMW, err := webmiddleware.AllowCIDRs(cfg.StripeWebhookAllowedCIDRs)
 		if err != nil {
 			return nil, fmt.Errorf("invalid Stripe webhook CIDR allowlist: %w", err)
 		}
-		webhookMws = append(webhookMws, cidrMW)
+		stripeWebhookMws = append(stripeWebhookMws, cidrMW)
 	}
-	webhookHandler := webmiddleware.Chain(http.HandlerFunc(hg.Billing.HandleStripeWebhook), webhookMws...)
+	webhookHandler := webmiddleware.Chain(http.HandlerFunc(hg.Billing.HandleStripeWebhook), stripeWebhookMws...)
 	// goneHandler is returned on retired paths to surface Stripe dashboard
 	// misconfiguration quickly.
 	goneHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
