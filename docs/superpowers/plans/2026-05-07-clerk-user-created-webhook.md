@@ -477,7 +477,17 @@ git commit -m "feat(services): extract UserProvisioning as single source of trut
 
 ---
 
-## Task 4: Refactor auth middleware to use the service (DRY cleanup)
+## ~~Task 4: Refactor auth middleware to use the service (DRY cleanup)~~ ✅ DONE
+
+**Commits:** `b27b62f` (refactor), `79b1fe9` (stale-comment cleanup)
+
+**LOC delta in `auth.go`:** +37 / -115 (net -78 lines).
+
+**Review notes:**
+- Reviewer: approved. All HTTP error semantics preserved (Clerk fetch fail → 500, no email → 400, Provision fail → 500). Logging fields preserved (`user_id`, `path`, `method`, `error`). `dbUser` re-assignment correct (no shadowing). `*clerk.User` used for the email helper because `user.Client.Get()` returns that type.
+- Two stale comments cleaned up in follow-up `79b1fe9`: removed reference to "Task 4 will delete the duplicate" in `user_provisioning.go`; updated `web/web.go` comment to mention `UserProvisioning` rather than `NewAuthMiddleware` as the consumer of `billingSvc`.
+- Reviewer flagged a **pre-existing** issue (out of scope): `userRepo.GetByID` returns `errors.New("user not found")` for not-found AND wraps transient DB errors via the same path — both old and new code treat any error as "user not found." Worth a follow-up to introduce a `models.ErrNotFound` sentinel, but not blocking this PR.
+
 
 **Files:**
 - Modify: `web/auth/auth.go:118-185` (the inlined chain) and `:287-336` (delete `grantSignupBonus`)
