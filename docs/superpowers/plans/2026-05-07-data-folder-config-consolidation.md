@@ -549,11 +549,16 @@ Make `pkg/config.Config.DataFolder` canonical. Move the flag binding to `runner.
 
 ### Task 4.2 — Master review (Opus 4.7)
 
-- **Status:** ☐ not started
-- **Findings:** _(list)_
-- **Fixes applied:** _(list)_
-- **Final verdict against spec:** _(Approved / blocked)_
-- **PR URL:** _(to fill)_
+- **Status:** ✅ complete
+- **Reviewer model:** `claude-opus-4-7` (per user directive)
+- **Final verdict against spec:** ✅ Approved (10/10 spec compliance, no critical/important issues)
+- **Findings:**
+  - All 10 spec compliance checks pass with file:line evidence (single source of truth, field changes, composition root order, FlagOverrides struct, six-case precedence test with corrected sixth case, no post-Load mutation, scope discipline, three logical commits each individually compilable, risk register documented).
+  - Architectural drift checks all clean: no resurrection of `runner.Config.DataFolder`, no new `os.Getenv` outside allow-list, no `t.Parallel()` on env-var tests, sixth test case locks observed library behavior.
+  - Reviewer flagged the `web/scrape.go:LoadConfig` zero-callers discovery as correctly deferred to a follow-up PR — Staff-Eng-level call.
+  - Reviewer's standout praise: doc comment on `LoadOption` ("Use sparingly — the canonical source of truth..."), the atomicity rationale for commit 2, and the comment locking caarlos0/env's empirical behavior.
+- **Fixes applied during master review:** none required.
+- **PR URL:** _(to fill after `gh pr create`)_
 
 ---
 
