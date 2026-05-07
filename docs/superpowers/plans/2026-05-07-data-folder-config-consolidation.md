@@ -502,11 +502,18 @@ Make `pkg/config.Config.DataFolder` canonical. Move the flag binding to `runner.
 
 ### Task 2.2 — Code review for Chunk 2
 
-- **Status:** ☐ not started
-- **Review iterations:** _(N)_
-- **Findings:** _(list)_
-- **Fixes applied:** _(list)_
-- **Final verdict:** _(Approved / blocked)_
+- **Status:** ✅ complete
+- **Review iterations:** 1 round of spec-compliance + 1 round of code-quality + 1 round of nit fixes
+- **Spec-compliance verdict:** Approved (12/12). All required shapes present: `runner.Config.DataFolder` deleted (`runner/runner.go:211-219`); `FlagOverrides` struct with documenting comment (`runner/runner.go:222-236`); `ParseConfig` returns `(*Config, FlagOverrides, error)` with all 8 return sites updated; `main.go` startup order matches spec (lines 44/52/59/73/100); `appCfg` immutable post-Load; all 4 webrunner sites flipped (200, 207, 268, 809); scope clean (only main.go, runner/runner.go, runner/webrunner/webrunner.go).
+- **Code-quality verdict:** Approved-with-nits.
+  - **Important (fixed in `4fd01f5`):** dead `os.Getenv("PLAYWRIGHT_INSTALL_ONLY")` branch inside `ParseConfig` unreachable after main.go reorder. Documented as defensive (kept for library/test callers); not deleted.
+  - **Nit (fixed in `4fd01f5`):** `-data-folder` help-string leaked the internal term "envDefault." Reworded to operator-facing `"overrides $DATA_FOLDER (default: ./webdata)"`.
+  - **Nit (deferred):** `FlagOverrides` could move to its own file `runner/flagoverrides.go` once a 2nd field is added — YAGNI now.
+  - **Nit (deferred):** `[]LoadOption` slice helper if more overrides accrue. YAGNI; trivial to refactor when needed.
+  - **Nit (rejected):** dedicated `dataFolder string` field on webrunner struct vs current `w.appCfg.DataFolder` — current is the minimal correct change; a dedicated field would duplicate state.
+- **Pre-existing CI gate FAIL not addressed in this PR:** `main.go:38`'s `os.Getenv("PLAYWRIGHT_INSTALL_ONLY")` is in the env-boundary deny list. Already fixed on `security/p1-cve-remediation` (`db78617`). When that PR merges to develop, this branch resolves on rebase. Master review (Chunk 4) must verify.
+- **Pre-existing modernize-lint warnings (not addressed):** `runner/runner.go` lines 35, 57, 67, 74, 92, 117, 258, 569 (`max()`/`SplitSeq`); `runner/webrunner/webrunner.go` lines 429, 443, 464, 472, 578, 927, 1317, 1327 (`WaitGroup.Go`/`max()`). Verified by reviewer to NOT overlap any line my changes touched. Out of scope.
+- **Final verdict:** Approved. Chunk 2 cleared to advance.
 
 ### Task 3.1 — web/scrape.go cleanup
 
