@@ -66,9 +66,19 @@ func (repo *userRepository) GetByEmail(ctx context.Context, email string) (User,
 // users always receive the DB default ('user'). Admin promotion requires direct
 // DB access via scripts/promote_admin.sh — there is no API for self-promotion.
 func (repo *userRepository) Create(ctx context.Context, user *User) error {
+	// ON CONFLICT DO NOTHING (no target column) suppresses both users_pkey AND
+	// users_email_key violations. With ON CONFLICT (id) only, a concurrent
+	// race between two callers inserting the same (id, email) could surface
+	// the email-uniqueness violation first — Postgres reports whichever
+	// constraint it checks first. Both call sites (Clerk webhook + auth
+	// middleware lazy fallback) derive id and email from the same Clerk user
+	// object, so a "different id, same email" insert would signal an upstream
+	// bug rather than a legitimate request; no-opping is the right behavior.
+	// The post-Create GetByID in services.UserProvisioning.Provision fetches
+	// the canonical row regardless of which goroutine actually inserted.
 	const q = `INSERT INTO users (id, email, created_at, updated_at)
 	           VALUES ($1, $2, $3, $4)
-	           ON CONFLICT (id) DO NOTHING`
+	           ON CONFLICT DO NOTHING`
 
 	now := time.Now().UTC()
 	if user.CreatedAt.IsZero() {
