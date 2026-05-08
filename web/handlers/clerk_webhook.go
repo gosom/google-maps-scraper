@@ -109,7 +109,12 @@ type clerkEvent struct {
 	Data json.RawMessage `json:"data"`
 }
 
-// clerkUserCreatedData is the subset of user.created data we need.
+// clerkUserCreatedData is the subset of user.created data we read. Phone /
+// Web3 / external-account arrays are unmarshalled as []json.RawMessage so we
+// can len()-check them for diagnostic logging without committing to their
+// schemas (Clerk extends those over time). They let the missing-email log
+// distinguish "expected empty" (Web3/phone signup) from "real anomaly"
+// (email-flow user with no email) so Loki alerts fire only on true bugs.
 type clerkUserCreatedData struct {
 	ID                    string `json:"id"`
 	PrimaryEmailAddressID string `json:"primary_email_address_id"`
@@ -117,6 +122,9 @@ type clerkUserCreatedData struct {
 		ID           string `json:"id"`
 		EmailAddress string `json:"email_address"`
 	} `json:"email_addresses"`
+	PhoneNumbers     []json.RawMessage `json:"phone_numbers"`
+	Web3Wallets      []json.RawMessage `json:"web3_wallets"`
+	ExternalAccounts []json.RawMessage `json:"external_accounts"`
 }
 
 func (h *ClerkWebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -245,11 +253,37 @@ func (h *ClerkWebhookHandler) handleUserCreated(ctx context.Context, msgID strin
 	}
 
 	email := primaryEmailFromClerkPayload(data)
+
+	// Defense-in-depth observability: a documented Clerk invariant says
+	// email_addresses[] and primary_email_address_id are consistent (primary
+	// is set iff at least one entry exists). Clerk's "Send Example" fixture
+	// violates this, but real production traffic should not. A distinct log
+	// key lets ops set a Loki alert that fires ONLY when Clerk ships a
+	// genuinely malformed payload — not for legitimate empty-email cases.
+	if len(data.EmailAddresses) == 0 && data.PrimaryEmailAddressID != "" {
+		h.logger.Warn("clerk_webhook_email_invariant_violated",
+			slog.String("svix_id", msgID),
+			slog.String("user_id", data.ID),
+			slog.String("primary_email_address_id", data.PrimaryEmailAddressID))
+	}
+
 	if data.ID == "" || email == "" {
+		// Loki/Grafana alert pattern (suggested):
+		//   {app="brezelscraper-backend"} |= "clerk_webhook_user_created_missing_fields"
+		//     | json | phone_numbers_count="0" | web3_wallets_count="0"
+		//     | external_accounts_count="0"
+		// → fires ONLY when there's no email AND no other identity signal,
+		// i.e. Clerk gave us an unprovisionable user (real bug). Web3/phone/
+		// external-only signups are filtered out — those are expected per
+		// Clerk's auth strategies and acked silently by this handler.
 		h.logger.Warn("clerk_webhook_user_created_missing_fields",
 			slog.String("svix_id", msgID),
 			slog.String("user_id", data.ID),
-			slog.Bool("has_email", email != ""))
+			slog.Bool("has_email", email != ""),
+			slog.Int("phone_numbers_count", len(data.PhoneNumbers)),
+			slog.Int("web3_wallets_count", len(data.Web3Wallets)),
+			slog.Int("external_accounts_count", len(data.ExternalAccounts)),
+		)
 		return false
 	}
 
