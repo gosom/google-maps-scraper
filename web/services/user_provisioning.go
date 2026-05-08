@@ -113,9 +113,12 @@ func (s *UserProvisioning) Provision(ctx context.Context, userID, email string) 
 // Returns (true, nil) when the bonus was actually granted, (false, nil) when
 // it was already granted (idempotent no-op), and (false, err) on any failure.
 func (s *UserProvisioning) grantSignupBonus(ctx context.Context, userID string) (granted bool, err error) {
+	// READ COMMITTED (nil opts) is intentional: SELECT ... FOR UPDATE on users
+	// serialises concurrent bonus grants at row level; SERIALIZABLE would add
+	// retry complexity without correctness benefit.
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("user_provisioning: begin bonus tx: %w", err)
 	}
 	defer func() {
 		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
@@ -156,10 +159,14 @@ func (s *UserProvisioning) grantSignupBonus(ctx context.Context, userID string) 
     WHERE id = $2`, SignupBonusAmount, userID); err != nil {
 		return false, fmt.Errorf("user_provisioning: update balance: %w", err)
 	}
+	txID, err := uuid.NewV7()
+	if err != nil {
+		return false, fmt.Errorf("user_provisioning: generate tx id: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `
     INSERT INTO credit_transactions (id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
     VALUES ($1, $2, 'bonus', $3, $4, $5, 'Signup bonus', 'signup_bonus', 'system')`,
-		uuid.Must(uuid.NewV7()).String(), userID, SignupBonusAmount, currentBalance, newBalance); err != nil {
+		txID.String(), userID, SignupBonusAmount, currentBalance, newBalance); err != nil {
 		return false, fmt.Errorf("user_provisioning: insert bonus tx: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

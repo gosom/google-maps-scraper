@@ -90,6 +90,10 @@ func (repo *userRepository) Create(ctx context.Context, user *User) error {
 	// bug rather than a legitimate request; no-opping is the right behavior.
 	// The post-Create GetByID in services.UserProvisioning.Provision fetches
 	// the canonical row regardless of which goroutine actually inserted.
+	//
+	// WARNING: untargeted ON CONFLICT — adding any new UNIQUE constraint to the
+	// users table requires reviewing every Create call site to ensure silent
+	// swallowing of the new constraint is still the intended behaviour.
 	const q = `INSERT INTO users (id, email, created_at, updated_at)
 	           VALUES ($1, $2, $3, $4)
 	           ON CONFLICT DO NOTHING`
