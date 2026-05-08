@@ -1116,7 +1116,29 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 							jobSuccess = true
 						} else {
 							w.logger.Debug("cancelled_with_zero_results_treating_failed", slog.String("job_id", job.ID))
-							job.FailureReason = "scrapemate inactivity timeout / context canceled with 0 results"
+							// When the exit monitor cancelled mate.Start because every
+							// seed failed, the original seed-level error (e.g. proxy
+							// connection failed) was logged per-worker but never
+							// reached this code — mate.Start returns context.Canceled
+							// because the cancellation came from us. Recover the real
+							// reason from the exit monitor (set by gmaps.GmapJob.Process
+							// when resp.Error != nil) and surface it as a sanitized
+							// user-facing failure_reason. Always log the raw error at
+							// ERROR with the job ID so support can correlate.
+							if seedErr := exitMonitor.LastSeedError(); seedErr != nil {
+								job.FailureReason = sanitizeSeedError(seedErr)
+								w.logger.Error("job_failed_seed_error",
+									slog.String("job_id", job.ID),
+									slog.String("user_id", job.UserID),
+									slog.String("user_facing_reason", job.FailureReason),
+									slog.Any("raw_error", seedErr),
+								)
+							} else {
+								// Cancellation happened without a recorded seed error
+								// — likely an external/parent timeout we can't attribute
+								// to a specific cause. Generic but honest.
+								job.FailureReason = "Scraping aborted before any results were collected"
+							}
 							jobSuccess = false
 						}
 					}
