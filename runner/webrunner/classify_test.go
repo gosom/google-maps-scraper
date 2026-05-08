@@ -3,10 +3,10 @@ package webrunner
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestClassifyOutcome(t *testing.T) {
@@ -23,6 +23,7 @@ func TestClassifyOutcome(t *testing.T) {
 		wantStatus          string
 		wantCause           TerminalCause
 		wantFailureReason   string
+		wantReasonNotRaw    string
 	}{
 		{
 			name:        "happy path: no error, results present",
@@ -39,6 +40,7 @@ func TestClassifyOutcome(t *testing.T) {
 			wantStatus:        "failed",
 			wantCause:         CauseSeedExhausted,
 			wantFailureReason: "Scraping aborted: proxy connection failed",
+			wantReasonNotRaw:  proxyErr.Error(),
 		},
 		{
 			name:                "user cancelled with results: partial outcome",
@@ -88,6 +90,22 @@ func TestClassifyOutcome(t *testing.T) {
 			wantCause:         CauseSeedExhausted,
 			wantFailureReason: "Scraping aborted before any results were collected",
 		},
+		{
+			name:                "wrapped context.Canceled with results: errors.Is must unwrap",
+			mateErr:             fmt.Errorf("transport layer: %w", context.Canceled),
+			userInitiatedCancel: false,
+			resultCount:         3,
+			wantStatus:          "completed",
+			wantCause:           CausePartial,
+		},
+		{
+			name:                "system-cancel with results: partial",
+			mateErr:             context.Canceled,
+			userInitiatedCancel: false,
+			resultCount:         4,
+			wantStatus:          "completed",
+			wantCause:           CausePartial,
+		},
 	}
 
 	for _, tc := range tests {
@@ -96,9 +114,13 @@ func TestClassifyOutcome(t *testing.T) {
 
 			got := classifyOutcome(tc.mateErr, tc.userInitiatedCancel, tc.resultCount, tc.seedErr)
 
-			require.Equal(t, tc.wantStatus, got.Status, "Status mismatch")
-			require.Equal(t, tc.wantCause, got.Cause, "Cause mismatch")
+			assert.Equal(t, tc.wantStatus, got.Status, "Status mismatch")
+			assert.Equal(t, tc.wantCause, got.Cause, "Cause mismatch")
 			assert.Equal(t, tc.wantFailureReason, got.FailureReason, "FailureReason mismatch")
+			if tc.wantReasonNotRaw != "" {
+				assert.NotContains(t, got.FailureReason, tc.wantReasonNotRaw,
+					"FailureReason must NOT contain the raw error verbatim — sanitizer must transform it")
+			}
 		})
 	}
 }
