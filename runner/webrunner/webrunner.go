@@ -630,38 +630,47 @@ func (w *webrunner) work(ctx context.Context) error {
 						w.logger.Info("job_picked_up", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
 
 						t0 := time.Now().UTC()
-						if err := w.scrapeJob(ctx, &job); err != nil {
-							duration := time.Since(t0)
-							params := map[string]any{
-								"job_count": len(job.Data.Keywords),
-								"duration":  duration.String(),
-								"error":     err.Error(),
-							}
+						outcome := w.scrapeJob(ctx, &job)
+						duration := time.Since(t0)
 
-							evt := tlmt.NewEvent("web_runner", params)
-							_ = runner.Telemetry().Send(ctx, evt)
+						params := map[string]any{
+							"job_count": len(job.Data.Keywords),
+							"duration":  duration.String(),
+							"cause":     string(outcome.Cause),
+						}
+						if outcome.Err() != nil {
+							params["error"] = outcome.Err().Error()
+						}
+						_ = runner.Telemetry().Send(ctx, tlmt.NewEvent("web_runner", params))
 
-							w.logger.Error("job_scrape_failed",
-								slog.String("job_id", job.ID),
-								slog.String("user_id", job.UserID),
-								slog.Int("result_count", job.ResultCount),
-								slog.Duration("duration", duration),
-								slog.Any("error", err),
-							)
-						} else {
-							duration := time.Since(t0)
-							params := map[string]any{
-								"job_count": len(job.Data.Keywords),
-								"duration":  duration.String(),
-							}
-
-							_ = runner.Telemetry().Send(ctx, tlmt.NewEvent("web_runner", params))
-
+						switch outcome.Status {
+						case web.StatusCompleted:
 							w.logger.Info("job_scrape_succeeded",
 								slog.String("job_id", job.ID),
 								slog.String("user_id", job.UserID),
-								slog.Int("result_count", job.ResultCount),
+								slog.Int("result_count", outcome.ResultCount),
+								slog.String("cause", string(outcome.Cause)),
 								slog.Duration("duration", duration),
+							)
+						case web.StatusCancelled:
+							w.logger.Info("job_scrape_cancelled",
+								slog.String("job_id", job.ID),
+								slog.String("user_id", job.UserID),
+								slog.Duration("duration", duration),
+							)
+						case web.StatusFailed:
+							w.logger.Error("job_scrape_failed",
+								slog.String("job_id", job.ID),
+								slog.String("user_id", job.UserID),
+								slog.String("cause", string(outcome.Cause)),
+								slog.String("failure_reason", outcome.FailureReason),
+								slog.Any("error", outcome.Err()),
+								slog.Duration("duration", duration),
+							)
+						default:
+							w.logger.Error("job_scrape_unknown_status",
+								slog.String("job_id", job.ID),
+								slog.String("status", string(outcome.Status)),
 							)
 						}
 					}(jobs[i]) // Pass by value to avoid race condition
@@ -674,7 +683,10 @@ func (w *webrunner) work(ctx context.Context) error {
 	}
 }
 
-func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
+func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) JobOutcome {
+	// outcome holds the final result; defaults to a runtime error so any
+	// unexpected early return surfaces as a failure rather than a silent success.
+	outcome := OutcomeFailed(CauseRuntimeError, "job exited without classification", nil)
 	// Always persist the final job status on exit
 	defer func() {
 		deferCtx, deferCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -726,8 +738,9 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		err := w.billingSvc.ChargeJobStart(jobStartCtx, job.UserID, job.ID)
 		jobStartCancel() // release resources immediately
 		if err != nil {
-			job.Status = web.StatusFailed
-			job.FailureReason = "insufficient credit balance to start job"
+			outcome = OutcomeFailed(CauseRuntimeError, "insufficient credit balance to start job", err)
+			job.Status = outcome.Status
+			job.FailureReason = outcome.FailureReason
 			w.logger.Error("job_start_charge_failed",
 				slog.String("job_id", job.ID),
 				slog.String("user_id", job.UserID),
@@ -735,7 +748,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 				slog.String("failure_reason", job.FailureReason),
 				slog.Any("error", err),
 			)
-			return err
+			return outcome
 		}
 		w.logger.Info("job_start_charge_succeeded", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
 	} else {
@@ -745,7 +758,10 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	// Check if job has been cancelled before starting
 	if job.Status == web.StatusCancelled || job.Status == web.StatusAborting {
 		w.logger.Debug("job_already_cancelled", slog.String("job_id", job.ID))
-		return nil
+		outcome = OutcomeUserCancelled()
+		job.Status = outcome.Status
+		job.FailureReason = outcome.FailureReason
+		return outcome
 	}
 
 	// Create a cancellable context for this job
@@ -798,27 +814,37 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 
 	err := w.svc.Update(jobCtx, job)
 	if err != nil {
-		return err
+		outcome = OutcomeFailed(CauseRuntimeError, "job initialization failed", err)
+		job.Status = outcome.Status
+		job.FailureReason = outcome.FailureReason
+		return outcome
 	}
 
 	if len(job.Data.Keywords) == 0 {
-		job.Status = web.StatusFailed
-		job.FailureReason = "no keywords provided"
-		return err
+		outcome = OutcomeFailed(CauseRuntimeError, "no keywords provided", nil)
+		job.Status = outcome.Status
+		job.FailureReason = outcome.FailureReason
+		return outcome
 	}
 
 	outpath := filepath.Join(w.appCfg.DataFolder, job.ID+".csv")
 
 	outfile, err := os.Create(outpath)
 	if err != nil {
-		return err
+		outcome = OutcomeFailed(CauseRuntimeError, "failed to create output file", err)
+		job.Status = outcome.Status
+		job.FailureReason = outcome.FailureReason
+		return outcome
 	}
 
 	// Write UTF-8 BOM to ensure proper encoding detection in Excel and other programs
 	// BOM = 0xEF, 0xBB, 0xBF
 	if _, err := outfile.Write([]byte{0xEF, 0xBB, 0xBF}); err != nil {
 		outfile.Close()
-		return fmt.Errorf("failed to write UTF-8 BOM: %w", err)
+		outcome = OutcomeFailed(CauseRuntimeError, "failed to write output file header", fmt.Errorf("failed to write UTF-8 BOM: %w", err))
+		job.Status = outcome.Status
+		job.FailureReason = outcome.FailureReason
+		return outcome
 	}
 	w.logger.Debug("utf8_bom_written", slog.String("job_id", job.ID))
 
@@ -841,8 +867,9 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 
 	mate, err := w.setupMate(jobCtx, outfile, job, exitMonitor)
 	if err != nil {
-		job.Status = web.StatusFailed
-		job.FailureReason = "job initialization failed"
+		outcome = OutcomeFailed(CauseRuntimeError, "job initialization failed", err)
+		job.Status = outcome.Status
+		job.FailureReason = outcome.FailureReason
 		w.logger.Error("setup_mate_failed",
 			slog.String("job_id", job.ID),
 			slog.String("user_id", job.UserID),
@@ -850,7 +877,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			slog.String("failure_reason", job.FailureReason),
 			slog.Any("error", err),
 		)
-		return err
+		return outcome
 	}
 
 	var closeOnce sync.Once
@@ -897,8 +924,9 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		MaxResults:   job.Data.MaxResults,
 	})
 	if err != nil {
-		job.Status = web.StatusFailed
-		job.FailureReason = "job configuration failed"
+		outcome = OutcomeFailed(CauseRuntimeError, "job configuration failed", err)
+		job.Status = outcome.Status
+		job.FailureReason = outcome.FailureReason
 		w.logger.Error("create_seed_jobs_failed",
 			slog.String("job_id", job.ID),
 			slog.String("user_id", job.UserID),
@@ -906,7 +934,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			slog.String("failure_reason", job.FailureReason),
 			slog.Any("error", err),
 		)
-		return err
+		return outcome
 	}
 
 	jobSuccess := false
@@ -1079,151 +1107,107 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 
 		w.logger.Debug("context_after_mate_start", slog.String("job_id", job.ID), slog.Any("context_err", mateCtx.Err()))
 
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				w.logger.Debug("context_canceled_checking_reason", slog.String("job_id", job.ID))
-
-				// Check if it was user cancellation (admin bypass - internal runner)
-				cancelCheckCtx, cancelCheckCancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer cancelCheckCancel()
-				currentJob, getErr := w.svc.Get(cancelCheckCtx, job.ID, "")
-				if getErr != nil {
-					w.logger.Debug("status_check_after_cancel_failed", slog.String("job_id", job.ID), slog.Any("error", getErr))
-					// Assume it was cancelled if we can't get status
-					job.Status = web.StatusCancelled
-					jobSuccess = false
-				} else {
-					w.logger.Debug("status_after_context_cancellation", slog.String("job_id", job.ID), slog.String("status", string(currentJob.Status)))
-
-					if currentJob.Status == web.StatusAborting || currentJob.Status == web.StatusCancelled {
-						job.Status = web.StatusCancelled
-						w.logger.Debug("job_marked_cancelled_user_initiated", slog.String("job_id", job.ID))
-						jobSuccess = false // Explicitly mark as not successful for user cancellation
-					} else {
-						// Check if we actually produced results before marking as successful
-						var resultCount int
-						if w.db != nil {
-							cancelCountCtx, cancelCountCancel := context.WithTimeout(context.Background(), 10*time.Second)
-							defer cancelCountCancel()
-							if err := w.db.QueryRowContext(cancelCountCtx, `SELECT COUNT(*) FROM results WHERE job_id=$1`, job.ID).Scan(&resultCount); err != nil {
-								w.logger.Debug("result_count_after_cancel_failed", slog.String("job_id", job.ID), slog.Any("error", err))
-								resultCount = 0
-							}
-						}
-
-						if resultCount > 0 {
-							w.logger.Debug("cancelled_with_results_treating_success", slog.String("job_id", job.ID), slog.Int("result_count", resultCount))
-							jobSuccess = true
-						} else {
-							w.logger.Debug("cancelled_with_zero_results_treating_failed", slog.String("job_id", job.ID))
-							// When the exit monitor cancelled mate.Start because every
-							// seed failed, the original seed-level error (e.g. proxy
-							// connection failed) was logged per-worker but never
-							// reached this code — mate.Start returns context.Canceled
-							// because the cancellation came from us. Recover the real
-							// reason from the exit monitor (set by gmaps.GmapJob.Process
-							// when resp.Error != nil) and surface it as a sanitized
-							// user-facing failure_reason. Always log the raw error at
-							// ERROR with the job ID so support can correlate.
-							if seedErr := exitMonitor.LastSeedError(); seedErr != nil {
-								job.FailureReason = sanitizeSeedError(seedErr)
-								w.logger.Error("job_failed_seed_error",
-									slog.String("job_id", job.ID),
-									slog.String("user_id", job.UserID),
-									slog.String("user_facing_reason", job.FailureReason),
-									slog.Any("raw_error", seedErr),
-								)
-							} else {
-								// Cancellation happened without a recorded seed error
-								// — likely an external/parent timeout we can't attribute
-								// to a specific cause. Generic but honest.
-								job.FailureReason = "Scraping aborted before any results were collected"
-							}
-							jobSuccess = false
-						}
-					}
-				}
-			} else if errors.Is(err, context.DeadlineExceeded) {
-				// Check if we actually produced results before marking as successful
-				var resultCount int
-				if w.db != nil {
-					deadlineCountCtx, deadlineCountCancel := context.WithTimeout(context.Background(), 10*time.Second)
-					defer deadlineCountCancel()
-					if err := w.db.QueryRowContext(deadlineCountCtx, `SELECT COUNT(*) FROM results WHERE job_id=$1`, job.ID).Scan(&resultCount); err != nil {
-						w.logger.Debug("result_count_after_timeout_failed", slog.String("job_id", job.ID), slog.Any("error", err))
-						resultCount = 0
-					}
-				}
-
-				if resultCount > 0 {
-					w.logger.Debug("deadline_exceeded_with_results", slog.String("job_id", job.ID), slog.Int("result_count", resultCount))
-					jobSuccess = true
-				} else {
-					w.logger.Debug("deadline_exceeded_zero_results", slog.String("job_id", job.ID))
-					job.FailureReason = "job timed out with 0 results"
-					jobSuccess = false
-				}
+		// Detect user-initiated cancellation by reading the persisted job status.
+		// classifyOutcome only consults this flag when mateErr is context.Canceled,
+		// but we always populate it so the input to classification is well-defined.
+		userInitiatedCancel := false
+		if errors.Is(err, context.Canceled) {
+			cancelCheckCtx, cancelCheckCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			currentJob, getErr := w.svc.Get(cancelCheckCtx, job.ID, "")
+			cancelCheckCancel()
+			if getErr != nil {
+				// On lookup failure, conservatively assume user cancellation —
+				// preserves the previous behavior of marking the job cancelled
+				// rather than failed when we can't determine the cause.
+				w.logger.Debug("status_check_after_cancel_failed", slog.String("job_id", job.ID), slog.Any("error", getErr))
+				userInitiatedCancel = true
 			} else {
-				// This is a real error
-				w.logger.Debug("real_error_occurred", slog.String("job_id", job.ID), slog.Any("error", err))
-				cancel()
-				job.Status = web.StatusFailed
-				if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "leaked") {
-					job.FailureReason = "job timed out"
-				} else {
-					job.FailureReason = "job failed due to a runtime error"
+				w.logger.Debug("status_after_context_cancellation", slog.String("job_id", job.ID), slog.String("status", string(currentJob.Status)))
+				if currentJob.Status == web.StatusAborting || currentJob.Status == web.StatusCancelled {
+					userInitiatedCancel = true
 				}
-				w.logger.Error("job_runtime_error",
-					slog.String("job_id", job.ID),
-					slog.String("user_id", job.UserID),
-					slog.String("job_name", job.Name),
-					slog.String("failure_reason", job.FailureReason),
-					slog.Any("error", err),
-				)
-
-				return err
 			}
-		} else {
-			w.logger.Debug("job_normal_completion", slog.String("job_id", job.ID))
-			jobSuccess = true
 		}
 
-		// Post-run sanity checks: ensure seeds completed and results were produced
+		// Single result-count query feeds classification, sanity checks, and billing.
+		// Replaces three separate QueryRowContext calls scattered through the old
+		// err-tree; missing row count silently degrades to 0 (best-effort billing).
+		resultCount := 0
+		if w.db != nil {
+			countCtx, countCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if dbErr := w.db.QueryRowContext(countCtx, `SELECT COUNT(*) FROM results WHERE job_id=$1`, job.ID).Scan(&resultCount); dbErr != nil {
+				w.logger.Debug("result_count_query_after_mate_failed", slog.String("job_id", job.ID), slog.Any("error", dbErr))
+				resultCount = 0
+			}
+			countCancel()
+		} else {
+			w.logger.Error("database_connection_nil", slog.String("job_id", job.ID))
+		}
+
+		outcome = classifyOutcome(err, userInitiatedCancel, resultCount, exitMonitor.LastSeedError())
+		job.Status = outcome.Status
+		job.FailureReason = outcome.FailureReason
+		job.ResultCount = outcome.ResultCount
+		jobSuccess = outcome.Status == web.StatusCompleted
+
+		// Operational logging that the old err-tree emitted; preserved here so
+		// Loki queries continue to work.
+		switch {
+		case err == nil:
+			w.logger.Debug("job_normal_completion", slog.String("job_id", job.ID))
+		case outcome.Status == web.StatusCancelled:
+			w.logger.Debug("job_marked_cancelled_user_initiated", slog.String("job_id", job.ID))
+		case outcome.Status == web.StatusFailed && outcome.Cause == CauseSeedExhausted:
+			if seedErr := exitMonitor.LastSeedError(); seedErr != nil {
+				w.logger.Error("job_failed_seed_error",
+					slog.String("job_id", job.ID),
+					slog.String("user_id", job.UserID),
+					slog.String("user_facing_reason", job.FailureReason),
+					slog.Any("raw_error", seedErr),
+				)
+			}
+		case outcome.Status == web.StatusFailed && outcome.Cause == CauseRuntimeError:
+			cancel()
+			w.logger.Error("job_runtime_error",
+				slog.String("job_id", job.ID),
+				slog.String("user_id", job.UserID),
+				slog.String("job_name", job.Name),
+				slog.String("failure_reason", job.FailureReason),
+				slog.Any("error", err),
+			)
+			return outcome
+		}
+
+		// Post-run sanity checks: ensure seeds completed and results were produced.
+		// These can downgrade a "success" classification when scrapemate returned
+		// nil but the seed/results bookkeeping disagrees. When that happens, we
+		// rewrite outcome so the caller sees a coherent failure.
 		seedCompleted, seedTotal := exitMonitor.GetSeedProgress()
 		resultsWritten := exitMonitor.GetResultsWritten()
 		if seedTotal > 0 && seedCompleted < seedTotal {
 			w.logger.Debug("seeds_incomplete", slog.String("job_id", job.ID), slog.Int("completed", seedCompleted), slog.Int("total", seedTotal))
-			if job.FailureReason == "" {
-				job.FailureReason = fmt.Sprintf("job partially completed (%d/%d searches finished)", seedCompleted, seedTotal)
+			if jobSuccess {
+				reason := fmt.Sprintf("job partially completed (%d/%d searches finished)", seedCompleted, seedTotal)
+				outcome = OutcomeFailed(CauseRuntimeError, reason, nil)
+				job.Status = outcome.Status
+				job.FailureReason = outcome.FailureReason
+				jobSuccess = false
 			}
-			jobSuccess = false
 		}
 		if resultsWritten == 0 {
 			w.logger.Warn("zero_results_written", slog.String("job_id", job.ID))
-			if job.FailureReason == "" {
-				job.FailureReason = "0 results written"
+			if jobSuccess {
+				outcome = OutcomeFailed(CauseRuntimeError, "0 results written", nil)
+				job.Status = outcome.Status
+				job.FailureReason = outcome.FailureReason
+				jobSuccess = false
 			}
-			jobSuccess = false
 		}
 
 		w.logger.Debug("billing_section_entry", slog.String("job_id", job.ID), slog.Bool("job_success", jobSuccess), slog.String("status", string(job.Status)), slog.Bool("cancelled", job.Status == web.StatusCancelled))
 
 		if jobSuccess && job.Status != web.StatusCancelled {
 			w.logger.Debug("billing_condition_passed", slog.String("job_id", job.ID))
-			var resultCount int
-			if w.db != nil {
-				billingCountCtx, billingCountCancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer billingCountCancel()
-				if err := w.db.QueryRowContext(billingCountCtx, `SELECT COUNT(*) FROM results WHERE job_id=$1`, job.ID).Scan(&resultCount); err != nil {
-					w.logger.Error("result_count_query_failed", slog.String("job_id", job.ID), slog.Any("error", err))
-					resultCount = 0
-				} else {
-					w.logger.Debug("result_count_query_succeeded", slog.String("job_id", job.ID), slog.Int("result_count", resultCount))
-				}
-			} else {
-				w.logger.Error("database_connection_nil", slog.String("job_id", job.ID))
-			}
-
 			w.logger.Debug("billing_check", slog.String("job_id", job.ID), slog.Bool("billing_svc_nil", w.billingSvc == nil), slog.Int("result_count", resultCount))
 
 			if w.billingSvc != nil && resultCount > 0 && job.Source != models.SourceAdmin {
@@ -1233,21 +1217,20 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 				w.logger.Debug("billing_charge_attempting", slog.String("job_id", job.ID), slog.Int("result_count", resultCount), slog.String("user_id", job.UserID))
 
 				chargeAllCtx, chargeAllCancel := context.WithTimeout(context.Background(), 30*time.Second)
-				err := w.billingSvc.ChargeAllJobEvents(chargeAllCtx, job.UserID, job.ID, resultCount)
+				billingErr := w.billingSvc.ChargeAllJobEvents(chargeAllCtx, job.UserID, job.ID, resultCount)
 				chargeAllCancel() // release resources immediately
-				if err != nil {
+				if billingErr != nil {
 					w.logger.Error("billing_atomic_charge_failed",
 						slog.String("job_id", job.ID),
 						slog.String("user_id", job.UserID),
 						slog.String("job_name", job.Name),
 						slog.String("failure_reason", "billing processing failed"),
-						slog.Any("error", err),
+						slog.Any("error", billingErr),
 					)
-					jobSuccess = false
-					job.Status = web.StatusFailed
-					job.FailureReason = "billing processing failed"
-					// Return the error so caller knows the job failed
-					return fmt.Errorf("billing failed: %w", err)
+					outcome = OutcomeFailed(CauseRuntimeError, "billing processing failed", fmt.Errorf("billing failed: %w", billingErr))
+					job.Status = outcome.Status
+					job.FailureReason = outcome.FailureReason
+					return outcome
 				} else {
 					w.logger.Info("billing_charge_succeeded", slog.String("job_id", job.ID), slog.String("user_id", job.UserID))
 				}
@@ -1280,11 +1263,11 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	// For writable files, we must explicitly check Close() errors as they can indicate data loss
 	w.logger.Debug("csv_file_closing", slog.String("job_id", job.ID))
 	if err := outfile.Close(); err != nil {
-		w.logger.Error("csv_file_close_failed", slog.String("job_id", job.ID), slog.Any("error", err))
 		// File close errors can indicate I/O errors (EIO) meaning data was lost
 		// This should fail the job to ensure data integrity
-		job.Status = web.StatusFailed
-		job.FailureReason = "failed to save results file"
+		outcome = OutcomeFailed(CauseRuntimeError, "failed to save results file", fmt.Errorf("failed to close CSV file: %w", err))
+		job.Status = outcome.Status
+		job.FailureReason = outcome.FailureReason
 		w.logger.Error("csv_file_close_failed",
 			slog.String("job_id", job.ID),
 			slog.String("user_id", job.UserID),
@@ -1292,7 +1275,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			slog.String("failure_reason", job.FailureReason),
 			slog.Any("error", err),
 		)
-		return fmt.Errorf("failed to close CSV file: %w", err)
+		return outcome
 	}
 	fileClosed = true
 	w.logger.Debug("csv_file_closed", slog.String("job_id", job.ID))
@@ -1328,7 +1311,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 
 	// Charging of places is attempted before marking success above; no charge here
 
-	return nil
+	return outcome
 }
 
 func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job, exitMonitor exiter.Exiter) (*scrapemateapp.ScrapemateApp, error) {
