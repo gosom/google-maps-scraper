@@ -86,8 +86,7 @@ func TestWebhookIdempotency_ConcurrentSameEvent(t *testing.T) {
 	ctx := context.Background()
 
 	// Use unique IDs per test run so tests are repeatable.
-	// Event IDs must match the chk_event_id_format constraint from migration
-	// 000018 which requires ^evt_[a-zA-Z0-9]+$ — no underscores after "evt_".
+	// Stripe webhook event IDs follow the `evt_*` prefix by convention.
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	eventID := "evt_testconc" + suffix
 	sessionID := "cs_test_" + suffix
@@ -183,8 +182,7 @@ func TestWebhookIdempotency_SequentialDuplicate(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Event IDs must match the chk_event_id_format constraint from migration
-	// 000018 which requires ^evt_[a-zA-Z0-9]+$ — no underscores after "evt_".
+	// Stripe webhook event IDs follow the `evt_*` prefix by convention.
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	eventID := "evt_testseq" + suffix
 	sessionID := "cs_test_seq_" + suffix
@@ -254,8 +252,7 @@ func TestHandleCheckoutSessionCompleted_BackfillsPaymentIntentID(t *testing.T) {
 	ctx := context.Background()
 
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
-	// event_id must match ^evt_[a-zA-Z0-9]+$ (chk_event_id_format), so no
-	// underscores after the evt_ prefix.
+	// Stripe webhook event IDs follow the `evt_*` prefix by convention.
 	eventID := "evt_testpi" + suffix
 	sessionID := "cs_test_pi_" + suffix
 	paymentIntentID := "pi_test_pi_" + suffix
@@ -320,7 +317,7 @@ func TestHandleCheckoutSessionCompleted_BackfillIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
-	// event_id must match ^evt_[a-zA-Z0-9]+$ (chk_event_id_format).
+	// Stripe webhook event IDs follow the `evt_*` prefix by convention.
 	eventID := "evt_testreplay" + suffix
 	sessionID := "cs_test_replay_" + suffix
 	paymentIntentID := "pi_test_replay_" + suffix
@@ -387,8 +384,7 @@ func TestHandleCheckoutSessionCompleted_BackfillIsIdempotent(t *testing.T) {
 
 // makeChargeRefundedEvent builds a stripe.Event wrapping a Charge with the
 // given refund parameters. Used by the S-C4 refund deficit ledger tests.
-// Event IDs must match chk_event_id_format (^evt_[a-zA-Z0-9]+$ — no
-// underscores after "evt_").
+// Stripe webhook event IDs follow the `evt_*` prefix by convention.
 func makeChargeRefundedEvent(eventID, chargeID, paymentIntentID string, originalCents, refundedCents int64) stripe.Event {
 	chargeData := map[string]any{
 		"id":              chargeID,
@@ -808,7 +804,7 @@ func TestReconcileSession_PaysDownDeficitFirst(t *testing.T) {
 
 // makeChargeDisputeCreatedEvent builds a stripe.Event wrapping a Dispute
 // with the given parameters. Used by the S-H5 dispute handler tests.
-// Event IDs must match chk_event_id_format.
+// Stripe webhook event IDs follow the `evt_*` prefix by convention.
 func makeChargeDisputeCreatedEvent(eventID, disputeID, chargeID, paymentIntentID string, amountCents int64, reason, status string, dueByUnix int64) stripe.Event {
 	disputeData := map[string]any{
 		"id":                   disputeID,

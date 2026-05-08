@@ -37,9 +37,16 @@ type Config struct {
 	DB DBConfig `envPrefix:"DB_"`
 
 	// ── Auth & crypto ────────────────────────────────────────────────
-	ClerkSecretKey     string `env:"CLERK_SECRET_KEY,required"`
-	APIKeyServerSecret []byte `env:"API_KEY_SERVER_SECRET"`
-	EncryptionKey      string `env:"ENCRYPTION_KEY"`
+	ClerkSecretKey string `env:"CLERK_SECRET_KEY,required"`
+	// ClerkWebhookSigningSecret is the active Svix signing secret for the Clerk
+	// webhook endpoint (whsec_* format). Always tried first during verification.
+	ClerkWebhookSigningSecret string `env:"CLERK_WEBHOOK_SIGNING_SECRET"`
+	// ClerkWebhookSigningSecretPrevious is the previous signing secret, accepted
+	// in parallel during key rotation. Clear it once the active secret is fully
+	// rolled out. Mirrors the STRIPE_WEBHOOK_SECRET_PREVIOUS rotation pattern.
+	ClerkWebhookSigningSecretPrevious string `env:"CLERK_WEBHOOK_SIGNING_SECRET_PREVIOUS"`
+	APIKeyServerSecret                []byte `env:"API_KEY_SERVER_SECRET"`
+	EncryptionKey                     string `env:"ENCRYPTION_KEY"`
 
 	// ── Stripe ──────────────────────────────────────────────────────
 	Stripe StripeConfig `envPrefix:"STRIPE_"`
@@ -115,6 +122,19 @@ func (s StripeConfig) WebhookSecrets() []string {
 		out = append(out, s.WebhookSecretPrevious)
 	}
 
+	return out
+}
+
+// ClerkWebhookSecrets returns the non-empty Clerk webhook signing secrets in
+// order [current, previous]. Mirrors StripeConfig.WebhookSecrets.
+func (c *Config) ClerkWebhookSecrets() []string {
+	out := make([]string, 0, 2)
+	if c.ClerkWebhookSigningSecret != "" {
+		out = append(out, c.ClerkWebhookSigningSecret)
+	}
+	if c.ClerkWebhookSigningSecretPrevious != "" {
+		out = append(out, c.ClerkWebhookSigningSecretPrevious)
+	}
 	return out
 }
 

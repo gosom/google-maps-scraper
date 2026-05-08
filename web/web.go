@@ -46,17 +46,22 @@ type Server struct {
 }
 
 type ServerConfig struct {
-	Service              *Service
-	Addr                 string
-	PgDB                 *sql.DB // Optional PostgreSQL connection
-	UserRepo             postgres.UserRepository
-	APIKeyRepo           models.APIKeyRepository             // Optional; enables API key auth when set
-	WebhookConfigRepo    models.WebhookConfigRepository      // Optional; enables webhook config management
-	WebhookDeliveryRepo  models.JobWebhookDeliveryRepository // Optional; enables webhook delivery tracking
-	ServerSecret         []byte                              // HMAC secret for API key HMAC (from API_KEY_SERVER_SECRET env)
-	ClerkSecretKey       string                              // Clerk server-side secret key for authentication
-	StripeAPIKey         string                              // Optional Stripe API key for subscriptions
-	StripeWebhookSecrets []string                            // Active first, then previous webhook secrets during rotation
+	Service             *Service
+	Addr                string
+	PgDB                *sql.DB // Optional PostgreSQL connection
+	UserRepo            postgres.UserRepository
+	APIKeyRepo          models.APIKeyRepository             // Optional; enables API key auth when set
+	WebhookConfigRepo   models.WebhookConfigRepository      // Optional; enables webhook config management
+	WebhookDeliveryRepo models.JobWebhookDeliveryRepository // Optional; enables webhook delivery tracking
+	ServerSecret        []byte                              // HMAC secret for API key HMAC (from API_KEY_SERVER_SECRET env)
+	ClerkSecretKey      string                              // Clerk server-side secret key for authentication
+	// ClerkWebhookSigningSecrets holds the Svix signing secrets for the Clerk
+	// Dashboard webhook endpoint. The active secret must be first; any previous
+	// secrets (during rotation) follow. All are tried in order. An empty slice
+	// disables /webhooks/clerk (route not mounted). Mirrors StripeWebhookSecrets.
+	ClerkWebhookSigningSecrets []string
+	StripeAPIKey               string   // Optional Stripe API key for subscriptions
+	StripeWebhookSecrets       []string // Active first, then previous webhook secrets during rotation
 	// StripeWebhookAllowedCIDRs is an optional defense-in-depth allowlist for
 	// the Stripe webhook receiver. This should complement, not replace, edge
 	// firewall allowlisting because reverse proxies may mask the original peer IP.
@@ -109,20 +114,28 @@ func New(cfg ServerConfig) (*Server, error) {
 		},
 	}
 
-	// Initialize billing service first so the auth middleware can receive
-	// it as a dependency for lazy Stripe Customer creation on signup.
-	// billingSvc may remain nil when no Stripe API key is configured;
-	// NewAuthMiddleware tolerates nil and the signup path then skips
-	// Stripe Customer creation (the next checkout will lazy-create).
+	// Initialize billing service first so the user-provisioning service can
+	// receive it as a dependency for lazy Stripe Customer creation. billingSvc
+	// may remain nil when no Stripe API key is configured; UserProvisioning
+	// tolerates nil and skips Stripe Customer creation (the next checkout will
+	// lazy-create via CreateCheckoutSession instead).
 	if cfg.StripeAPIKey != "" && cfg.PgDB != nil {
 		cfgSvc := config.New(cfg.PgDB)
 		ans.billingSvc = billing.New(cfg.PgDB, cfgSvc, cfg.StripeAPIKey, cfg.StripeWebhookSecrets, cfg.UserRepo, ans.logger)
 	}
 
-	// Initialize authentication middleware if Clerk secret key is provided
+	// Initialize the user-provisioning service if we have the DB + user repo.
+	// Used by both the auth-middleware lazy fallback and the Clerk webhook
+	// handler — kept at function scope so both surfaces share one instance.
+	var provisioningSvc *webservices.UserProvisioning
+	if cfg.PgDB != nil && cfg.UserRepo != nil {
+		provisioningSvc = webservices.NewUserProvisioning(cfg.PgDB, cfg.UserRepo, ans.billingSvc, ans.logger)
+	}
+
+	// Initialize authentication middleware if Clerk secret key is provided.
 	if cfg.ClerkSecretKey != "" && cfg.UserRepo != nil {
 		var err error
-		ans.authMiddleware, err = auth.NewAuthMiddleware(cfg.ClerkSecretKey, cfg.PgDB, cfg.UserRepo, cfg.APIKeyRepo, cfg.ServerSecret, ans.logger, ans.billingSvc)
+		ans.authMiddleware, err = auth.NewAuthMiddleware(cfg.ClerkSecretKey, cfg.UserRepo, cfg.APIKeyRepo, cfg.ServerSecret, provisioningSvc, ans.logger)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize authentication: %w", err)
 		}
@@ -347,20 +360,54 @@ func New(cfg ServerConfig) (*Server, error) {
 	// Webhook endpoints are public provider callbacks, not customer API routes.
 	// Keep them out of the /api/v1 customer namespace and give them a dedicated
 	// middleware chain rather than inheriting generic public API rate limits.
-	webhookMws := []func(http.Handler) http.Handler{
+	//
+	// H3: Per-IP rate limit applied here to both Clerk and Stripe webhooks.
+	// Svix retries at most ~1/min/event; Stripe bursts are brief and per-IP.
+	// 20 req/s with burst 50 per IP is far above legitimate delivery rates
+	// and well below flood throughput. Because limits are per-IP, Clerk and
+	// Stripe IPs each have independent buckets.
+	baseWebhookMws := []func(http.Handler) http.Handler{
+		webmiddleware.PerIPRateLimit(rate.Limit(20), 50),
 		webmiddleware.RequestID,
 		webmiddleware.InjectLogger(ans.logger),
 		webmiddleware.RequestLogger(ans.logger),
-		webmiddleware.MaxBodySize(64 << 10), // Stripe payloads are small; cap memory use.
+		webmiddleware.MaxBodySize(64 << 10), // Webhook payloads are small; cap memory use.
 	}
+
+	// Build the Clerk webhook handler from the base middleware chain. Mounted
+	// only when signing secrets are configured AND the provisioning service is
+	// available. The handler verifies Svix signatures itself and is intentionally
+	// NOT behind any CIDR allowlist (Clerk uses Cloudflare, not fixed CIDRs).
+	// H4: accepts a slice so the previous secret stays valid during rotation.
+	switch {
+	case len(cfg.ClerkWebhookSigningSecrets) > 0 && provisioningSvc != nil:
+		clerkHandler, err := webhandlers.NewClerkWebhookHandler(cfg.PgDB, cfg.ClerkWebhookSigningSecrets, provisioningSvc, ans.logger)
+		if err != nil {
+			return nil, fmt.Errorf("clerk webhook handler init: %w", err)
+		}
+		clerkWebhookHandler := webmiddleware.Chain(clerkHandler, baseWebhookMws...)
+		router.Handle("/webhooks/clerk", clerkWebhookHandler).Methods(http.MethodPost)
+	case len(cfg.ClerkWebhookSigningSecrets) > 0:
+		// Secrets configured but provisioning unavailable (DB or user repo
+		// nil) — surface this loudly so operators don't silently lose
+		// webhook deliveries waiting for a route that was never mounted.
+		ans.logger.Warn("clerk_webhook_route_not_mounted",
+			slog.String("reason", "provisioning service unavailable (db or user repo is nil)"))
+	}
+
+	// Stripe webhook chain layers an optional CIDR allowlist on top of the
+	// base. Use an explicit copy (NOT slice-header aliasing) so a future
+	// append into stripeWebhookMws cannot bleed into baseWebhookMws if the
+	// base ever grows past its initial capacity.
+	stripeWebhookMws := append([]func(http.Handler) http.Handler{}, baseWebhookMws...)
 	if len(cfg.StripeWebhookAllowedCIDRs) > 0 {
 		cidrMW, err := webmiddleware.AllowCIDRs(cfg.StripeWebhookAllowedCIDRs)
 		if err != nil {
 			return nil, fmt.Errorf("invalid Stripe webhook CIDR allowlist: %w", err)
 		}
-		webhookMws = append(webhookMws, cidrMW)
+		stripeWebhookMws = append(stripeWebhookMws, cidrMW)
 	}
-	webhookHandler := webmiddleware.Chain(http.HandlerFunc(hg.Billing.HandleStripeWebhook), webhookMws...)
+	webhookHandler := webmiddleware.Chain(http.HandlerFunc(hg.Billing.HandleStripeWebhook), stripeWebhookMws...)
 	// goneHandler is returned on retired paths to surface Stripe dashboard
 	// misconfiguration quickly.
 	goneHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -1,0 +1,19 @@
+-- 000035_relax_processed_webhook_events_event_id_check.down.sql
+-- INTENTIONALLY EMPTY (no-op).
+--
+-- The up migration drops the chk_event_id_format CHECK so Clerk Svix msg_*
+-- IDs can coexist with Stripe evt_* IDs in processed_webhook_events. Re-
+-- adding the constraint requires PostgreSQL to validate every existing row;
+-- any msg_* rows present (from Clerk events after the up ran) will cause
+-- the ADD CONSTRAINT to fail while holding an ACCESS EXCLUSIVE lock,
+-- blocking webhook processing for the duration of the locked validation.
+--
+-- If you genuinely need to restore the constraint:
+--   1. Manually delete all non-evt_* rows:
+--        DELETE FROM processed_webhook_events WHERE event_id NOT LIKE 'evt_%';
+--   2. Then run:
+--        ALTER TABLE processed_webhook_events
+--            ADD CONSTRAINT chk_event_id_format
+--            CHECK (event_id ~ '^evt_[a-zA-Z0-9]+$');
+-- Both steps require a maintenance window.
+SELECT 1;

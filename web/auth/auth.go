@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -14,28 +13,19 @@ import (
 	"github.com/clerk/clerk-sdk-go/v2"
 	clerkhttp "github.com/clerk/clerk-sdk-go/v2/http"
 	"github.com/clerk/clerk-sdk-go/v2/user"
-	"github.com/google/uuid"
-	"github.com/gosom/google-maps-scraper/billing"
 	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/postgres"
+	"github.com/gosom/google-maps-scraper/web/services"
 )
-
-// SignupBonusAmount is the credit amount granted to new users on signup ($2.00).
-const SignupBonusAmount = 2.0
 
 // AuthMiddleware handles Clerk authentication and adds user info to the request context.
 type AuthMiddleware struct {
-	db           *sql.DB
 	userAPI      *user.Client
 	userRepo     postgres.UserRepository
 	apiKeyRepo   models.APIKeyRepository // nil if API key auth is not configured
 	serverSecret []byte                  // HMAC secret for API key lookup hashes
-	// billingSvc is used to lazily provision a Stripe Customer for new
-	// users at signup time. nil-safe: when nil (e.g. test builds without a
-	// Stripe key), signup proceeds without creating a Customer and the
-	// first checkout will lazy-create one via CreateCheckoutSession.
-	billingSvc *billing.Service
-	logger     *slog.Logger
+	provisioning *services.UserProvisioning
+	logger       *slog.Logger
 }
 
 // ContextKey is used to store user information in the request context.
@@ -58,14 +48,11 @@ const (
 // NewAuthMiddleware creates a new AuthMiddleware.
 // apiKeyRepo and serverSecret may be nil/empty; when either is nil/empty, API key
 // authentication is disabled and all Bearer tokens are validated as Clerk JWTs.
-// billingSvc may be nil (in test builds or when Stripe is not configured); when
-// nil, the lazy Stripe Customer creation on signup is skipped and the user's
-// first checkout will create the Customer instead.
-func NewAuthMiddleware(clerkAPIKey string, db *sql.DB, userRepo postgres.UserRepository, apiKeyRepo models.APIKeyRepository, serverSecret []byte, logger *slog.Logger, billingSvc *billing.Service) (*AuthMiddleware, error) {
+// provisioning is positioned before logger per codebase convention.
+func NewAuthMiddleware(clerkAPIKey string, userRepo postgres.UserRepository, apiKeyRepo models.APIKeyRepository, serverSecret []byte, provisioning *services.UserProvisioning, logger *slog.Logger) (*AuthMiddleware, error) {
 	clerk.SetKey(clerkAPIKey)
 
 	return &AuthMiddleware{
-		db: db,
 		userAPI: user.NewClient(&clerk.ClientConfig{
 			BackendConfig: clerk.BackendConfig{
 				Key: clerk.String(clerkAPIKey),
@@ -74,7 +61,7 @@ func NewAuthMiddleware(clerkAPIKey string, db *sql.DB, userRepo postgres.UserRep
 		userRepo:     userRepo,
 		apiKeyRepo:   apiKeyRepo,
 		serverSecret: serverSecret,
-		billingSvc:   billingSvc,
+		provisioning: provisioning,
 		logger:       logger,
 	}, nil
 }
@@ -124,8 +111,22 @@ func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
 		userID := claims.Subject
 
 		dbUser, err := m.userRepo.GetByID(r.Context(), userID)
-		if err != nil {
-			// User not found — auto-provision from Clerk
+		if err != nil && !errors.Is(err, postgres.ErrUserNotFound) {
+			// Transient DB error (connection reset, timeout, etc.) — do NOT
+			// auto-provision. Returning 500 here prevents the middleware from
+			// treating every DB hiccup as "user missing" and triggering Clerk
+			// fetches + INSERT attempts under load.
+			m.logger.Error("auth_get_user_failed",
+				slog.String("user_id", userID),
+				slog.Any("error", err))
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		if errors.Is(err, postgres.ErrUserNotFound) {
+			// Sentinel-confirmed not found — auto-provision from Clerk.
+			// Defense-in-depth fallback for the Clerk user.created webhook
+			// (handlers/clerk_webhook.go); both surfaces converge on the same
+			// idempotent UserProvisioning.Provision.
 			clerkUser, err := m.userAPI.Get(r.Context(), userID)
 			if err != nil {
 				m.logger.Error("failed_to_retrieve_user_from_clerk", slog.String("user_id", userID), slog.Any("error", err))
@@ -133,55 +134,23 @@ func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
 				return
 			}
 
-			var email string
-			if clerkUser.PrimaryEmailAddressID != nil {
-				primaryID := *clerkUser.PrimaryEmailAddressID
-				for _, emailAddr := range clerkUser.EmailAddresses {
-					if emailAddr.ID == primaryID {
-						email = emailAddr.EmailAddress
-						break
-					}
-				}
-			} else if len(clerkUser.EmailAddresses) > 0 {
-				email = clerkUser.EmailAddresses[0].EmailAddress
-			}
+			email := primaryEmailFromClerkUser(clerkUser)
 			if email == "" {
 				m.logger.Error("user_has_no_email", slog.String("user_id", userID))
 				http.Error(w, "User has no email address", http.StatusBadRequest)
 				return
 			}
 
-			newUser := postgres.User{ID: userID, Email: email}
-			if err := m.userRepo.Create(r.Context(), &newUser); err != nil {
-				m.logger.Error("user_record_creation_failed",
-					slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+			dbUser, err = m.provisioning.Provision(r.Context(), userID, email)
+			if err != nil {
+				m.logger.Error("user_provisioning_failed",
+					slog.String("user_id", userID),
+					slog.String("path", r.URL.Path),
+					slog.String("method", r.Method),
+					slog.Any("error", err))
 				http.Error(w, "Failed to create user record", http.StatusInternalServerError)
 				return
 			}
-			// Lazily create a Stripe Customer for the new user. Non-fatal:
-			// signup must succeed even if Stripe is unreachable. The next
-			// checkout attempt will lazy-create via CreateCheckoutSession.
-			// Logged at ERROR so ops sees the orphan signup path. Same
-			// pattern as grantSignupBonus below.
-			if m.billingSvc != nil {
-				if _, err := m.billingSvc.EnsureStripeCustomer(r.Context(), newUser.ID, newUser.Email, "", m.userRepo); err != nil {
-					m.logger.Error("stripe_customer_ensure_failed_on_signup",
-						slog.String("user_id", newUser.ID),
-						slog.Any("error", err),
-					)
-				}
-			}
-			if err := m.grantSignupBonus(r.Context(), userID); err != nil {
-				m.logger.Error("failed_to_grant_signup_bonus", slog.String("user_id", userID), slog.Any("error", err))
-			} else {
-				m.logger.Info("signup_bonus_granted", slog.Float64("amount", SignupBonusAmount), slog.String("user_id", userID))
-			}
-
-			// Newly created users always have the default role ("user").
-			// Set explicitly so the in-memory struct matches the DB default,
-			// rather than relying on GetUserRole()'s empty-string fallback.
-			newUser.Role = models.RoleUser
-			dbUser = newUser
 		}
 
 		ctx := r.Context()
@@ -223,7 +192,7 @@ func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
 			// Record API key usage asynchronously to avoid adding latency.
 			// Extract IP before launching goroutine — accessing the request
 			// after ServeHTTP returns is unsafe because the server may recycle it.
-			ip := clientIP(r)
+			ip := ClientIP(r)
 			go func() {
 				if err := m.apiKeyRepo.UpdateLastUsed(context.Background(), keyID, ip); err != nil {
 					m.logger.Warn("api_key_update_last_used_failed", slog.String("key_id", keyID), slog.Any("error", err))
@@ -252,9 +221,9 @@ func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
 	})
 }
 
-// clientIP extracts the client IP from the request, preferring X-Forwarded-For
+// ClientIP extracts the client IP from the request, preferring X-Forwarded-For
 // when present (common behind reverse proxies). Only the first entry is trusted.
-func clientIP(r *http.Request) net.IP {
+func ClientIP(r *http.Request) net.IP {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		first := strings.SplitN(xff, ",", 2)[0]
 		if ip := net.ParseIP(strings.TrimSpace(first)); ip != nil {
@@ -282,59 +251,6 @@ func GetAPIKeyPlanTier(ctx context.Context) string {
 	return tier
 }
 
-// grantSignupBonus awards the signup bonus credit to a newly created user.
-// It is idempotent: if a bonus transaction already exists for this user, it no-ops.
-func (m *AuthMiddleware) grantSignupBonus(ctx context.Context, userID string) error {
-	tx, err := m.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-			m.logger.Error("rollback_failed", slog.Any("error", rbErr))
-		}
-	}()
-
-	var alreadyGranted bool
-	err = tx.QueryRowContext(ctx,
-		"SELECT EXISTS(SELECT 1 FROM credit_transactions WHERE user_id = $1 AND reference_id = 'signup_bonus' AND reference_type = 'system' FOR UPDATE)",
-		userID).Scan(&alreadyGranted)
-	if err != nil {
-		return err
-	}
-	if alreadyGranted {
-		m.logger.Info("signup_bonus_already_granted", slog.String("user_id", userID))
-		return nil
-	}
-
-	var currentBalance float64
-	err = tx.QueryRowContext(ctx, "SELECT COALESCE(credit_balance, 0) FROM users WHERE id = $1 FOR UPDATE", userID).Scan(&currentBalance)
-	if err != nil {
-		return err
-	}
-
-	newBalance := currentBalance + SignupBonusAmount
-
-	_, err = tx.ExecContext(ctx, `
-		UPDATE users
-		SET credit_balance = COALESCE(credit_balance, 0) + $1::numeric,
-		    updated_at = NOW()
-		WHERE id = $2`, SignupBonusAmount, userID)
-	if err != nil {
-		return err
-	}
-
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO credit_transactions (id, user_id, type, amount, balance_before, balance_after, description, reference_id, reference_type)
-		VALUES ($1, $2, 'bonus', $3, $4, $5, 'Signup bonus', 'signup_bonus', 'system')`,
-		uuid.Must(uuid.NewV7()).String(), userID, SignupBonusAmount, currentBalance, newBalance)
-	if err != nil {
-		return err
-	}
-
-	return tx.Commit()
-}
-
 // GetUserID extracts the user ID from the request context.
 func GetUserID(ctx context.Context) (string, error) {
 	userID, ok := ctx.Value(UserIDKey).(string)
@@ -352,4 +268,22 @@ func GetUserRole(ctx context.Context) string {
 		return "user"
 	}
 	return role
+}
+
+// primaryEmailFromClerkUser returns the primary email address from a Clerk
+// SDK user record, falling back to the first email if no primary is set.
+// Returns "" if the user has no email addresses.
+func primaryEmailFromClerkUser(u *clerk.User) string {
+	if u.PrimaryEmailAddressID != nil {
+		primaryID := *u.PrimaryEmailAddressID
+		for _, ea := range u.EmailAddresses {
+			if ea.ID == primaryID {
+				return ea.EmailAddress
+			}
+		}
+	}
+	if len(u.EmailAddresses) > 0 {
+		return u.EmailAddresses[0].EmailAddress
+	}
+	return ""
 }

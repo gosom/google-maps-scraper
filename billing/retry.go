@@ -128,8 +128,10 @@ func withSerializableRetryHTTP(ctx context.Context, db *sql.DB, log *slog.Logger
 func jitterSleep(ctx context.Context, attempt int) {
 	base := time.Duration(attempt) * 50 * time.Millisecond
 	jitter := time.Duration(rand.Int64N(int64(base)))
+	t := time.NewTimer(base + jitter)
+	defer t.Stop()
 	select {
-	case <-time.After(base + jitter):
+	case <-t.C:
 	case <-ctx.Done():
 	}
 }

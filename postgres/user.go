@@ -10,6 +10,20 @@ import (
 	"github.com/gosom/google-maps-scraper/models"
 )
 
+// ErrUserNotFound is returned by GetByID, GetByEmail, and the disambiguation
+// path of SetStripeCustomerID when no matching row exists. Callers MUST use
+// errors.Is to distinguish "row does not exist" from transient DB failures;
+// treating all errors as not-found risks triggering auto-provision on
+// connection resets or query timeouts.
+var ErrUserNotFound = errors.New("user not found")
+
+// ErrStripeCustomerIDConflict is returned by SetStripeCustomerID when the
+// user row already has a different stripe_customer_id. The existing and
+// requested IDs are high-cardinality values; they are NOT interpolated into
+// this sentinel so that APM/log aggregators can group all occurrences under
+// one fingerprint. Log both IDs as structured fields at the call site.
+var ErrStripeCustomerIDConflict = errors.New("stripe_customer_id already set to a different value")
+
 // User is now an alias to the models.User struct
 type User = models.User
 
@@ -36,7 +50,7 @@ func (repo *userRepository) GetByID(ctx context.Context, id string) (User, error
 	err := row.Scan(&user.ID, &user.Email, &user.Role, &user.StripeCustomerID, &user.RefundDeficitCredits, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return User{}, errors.New("user not found")
+			return User{}, ErrUserNotFound
 		}
 		return User{}, err
 	}
@@ -54,7 +68,7 @@ func (repo *userRepository) GetByEmail(ctx context.Context, email string) (User,
 	err := row.Scan(&user.ID, &user.Email, &user.Role, &user.StripeCustomerID, &user.RefundDeficitCredits, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return User{}, errors.New("user not found")
+			return User{}, ErrUserNotFound
 		}
 		return User{}, err
 	}
@@ -66,8 +80,23 @@ func (repo *userRepository) GetByEmail(ctx context.Context, email string) (User,
 // users always receive the DB default ('user'). Admin promotion requires direct
 // DB access via scripts/promote_admin.sh — there is no API for self-promotion.
 func (repo *userRepository) Create(ctx context.Context, user *User) error {
+	// ON CONFLICT DO NOTHING (no target column) suppresses both users_pkey AND
+	// users_email_key violations. With ON CONFLICT (id) only, a concurrent
+	// race between two callers inserting the same (id, email) could surface
+	// the email-uniqueness violation first — Postgres reports whichever
+	// constraint it checks first. Both call sites (Clerk webhook + auth
+	// middleware lazy fallback) derive id and email from the same Clerk user
+	// object, so a "different id, same email" insert would signal an upstream
+	// bug rather than a legitimate request; no-opping is the right behavior.
+	// The post-Create GetByID in services.UserProvisioning.Provision fetches
+	// the canonical row regardless of which goroutine actually inserted.
+	//
+	// WARNING: untargeted ON CONFLICT — adding any new UNIQUE constraint to the
+	// users table requires reviewing every Create call site to ensure silent
+	// swallowing of the new constraint is still the intended behaviour.
 	const q = `INSERT INTO users (id, email, created_at, updated_at)
-	           VALUES ($1, $2, $3, $4)`
+	           VALUES ($1, $2, $3, $4)
+	           ON CONFLICT DO NOTHING`
 
 	now := time.Now().UTC()
 	if user.CreatedAt.IsZero() {
@@ -121,7 +150,7 @@ func (repo *userRepository) SetStripeCustomerID(ctx context.Context, userID, str
 			`SELECT stripe_customer_id FROM users WHERE id = $1`, userID).Scan(&existing)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return errors.New("user not found")
+				return ErrUserNotFound
 			}
 			return fmt.Errorf("failed to disambiguate SetStripeCustomerID failure: %w", err)
 		}
@@ -131,7 +160,7 @@ func (repo *userRepository) SetStripeCustomerID(ctx context.Context, userID, str
 		// branch it means a concurrent write changed the value out from
 		// under us, which is itself a conflict).
 		if existing.Valid {
-			return fmt.Errorf("stripe_customer_id already set to a different value: have %q, requested %q", existing.String, stripeCustomerID)
+			return ErrStripeCustomerIDConflict
 		}
 		// Defensive: row has NULL stripe_customer_id but our UPDATE missed.
 		// Shouldn't happen given the WHERE clause; treat as a transient error.

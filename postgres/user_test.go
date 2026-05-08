@@ -3,9 +3,9 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +15,8 @@ import (
 // openUserTestDB opens a DB connection from PG_TEST_DSN and skips the test
 // if not set. Mirrors the helper used elsewhere in the package; defined
 // locally to keep this file self-contained for the new S-C3 user tests.
+// Registers db.Close via t.Cleanup so row-deletion cleanups registered after
+// this call still see an open pool (LIFO ordering: Close runs last).
 func openUserTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	dsn := os.Getenv("PG_TEST_DSN")
@@ -28,6 +30,7 @@ func openUserTestDB(t *testing.T) *sql.DB {
 	if err := db.PingContext(context.Background()); err != nil {
 		t.Fatalf("failed to ping db: %v", err)
 	}
+	t.Cleanup(func() { _ = db.Close() })
 	return db
 }
 
@@ -53,7 +56,6 @@ func seedTestUser(t *testing.T, db *sql.DB) string {
 
 func TestSetStripeCustomerID_FirstWrite(t *testing.T) {
 	db := openUserTestDB(t)
-	defer db.Close()
 	ctx := context.Background()
 
 	repo := NewUserRepository(db).(*userRepository)
@@ -76,7 +78,6 @@ func TestSetStripeCustomerID_FirstWrite(t *testing.T) {
 
 func TestSetStripeCustomerID_SameValueIsNoOp(t *testing.T) {
 	db := openUserTestDB(t)
-	defer db.Close()
 	ctx := context.Background()
 
 	repo := NewUserRepository(db).(*userRepository)
@@ -94,7 +95,6 @@ func TestSetStripeCustomerID_SameValueIsNoOp(t *testing.T) {
 
 func TestSetStripeCustomerID_RefusesDifferentValue(t *testing.T) {
 	db := openUserTestDB(t)
-	defer db.Close()
 	ctx := context.Background()
 
 	repo := NewUserRepository(db).(*userRepository)
@@ -110,8 +110,8 @@ func TestSetStripeCustomerID_RefusesDifferentValue(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error overwriting with a different stripe_customer_id, got nil")
 	}
-	if !strings.Contains(err.Error(), "already set to a different value") {
-		t.Errorf("expected error to mention 'already set to a different value', got: %v", err)
+	if !errors.Is(err, ErrStripeCustomerIDConflict) {
+		t.Errorf("expected ErrStripeCustomerIDConflict, got: %v", err)
 	}
 
 	// Verify the original value is still in place — defense in depth.
@@ -127,7 +127,6 @@ func TestSetStripeCustomerID_RefusesDifferentValue(t *testing.T) {
 
 func TestSetStripeCustomerID_RejectsEmpty(t *testing.T) {
 	db := openUserTestDB(t)
-	defer db.Close()
 	ctx := context.Background()
 
 	repo := NewUserRepository(db).(*userRepository)
@@ -141,7 +140,6 @@ func TestSetStripeCustomerID_RejectsEmpty(t *testing.T) {
 
 func TestSetStripeCustomerID_RejectsMissingUser(t *testing.T) {
 	db := openUserTestDB(t)
-	defer db.Close()
 	ctx := context.Background()
 
 	repo := NewUserRepository(db).(*userRepository)
@@ -151,14 +149,13 @@ func TestSetStripeCustomerID_RejectsMissingUser(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing user, got nil")
 	}
-	if !strings.Contains(err.Error(), "user not found") {
-		t.Errorf("expected error to mention 'user not found', got: %v", err)
+	if !errors.Is(err, ErrUserNotFound) {
+		t.Errorf("expected ErrUserNotFound, got: %v", err)
 	}
 }
 
 func TestGetByID_IncludesStripeCustomerID(t *testing.T) {
 	db := openUserTestDB(t)
-	defer db.Close()
 	ctx := context.Background()
 
 	repo := NewUserRepository(db)
@@ -178,5 +175,43 @@ func TestGetByID_IncludesStripeCustomerID(t *testing.T) {
 	}
 	if *user.StripeCustomerID != stripeCustomerID {
 		t.Errorf("expected StripeCustomerID=%q, got %q", stripeCustomerID, *user.StripeCustomerID)
+	}
+}
+
+// TestCreate_IsIdempotent_OnDuplicateID locks in the contract that Create may
+// be called multiple times with the same user ID without error and without
+// overwriting the original row. Required so the Clerk webhook and the
+// auth-middleware lazy-provisioning path can both call Create concurrently
+// for the same brand-new user (the case that produced the "Failed to load
+// dashboard" toast on first sign-up).
+func TestCreate_IsIdempotent_OnDuplicateID(t *testing.T) {
+	t.Parallel()
+	db := openUserTestDB(t)
+	ctx := context.Background()
+
+	repo := NewUserRepository(db)
+	userID := "user_test_idem_" + fmt.Sprintf("%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, userID)
+	})
+
+	first := User{ID: userID, Email: userID + "@test.invalid"}
+	if err := repo.Create(ctx, &first); err != nil {
+		t.Fatalf("first Create: %v", err)
+	}
+
+	// Second call with the same ID must succeed (no error, no panic).
+	second := User{ID: userID, Email: "different-email@test.invalid"}
+	if err := repo.Create(ctx, &second); err != nil {
+		t.Fatalf("second Create (must be idempotent): %v", err)
+	}
+
+	// ON CONFLICT DO NOTHING semantics: original row preserved, NOT updated.
+	got, err := repo.GetByID(ctx, userID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.Email != first.Email {
+		t.Errorf("email overwritten: want %q, got %q (DO NOTHING must preserve)", first.Email, got.Email)
 	}
 }
