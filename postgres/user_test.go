@@ -3,9 +3,9 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -110,8 +110,8 @@ func TestSetStripeCustomerID_RefusesDifferentValue(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error overwriting with a different stripe_customer_id, got nil")
 	}
-	if !strings.Contains(err.Error(), "already set to a different value") {
-		t.Errorf("expected error to mention 'already set to a different value', got: %v", err)
+	if !errors.Is(err, ErrStripeCustomerIDConflict) {
+		t.Errorf("expected ErrStripeCustomerIDConflict, got: %v", err)
 	}
 
 	// Verify the original value is still in place — defense in depth.
@@ -151,8 +151,8 @@ func TestSetStripeCustomerID_RejectsMissingUser(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing user, got nil")
 	}
-	if !strings.Contains(err.Error(), "user not found") {
-		t.Errorf("expected error to mention 'user not found', got: %v", err)
+	if !errors.Is(err, ErrUserNotFound) {
+		t.Errorf("expected ErrUserNotFound, got: %v", err)
 	}
 }
 

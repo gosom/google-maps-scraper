@@ -111,10 +111,22 @@ func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
 		userID := claims.Subject
 
 		dbUser, err := m.userRepo.GetByID(r.Context(), userID)
-		if err != nil {
-			// User not found — auto-provision from Clerk. Defense-in-depth fallback
-			// for the Clerk user.created webhook (handlers/clerk_webhook.go); both
-			// surfaces converge on the same idempotent UserProvisioning.Provision.
+		if err != nil && !errors.Is(err, postgres.ErrUserNotFound) {
+			// Transient DB error (connection reset, timeout, etc.) — do NOT
+			// auto-provision. Returning 500 here prevents the middleware from
+			// treating every DB hiccup as "user missing" and triggering Clerk
+			// fetches + INSERT attempts under load.
+			m.logger.Error("auth_get_user_failed",
+				slog.String("user_id", userID),
+				slog.Any("error", err))
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		if errors.Is(err, postgres.ErrUserNotFound) {
+			// Sentinel-confirmed not found — auto-provision from Clerk.
+			// Defense-in-depth fallback for the Clerk user.created webhook
+			// (handlers/clerk_webhook.go); both surfaces converge on the same
+			// idempotent UserProvisioning.Provision.
 			clerkUser, err := m.userAPI.Get(r.Context(), userID)
 			if err != nil {
 				m.logger.Error("failed_to_retrieve_user_from_clerk", slog.String("user_id", userID), slog.Any("error", err))
