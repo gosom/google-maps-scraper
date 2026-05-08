@@ -192,7 +192,7 @@ func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
 			// Record API key usage asynchronously to avoid adding latency.
 			// Extract IP before launching goroutine — accessing the request
 			// after ServeHTTP returns is unsafe because the server may recycle it.
-			ip := clientIP(r)
+			ip := ClientIP(r)
 			go func() {
 				if err := m.apiKeyRepo.UpdateLastUsed(context.Background(), keyID, ip); err != nil {
 					m.logger.Warn("api_key_update_last_used_failed", slog.String("key_id", keyID), slog.Any("error", err))
@@ -221,9 +221,9 @@ func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
 	})
 }
 
-// clientIP extracts the client IP from the request, preferring X-Forwarded-For
+// ClientIP extracts the client IP from the request, preferring X-Forwarded-For
 // when present (common behind reverse proxies). Only the first entry is trusted.
-func clientIP(r *http.Request) net.IP {
+func ClientIP(r *http.Request) net.IP {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		first := strings.SplitN(xff, ",", 2)[0]
 		if ip := net.ParseIP(strings.TrimSpace(first)); ip != nil {

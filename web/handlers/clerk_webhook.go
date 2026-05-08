@@ -3,17 +3,20 @@ package handlers
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	svix "github.com/svix/svix-webhooks/go"
 
 	"github.com/gosom/google-maps-scraper/postgres"
+	"github.com/gosom/google-maps-scraper/web/auth"
 )
 
 // Provisioner is the narrow interface the Clerk webhook handler depends on.
@@ -33,6 +36,11 @@ type ClerkWebhookHandler struct {
 	logger       *slog.Logger
 }
 
+// clerkWebhookMinKeyBytes is the minimum byte length of the decoded HMAC key.
+// A shorter key (e.g. the bare "whsec_" prefix that decodes to zero bytes) is
+// computationally valid in Go's HMAC but produces forgeable signatures.
+const clerkWebhookMinKeyBytes = 16
+
 // NewClerkWebhookHandler validates the signing secret and constructs the
 // handler. Returns an error if the signing secret is empty or malformed.
 // The caller (web/web.go) should treat that as a fatal startup error
@@ -46,6 +54,16 @@ func NewClerkWebhookHandler(db *sql.DB, signingSecret string, provisioning Provi
 	if err != nil {
 		return nil, fmt.Errorf("clerk_webhook: invalid signing secret: %w", err)
 	}
+
+	// Defense-in-depth: svix.NewWebhook accepts a bare "whsec_" prefix which
+	// decodes to a zero-length HMAC key — HMAC over an empty key is
+	// computationally valid, producing forgeable signatures. Reject any secret
+	// whose decoded body is shorter than clerkWebhookMinKeyBytes.
+	rawKey, decErr := base64.StdEncoding.DecodeString(strings.TrimPrefix(signingSecret, "whsec_"))
+	if decErr != nil || len(rawKey) < clerkWebhookMinKeyBytes {
+		return nil, fmt.Errorf("clerk_webhook: signing secret decodes to too few bytes (min %d)", clerkWebhookMinKeyBytes)
+	}
+
 	return &ClerkWebhookHandler{
 		db:           db,
 		verifier:     wh,
@@ -54,14 +72,15 @@ func NewClerkWebhookHandler(db *sql.DB, signingSecret string, provisioning Provi
 	}, nil
 }
 
-// Maximum body size for an inbound Clerk webhook (defensive). Clerk
-// user.created payloads are ~2KB; 32KB leaves generous headroom.
-const clerkWebhookMaxBody = 32 * 1024
-
 // clerkWebhookTimeout caps total processing time per delivery. Well under
 // Svix's 15s delivery timeout. Stripe customer creation (post-Provision)
 // is ~500ms p99, so 10s leaves wide margin.
 const clerkWebhookTimeout = 10 * time.Second
+
+// maxLoggedEventTypeLen caps the event-type string included in log records.
+// Prevents log injection / oversized fields when an unexpected event type
+// is received (e.g. from a replayed or crafted delivery).
+const maxLoggedEventTypeLen = 64
 
 // clerkEvent is the minimal envelope read from the verified body. Other
 // envelope fields (object, timestamp, instance_id) exist but we don't read
@@ -83,11 +102,25 @@ type clerkUserCreatedData struct {
 }
 
 func (h *ClerkWebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// H7: recover from any panic inside this handler and return 500 so Svix
+	// retries the delivery. The middleware Recovery() is not in the webhook
+	// chain, so we add our own guard here.
+	defer func() {
+		if rec := recover(); rec != nil {
+			h.logger.Error("clerk_webhook_panic_recovered",
+				slog.Any("panic", rec))
+			// Best-effort: response may already be partially written.
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
+	}()
+
 	ctx, cancel := context.WithTimeout(r.Context(), clerkWebhookTimeout)
 	defer cancel()
 
 	// 1. Read raw body BEFORE any parsing — signature is computed over bytes.
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, clerkWebhookMaxBody))
+	// Body size is capped by the MaxBodySize(64KiB) middleware in the webhook
+	// chain (web/web.go baseWebhookMws); no inner MaxBytesReader is needed.
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		h.logger.Warn("clerk_webhook_body_read_failed", slog.Any("error", err))
 		var mbe *http.MaxBytesError
@@ -103,8 +136,13 @@ func (h *ClerkWebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 	// 2. Verify signature. svix-webhooks/go v1.93 takes raw bytes + http.Header.
 	if err := h.verifier.Verify(body, r.Header); err != nil {
+		// M17: log the real client IP, not the proxy's RemoteAddr.
+		sourceIP := "unknown"
+		if ip := auth.ClientIP(r); ip != nil {
+			sourceIP = ip.String()
+		}
 		h.logger.Warn("clerk_webhook_signature_invalid",
-			slog.String("source_ip", r.RemoteAddr),
+			slog.String("source_ip", sourceIP),
 			slog.Any("error", err))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -145,23 +183,36 @@ func (h *ClerkWebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	// 5. Dispatch on event type. Only user.created today (D1).
 	switch evt.Type {
 	case "user.created":
-		h.handleUserCreated(ctx, msgID, evt.Data)
+		if h.handleUserCreated(ctx, msgID, evt.Data) {
+			// Provisioning failed; dedupe row was released so Svix will retry.
+			http.Error(w, "transient — please retry", http.StatusServiceUnavailable)
+			return
+		}
 	default:
 		// Acknowledge and ignore — returning 4xx would make Svix retry
 		// forever for events we don't subscribe to.
+		// M4: cap the logged event type to prevent oversized / injected log fields.
+		loggedType := evt.Type
+		if len(loggedType) > maxLoggedEventTypeLen {
+			loggedType = loggedType[:maxLoggedEventTypeLen]
+		}
 		h.logger.Info("clerk_webhook_event_ignored",
-			slog.String("svix_id", msgID), slog.String("type", evt.Type))
+			slog.String("svix_id", msgID), slog.String("type", loggedType))
 	}
 
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *ClerkWebhookHandler) handleUserCreated(ctx context.Context, msgID string, raw json.RawMessage) {
+// handleUserCreated parses and provisions the user.created payload.
+// Returns true if provisioning failed AND the dedupe row was released
+// (caller should respond 503 to trigger Svix redelivery).
+// Returns false on success or on validation-only skips (no retry needed).
+func (h *ClerkWebhookHandler) handleUserCreated(ctx context.Context, msgID string, raw json.RawMessage) (retry bool) {
 	var data clerkUserCreatedData
 	if err := json.Unmarshal(raw, &data); err != nil {
 		h.logger.Warn("clerk_webhook_user_created_data_invalid",
 			slog.String("svix_id", msgID), slog.Any("error", err))
-		return
+		return false
 	}
 
 	email := primaryEmailFromClerkPayload(data)
@@ -170,24 +221,29 @@ func (h *ClerkWebhookHandler) handleUserCreated(ctx context.Context, msgID strin
 			slog.String("svix_id", msgID),
 			slog.String("user_id", data.ID),
 			slog.Bool("has_email", email != ""))
-		return
+		return false
 	}
 
 	if _, err := h.provisioning.Provision(ctx, data.ID, email); err != nil {
-		// Provisioning failed AFTER we claimed the event — log and let
-		// the next user request hit the auth-middleware fallback. Returning
-		// 5xx here would make Svix redeliver, but the dedupe row is already
-		// present so the redelivery would also no-op. Returning 200 +
-		// logging is the right call.
 		h.logger.Error("clerk_webhook_provisioning_failed",
 			slog.String("svix_id", msgID),
 			slog.String("user_id", data.ID),
 			slog.Any("error", err))
-		return
+
+		// H1: On provisioning failure post-claim, the dedupe row would block
+		// Svix redelivery from retrying. Delete the row so the next delivery
+		// can re-attempt. Best-effort: a deletion failure is logged but not
+		// returned (we already failed provisioning).
+		if _, delErr := h.db.ExecContext(ctx, `DELETE FROM processed_webhook_events WHERE event_id = $1`, msgID); delErr != nil {
+			h.logger.Error("clerk_webhook_dedupe_release_failed",
+				slog.String("svix_id", msgID), slog.Any("error", delErr))
+		}
+		return true
 	}
 
 	h.logger.Info("clerk_webhook_user_provisioned",
 		slog.String("svix_id", msgID), slog.String("user_id", data.ID))
+	return false
 }
 
 // claimEvent inserts a row into processed_webhook_events and returns true

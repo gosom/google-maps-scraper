@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -23,8 +24,10 @@ import (
 )
 
 // testClerkSecret is a valid whsec_-prefixed base64 secret for unit tests.
-// base64("testsecret") = "dGVzdHNlY3JldA=="
-const testClerkSecret = "whsec_dGVzdHNlY3JldA=="
+// The decoded value is "testsecret16byte" (16 bytes), satisfying the minimum
+// key-length check added in C2 hardening (clerkWebhookMinKeyBytes = 16).
+// base64("testsecret16byte") = "dGVzdHNlY3JldDE2Ynl0ZQ=="
+const testClerkSecret = "whsec_dGVzdHNlY3JldDE2Ynl0ZQ=="
 
 // ---------------------------------------------------------------------------
 // Fake Provisioner — no DB needed for pure-unit tests.
@@ -35,6 +38,7 @@ type fakeProvisioner struct {
 	callCount int
 	lastID    string
 	lastEmail string
+	err       error // if non-nil, Provision returns this error
 }
 
 func (f *fakeProvisioner) Provision(_ context.Context, userID, email string) (postgres.User, error) {
@@ -43,6 +47,9 @@ func (f *fakeProvisioner) Provision(_ context.Context, userID, email string) (po
 	f.callCount++
 	f.lastID = userID
 	f.lastEmail = email
+	if f.err != nil {
+		return postgres.User{}, f.err
+	}
 	return postgres.User{ID: userID, Email: email}, nil
 }
 
@@ -385,5 +392,63 @@ func TestClerkWebhook_UserCreatedNoEmail_200_NoOp(t *testing.T) {
 	count, _, _ := prov.snapshot()
 	if count != 0 {
 		t.Errorf("expected provisioner not called when no email, got %d calls", count)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test 8 — Provisioning failure → 503 + dedupe row released (Integration)
+//
+// H1 fix: when Provision returns an error after the dedupe row was claimed,
+// the handler must delete the row and respond 503 so Svix retries the delivery.
+// ---------------------------------------------------------------------------
+
+func TestClerkWebhook_ProvisioningFailure_Returns503AndReleasesDedupe(t *testing.T) {
+	db := openClerkTestDB(t)
+	prov := &fakeProvisioner{err: errors.New("db down")}
+	h := newTestClerkHandler(t, db, prov)
+
+	userID := "user_" + uuid.NewString()
+	emailAddrID := "idn_" + uuid.NewString()
+	email := "failtest+" + uuid.NewString() + "@example.com"
+
+	payload := map[string]interface{}{
+		"type": "user.created",
+		"data": map[string]interface{}{
+			"id":                       userID,
+			"primary_email_address_id": emailAddrID,
+			"email_addresses": []map[string]interface{}{
+				{"id": emailAddrID, "email_address": email},
+			},
+		},
+	}
+	body, _ := json.Marshal(payload)
+	req, msgID := signedRequest(t, body, testClerkSecret)
+	// Cleanup is best-effort; the handler should have deleted the row already.
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM processed_webhook_events WHERE event_id = $1", msgID) //nolint:errcheck
+	})
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	// Expect 503 so Svix triggers a redelivery.
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503, got %d", rr.Code)
+	}
+
+	// Provisioner must have been called exactly once.
+	callCount, _, _ := prov.snapshot()
+	if callCount != 1 {
+		t.Errorf("expected provisioner called once, got %d", callCount)
+	}
+
+	// Dedupe row must have been deleted so a redelivery can re-process.
+	var rowCount int
+	err := db.QueryRow("SELECT COUNT(*) FROM processed_webhook_events WHERE event_id = $1", msgID).Scan(&rowCount)
+	if err != nil {
+		t.Fatalf("query dedupe row: %v", err)
+	}
+	if rowCount != 0 {
+		t.Errorf("expected dedupe row deleted after provisioning failure, got count=%d", rowCount)
 	}
 }
