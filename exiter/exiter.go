@@ -27,6 +27,16 @@ type Exiter interface {
 	IncrPlacesCompleted(int)
 	IncrResultsWritten(int) // New method to count actual results written
 	IsCancellationTriggered() bool
+	// RecordSeedError stores a seed-level error (e.g. proxy connection failed,
+	// page navigation timeout) so the wrapping webrunner can surface a useful
+	// failure_reason to the user instead of the catch-all "context canceled"
+	// message. Only the most recent error is retained; per-seed errors are
+	// already logged separately via gmap_seed_fetch_failed for support
+	// debugging. Nil errors are ignored.
+	RecordSeedError(error)
+	// LastSeedError returns the most recently recorded seed error, or nil if
+	// no seed error has been recorded. Read-only — repeated calls are safe.
+	LastSeedError() error
 	Run(context.Context)
 }
 
@@ -40,6 +50,7 @@ type exiter struct {
 	cancellationTriggered bool      // Track if cancellation has been triggered
 	lastProgressTime      time.Time // Track last time we made progress
 	startTime             time.Time // Track when the exiter was created for grace period
+	lastSeedError         error     // Most recently recorded seed-level error
 
 	mu         *sync.Mutex
 	cancelFunc context.CancelFunc
@@ -187,6 +198,25 @@ func (e *exiter) IsCancellationTriggered() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.cancellationTriggered
+}
+
+// RecordSeedError stores the most recent seed-level error so the wrapping
+// runner can surface it as failure_reason. Nil errors are ignored so callers
+// don't need to nil-check at every site.
+func (e *exiter) RecordSeedError(err error) {
+	if err == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.lastSeedError = err
+}
+
+// LastSeedError returns the most recently recorded seed error, or nil.
+func (e *exiter) LastSeedError() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.lastSeedError
 }
 
 func (e *exiter) Run(ctx context.Context) {

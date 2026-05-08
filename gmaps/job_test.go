@@ -3,6 +3,7 @@ package gmaps
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -14,6 +15,8 @@ import (
 // seed as "done" (the bug at the heart of the half-hour-stuck-job incident).
 type fakeExiter struct {
 	seedCompleted atomic.Int64
+	mu            sync.Mutex
+	lastSeedError error
 }
 
 func (f *fakeExiter) SetSeedCount(int)                 {}
@@ -28,6 +31,19 @@ func (f *fakeExiter) IncrPlacesCompleted(int)          {}
 func (f *fakeExiter) IncrResultsWritten(int)           {}
 func (f *fakeExiter) IsCancellationTriggered() bool    { return false }
 func (f *fakeExiter) Run(context.Context)              {}
+func (f *fakeExiter) RecordSeedError(err error) {
+	if err == nil {
+		return
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lastSeedError = err
+}
+func (f *fakeExiter) LastSeedError() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastSeedError
+}
 
 // TestGmapJob_ProcessOnFetchError_True locks in the contract that GmapJob
 // opts in to receiving Process() calls even when the BrowserActions/fetch
@@ -79,6 +95,12 @@ func TestGmapJob_Process_FetchError_IncrementsSeedCompleted(t *testing.T) {
 	// the exit monitor's seedCompleted >= seedCount check eventually trips.
 	if got := exiter.seedCompleted.Load(); got != 1 {
 		t.Errorf("seedCompleted: want 1 (failed seed counted as done), got %d", got)
+	}
+	// The raw fetch error must also be captured on the exit monitor so the
+	// wrapping webrunner can sanitize and surface it as failure_reason
+	// (otherwise the user sees the generic "context canceled" catch-all).
+	if got := exiter.LastSeedError(); got == nil || got.Error() != resp.Error.Error() {
+		t.Errorf("LastSeedError: want %v (the fetch error must be recorded), got %v", resp.Error, got)
 	}
 }
 

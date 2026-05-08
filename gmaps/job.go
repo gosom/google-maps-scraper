@@ -166,6 +166,13 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 		)
 		if j.ExitMonitor != nil {
 			j.ExitMonitor.IncrSeedCompleted(1)
+			// Capture the underlying error so the wrapping webrunner can
+			// surface a useful failure_reason ("Scraping aborted: proxy
+			// connection failed") instead of the catch-all
+			// "context canceled with 0 results" — the failure_reason was
+			// previously dropped because mate.Start returns context.Canceled
+			// after our exit monitor cancels, masking the real cause.
+			j.ExitMonitor.RecordSeedError(resp.Error)
 		}
 		return nil, nil, resp.Error
 	}
