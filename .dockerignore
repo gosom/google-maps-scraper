@@ -10,8 +10,7 @@ brezel-api
 *.dylib
 
 # Data and logs
-gmapsdata/
-webdata/
+data/
 logs/
 *.log
 migration_log.txt

@@ -22,7 +22,7 @@ type Config struct {
 	AppEnv           appenv.Environment `env:"APP_ENV"`
 	LogLevel         string             `env:"LOG_LEVEL" envDefault:"info"`
 	InternalAddr     string             `env:"INTERNAL_ADDR" envDefault:":9090"`
-	DataFolder       string             `env:"DATA_FOLDER" envDefault:"./webdata"`
+	DataFolder       string             `env:"DATA_FOLDER" envDefault:"./data"`
 	Concurrency      int                `env:"CONCURRENCY"`
 	DisableTelemetry bool               `env:"DISABLE_TELEMETRY"`
 

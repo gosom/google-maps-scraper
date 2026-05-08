@@ -78,11 +78,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Non-root runtime user. Created before Playwright install so the browser cache
 # is owned by uid 1001 — Playwright fails opaquely when the cache UID differs
 # from the running process. /opt is the PLAYWRIGHT_DRIVER_PATH, /opt/browsers
-# is the PLAYWRIGHT_BROWSERS_PATH, /gmapsdata is the runtime data volume mount.
+# is the PLAYWRIGHT_BROWSERS_PATH. /data is the canonical runtime data volume
+# mount (matches DATA_FOLDER=/data and the compose mount target). The directory
+# MUST exist in the image and be owned by brezel:1001 — when Docker mounts a
+# named volume onto a path that doesn't exist in the image, the runtime auto-
+# creates the mount point as root:root, blocking the brezel user from writing.
 RUN groupadd --system --gid 1001 brezel \
   && useradd --system --uid 1001 --gid 1001 --no-create-home --shell /usr/sbin/nologin brezel \
-  && mkdir -p /opt/browsers /gmapsdata /webdata /logs \
-  && chown -R brezel:brezel /opt /gmapsdata /webdata /logs
+  && mkdir -p /opt/browsers /data /logs \
+  && chown -R brezel:brezel /opt /data /logs
 
 COPY --from=builder --chown=brezel:brezel /usr/bin/brezel-api /usr/bin/
 

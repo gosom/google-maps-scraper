@@ -35,3 +35,6 @@ brezel-api
 .DS_Store
 .claude/
 google_cookies.json
+
+# Local-only build artifacts
+tmp/

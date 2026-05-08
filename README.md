@@ -22,16 +22,16 @@ customize it to your needs
 **Quick Start:**
 ```bash
 # Create a directory for your data
-mkdir -p gmapsdata
+mkdir -p data
 
 # Run the scraper with Docker
-docker run -v $PWD/gmapsdata:/gmapsdata -p 8080:8080 gosom/google-maps-scraper -data-folder /gmapsdata
+docker run -v $PWD/data:/data -p 8080:8080 gosom/google-maps-scraper -data-folder /data
 ```
 
 **What this does:**
-- `-v $PWD/gmapsdata:/gmapsdata`: Mounts your local `gmapsdata` folder into the container
+- `-v $PWD/data:/data`: Mounts your local `data` folder into the container
 - `-p 8080:8080`: Maps port 8080 from the container to your local machine
-- `-data-folder /gmapsdata`: Tells the scraper where to save results
+- `-data-folder /data`: Tells the scraper where to save results
 
 **Access the web interface:**
 Open your browser and go to: `http://localhost:8080`
@@ -221,7 +221,7 @@ environment:
 
 **"Permission denied" on mounted volumes**
 - On Linux/Mac, ensure the directory has proper permissions
-- Try: `chmod 755 gmapsdata`
+- Try: `chmod 755 data`
 
 **Container exits immediately**
 - Check logs: `docker logs <container-name>`
@@ -474,7 +474,7 @@ try `./google-maps-scraper -h` to see the command line options available:
   -cache string
         sets the cache directory [no effect at the moment] (default "cache")
   -data-folder string
-        data folder for web runner (default "webdata")
+        data folder for web runner (default "data")
   -debug
         enable headful crawl (opens browser window) [default: false]
   -depth int
