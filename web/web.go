@@ -55,14 +55,13 @@ type ServerConfig struct {
 	WebhookDeliveryRepo models.JobWebhookDeliveryRepository // Optional; enables webhook delivery tracking
 	ServerSecret        []byte                              // HMAC secret for API key HMAC (from API_KEY_SERVER_SECRET env)
 	ClerkSecretKey      string                              // Clerk server-side secret key for authentication
-	// ClerkWebhookSigningSecret is the Svix-format signing secret for the
-	// Clerk Dashboard webhook endpoint. Empty disables /webhooks/clerk
-	// (the route is not mounted); required in production for eager user
-	// provisioning. Per-environment — Clerk test and prod instances each
-	// have their own signing secret.
-	ClerkWebhookSigningSecret string
-	StripeAPIKey              string   // Optional Stripe API key for subscriptions
-	StripeWebhookSecrets      []string // Active first, then previous webhook secrets during rotation
+	// ClerkWebhookSigningSecrets holds the Svix signing secrets for the Clerk
+	// Dashboard webhook endpoint. The active secret must be first; any previous
+	// secrets (during rotation) follow. All are tried in order. An empty slice
+	// disables /webhooks/clerk (route not mounted). Mirrors StripeWebhookSecrets.
+	ClerkWebhookSigningSecrets []string
+	StripeAPIKey               string   // Optional Stripe API key for subscriptions
+	StripeWebhookSecrets       []string // Active first, then previous webhook secrets during rotation
 	// StripeWebhookAllowedCIDRs is an optional defense-in-depth allowlist for
 	// the Stripe webhook receiver. This should complement, not replace, edge
 	// firewall allowlisting because reverse proxies may mask the original peer IP.
@@ -361,7 +360,14 @@ func New(cfg ServerConfig) (*Server, error) {
 	// Webhook endpoints are public provider callbacks, not customer API routes.
 	// Keep them out of the /api/v1 customer namespace and give them a dedicated
 	// middleware chain rather than inheriting generic public API rate limits.
+	//
+	// H3: Per-IP rate limit applied here to both Clerk and Stripe webhooks.
+	// Svix retries at most ~1/min/event; Stripe bursts are brief and per-IP.
+	// 20 req/s with burst 50 per IP is far above legitimate delivery rates
+	// and well below flood throughput. Because limits are per-IP, Clerk and
+	// Stripe IPs each have independent buckets.
 	baseWebhookMws := []func(http.Handler) http.Handler{
+		webmiddleware.PerIPRateLimit(rate.Limit(20), 50),
 		webmiddleware.RequestID,
 		webmiddleware.InjectLogger(ans.logger),
 		webmiddleware.RequestLogger(ans.logger),
@@ -369,20 +375,20 @@ func New(cfg ServerConfig) (*Server, error) {
 	}
 
 	// Build the Clerk webhook handler from the base middleware chain. Mounted
-	// only when the Svix signing secret is configured AND the provisioning
-	// service is available. The handler verifies signatures itself and is
-	// intentionally NOT behind any CIDR allowlist (Clerk uses Cloudflare, not
-	// fixed CIDRs); Svix signature is the auth.
+	// only when signing secrets are configured AND the provisioning service is
+	// available. The handler verifies Svix signatures itself and is intentionally
+	// NOT behind any CIDR allowlist (Clerk uses Cloudflare, not fixed CIDRs).
+	// H4: accepts a slice so the previous secret stays valid during rotation.
 	switch {
-	case cfg.ClerkWebhookSigningSecret != "" && provisioningSvc != nil:
-		clerkHandler, err := webhandlers.NewClerkWebhookHandler(cfg.PgDB, cfg.ClerkWebhookSigningSecret, provisioningSvc, ans.logger)
+	case len(cfg.ClerkWebhookSigningSecrets) > 0 && provisioningSvc != nil:
+		clerkHandler, err := webhandlers.NewClerkWebhookHandler(cfg.PgDB, cfg.ClerkWebhookSigningSecrets, provisioningSvc, ans.logger)
 		if err != nil {
 			return nil, fmt.Errorf("clerk webhook handler init: %w", err)
 		}
 		clerkWebhookHandler := webmiddleware.Chain(clerkHandler, baseWebhookMws...)
 		router.Handle("/webhooks/clerk", clerkWebhookHandler).Methods(http.MethodPost)
-	case cfg.ClerkWebhookSigningSecret != "":
-		// Secret configured but provisioning unavailable (DB or user repo
+	case len(cfg.ClerkWebhookSigningSecrets) > 0:
+		// Secrets configured but provisioning unavailable (DB or user repo
 		// nil) — surface this loudly so operators don't silently lose
 		// webhook deliveries waiting for a route that was never mounted.
 		ans.logger.Warn("clerk_webhook_route_not_mounted",

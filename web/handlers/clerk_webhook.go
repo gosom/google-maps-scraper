@@ -29,9 +29,11 @@ type Provisioner interface {
 // ClerkWebhookHandler verifies and dispatches Svix-signed Clerk webhooks.
 // Routed at POST /webhooks/clerk in web/web.go (outside the auth middleware
 // — authentication is via Svix signature, not user JWT).
+// H4: verifiers holds one entry per signing secret so the previous secret
+// remains valid during key rotation.
 type ClerkWebhookHandler struct {
 	db           *sql.DB
-	verifier     *svix.Webhook
+	verifiers    []*svix.Webhook
 	provisioning Provisioner
 	logger       *slog.Logger
 }
@@ -41,32 +43,48 @@ type ClerkWebhookHandler struct {
 // computationally valid in Go's HMAC but produces forgeable signatures.
 const clerkWebhookMinKeyBytes = 16
 
-// NewClerkWebhookHandler validates the signing secret and constructs the
-// handler. Returns an error if the signing secret is empty or malformed.
-// The caller (web/web.go) should treat that as a fatal startup error
-// when CLERK_WEBHOOK_SIGNING_SECRET is set; if the env var is empty,
-// the caller skips constructing this handler entirely (route is not mounted).
-func NewClerkWebhookHandler(db *sql.DB, signingSecret string, provisioning Provisioner, logger *slog.Logger) (*ClerkWebhookHandler, error) {
-	if signingSecret == "" {
-		return nil, errors.New("clerk_webhook: signing secret is empty")
-	}
-	wh, err := svix.NewWebhook(signingSecret)
-	if err != nil {
-		return nil, fmt.Errorf("clerk_webhook: invalid signing secret: %w", err)
+// NewClerkWebhookHandler validates every signing secret and constructs the
+// handler. signingSecrets must be non-empty; the active secret should be
+// first so it is tried first on every request.
+//
+// H4: accepts multiple secrets so the previous secret stays valid during
+// rotation. All secrets are validated at startup; the handler tries each in
+// order until one succeeds or all fail.
+//
+// The caller (web/web.go) should treat a returned error as a fatal startup
+// error when any CLERK_WEBHOOK_SIGNING_SECRET* var is set; when both vars
+// are empty the caller skips construction entirely (route is not mounted).
+func NewClerkWebhookHandler(db *sql.DB, signingSecrets []string, provisioning Provisioner, logger *slog.Logger) (*ClerkWebhookHandler, error) {
+	if len(signingSecrets) == 0 {
+		return nil, errors.New("clerk_webhook: no signing secrets provided")
 	}
 
-	// Defense-in-depth: svix.NewWebhook accepts a bare "whsec_" prefix which
-	// decodes to a zero-length HMAC key — HMAC over an empty key is
-	// computationally valid, producing forgeable signatures. Reject any secret
-	// whose decoded body is shorter than clerkWebhookMinKeyBytes.
-	rawKey, decErr := base64.StdEncoding.DecodeString(strings.TrimPrefix(signingSecret, "whsec_"))
-	if decErr != nil || len(rawKey) < clerkWebhookMinKeyBytes {
-		return nil, fmt.Errorf("clerk_webhook: signing secret decodes to too few bytes (min %d)", clerkWebhookMinKeyBytes)
+	verifiers := make([]*svix.Webhook, 0, len(signingSecrets))
+	for i, secret := range signingSecrets {
+		if secret == "" {
+			return nil, fmt.Errorf("clerk_webhook: signing secret %d is empty", i)
+		}
+
+		wh, err := svix.NewWebhook(secret)
+		if err != nil {
+			return nil, fmt.Errorf("clerk_webhook: invalid signing secret %d: %w", i, err)
+		}
+
+		// Defense-in-depth: svix.NewWebhook accepts a bare "whsec_" prefix which
+		// decodes to a zero-length HMAC key — HMAC over an empty key is
+		// computationally valid, producing forgeable signatures. Reject any secret
+		// whose decoded body is shorter than clerkWebhookMinKeyBytes.
+		rawKey, decErr := base64.StdEncoding.DecodeString(strings.TrimPrefix(secret, "whsec_"))
+		if decErr != nil || len(rawKey) < clerkWebhookMinKeyBytes {
+			return nil, fmt.Errorf("clerk_webhook: signing secret %d decodes to too few bytes (min %d)", i, clerkWebhookMinKeyBytes)
+		}
+
+		verifiers = append(verifiers, wh)
 	}
 
 	return &ClerkWebhookHandler{
 		db:           db,
-		verifier:     wh,
+		verifiers:    verifiers,
 		provisioning: provisioning,
 		logger:       logger,
 	}, nil
@@ -134,8 +152,19 @@ func (h *ClerkWebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// 2. Verify signature. svix-webhooks/go v1.93 takes raw bytes + http.Header.
-	if err := h.verifier.Verify(body, r.Header); err != nil {
+	// 2. Verify signature. H4: try each verifier in order (active first, then
+	// previous secrets during rotation). svix-webhooks/go v1.93 takes raw bytes
+	// + http.Header.
+	var verifyErr error
+	for _, v := range h.verifiers {
+		if err := v.Verify(body, r.Header); err == nil {
+			verifyErr = nil
+			break
+		} else {
+			verifyErr = err
+		}
+	}
+	if verifyErr != nil {
 		// M17: log the real client IP, not the proxy's RemoteAddr.
 		sourceIP := "unknown"
 		if ip := auth.ClientIP(r); ip != nil {
@@ -143,7 +172,7 @@ func (h *ClerkWebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		}
 		h.logger.Warn("clerk_webhook_signature_invalid",
 			slog.String("source_ip", sourceIP),
-			slog.Any("error", err))
+			slog.Any("error", verifyErr))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}

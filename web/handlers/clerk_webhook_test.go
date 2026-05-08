@@ -110,7 +110,7 @@ func openClerkTestDB(t *testing.T) *sql.DB {
 // Panics if construction fails (misconfigured test).
 func newTestClerkHandler(t *testing.T, db *sql.DB, prov Provisioner) *ClerkWebhookHandler {
 	t.Helper()
-	h, err := NewClerkWebhookHandler(db, testClerkSecret, prov, slog.Default())
+	h, err := NewClerkWebhookHandler(db, []string{testClerkSecret}, prov, slog.Default())
 	if err != nil {
 		t.Fatalf("NewClerkWebhookHandler: %v", err)
 	}
