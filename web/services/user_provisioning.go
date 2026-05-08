@@ -17,6 +17,7 @@ import (
 	"github.com/gosom/google-maps-scraper/billing"
 	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/postgres"
+	"golang.org/x/sync/singleflight"
 )
 
 // SignupBonusAmount is the credit amount granted to new users on signup ($2.00).
@@ -29,6 +30,11 @@ type UserProvisioning struct {
 	userRepo   postgres.UserRepository
 	billingSvc *billing.Service // nil-safe (test/no-Stripe builds)
 	logger     *slog.Logger
+	// sf coalesces concurrent Provision calls for the same userID so that only
+	// the first caller performs the Clerk fetch, DB INSERT, Stripe customer
+	// creation, and signup-bonus grant. Followers receive the same result for
+	// free. Zero-value is ready to use.
+	sf singleflight.Group
 }
 
 // NewUserProvisioning creates a new UserProvisioning service.
@@ -48,15 +54,35 @@ func NewUserProvisioning(
 // bonus). Safe to call concurrently and repeatedly: every step is
 // idempotent. Returns the canonical user row from the DB.
 //
-// Order is intentional: idempotent INSERT first, then re-read to get the
-// canonical row regardless of which concurrent caller actually inserted
-// it. Stripe customer creation and the signup bonus follow; their failures
-// are non-fatal — the same contract the inlined chain in auth.go used.
+// Concurrent calls for the same userID are coalesced via singleflight: only
+// the first caller performs the Clerk fetch, DB INSERT, Stripe customer
+// creation, and signup-bonus grant; followers receive the leader's result at
+// no extra cost. If the leader fails, all followers receive the same error
+// (retry is the caller's responsibility — auth middleware returns 500 and
+// the client retries, which starts a fresh singleflight round).
 func (s *UserProvisioning) Provision(ctx context.Context, userID, email string) (postgres.User, error) {
 	if userID == "" || email == "" {
 		return postgres.User{}, errors.New("user_provisioning: userID and email are required")
 	}
 
+	v, err, _ := s.sf.Do(userID, func() (any, error) {
+		return s.provision(ctx, userID, email)
+	})
+	if err != nil {
+		return postgres.User{}, err
+	}
+	return v.(postgres.User), nil
+}
+
+// provision is the un-coalesced inner implementation called by Provision via
+// singleflight. Only the leader goroutine executes this; followers share the
+// result.
+//
+// Order is intentional: idempotent INSERT first, then re-read to get the
+// canonical row regardless of which concurrent caller actually inserted
+// it. Stripe customer creation and the signup bonus follow; their failures
+// are non-fatal — the same contract the inlined chain in auth.go used.
+func (s *UserProvisioning) provision(ctx context.Context, userID, email string) (postgres.User, error) {
 	// Step 1 — idempotent insert. ON CONFLICT DO NOTHING (postgres/user.go,
 	// untargeted so it suppresses both users_pkey AND users_email_key races)
 	// means concurrent callers all return nil; the loser simply does not insert.
