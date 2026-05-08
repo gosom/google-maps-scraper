@@ -10,6 +10,24 @@
 
 ---
 
+## Go-skill specialist review fixes (2026-05-08)
+
+After PR #52 was opened, five parallel Go-skill specialist reviews ran (security, concurrency, database, error-handling, testing). They surfaced 2 Critical + 8 High + 18 Medium + 10 Low findings. All Critical, High, and selected Medium items were implemented across 7 fix-up commits; M9 (testify migration, repo-wide refactor) and M12 (build-tag convention, repo-wide decision) deferred as out-of-scope.
+
+| Wave | Commit | Findings closed |
+|---|---|---|
+| 1 | `29e78f2` | C1 + M5 + M6 — `ErrUserNotFound` + `ErrStripeCustomerIDConflict` sentinels |
+| 2 | `85df82c` | H6 + M2 + M7 — `uuid.NewV7` error-checked, `BeginTx` doc + wrap. H2 + H5 confirmed false-positive after re-verification (FOR UPDATE serialises; untargeted ON CONFLICT documented) |
+| 3 | `81405c6` | C2 + H1 + H7 + M3 + M4 + M17 — 16-byte key floor, dedupe-row release on Provision failure (503), `defer recover()`, single body cap, log truncation, `auth.ClientIP` for source IP. M1 confirmed false-positive (already targeted). |
+| 4 | `28877d0` | H3 + H4 — per-IP rate limit on webhook chain, signing-secret rotation slice |
+| 5 | `e25be63` | M15 + M16 — `time.NewTimer` in `jitterSleep`, no-op down for migration 000035 |
+| 6 | `d77eca4` | M18 — `singleflight.Group` coalesces concurrent first-request `Provision` |
+| 7 | `3d6823e` | H8 + M8 + M10 + M11 + M13 + M14 — fallback-email tests, `t.Parallel`, `goleak.VerifyTestMain`, cleanup ordering, concurrent dedupe test, balance assertion |
+
+**Master reviewer (Opus) verdict on the wave fix-ups:** ready to merge. Every finding either closed or re-confirmed false-positive after deeper inspection. No regressions, no over-engineering, no new bugs introduced. 10/10 stress runs of `TestProvision_Concurrent_DoesNotErrorOrDuplicate` stable. Original-bug coverage preserved.
+
+---
+
 ## Review changelog (2026-05-07, post-Clerk-docs verification)
 
 Two **blocking** issues and three over-engineering tightens were applied after re-checking the plan against current `pkg.go.dev/github.com/svix/svix-webhooks/go` and the actual `processed_webhook_events` schema:
