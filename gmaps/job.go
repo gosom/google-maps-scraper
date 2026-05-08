@@ -134,11 +134,41 @@ func (j *GmapJob) UseInResults() bool {
 	return false
 }
 
+// ProcessOnFetchError opts this seed job into receiving Process() calls even
+// when the BrowserActions/fetch step failed (e.g., proxy down, network
+// error). Without this, scrapemate discards the failed job before reaching
+// Process(), so our exit monitor never sees IncrSeedCompleted ticked for
+// the failed seed and the job hangs until the webrunner's 61-minute backup
+// timeout fires (the May 2026 ERR_PROXY_CONNECTION_FAILED prod incident).
+// Returning true ensures every terminal seed outcome — success or failure
+// — flows through Process() so seedCompleted is always counted.
+func (j *GmapJob) ProcessOnFetchError() bool {
+	return true
+}
+
 func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, []scrapemate.IJob, error) {
 	defer func() {
 		resp.Document = nil
 		resp.Body = nil
 	}()
+
+	// Fetch-error short-circuit. When BrowserActions failed (proxy/network/
+	// retry-exhausted), there is no document to parse — count the seed as
+	// terminally done so the exit monitor's seedCompleted >= seedCount check
+	// trips and mate.Start can return; then propagate the error so scrapemate
+	// logs the seed-level failure. See ProcessOnFetchError() above.
+	if resp.Error != nil {
+		log := scrapemate.GetLoggerFromContext(ctx)
+		log.Warn("gmap_seed_fetch_failed",
+			slog.String("job_id", j.ID),
+			slog.String("url", resp.URL),
+			slog.Any("error", resp.Error),
+		)
+		if j.ExitMonitor != nil {
+			j.ExitMonitor.IncrSeedCompleted(1)
+		}
+		return nil, nil, resp.Error
+	}
 
 	// Check for cancellation before processing
 	select {
