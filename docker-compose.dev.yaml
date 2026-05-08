@@ -7,7 +7,7 @@ services:
     container_name: brezelscraper-go-api-dev
     environment:
       - DSN=${DSN}
-      - DATA_FOLDER=${DATA_FOLDER:-/gmapsdata}
+      - DATA_FOLDER=${DATA_FOLDER:-/data}
       - WEB_ADDR=${WEB_ADDR:-:8080}
       - LOG_LEVEL=${LOG_LEVEL:-debug}
       - CONCURRENCY=${CONCURRENCY:-1}
@@ -21,7 +21,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./gmapsdata:/gmapsdata
+      - ./data:/data
     restart: unless-stopped
 
   frontend:

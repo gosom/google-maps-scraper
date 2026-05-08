@@ -45,7 +45,7 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, appenv.Development, cfg.AppEnv, "APP_ENV should default to Development")
 	assert.Equal(t, "info", cfg.LogLevel)
 	assert.Equal(t, ":9090", cfg.InternalAddr)
-	assert.Equal(t, "./webdata", cfg.DataFolder)
+	assert.Equal(t, "./data", cfg.DataFolder)
 	assert.Equal(t, 0, cfg.Concurrency)
 	assert.Equal(t, false, cfg.DisableTelemetry)
 

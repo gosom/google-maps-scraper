@@ -4,7 +4,7 @@ services:
     image: ${DOCKER_IMAGE}:${DOCKER_IMAGE_TAG:-latest}
     environment:
       - DSN=${DSN}
-      - DATA_FOLDER=${DATA_FOLDER:-/gmapsdata}
+      - DATA_FOLDER=${DATA_FOLDER:-/data}
       - WEB_ADDR=${WEB_ADDR:-:8080}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - LOG_OUTPUT=${LOG_OUTPUT:-stdout}
@@ -16,7 +16,7 @@ services:
       - "127.0.0.1:${API_PORT:-8080}:8080"
       - "127.0.0.1:${INTERNAL_PORT:-9090}:9090"
     volumes:
-      - gmapsdata:/gmapsdata
+      - data:/data
     restart: unless-stopped
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
@@ -84,7 +84,7 @@ services:
     restart: unless-stopped
 
 volumes:
-  gmapsdata:
+  data:
   loki-data:
   grafana-data:
 

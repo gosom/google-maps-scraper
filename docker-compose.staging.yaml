@@ -4,7 +4,7 @@ services:
     container_name: brezelscraper-backend
     environment:
       - DSN=${DSN}
-      - DATA_FOLDER=${DATA_FOLDER:-/gmapsdata}
+      - DATA_FOLDER=${DATA_FOLDER:-/data}
       - WEB_ADDR=${WEB_ADDR:-:8080}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - LOG_OUTPUT=${LOG_OUTPUT:-stdout}
@@ -25,7 +25,7 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
-      - ./gmapsdata:/gmapsdata
+      - ./data:/data
       - ./google_cookies.json:/app/google_cookies.json:ro
     restart: unless-stopped
     networks:
@@ -107,7 +107,7 @@ services:
       - gmaps
 
 volumes:
-  gmapsdata:
+  data:
     driver: local
   loki-data:
     driver: local

@@ -132,7 +132,7 @@ DSN=postgres://scraper:your_password@172.17.0.1:5432/google_maps_scraper?sslmode
 
 # Application Configuration
 WEB_ADDR=:8080
-DATA_FOLDER=/gmapsdata
+DATA_FOLDER=/data
 LOG_LEVEL=info
 
 # Optional configurations
@@ -223,7 +223,7 @@ docker logs google-maps-scraper-2-brezel-api-1 2>&1 | logger -t brezel-api
 pg_dump -h 172.17.0.1 -U scraper google_maps_scraper > backup-$(date +%Y%m%d).sql
 
 # Data folder backup
-tar -czf gmapsdata-backup-$(date +%Y%m%d).tar.gz ./gmapsdata/
+tar -czf data-backup-$(date +%Y%m%d).tar.gz ./data/
 ```
 
 ## Troubleshooting
