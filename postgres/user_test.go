@@ -15,6 +15,8 @@ import (
 // openUserTestDB opens a DB connection from PG_TEST_DSN and skips the test
 // if not set. Mirrors the helper used elsewhere in the package; defined
 // locally to keep this file self-contained for the new S-C3 user tests.
+// Registers db.Close via t.Cleanup so row-deletion cleanups registered after
+// this call still see an open pool (LIFO ordering: Close runs last).
 func openUserTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	dsn := os.Getenv("PG_TEST_DSN")
@@ -28,6 +30,7 @@ func openUserTestDB(t *testing.T) *sql.DB {
 	if err := db.PingContext(context.Background()); err != nil {
 		t.Fatalf("failed to ping db: %v", err)
 	}
+	t.Cleanup(func() { _ = db.Close() })
 	return db
 }
 
@@ -53,7 +56,6 @@ func seedTestUser(t *testing.T, db *sql.DB) string {
 
 func TestSetStripeCustomerID_FirstWrite(t *testing.T) {
 	db := openUserTestDB(t)
-	defer db.Close()
 	ctx := context.Background()
 
 	repo := NewUserRepository(db).(*userRepository)
@@ -76,7 +78,6 @@ func TestSetStripeCustomerID_FirstWrite(t *testing.T) {
 
 func TestSetStripeCustomerID_SameValueIsNoOp(t *testing.T) {
 	db := openUserTestDB(t)
-	defer db.Close()
 	ctx := context.Background()
 
 	repo := NewUserRepository(db).(*userRepository)
@@ -94,7 +95,6 @@ func TestSetStripeCustomerID_SameValueIsNoOp(t *testing.T) {
 
 func TestSetStripeCustomerID_RefusesDifferentValue(t *testing.T) {
 	db := openUserTestDB(t)
-	defer db.Close()
 	ctx := context.Background()
 
 	repo := NewUserRepository(db).(*userRepository)
@@ -127,7 +127,6 @@ func TestSetStripeCustomerID_RefusesDifferentValue(t *testing.T) {
 
 func TestSetStripeCustomerID_RejectsEmpty(t *testing.T) {
 	db := openUserTestDB(t)
-	defer db.Close()
 	ctx := context.Background()
 
 	repo := NewUserRepository(db).(*userRepository)
@@ -141,7 +140,6 @@ func TestSetStripeCustomerID_RejectsEmpty(t *testing.T) {
 
 func TestSetStripeCustomerID_RejectsMissingUser(t *testing.T) {
 	db := openUserTestDB(t)
-	defer db.Close()
 	ctx := context.Background()
 
 	repo := NewUserRepository(db).(*userRepository)
@@ -158,7 +156,6 @@ func TestSetStripeCustomerID_RejectsMissingUser(t *testing.T) {
 
 func TestGetByID_IncludesStripeCustomerID(t *testing.T) {
 	db := openUserTestDB(t)
-	defer db.Close()
 	ctx := context.Background()
 
 	repo := NewUserRepository(db)
@@ -188,8 +185,8 @@ func TestGetByID_IncludesStripeCustomerID(t *testing.T) {
 // for the same brand-new user (the case that produced the "Failed to load
 // dashboard" toast on first sign-up).
 func TestCreate_IsIdempotent_OnDuplicateID(t *testing.T) {
+	t.Parallel()
 	db := openUserTestDB(t)
-	defer db.Close()
 	ctx := context.Background()
 
 	repo := NewUserRepository(db)

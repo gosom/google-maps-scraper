@@ -11,11 +11,18 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"go.uber.org/goleak"
 
 	"github.com/gosom/google-maps-scraper/postgres"
 )
 
+func TestMain(m *testing.M) {
+	goleak.VerifyTestMain(m)
+}
+
 // openServicesTestDB opens a DB connection from PG_TEST_DSN; skips if unset.
+// Registers db.Close via t.Cleanup so row-deletion cleanups registered after
+// this call still see an open pool (LIFO ordering: Close runs last).
 func openServicesTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	dsn := os.Getenv("PG_TEST_DSN")
@@ -29,6 +36,7 @@ func openServicesTestDB(t *testing.T) *sql.DB {
 	if err := db.PingContext(context.Background()); err != nil {
 		t.Fatalf("ping: %v", err)
 	}
+	t.Cleanup(func() { _ = db.Close() })
 	return db
 }
 
@@ -39,8 +47,8 @@ func openServicesTestDB(t *testing.T) *sql.DB {
 // lazy provisioning concurrently. Post-fix, all goroutines must succeed and
 // the users table must contain exactly one row.
 func TestProvision_Concurrent_DoesNotErrorOrDuplicate(t *testing.T) {
+	t.Parallel()
 	db := openServicesTestDB(t)
-	defer db.Close()
 
 	ctx := context.Background()
 	userID := "user_test_provision_concurrent_" + fmt.Sprintf("%d", time.Now().UnixNano())
@@ -92,5 +100,16 @@ func TestProvision_Concurrent_DoesNotErrorOrDuplicate(t *testing.T) {
 	}
 	if bonusCount != 1 {
 		t.Errorf("signup_bonus transactions: want 1, got %d", bonusCount)
+	}
+
+	// M14: verify credit_balance equals exactly one signup bonus — a
+	// double-UPDATE would show a multiple of SignupBonusAmount here.
+	var balance float64
+	if err := db.QueryRowContext(ctx,
+		`SELECT COALESCE(credit_balance, 0) FROM users WHERE id = $1`, userID).Scan(&balance); err != nil {
+		t.Fatalf("read credit_balance: %v", err)
+	}
+	if balance != SignupBonusAmount {
+		t.Errorf("credit_balance: want %v, got %v", SignupBonusAmount, balance)
 	}
 }

@@ -19,9 +19,14 @@ import (
 
 	"github.com/google/uuid"
 	svix "github.com/svix/svix-webhooks/go"
+	"go.uber.org/goleak"
 
 	"github.com/gosom/google-maps-scraper/postgres"
 )
+
+func TestMain(m *testing.M) {
+	goleak.VerifyTestMain(m)
+}
 
 // testClerkSecret is a valid whsec_-prefixed base64 secret for unit tests.
 // The decoded value is "testsecret16byte" (16 bytes), satisfying the minimum
@@ -122,6 +127,7 @@ func newTestClerkHandler(t *testing.T, db *sql.DB, prov Provisioner) *ClerkWebho
 // ---------------------------------------------------------------------------
 
 func TestClerkWebhook_BadSignature_401(t *testing.T) {
+	t.Parallel()
 	prov := &fakeProvisioner{}
 	h := newTestClerkHandler(t, nil, prov)
 
@@ -148,6 +154,7 @@ func TestClerkWebhook_BadSignature_401(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestClerkWebhook_MissingSvixHeaders_401(t *testing.T) {
+	t.Parallel()
 	prov := &fakeProvisioner{}
 	h := newTestClerkHandler(t, nil, prov)
 
@@ -178,6 +185,7 @@ func TestClerkWebhook_MissingSvixHeaders_401(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestClerkWebhook_MalformedJSON_400_AfterVerify(t *testing.T) {
+	t.Parallel()
 	db := openClerkTestDB(t)
 	prov := &fakeProvisioner{}
 	h := newTestClerkHandler(t, db, prov)
@@ -215,6 +223,7 @@ func TestClerkWebhook_MalformedJSON_400_AfterVerify(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestClerkWebhook_UserCreated_HappyPath_200(t *testing.T) {
+	t.Parallel()
 	db := openClerkTestDB(t)
 	prov := &fakeProvisioner{}
 	h := newTestClerkHandler(t, db, prov)
@@ -262,6 +271,7 @@ func TestClerkWebhook_UserCreated_HappyPath_200(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestClerkWebhook_DedupesByMessageID(t *testing.T) {
+	t.Parallel()
 	db := openClerkTestDB(t)
 	prov := &fakeProvisioner{}
 	h := newTestClerkHandler(t, db, prov)
@@ -334,6 +344,7 @@ func TestClerkWebhook_DedupesByMessageID(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestClerkWebhook_UnknownEventType_200_NoOp(t *testing.T) {
+	t.Parallel()
 	db := openClerkTestDB(t)
 	prov := &fakeProvisioner{}
 	h := newTestClerkHandler(t, db, prov)
@@ -365,6 +376,7 @@ func TestClerkWebhook_UnknownEventType_200_NoOp(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestClerkWebhook_UserCreatedNoEmail_200_NoOp(t *testing.T) {
+	t.Parallel()
 	db := openClerkTestDB(t)
 	prov := &fakeProvisioner{}
 	h := newTestClerkHandler(t, db, prov)
@@ -396,6 +408,30 @@ func TestClerkWebhook_UserCreatedNoEmail_200_NoOp(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// signedRequestWithMsgID is like signedRequest but uses a caller-supplied
+// msgID instead of generating a fresh one. Use this to simulate Svix
+// redelivery of the same message (same svix-id, same signature).
+// ---------------------------------------------------------------------------
+
+func signedRequestWithMsgID(t *testing.T, body []byte, secret, msgID string) *http.Request {
+	t.Helper()
+	ts := time.Now()
+	wh, err := svix.NewWebhook(secret)
+	if err != nil {
+		t.Fatalf("NewWebhook: %v", err)
+	}
+	sig, err := wh.Sign(msgID, ts, body)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/clerk", bytes.NewReader(body))
+	req.Header.Set("svix-id", msgID)
+	req.Header.Set("svix-timestamp", strconv.FormatInt(ts.Unix(), 10))
+	req.Header.Set("svix-signature", sig)
+	return req
+}
+
+// ---------------------------------------------------------------------------
 // Test 8 — Provisioning failure → 503 + dedupe row released (Integration)
 //
 // H1 fix: when Provision returns an error after the dedupe row was claimed,
@@ -403,6 +439,7 @@ func TestClerkWebhook_UserCreatedNoEmail_200_NoOp(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestClerkWebhook_ProvisioningFailure_Returns503AndReleasesDedupe(t *testing.T) {
+	t.Parallel()
 	db := openClerkTestDB(t)
 	prov := &fakeProvisioner{err: errors.New("db down")}
 	h := newTestClerkHandler(t, db, prov)
@@ -450,5 +487,128 @@ func TestClerkWebhook_ProvisioningFailure_Returns503AndReleasesDedupe(t *testing
 	}
 	if rowCount != 0 {
 		t.Errorf("expected dedupe row deleted after provisioning failure, got count=%d", rowCount)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// H8 — Unit tests for primaryEmailFromClerkPayload fallback paths
+// ---------------------------------------------------------------------------
+
+func TestPrimaryEmailFromClerkPayload(t *testing.T) {
+	t.Parallel()
+
+	// emailEntry mirrors clerkUserCreatedData.EmailAddresses element type.
+	type emailEntry = struct {
+		ID           string `json:"id"`
+		EmailAddress string `json:"email_address"`
+	}
+
+	tests := []struct {
+		name string
+		in   clerkUserCreatedData
+		want string
+	}{
+		{
+			name: "primary_id matches an entry",
+			in: clerkUserCreatedData{
+				PrimaryEmailAddressID: "idn_a",
+				EmailAddresses: []emailEntry{
+					{ID: "idn_a", EmailAddress: "a@example.com"},
+					{ID: "idn_b", EmailAddress: "b@example.com"},
+				},
+			},
+			want: "a@example.com",
+		},
+		{
+			name: "primary_id set but no match — fallback to first",
+			in: clerkUserCreatedData{
+				PrimaryEmailAddressID: "idn_missing",
+				EmailAddresses: []emailEntry{
+					{ID: "idn_b", EmailAddress: "b@example.com"},
+				},
+			},
+			want: "b@example.com",
+		},
+		{
+			name: "no primary_id — fallback to first",
+			in: clerkUserCreatedData{
+				EmailAddresses: []emailEntry{
+					{ID: "idn_c", EmailAddress: "c@example.com"},
+				},
+			},
+			want: "c@example.com",
+		},
+		{
+			name: "no emails at all",
+			in:   clerkUserCreatedData{},
+			want: "",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := primaryEmailFromClerkPayload(tc.in)
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// M13 — Concurrent dedupe: two simultaneous deliveries of the same svix-id
+// must result in exactly one Provision call (Integration)
+// ---------------------------------------------------------------------------
+
+func TestClerkWebhook_DedupesByMessageID_Concurrent(t *testing.T) {
+	t.Parallel()
+	db := openClerkTestDB(t)
+	fp := &fakeProvisioner{}
+	h := newTestClerkHandler(t, db, fp)
+
+	userID := "user_" + uuid.NewString()
+	emailAddrID := "idn_" + uuid.NewString()
+	email := "concurrent_dedupe+" + uuid.NewString() + "@example.com"
+
+	payload := map[string]interface{}{
+		"type": "user.created",
+		"data": map[string]interface{}{
+			"id":                       userID,
+			"primary_email_address_id": emailAddrID,
+			"email_addresses": []map[string]interface{}{
+				{"id": emailAddrID, "email_address": email},
+			},
+		},
+	}
+	body, _ := json.Marshal(payload)
+
+	// Generate a single msgID shared by both requests to simulate concurrent
+	// Svix redelivery of the same message.
+	msgID := "msg_" + uuid.NewString()
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM processed_webhook_events WHERE event_id = $1", msgID) //nolint:errcheck
+	})
+
+	rec1, rec2 := httptest.NewRecorder(), httptest.NewRecorder()
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		h.ServeHTTP(rec1, signedRequestWithMsgID(t, body, testClerkSecret, msgID))
+	}()
+	go func() {
+		defer wg.Done()
+		h.ServeHTTP(rec2, signedRequestWithMsgID(t, body, testClerkSecret, msgID))
+	}()
+	wg.Wait()
+
+	// Both responses must be 200 (one is a fresh process, the other a dedupe hit).
+	if rec1.Code != http.StatusOK || rec2.Code != http.StatusOK {
+		t.Errorf("both must be 200, got %d / %d", rec1.Code, rec2.Code)
+	}
+	// Provisioner must have been called exactly once despite the race.
+	count, _, _ := fp.snapshot()
+	if count != 1 {
+		t.Errorf("provisioner must be called exactly once under concurrent dedupe, got %d", count)
 	}
 }
