@@ -686,7 +686,10 @@ func (w *webrunner) work(ctx context.Context) error {
 func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) JobOutcome {
 	// outcome holds the final result; defaults to a runtime error so any
 	// unexpected early return surfaces as a failure rather than a silent success.
-	outcome := OutcomeFailed(CauseRuntimeError, "job exited without classification", nil)
+	outcome := OutcomeFailed(CauseRuntimeError, "job ended unexpectedly",
+		errors.New("scrapeJob exited without classification"))
+	job.Status = outcome.Status
+	job.FailureReason = outcome.FailureReason
 	// Always persist the final job status on exit
 	defer func() {
 		deferCtx, deferCancel := context.WithTimeout(context.Background(), 10*time.Second)

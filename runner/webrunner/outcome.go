@@ -61,10 +61,14 @@ func OutcomeSuccess(resultCount int) JobOutcome {
 }
 
 // OutcomePartial — the job didn't complete cleanly (timeout, mid-run cancel)
-// but produced at least one result row. Existing webrunner logic already
-// treats this as "Completed" — we keep that behavior but tag the cause so
-// future code (e.g. a "job_scrape_partial" log line, a UI badge) can
-// distinguish without touching the persisted Status string.
+// but produced at least one result row. Returned by classifyOutcome.
+//
+// Note: in the current orchestration, scrapeJob's post-run sanity check
+// (the seeds_incomplete + zero_results_written guards) may downgrade a
+// partial to OutcomeFailed when the seed/result bookkeeping disagrees —
+// so a CausePartial Cause is rarely visible in the persisted row today.
+// Future work (typed seed-outcome events in Task 4/5) will make
+// CausePartial reachable in steady state.
 func OutcomePartial(resultCount int) JobOutcome {
 	return JobOutcome{
 		Status:      models.StatusCompleted,
