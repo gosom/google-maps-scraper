@@ -1,5 +1,5 @@
 # Build stage for Playwright dependencies
-FROM golang:1.25.9-alpine AS builder
+FROM golang:1.26.3-alpine AS builder
 
 # Set up Go environment
 ENV PATH="/usr/local/go/bin:${PATH}"
