@@ -1,6 +1,6 @@
 module github.com/gosom/google-maps-scraper
 
-go 1.26.2
+go 1.26.3
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
