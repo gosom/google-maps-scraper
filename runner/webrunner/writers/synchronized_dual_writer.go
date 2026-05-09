@@ -1,6 +1,7 @@
 package writers
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/csv"
@@ -16,12 +17,25 @@ import (
 	"github.com/gosom/scrapemate"
 )
 
-// mustMarshalJSON marshals v to JSON, logging a warning and returning "null" on error.
+// nulEscape is the 6-character JSON escape that json.Marshal produces for
+// a NUL byte (0x00). Valid per the JSON spec, but rejected by Postgres'
+// json/jsonb type with SQLSTATE 22P02 ("invalid input syntax for type
+// json"). Google Maps scraped strings (review text, image alt text)
+// sometimes contain NUL bytes; without stripping, the whole row fails to
+// insert and the job hangs in "scraping" forever (May 2026 prod incident).
+var nulEscape = []byte{'\\', 'u', '0', '0', '0', '0'}
+
+// mustMarshalJSON marshals v to JSON, logging a warning and returning
+// "null" on error. Strips the JSON-escaped NUL sequence from the output so
+// the result is safe to insert into a Postgres json/jsonb column.
 func mustMarshalJSON(v any) []byte {
 	b, err := json.Marshal(v)
 	if err != nil {
 		slog.Warn("json_marshal_failed", slog.String("type", fmt.Sprintf("%T", v)), slog.Any("error", err))
 		return []byte("null")
+	}
+	if bytes.Contains(b, nulEscape) {
+		b = bytes.ReplaceAll(b, nulEscape, nil)
 	}
 	return b
 }
