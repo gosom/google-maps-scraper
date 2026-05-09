@@ -37,6 +37,15 @@ type Exiter interface {
 	// LastSeedError returns the most recently recorded seed error, or nil if
 	// no seed error has been recorded. Read-only — repeated calls are safe.
 	LastSeedError() error
+	// RecordSeedOutcome is the typed-event API for seed-completion. Atomically
+	// increments seedCompleted, stores the last error if any, and tracks the
+	// terminal-failure count for isDone()'s fail-fast logic. Replaces the
+	// older split call sequence IncrSeedCompleted(1) + RecordSeedError(err).
+	//
+	// The legacy methods (IncrSeedCompleted, RecordSeedError) remain for
+	// backwards-compat with callers that haven't migrated yet — but new code
+	// should call RecordSeedOutcome.
+	RecordSeedOutcome(SeedOutcome)
 	Run(context.Context)
 }
 
@@ -51,6 +60,7 @@ type exiter struct {
 	lastProgressTime      time.Time // Track last time we made progress
 	startTime             time.Time // Track when the exiter was created for grace period
 	lastSeedError         error     // Most recently recorded seed-level error
+	terminallyFailed      int       // count of seeds that recorded SeedOutcome.IsTerminalFailure()
 
 	mu         *sync.Mutex
 	cancelFunc context.CancelFunc
@@ -219,6 +229,27 @@ func (e *exiter) LastSeedError() error {
 	return e.lastSeedError
 }
 
+// RecordSeedOutcome is the typed-event API for seed-completion. Atomically
+// increments seedCompleted, stores the last error if any, and tracks the
+// terminal-failure count for isDone()'s fail-fast logic. Replaces the
+// older split call sequence IncrSeedCompleted(1) + RecordSeedError(err).
+//
+// The legacy methods (IncrSeedCompleted, RecordSeedError) remain for
+// backwards-compat with callers that haven't migrated yet — but new code
+// should call RecordSeedOutcome.
+func (e *exiter) RecordSeedOutcome(o SeedOutcome) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.seedCompleted++
+	if o.Err != nil {
+		e.lastSeedError = o.Err
+	}
+	if o.IsTerminalFailure() {
+		e.terminallyFailed++
+	}
+	e.lastProgressTime = time.Now()
+}
+
 func (e *exiter) Run(ctx context.Context) {
 	ticker := time.NewTicker(time.Second * 1) // Check every second instead of 5 seconds
 	defer ticker.Stop()
@@ -291,6 +322,18 @@ func (e *exiter) isDone() bool {
 		slog.Debug("exit_done_max_results_reached",
 			slog.Int("results_written", e.resultsWritten),
 			slog.Int("max_results", e.maxResults),
+		)
+		return true
+	}
+
+	// Fail-fast: every seed has terminally failed. The exit monitor's prior
+	// 30s grace existed because the counter alone couldn't distinguish
+	// "succeeded-but-empty" (legit slow render) from "all failed" (no point
+	// waiting). RecordSeedOutcome now carries the discriminator — short-circuit.
+	if e.seedCount > 0 && e.terminallyFailed >= e.seedCount {
+		slog.Debug("exit_done_all_seeds_terminally_failed",
+			slog.Int("seed_count", e.seedCount),
+			slog.Int("terminally_failed", e.terminallyFailed),
 		)
 		return true
 	}

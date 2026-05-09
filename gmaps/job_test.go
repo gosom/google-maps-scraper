@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/scrapemate"
 )
 
@@ -44,6 +45,12 @@ func (f *fakeExiter) LastSeedError() error {
 	defer f.mu.Unlock()
 	return f.lastSeedError
 }
+
+// RecordSeedOutcome is a stub to satisfy the exiter.Exiter interface.
+// Task 5 will replace this with a real recording implementation and migrate
+// the call sites in gmaps/job.go to use RecordSeedOutcome instead of the
+// legacy IncrSeedCompleted + RecordSeedError pair.
+func (f *fakeExiter) RecordSeedOutcome(_ exiter.SeedOutcome) {}
 
 // TestGmapJob_ProcessOnFetchError_True locks in the contract that GmapJob
 // opts in to receiving Process() calls even when the BrowserActions/fetch
