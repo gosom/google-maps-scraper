@@ -9,15 +9,17 @@ import (
 
 	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/scrapemate"
+	"github.com/stretchr/testify/assert"
 )
 
 // fakeExiter is a minimal exiter.Exiter that records IncrSeedCompleted
 // calls so tests can assert the fetch-error path correctly counts a failed
 // seed as "done" (the bug at the heart of the half-hour-stuck-job incident).
 type fakeExiter struct {
-	seedCompleted atomic.Int64
-	mu            sync.Mutex
-	lastSeedError error
+	seedCompleted   atomic.Int64
+	mu              sync.Mutex
+	lastSeedError   error
+	lastSeedOutcome exiter.SeedOutcome // capture for assertions
 }
 
 func (f *fakeExiter) SetSeedCount(int)                 {}
@@ -46,11 +48,15 @@ func (f *fakeExiter) LastSeedError() error {
 	return f.lastSeedError
 }
 
-// RecordSeedOutcome is a stub to satisfy the exiter.Exiter interface.
-// Task 5 will replace this with a real recording implementation and migrate
-// the call sites in gmaps/job.go to use RecordSeedOutcome instead of the
-// legacy IncrSeedCompleted + RecordSeedError pair.
-func (f *fakeExiter) RecordSeedOutcome(_ exiter.SeedOutcome) {}
+func (f *fakeExiter) RecordSeedOutcome(o exiter.SeedOutcome) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lastSeedOutcome = o
+	f.seedCompleted.Add(1)
+	if o.Err != nil {
+		f.lastSeedError = o.Err
+	}
+}
 
 // TestGmapJob_ProcessOnFetchError_True locks in the contract that GmapJob
 // opts in to receiving Process() calls even when the BrowserActions/fetch
@@ -109,6 +115,12 @@ func TestGmapJob_Process_FetchError_IncrementsSeedCompleted(t *testing.T) {
 	if got := exiter.LastSeedError(); got == nil || got.Error() != resp.Error.Error() {
 		t.Errorf("LastSeedError: want %v (the fetch error must be recorded), got %v", resp.Error, got)
 	}
+
+	// Verify the SeedOutcome is correctly populated via the new typed API.
+	gotOutcome := exiter.lastSeedOutcome
+	assert.Same(t, resp.Error, gotOutcome.Err, "RecordSeedOutcome must carry the raw fetch error")
+	assert.True(t, gotOutcome.IsTerminalFailure(),
+		"fetch error after retries with 0 places → terminal failure (fail-fast)")
 }
 
 // TestGmapJob_Process_FetchError_NilExitMonitor verifies the fetch-error

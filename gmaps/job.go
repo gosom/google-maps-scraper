@@ -165,14 +165,11 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 			slog.Any("error", resp.Error),
 		)
 		if j.ExitMonitor != nil {
-			j.ExitMonitor.IncrSeedCompleted(1)
-			// Capture the underlying error so the wrapping webrunner can
-			// surface a useful failure_reason ("Scraping aborted: proxy
-			// connection failed") instead of the catch-all
-			// "context canceled with 0 results" — the failure_reason was
-			// previously dropped because mate.Start returns context.Canceled
-			// after our exit monitor cancels, masking the real cause.
-			j.ExitMonitor.RecordSeedError(resp.Error)
+			j.ExitMonitor.RecordSeedOutcome(exiter.SeedOutcome{
+				Err:         resp.Error,
+				RetriesLeft: 0, // Process is invoked AFTER retries — every fetch error here is terminal
+				PlacesFound: 0,
+			})
 		}
 		return nil, nil, resp.Error
 	}
@@ -281,8 +278,12 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 	}
 
 	if j.ExitMonitor != nil {
-		j.ExitMonitor.IncrPlacesFound(len(next))
-		j.ExitMonitor.IncrSeedCompleted(1)
+		j.ExitMonitor.IncrPlacesFound(len(next)) // place-jobs counter is separate
+		j.ExitMonitor.RecordSeedOutcome(exiter.SeedOutcome{
+			Err:         nil,
+			RetriesLeft: 0,
+			PlacesFound: len(next),
+		})
 	}
 
 	log.Debug("gmap_job_place_jobs_created",
