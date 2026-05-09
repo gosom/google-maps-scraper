@@ -3,23 +3,31 @@ package gmaps
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/scrapemate"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// fakeExiter is a minimal exiter.Exiter that records IncrSeedCompleted
-// calls so tests can assert the fetch-error path correctly counts a failed
-// seed as "done" (the bug at the heart of the half-hour-stuck-job incident).
+// fakeExiter is a minimal exiter.Exiter that records the SeedOutcome events
+// emitted by GmapJob.Process so tests can assert the fetch-error path
+// correctly counts a failed seed (the half-hour-stuck-job incident) AND the
+// success path emits a non-error outcome with PlacesFound. seedCompleted is
+// kept atomic so concurrent goroutines (none in current tests, but cheap
+// insurance) can read it without racing the captured outcome.
 type fakeExiter struct {
-	seedCompleted   atomic.Int64
-	mu              sync.Mutex
-	lastSeedError   error
-	lastSeedOutcome exiter.SeedOutcome // capture for assertions
+	seedCompleted    atomic.Int64
+	placesFoundCalls atomic.Int64
+	placesFoundTotal atomic.Int64
+	mu               sync.Mutex
+	lastSeedError    error
+	lastSeedOutcome  exiter.SeedOutcome // capture for assertions
 }
 
 func (f *fakeExiter) SetSeedCount(int)                 {}
@@ -29,11 +37,14 @@ func (f *fakeExiter) GetSeedProgress() (int, int)      { return int(f.seedComple
 func (f *fakeExiter) GetResultsWritten() int           { return 0 }
 func (f *fakeExiter) SetCancelFunc(context.CancelFunc) {}
 func (f *fakeExiter) IncrSeedCompleted(n int)          { f.seedCompleted.Add(int64(n)) }
-func (f *fakeExiter) IncrPlacesFound(int)              {}
-func (f *fakeExiter) IncrPlacesCompleted(int)          {}
-func (f *fakeExiter) IncrResultsWritten(int)           {}
-func (f *fakeExiter) IsCancellationTriggered() bool    { return false }
-func (f *fakeExiter) Run(context.Context)              {}
+func (f *fakeExiter) IncrPlacesFound(n int) {
+	f.placesFoundCalls.Add(1)
+	f.placesFoundTotal.Add(int64(n))
+}
+func (f *fakeExiter) IncrPlacesCompleted(int)       {}
+func (f *fakeExiter) IncrResultsWritten(int)        {}
+func (f *fakeExiter) IsCancellationTriggered() bool { return false }
+func (f *fakeExiter) Run(context.Context)           {}
 func (f *fakeExiter) RecordSeedError(err error) {
 	if err == nil {
 		return
@@ -138,10 +149,83 @@ func TestGmapJob_Process_FetchError_NilExitMonitor(t *testing.T) {
 
 	result, next, err := j.Process(context.Background(), resp)
 
-	if err == nil {
-		t.Errorf("err: want non-nil, got nil")
+	require.Error(t, err, "fetch error must propagate even without an ExitMonitor")
+	assert.Nil(t, result, "no result on fetch error")
+	assert.Nil(t, next, "no follow-up jobs on fetch error")
+}
+
+// TestGmapJob_Process_PlaceURL_SuccessBranch covers the happy path companion
+// to the fetch-error tests above. When BrowserActions succeeds and the seed
+// URL points at a /maps/place/ page, Process emits a PlaceJob and reports
+// the seed as terminally successful (Err=nil, PlacesFound=1) so isDone()
+// can later flush the run cleanly. Without coverage on this branch, a
+// regression that swapped the success-side RecordSeedOutcome call would
+// silently hang the exit monitor — symmetric to the original bug.
+func TestGmapJob_Process_PlaceURL_SuccessBranch(t *testing.T) {
+	t.Parallel()
+
+	exit := &fakeExiter{}
+	j := &GmapJob{ExitMonitor: exit}
+	j.ID = "job_test_place_success"
+
+	// /maps/place/ branch skips the goquery-feed selector entirely — a
+	// minimal empty document is enough; the URL drives the dispatch.
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader("<html></html>"))
+	require.NoError(t, err)
+	resp := &scrapemate.Response{
+		URL:      "https://www.google.com/maps/place/Cafe+Mitte/@52.5,13.4,17z",
+		Document: doc,
 	}
-	if result != nil || next != nil {
-		t.Errorf("result/next: want nil/nil, got %v/%v", result, next)
+
+	result, next, err := j.Process(context.Background(), resp)
+
+	require.NoError(t, err, "success branch must not return an error")
+	assert.Nil(t, result, "GmapJob never returns a result row directly — only follow-up PlaceJobs")
+	require.Len(t, next, 1, "place URL must spawn exactly one PlaceJob")
+
+	assert.Equal(t, int64(1), exit.seedCompleted.Load(),
+		"successful seed must tick seedCompleted exactly once")
+	assert.Equal(t, int64(1), exit.placesFoundCalls.Load(),
+		"IncrPlacesFound must be called exactly once on success")
+	assert.Equal(t, int64(1), exit.placesFoundTotal.Load(),
+		"IncrPlacesFound must report 1 place for a /maps/place/ seed")
+
+	got := exit.lastSeedOutcome
+	assert.NoError(t, got.Err, "success outcome must carry no error")
+	assert.Equal(t, 1, got.PlacesFound, "success outcome must report 1 place")
+	assert.True(t, got.IsTerminal(), "RetriesLeft=0 → terminal")
+	assert.False(t, got.IsTerminalFailure(), "successful outcome is not a terminal failure")
+}
+
+// TestGmapJob_Process_CancelledBeforeParse pins that a context cancelled
+// after a successful fetch but before parsing returns ctx.Err() with no
+// outcome side-effects — important so a user-cancel mid-run does not
+// double-count the seed (it would have already been counted once Process
+// returns; the outer scrapemate worker handles the cancel path).
+func TestGmapJob_Process_CancelledBeforeParse(t *testing.T) {
+	t.Parallel()
+
+	exit := &fakeExiter{}
+	j := &GmapJob{ExitMonitor: exit}
+	j.ID = "job_test_ctx_cancelled"
+
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader("<html></html>"))
+	require.NoError(t, err)
+	resp := &scrapemate.Response{
+		URL:      "https://www.google.com/maps/place/X",
+		Document: doc,
 	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled
+
+	result, next, err := j.Process(ctx, resp)
+
+	assert.ErrorIs(t, err, context.Canceled,
+		"cancelled context must surface as ctx.Err() so the outer worker classifies it as user/system cancel")
+	assert.Nil(t, result)
+	assert.Nil(t, next)
+	assert.Equal(t, int64(0), exit.seedCompleted.Load(),
+		"on early cancel return, RecordSeedOutcome must NOT have been called yet "+
+			"(prevents double-counting when the seed retries on a fresh ctx)")
 }

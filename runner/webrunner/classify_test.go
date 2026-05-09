@@ -106,6 +106,32 @@ func TestClassifyOutcome(t *testing.T) {
 			wantStatus:          "completed",
 			wantCause:           CausePartial,
 		},
+		{
+			// Defense against a future refactor that swaps errors.Is for
+			// pointer equality (mateErr == context.Canceled) — middleware
+			// can wrap the cancel multiple times.
+			name:                "doubly-wrapped context.Canceled: errors.Is must unwrap to root",
+			mateErr:             fmt.Errorf("outer: %w", fmt.Errorf("transport: %w", context.Canceled)),
+			userInitiatedCancel: false,
+			resultCount:         0,
+			seedErr:             nil,
+			wantStatus:          "failed",
+			wantCause:           CauseSeedExhausted,
+			wantFailureReason:   "Scraping aborted before any results were collected",
+		},
+		{
+			// mateErr=nil dominates: even if a stale seedErr was recorded
+			// earlier in the run, a clean mate.Start return means the job
+			// succeeded. Without this assertion, a refactor that always
+			// branches on seedErr would silently downgrade good runs to
+			// "failed".
+			name:        "happy path with stale seedErr: success still wins",
+			mateErr:     nil,
+			resultCount: 12,
+			seedErr:     errors.New("an old transient seed error"),
+			wantStatus:  "completed",
+			wantCause:   CauseSuccess,
+		},
 	}
 
 	for _, tc := range tests {

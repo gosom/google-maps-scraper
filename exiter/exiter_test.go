@@ -2,6 +2,7 @@ package exiter
 
 import (
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -60,4 +61,76 @@ func TestIsDone_StillGracesEmptySuccess(t *testing.T) {
 	e.startTime = time.Now() // reset grace clock
 	assert.False(t, e.isDone(),
 		"seed succeeded-but-empty: keep the 30s grace for slow renderers")
+}
+
+// TestRecordSeedOutcome_NilErrDoesNotMarkTerminallyFailed pins that a
+// successful seed outcome does NOT contribute to the terminallyFailed
+// counter — without this guard, a successful run with 0 places (legit slow
+// renderer) would short-circuit through the fail-fast branch in isDone()
+// and skip the 30s grace.
+func TestRecordSeedOutcome_NilErrDoesNotMarkTerminallyFailed(t *testing.T) {
+	t.Parallel()
+	e := New().(*exiter)
+	e.SetSeedCount(2)
+	e.RecordSeedOutcome(SeedOutcome{Err: nil, RetriesLeft: 0, PlacesFound: 0})
+	e.RecordSeedOutcome(SeedOutcome{Err: nil, RetriesLeft: 0, PlacesFound: 0})
+	assert.Equal(t, 0, e.terminallyFailed,
+		"successful seeds (Err=nil) must NOT increment terminallyFailed")
+	e.startTime = time.Now()
+	assert.False(t, e.isDone(),
+		"all successful but empty: must grace, not fail-fast")
+}
+
+// TestRecordSeedOutcome_ErrWithPlacesIsNotTerminalFailure documents the
+// nuanced edge case: a seed that errored out AFTER producing place links
+// is not a terminal failure — those places should still be processed.
+// Without this guard, a partial-extraction error would cause the run to
+// fail-fast before its place-jobs ran.
+func TestRecordSeedOutcome_ErrWithPlacesIsNotTerminalFailure(t *testing.T) {
+	t.Parallel()
+	e := New().(*exiter)
+	e.SetSeedCount(1)
+	e.RecordSeedOutcome(SeedOutcome{
+		Err:         errors.New("connection reset mid-extraction"),
+		RetriesLeft: 0,
+		PlacesFound: 7, // some places extracted before the error
+	})
+	assert.Equal(t, 0, e.terminallyFailed,
+		"err with places>0 must NOT count as terminal failure (partial work salvaged)")
+}
+
+// TestRecordSeedOutcome_ConcurrentWritersAreSafe stresses the mutex under
+// the race detector. In production, scrapemate runs N seed workers in
+// parallel and each calls RecordSeedOutcome once — any data race here
+// would corrupt seedCompleted / lastSeedError / terminallyFailed and
+// silently break exit detection.
+func TestRecordSeedOutcome_ConcurrentWritersAreSafe(t *testing.T) {
+	t.Parallel()
+	e := New().(*exiter)
+	const workers = 50
+	e.SetSeedCount(workers)
+
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	failErr := errors.New("seed failure")
+	for i := range workers {
+		go func(idx int) {
+			defer wg.Done()
+			// Half succeed, half fail — exercises every mutated field.
+			if idx%2 == 0 {
+				e.RecordSeedOutcome(SeedOutcome{Err: nil, PlacesFound: idx})
+			} else {
+				e.RecordSeedOutcome(SeedOutcome{Err: failErr, PlacesFound: 0})
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	completed, total := e.GetSeedProgress()
+	assert.Equal(t, workers, completed, "every concurrent RecordSeedOutcome must increment seedCompleted")
+	assert.Equal(t, workers, total)
+	assert.Equal(t, workers/2, e.terminallyFailed,
+		"exactly half the writers recorded terminal failures — counter must match")
+	assert.ErrorIs(t, e.LastSeedError(), failErr,
+		"LastSeedError must reflect one of the failure errors (not nil, not garbage)")
 }

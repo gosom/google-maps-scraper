@@ -54,13 +54,15 @@ func TestOutcomeFailed_CarriesReasonAndRawErr(t *testing.T) {
 	require.ErrorIs(t, o.Err(), raw, "raw error must be retrievable for support logging")
 }
 
-func TestJobOutcome_RawErrIsUnexported(t *testing.T) {
+// TestOutcomeFailed_NilRawErrIsAllowed pins that OutcomeFailed accepts a nil
+// raw error — used by the "Scraping aborted before any results were
+// collected" branch in classifyOutcome where there's no underlying error to
+// surface, only a sanitized message. Without this, a future change that
+// nil-checks raw at construction time would silently break that path.
+func TestOutcomeFailed_NilRawErrIsAllowed(t *testing.T) {
 	t.Parallel()
-	// Documents the design: rawErr is unexported. Callers MUST use Err() —
-	// they should not be able to grep job.RawErr and string-match on it.
-	o := OutcomeFailed(CauseRuntimeError, "X", errors.New("internal detail"))
-	// If you can read the unexported field by name, this whole test file
-	// failed to compile (which would itself signal a regression). The
-	// runtime assertion is just that Err() returns the same value.
-	assert.NotNil(t, o.Err())
+	o := OutcomeFailed(CauseSeedExhausted, "Scraping aborted before any results were collected", nil)
+	assert.Equal(t, models.StatusFailed, o.Status)
+	assert.Equal(t, "Scraping aborted before any results were collected", o.FailureReason)
+	assert.NoError(t, o.Err(), "nil raw must round-trip as nil from Err()")
 }
