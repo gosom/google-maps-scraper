@@ -26,7 +26,6 @@ import (
 	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	"github.com/gosom/google-maps-scraper/pkg/metrics"
 	"github.com/gosom/google-maps-scraper/postgres"
-	"github.com/gosom/google-maps-scraper/proxy"
 	"github.com/gosom/google-maps-scraper/runner"
 	"github.com/gosom/google-maps-scraper/runner/webrunner/writers"
 	"github.com/gosom/google-maps-scraper/s3uploader"
@@ -120,7 +119,8 @@ type webrunner struct {
 	appCfg              *pkgconfig.Config
 	db                  *sql.DB
 	billingSvc          *billing.Service
-	proxyPool           *proxy.Pool
+	proxyURLs           []string     // upstream proxy URLs with creds; round-robin via proxyIndex
+	proxyIndex          atomic.Int64 // round-robin counter, increments per job
 	s3Uploader          *s3uploader.Uploader
 	s3Bucket            string
 	jobFileRepo         models.JobFileRepository
@@ -297,17 +297,11 @@ func New(cfg *runner.Config, appCfg *pkgconfig.Config, logger *slog.Logger) (run
 		slog.Warn("billing_service_nil", slog.String("detail", "charges will not be applied"))
 	}
 
-	// Initialize proxy pool if proxies are configured
-	var proxyPool *proxy.Pool
+	// Proxy URLs (round-robin per job). scrapemate v0.9.6+ runs its own
+	// internal auth-handling local proxy, so we just pass the upstream URL
+	// (with creds inline) and let scrapemate handle the playwright auth bug.
 	if len(cfg.Proxy.Proxies) > 0 {
-		slog.Debug("creating_proxy_pool", slog.Int("proxy_count", len(cfg.Proxy.Proxies)))
-
-		// Create proxy pool with port range 8888-9998 (1000 ports)
-		proxyPool, err = proxy.NewPool(cfg.Proxy.Proxies, 8888, 9998, slog.Default())
-		if err != nil {
-			return nil, fmt.Errorf("failed to create proxy pool: %w", err)
-		}
-		slog.Info("proxy_pool_started", slog.Int("proxy_count", len(cfg.Proxy.Proxies)))
+		slog.Info("proxies_configured", slog.Int("proxy_count", len(cfg.Proxy.Proxies)))
 	}
 
 	// Initialize S3 uploader if AWS credentials are configured
@@ -408,7 +402,7 @@ func New(cfg *runner.Config, appCfg *pkgconfig.Config, logger *slog.Logger) (run
 		appCfg:              appCfg,
 		db:                  db,
 		billingSvc:          billSvc,
-		proxyPool:           proxyPool,
+		proxyURLs:           cfg.Proxy.Proxies,
 		s3Uploader:          s3Upload,
 		s3Bucket:            s3BucketName,
 		jobFileRepo:         jobFileRepo,
@@ -544,9 +538,6 @@ func (w *webrunner) Close(context.Context) error {
 	// Drain all leaked mate.Start goroutines with a timeout.
 	w.leaks.drain(30*time.Second, w.logger)
 
-	if w.proxyPool != nil {
-		w.proxyPool.Close()
-	}
 	if w.db != nil {
 		w.db.Close()
 	}
@@ -1374,22 +1365,14 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 		}
 	}
 
-	// Handle proxy configuration
-	if w.proxyPool != nil {
-		w.logger.Debug("proxy_requesting_from_pool", slog.String("job_id", job.ID))
-		// Get a dedicated proxy server for this job
-		proxySrv, err := w.proxyPool.GetServerForJob(job.ID)
-		if err != nil {
-			w.logger.Error("proxy_server_get_failed", slog.String("job_id", job.ID), slog.Any("error", err))
-			// Continue without proxy
-		} else {
-			defer w.proxyPool.ReturnServer(job.ID)
-			localProxyURL := proxySrv.GetLocalURL()
-			currentProxy := proxySrv.GetCurrentProxy()
-			w.logger.Debug("proxy_assigned", slog.String("job_id", job.ID), slog.String("address", currentProxy.Address), slog.String("port", currentProxy.Port), slog.String("local_url", localProxyURL))
-			opts = append(opts, scrapemateapp.WithProxies([]string{localProxyURL}))
-			w.logger.Debug("proxy_server_attached", slog.String("job_id", job.ID))
-		}
+	// Handle proxy configuration: round-robin assign one upstream proxy per
+	// job. scrapemate v0.9.6+ runs an internal local proxy that handles
+	// playwright's authenticated-proxy bug, so passing the upstream URL
+	// directly (with creds inline) is the correct shape.
+	if n := len(w.proxyURLs); n > 0 {
+		idx := int(w.proxyIndex.Add(1)-1) % n
+		opts = append(opts, scrapemateapp.WithProxies([]string{w.proxyURLs[idx]}))
+		w.logger.Debug("proxy_assigned", slog.String("job_id", job.ID), slog.Int("index", idx+1), slog.Int("of", n))
 	} else if len(job.Data.Proxies) > 0 {
 		// User-supplied proxies (job.Data.Proxies) are intentionally NOT forwarded to the scraper.
 		// The production proxy system uses admin-configured proxyPool only. Passing user-supplied
