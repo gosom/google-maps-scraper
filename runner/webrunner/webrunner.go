@@ -36,6 +36,7 @@ import (
 	"github.com/gosom/scrapemate/adapters/writers/csvwriter"
 	"github.com/gosom/scrapemate/scrapemateapp"
 	_ "github.com/jackc/pgx/v5/stdlib" // PostgreSQL driver
+	"github.com/shopspring/decimal"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -119,6 +120,7 @@ type webrunner struct {
 	appCfg              *pkgconfig.Config
 	db                  *sql.DB
 	billingSvc          *billing.Service
+	concurrentLimitSvc  *webservices.ConcurrentLimitService
 	proxyURLs           []string     // upstream proxy URLs with creds; round-robin via proxyIndex
 	proxyIndex          atomic.Int64 // round-robin counter, increments per job
 	s3Uploader          *s3uploader.Uploader
@@ -402,6 +404,7 @@ func New(cfg *runner.Config, appCfg *pkgconfig.Config, logger *slog.Logger) (run
 		appCfg:              appCfg,
 		db:                  db,
 		billingSvc:          billSvc,
+		concurrentLimitSvc:  webservices.NewConcurrentLimitService(db),
 		proxyURLs:           cfg.Proxy.Proxies,
 		s3Uploader:          s3Upload,
 		s3Bucket:            s3BucketName,
@@ -681,6 +684,26 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) JobOutcome {
 		errors.New("scrapeJob exited without classification"))
 	job.Status = outcome.Status
 	job.FailureReason = outcome.FailureReason
+
+	// Release the credit hold and emit the quote-vs-actual observability
+	// line, regardless of how scrapeJob exits (success, failure, panic
+	// recovery, or early return). The hold was reserved in
+	// ConcurrentLimitService.CreateJobWithLimit at submission time; it
+	// must be released exactly once per job to keep credit_held_precise
+	// in sync with the user's actually-in-flight estimates.
+	//
+	// Defer ordering: this defer is REGISTERED first and the
+	// status-persist defer is REGISTERED second. Defers fire LIFO, so
+	// the status-persist defer fires first and this one fires last.
+	// That ordering puts the final terminal job.Status on the
+	// `job_billing_summary` log line we emit here.
+	//
+	// Admin jobs and DB-less paths are skipped — they never reserved a
+	// hold and never wrote estimated_cost_precise.
+	if job.Source != models.SourceAdmin && w.db != nil {
+		defer w.releaseHoldAndLogBilling(job)
+	}
+
 	// Always persist the final job status on exit
 	defer func() {
 		deferCtx, deferCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -1333,6 +1356,122 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) JobOutcome {
 	// Charging of places is attempted before marking success above; no charge here
 
 	return outcome
+}
+
+// releaseHoldAndLogBilling reads the persisted quote (estimated_cost_precise)
+// and the running tally of actual charges (actual_cost_precise — populated
+// by the fn_billing_events_after_insert trigger), releases the credit hold
+// the user reserved at submission, and emits a single observability line
+// per job with the variance.
+//
+// Today the policy is "we don't refund overruns" — we charge actual via
+// ChargeAllJobEvents and that's final. The quote-vs-actual log is the
+// data we need to decide whether to introduce a refund/cap policy later.
+//
+// Best-effort: this routine never fails the job. It runs in a defer
+// after the status-persist defer, so any DB error here is logged but
+// does not affect job.Status. The hold-leak failure mode is bounded by:
+//   - the credit_held_precise >= 0 CHECK on users (loud fail on
+//     double-release), and
+//   - the stuck-job reaper (postgres/stuck_jobs.go), which decrements
+//     held when it transitions a stuck job to failed.
+func (w *webrunner) releaseHoldAndLogBilling(job *web.Job) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var estimatedStr, actualStr string
+	err := w.db.QueryRowContext(ctx,
+		`SELECT
+		     COALESCE(estimated_cost_precise, 0)::text,
+		     COALESCE(actual_cost_precise, 0)::text
+		 FROM jobs WHERE id = $1`,
+		job.ID,
+	).Scan(&estimatedStr, &actualStr)
+	if err != nil {
+		w.logger.Error("billing_summary_read_failed",
+			slog.String("job_id", job.ID),
+			slog.Any("error", err),
+		)
+		return
+	}
+
+	// Parse both columns up-front. NewFromString errors are surfaced
+	// rather than silently treated as zero — a malformed numeric in
+	// either column is a schema regression we want to scream about, not
+	// silently leak a hold against. The COALESCE in the SELECT means
+	// these strings are always at minimum "0", but the defensive parse
+	// guards against future shape changes.
+	estimated, err := decimal.NewFromString(estimatedStr)
+	if err != nil {
+		w.logger.Error("billing_summary_parse_failed",
+			slog.String("job_id", job.ID),
+			slog.String("field", "estimated_cost_precise"),
+			slog.String("raw", estimatedStr),
+			slog.Any("error", err),
+		)
+		return
+	}
+	actual, err := decimal.NewFromString(actualStr)
+	if err != nil {
+		w.logger.Error("billing_summary_parse_failed",
+			slog.String("job_id", job.ID),
+			slog.String("field", "actual_cost_precise"),
+			slog.String("raw", actualStr),
+			slog.Any("error", err),
+		)
+		return
+	}
+	delta := actual.Sub(estimated)
+	quoted := estimated.IsPositive()
+
+	// Release exactly the held amount. We delegate to the canonical
+	// ReleaseHold so there is one implementation of the release
+	// invariant — see ConcurrentLimitService.ReleaseHold for the
+	// contract (loud failure if the user no longer has the held amount).
+	//
+	// Skip when no quote was reserved (admin job, or job created before
+	// migration 000036). estimated is the stored quote, not a recomputed
+	// estimate, so this is safe across pricing changes mid-job.
+	if quoted {
+		amount, _ := estimated.Float64()
+		if releaseErr := w.concurrentLimitSvc.ReleaseHold(ctx, job.UserID, amount); releaseErr != nil {
+			w.logger.Error("credit_hold_release_failed",
+				slog.String("job_id", job.ID),
+				slog.String("user_id", job.UserID),
+				slog.String("estimated", estimatedStr),
+				slog.Any("error", releaseErr),
+			)
+		}
+	}
+
+	// One structured event per job, intentionally INFO so it's queryable
+	// in any default-level prod environment without flipping LOG_LEVEL.
+	// Goal: feed a Grafana / Loki dashboard that plots
+	// (delta / estimated) histograms, percentage of jobs where
+	// |delta|/estimated > 0.5, etc., to inform the future quote-policy
+	// decision (cap actual at quote × X? refund unused estimate?).
+	//
+	// Float64 conversion is log-only — money math stays in
+	// decimal.Decimal. Exactness flag is irrelevant at six decimals
+	// for credit values up to ~9 × 10⁹.
+	estimatedFloat, _ := estimated.Float64()
+	actualFloat, _ := actual.Float64()
+	deltaFloat, _ := delta.Float64()
+	var deltaPct float64
+	if quoted {
+		deltaPct = deltaFloat / estimatedFloat
+	}
+	w.logger.Info("job_billing_summary",
+		slog.String("job_id", job.ID),
+		slog.String("user_id", job.UserID),
+		slog.String("status", string(job.Status)),
+		slog.Bool("quote_present", quoted),
+		slog.Float64("estimated_cost", estimatedFloat),
+		slog.Float64("actual_cost", actualFloat),
+		slog.Float64("delta", deltaFloat),
+		slog.Float64("delta_pct", deltaPct),
+		slog.Bool("over_quote", quoted && delta.IsPositive()),
+	)
 }
 
 func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job, exitMonitor exiter.Exiter) (*scrapemateapp.ScrapemateApp, error) {

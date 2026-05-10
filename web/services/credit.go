@@ -27,21 +27,55 @@ func NewCreditService(db *sql.DB, billingSvc *billing.Service, logger *slog.Logg
 }
 
 // GetBalance returns credit balance info for a user.
+//
+// Returns three figures (all strings, NUMERIC(18,6) preserving):
+//   - credit_balance:   gross balance (the wallet)
+//   - credit_held:      sum reserved by in-flight jobs' estimates
+//   - credit_available: balance - held — what the user can actually
+//     commit to a new job. The frontend should compare its preview
+//     against credit_available, not credit_balance.
+//
+// Computed in SQL with `(credit_balance - credit_held_precise)::text`
+// so the subtraction happens in NUMERIC space and the result is
+// exact at 6 decimals.
 func (s *CreditService) GetBalance(ctx context.Context, userID string) (models.CreditBalanceResponse, error) {
 	var resp models.CreditBalanceResponse
 	if s.db == nil {
 		return resp, sql.ErrConnDone
 	}
-	const q = `SELECT id, credit_balance::text, total_credits_purchased::text FROM users WHERE id=$1`
-	if err := s.db.QueryRowContext(ctx, q, userID).Scan(&resp.UserID, &resp.CreditBalance, &resp.TotalCreditsPurchased); err != nil {
+	const q = `SELECT
+	    id,
+	    credit_balance::text,
+	    COALESCE(credit_held_precise, 0)::text,
+	    (credit_balance - COALESCE(credit_held_precise, 0))::text,
+	    total_credits_purchased::text
+	FROM users WHERE id=$1`
+	if err := s.db.QueryRowContext(ctx, q, userID).Scan(
+		&resp.UserID,
+		&resp.CreditBalance,
+		&resp.CreditHeld,
+		&resp.CreditAvailable,
+		&resp.TotalCreditsPurchased,
+	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			s.log.Debug("credit_balance_not_found", slog.String("user_id", userID))
-			resp = models.CreditBalanceResponse{UserID: userID, CreditBalance: "0", TotalCreditsPurchased: "0"}
+			resp = models.CreditBalanceResponse{
+				UserID:                userID,
+				CreditBalance:         "0",
+				CreditHeld:            "0",
+				CreditAvailable:       "0",
+				TotalCreditsPurchased: "0",
+			}
 			return resp, nil
 		}
 		return resp, fmt.Errorf("credit balance query failed: %w", err)
 	}
-	s.log.Debug("credit_balance_retrieved", slog.String("user_id", userID), slog.String("balance", resp.CreditBalance))
+	s.log.Debug("credit_balance_retrieved",
+		slog.String("user_id", userID),
+		slog.String("balance", resp.CreditBalance),
+		slog.String("held", resp.CreditHeld),
+		slog.String("available", resp.CreditAvailable),
+	)
 	return resp, nil
 }
 

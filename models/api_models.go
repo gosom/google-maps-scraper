@@ -12,10 +12,26 @@ type ApiScrapeResponse struct {
 	ID string `json:"id"`
 }
 
-// response for credits balance
+// CreditBalanceResponse is the wire shape for GET /api/v1/credits/balance.
+//
+//   - CreditBalance is the user's gross balance (money they have).
+//   - CreditHeld is the total reserved by in-flight jobs' estimates
+//     (credit_held_precise). It is part of the gross balance — i.e. NOT
+//     yet spent — but is unavailable for new submissions until those
+//     jobs finish and release their holds.
+//   - CreditAvailable = CreditBalance − CreditHeld. This is the figure
+//     the frontend should compare against an estimate when deciding
+//     whether to enable the submit button. A user with balance 1.0 and
+//     two in-flight jobs holding 0.7 should see Available = 0.3 and
+//     not be allowed to start a third job estimated at 0.5.
+//
+// All three fields are strings (NUMERIC(18,6) round-trip) so the
+// frontend can render exact decimal values without IEEE 754 surprises.
 type CreditBalanceResponse struct {
 	UserID                string `json:"user_id"`
 	CreditBalance         string `json:"credit_balance"`
+	CreditHeld            string `json:"credit_held"`
+	CreditAvailable       string `json:"credit_available"`
 	TotalCreditsPurchased string `json:"total_credits_purchased"`
 }
 

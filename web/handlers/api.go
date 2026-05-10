@@ -182,6 +182,22 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 			imPtr,
 		)
 		if err != nil {
+			// Pricing-layer outage (DB unreachable, pricing_rules empty)
+			// is a 503: estimate-as-quote semantics require an authoritative
+			// price; we will not silently default and risk billing the user
+			// at a different rate than what they were quoted.
+			if errors.Is(err, webservices.ErrPricingUnavailable) {
+				if h.Deps.Logger != nil {
+					h.Deps.Logger.Error("pricing_unavailable",
+						slog.String("user_id", userID), slog.Any("error", err))
+				}
+				w.Header().Set("Retry-After", "30")
+				renderJSON(w, http.StatusServiceUnavailable, models.APIError{
+					Code:    http.StatusServiceUnavailable,
+					Message: "Billing service is temporarily unavailable. Please try again in a few seconds.",
+				})
+				return
+			}
 			if h.Deps.Logger != nil {
 				h.Deps.Logger.Error("job_cost_estimation_failed",
 					slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
@@ -201,20 +217,41 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 			)
 		}
 
-		// Fast-fail: reject obviously insufficient balances before taking a row lock.
-		// This avoids a transaction round-trip for users who clearly can't afford the job.
+		// Fast-fail: reject obviously insufficient AVAILABLE balance
+		// (credit_balance - credit_held_precise) before taking a row
+		// lock. CheckSufficientBalance now compares against the same
+		// Total that the transactional gate uses, so the fast-fail and
+		// the authoritative check can never disagree on the same input
+		// (pre-2026-05-10 the fast-fail used MinTotal and the gate used
+		// Total — a user with balance ∈ [Min, Total) would silently pass
+		// here and 402 inside the transaction, which was confusing).
 		if err := estimationSvc.CheckSufficientBalance(r.Context(), userID, estimate); err != nil {
 			if h.Deps.Logger != nil {
 				h.Deps.Logger.Info("job_creation_blocked", slog.String("user_id", userID), slog.Any("error", err))
 			}
+			// Render user-facing message via the typed error's
+			// UserMessage. err.Error() is the stable low-cardinality
+			// grouping key for log aggregators ("insufficient
+			// available balance"); the wire string the user sees is
+			// the formatted UserMessage with current numbers.
+			userMsg := err.Error()
+			var balanceErr webservices.ErrInsufficientBalance
+			if errors.As(err, &balanceErr) {
+				userMsg = balanceErr.UserMessage()
+			}
 			renderJSON(w, http.StatusPaymentRequired, models.APIError{
 				Code:    http.StatusPaymentRequired,
-				Message: err.Error(),
+				Message: userMsg,
 			})
 			return
 		}
 
-		// Pass the estimate to createJob for the authoritative transactional check.
+		// Pass the estimate to createJob. The transactional gate inside
+		// CreateJobWithLimit re-checks affordability under FOR UPDATE,
+		// reserves credit_held_precise += estimate.Total, and persists
+		// the same value to jobs.estimated_cost_precise as the
+		// user-facing quote. The hold is released at job end by
+		// webrunner.go regardless of outcome.
 		estimateOpts = &webservices.JobLimitOpts{
 			EstimatedCost:   estimate.Total,
 			EstimatedPlaces: estimate.Places,
@@ -260,9 +297,13 @@ func (h *APIHandlers) createJob(ctx context.Context, job *models.Job, w http.Res
 			}
 			var balanceErr webservices.ErrInsufficientBalance
 			if errors.As(err, &balanceErr) {
+				// UserMessage formats the figures for the response;
+				// Error() stays as the low-cardinality grouping key
+				// in logs (the failure was already logged by the
+				// service layer or will be by internalError).
 				renderJSON(w, http.StatusPaymentRequired, models.APIError{
 					Code:    http.StatusPaymentRequired,
-					Message: balanceErr.Error(),
+					Message: balanceErr.UserMessage(),
 				})
 				return err
 			}
@@ -725,6 +766,18 @@ func (h *APIHandlers) EstimateJobCost(w http.ResponseWriter, r *http.Request) {
 		req.MaxImages,
 	)
 	if err != nil {
+		if errors.Is(err, webservices.ErrPricingUnavailable) {
+			if h.Deps.Logger != nil {
+				h.Deps.Logger.Error("pricing_unavailable",
+					slog.String("user_id", userID), slog.Any("error", err))
+			}
+			w.Header().Set("Retry-After", "30")
+			renderJSON(w, http.StatusServiceUnavailable, models.APIError{
+				Code:    http.StatusServiceUnavailable,
+				Message: "Billing service is temporarily unavailable. Please try again in a few seconds.",
+			})
+			return
+		}
 		if h.Deps.Logger != nil {
 			h.Deps.Logger.Error("job_cost_estimation_failed",
 				slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.Any("error", err))
