@@ -185,6 +185,68 @@ func TestEstimateJobCost(t *testing.T) {
 	}
 }
 
+// TestEstimate_CreateJobMatchesEstimateEndpoint pins the May 10 prod 402 bug.
+//
+// Prod scenario:
+//   - Frontend sends `{depth:5, max_results:0, max_reviews:0, max_images:0,
+//     include_emails:false}` for both the estimate preview and the actual
+//     job create.
+//   - GET /api/v1/jobs/estimates returned total=0.127 (correct: 40 places,
+//     no reviews, no images, no emails).
+//   - POST /api/v1/jobs returned 402 with total=1.727 because the create
+//     handler converted MaxReviews=0/MaxImages=0 to nil pointers, and the
+//     estimator's nil-branch applied AvgReviewsPerPlace=50 +
+//     AvgImagesPerPlace=30, billing the user for 2000 reviews + 1200
+//     images they did not ask for.
+//
+// Fix: create handler now forwards MaxReviews/MaxImages as *int(0) when
+// the wire value is 0, mirroring what the estimate endpoint already does
+// via its `*int` request struct. This test pins the contract at the
+// service level: passing &0 for the two enrichment caps must produce a
+// cost identical to the no-enrichments depth-5 run, never the inflated
+// "with defaults" cost.
+func TestEstimate_CreateJobMatchesEstimateEndpoint(t *testing.T) {
+	t.Parallel()
+	svc := NewEstimationService(nil, nil, slog.Default())
+	ctx := context.Background()
+
+	// Mirror the wire payload of both endpoints in prod.
+	keywords := []string{"Cafe Mitte Berlin"}
+	depth := 5
+	includeEmails := false
+
+	// Estimate-endpoint shape: max_reviews=0, max_images=0 → *int(0).
+	got, err := svc.EstimateJobCost(ctx, keywords, depth, nil, includeEmails, intPtr(0), intPtr(0))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The pre-fix create handler would have called this:
+	//   svc.EstimateJobCost(ctx, keywords, depth, nil, includeEmails, nil, nil)
+	// — i.e. nil pointers for the two enrichment caps. That triggers the
+	// estimator's "nil = no limit, use averages" branches and adds 2000
+	// reviews + 1200 images to the cost. Compute it explicitly so we can
+	// assert the gap is meaningful (no false-positive on 0 vs 0.001).
+	pre, err := svc.EstimateJobCost(ctx, keywords, depth, nil, includeEmails, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error (pre-fix shape): %v", err)
+	}
+
+	if got.Total >= pre.Total {
+		t.Errorf("post-fix total %.4f is not < pre-fix total %.4f — the bug is back: nil and &0 must produce different costs",
+			got.Total, pre.Total)
+	}
+	if got.Reviews != 0 {
+		t.Errorf("Reviews = %d, expected 0 (toggle off)", got.Reviews)
+	}
+	if got.Images != 0 {
+		t.Errorf("Images = %d, expected 0 (toggle off)", got.Images)
+	}
+	if got.Total > 0.5 {
+		t.Errorf("Total = %.4f — still inflated. Expected ~0.127 for depth-5 with no enrichments", got.Total)
+	}
+}
+
 // TestEstimate_BugRegression verifies the exact bug scenario:
 // "Cafe Mitte Berlin" at depth 5, no max_results should NOT produce 1.507 credits.
 func TestEstimate_BugRegression(t *testing.T) {

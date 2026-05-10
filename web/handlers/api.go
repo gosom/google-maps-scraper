@@ -140,18 +140,38 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 	if h.Deps.DB != nil {
 		estimationSvc := webservices.NewEstimationService(h.Deps.DB, h.Deps.PricingRuleRepo, h.Deps.Logger)
 
-		// Estimate job cost. 0 means "no cap" — pass nil so the
-		// estimator uses depth-based calculation.
-		var mrPtr, rvPtr, imPtr *int
+		// Estimate job cost. The three caps map to the EstimationService's
+		// pointer-typed inputs with DIFFERENT semantics — keep them straight:
+		//
+		//   MaxResults=0  → "no hard cap, use depth-based natural yield".
+		//                   Pass nil; estimator computes rawEstimate from
+		//                   depth × keywords.
+		//
+		//   MaxReviews=0  → "toggle off, scrape no reviews".
+		//                   Pass &0; estimator's nil-branch would otherwise
+		//                   apply AvgReviewsPerPlace=50, charging the user
+		//                   for reviews they didn't ask for. This was the
+		//                   May 10 prod 402 bug: the estimate endpoint
+		//                   typed MaxReviews as *int and forwarded &0, so
+		//                   the user-visible cost (0.127) didn't match the
+		//                   create endpoint's silent 1.727.
+		//
+		//   MaxImages=0   → same as MaxReviews. AvgImagesPerPlace=30.
+		//
+		// ApplyJobDataDefaults at the entry point already pins the
+		// "0 means toggle off" convention for MaxReviews/MaxImages, so we
+		// trust the values here and forward unconditionally.
+		var mrPtr *int
 		if v := newJob.Data.MaxResults; v > 0 {
 			mrPtr = &v
 		}
-		if v := newJob.Data.MaxReviews; v > 0 {
-			rvPtr = &v
-		}
-		if v := newJob.Data.MaxImages; v > 0 {
-			imPtr = &v
-		}
+		// Local copies so the address is stable across the EstimateJobCost
+		// call (loop-variable / parameter capture safety, not strictly
+		// required here but cheap and idiomatic).
+		rv := newJob.Data.MaxReviews
+		im := newJob.Data.MaxImages
+		rvPtr := &rv
+		imPtr := &im
 		estimate, err := estimationSvc.EstimateJobCost(
 			r.Context(),
 			newJob.Data.Keywords,
