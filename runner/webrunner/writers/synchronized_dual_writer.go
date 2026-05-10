@@ -303,7 +303,20 @@ func (w *SynchronizedDualWriter) writeToPostgreSQL(ctx context.Context, entry *g
 	// Serialize JSON fields. Keep an ordered list keyed by column name so
 	// that on a Postgres rejection we can dump exactly the bytes we tried
 	// to insert and pinpoint the offending column from the error
-	// position/column.
+	// position/column (see logRowFailureDiagnostics).
+	//
+	// CRITICAL: at the ExecContext boundary below, every jsonFields entry
+	// is passed as `string(...)`, never as raw `[]byte`. Production talks
+	// to DigitalOcean Managed Postgres via PgBouncer in transaction mode,
+	// which forces pgx into simple_protocol (extended-protocol prepared
+	// statements are session-level and incompatible with PgBouncer
+	// transaction mode). In simple_protocol pgx infers parameter types
+	// purely from the Go type: `string` → text, `[]byte` → bytea
+	// (jackc/pgx#2231, maintainer comment). When `[]byte` is sent for a
+	// jsonb column under simple_protocol, pgx emits a bytea hex literal
+	// (`'\x5b7b...'`) and the row fails with SQLSTATE 22P02 "invalid
+	// input syntax for type json" — the May 2026 prod incident.
+	// Reproduced 1:1 against simple_protocol on 2026-05-10.
 	jsonFields := []struct {
 		column string
 		bytes  []byte
@@ -341,43 +354,43 @@ func (w *SynchronizedDualWriter) writeToPostgreSQL(ctx context.Context, entry *g
 	) ON CONFLICT (cid, job_id) DO NOTHING`
 
 	res, err := w.db.ExecContext(dbCtx, q,
-		w.userID,             // 1
-		w.jobID,              // 2
-		entry.ID,             // 3
-		entry.Link,           // 4
-		entry.Cid,            // 5
-		entry.Title,          // 6
-		categoriesStr,        // 7
-		entry.Category,       // 8
-		entry.Address,        // 9
-		jsonFields[0].bytes,  // 10  openhours
-		jsonFields[1].bytes,  // 11  popular_times
-		entry.WebSite,        // 12
-		entry.Phone,          // 13
-		entry.PlusCode,       // 14
-		entry.ReviewCount,    // 15
-		entry.ReviewRating,   // 16
-		jsonFields[2].bytes,  // 17  reviews_per_rating
-		entry.Latitude,       // 18
-		entry.Longtitude,     // 19
-		entry.Status,         // 20
-		entry.Description,    // 21
-		entry.ReviewsLink,    // 22
-		entry.Thumbnail,      // 23
-		entry.Timezone,       // 24
-		entry.PriceRange,     // 25
-		entry.DataID,         // 26
-		jsonFields[3].bytes,  // 27  images
-		jsonFields[4].bytes,  // 28  reservations
-		jsonFields[5].bytes,  // 29  order_online
-		jsonFields[6].bytes,  // 30  menu
-		jsonFields[7].bytes,  // 31  owner
-		jsonFields[8].bytes,  // 32  complete_address
-		jsonFields[9].bytes,  // 33  about
-		jsonFields[10].bytes, // 34  user_reviews
-		jsonFields[11].bytes, // 35  user_reviews_extended
-		emailsStr,            // 36
-		time.Now(),           // 37
+		w.userID,                     // 1
+		w.jobID,                      // 2
+		entry.ID,                     // 3
+		entry.Link,                   // 4
+		entry.Cid,                    // 5
+		entry.Title,                  // 6
+		categoriesStr,                // 7
+		entry.Category,               // 8
+		entry.Address,                // 9
+		string(jsonFields[0].bytes),  // 10  openhours      — string, not []byte (simple_protocol fix)
+		string(jsonFields[1].bytes),  // 11  popular_times
+		entry.WebSite,                // 12
+		entry.Phone,                  // 13
+		entry.PlusCode,               // 14
+		entry.ReviewCount,            // 15
+		entry.ReviewRating,           // 16
+		string(jsonFields[2].bytes),  // 17  reviews_per_rating
+		entry.Latitude,               // 18
+		entry.Longtitude,             // 19
+		entry.Status,                 // 20
+		entry.Description,            // 21
+		entry.ReviewsLink,            // 22
+		entry.Thumbnail,              // 23
+		entry.Timezone,               // 24
+		entry.PriceRange,             // 25
+		entry.DataID,                 // 26
+		string(jsonFields[3].bytes),  // 27  images
+		string(jsonFields[4].bytes),  // 28  reservations
+		string(jsonFields[5].bytes),  // 29  order_online
+		string(jsonFields[6].bytes),  // 30  menu
+		string(jsonFields[7].bytes),  // 31  owner
+		string(jsonFields[8].bytes),  // 32  complete_address
+		string(jsonFields[9].bytes),  // 33  about
+		string(jsonFields[10].bytes), // 34  user_reviews
+		string(jsonFields[11].bytes), // 35  user_reviews_extended
+		emailsStr,                    // 36
+		time.Now(),                   // 37
 	)
 
 	if err != nil {
