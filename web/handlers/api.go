@@ -786,10 +786,17 @@ func (h *APIHandlers) EstimateJobCost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get user's current balance.
-	var balanceStr string
-	const query = `SELECT COALESCE(credit_balance, 0)::text FROM users WHERE id = $1`
-	if err := h.Deps.DB.QueryRowContext(r.Context(), query, userID).Scan(&balanceStr); err != nil {
+	// Read both gross balance AND held; report AVAILABLE on the wire so
+	// the frontend's "Available X.XXXX" display and the `sufficient`
+	// flag match the affordability gate the create endpoint enforces.
+	// PR #66 added credit_held_precise but didn't update this endpoint;
+	// without subtracting holds, a user with held>0 would see
+	// sufficient=true on the preview AND get a 402 from the create
+	// endpoint. Now symmetric with CheckSufficientBalance + the
+	// transactional gate in ConcurrentLimitService.
+	var balanceStr, heldStr string
+	const query = `SELECT COALESCE(credit_balance, 0)::text, COALESCE(credit_held_precise, 0)::text FROM users WHERE id = $1`
+	if err := h.Deps.DB.QueryRowContext(r.Context(), query, userID).Scan(&balanceStr, &heldStr); err != nil {
 		if h.Deps.Logger != nil {
 			h.Deps.Logger.Error("credit_balance_fetch_failed",
 				slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.Any("error", err))
@@ -806,14 +813,28 @@ func (h *APIHandlers) EstimateJobCost(w http.ResponseWriter, r *http.Request) {
 		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: "failed to parse credit balance"})
 		return
 	}
-	balanceFloat, _ := balanceDec.Float64()
-	balanceMicro := balanceDec.Mul(decimal.NewFromInt(models.MicroUnit)).IntPart()
+	heldDec, err := decimal.NewFromString(heldStr)
+	if err != nil {
+		if h.Deps.Logger != nil {
+			h.Deps.Logger.Error("credit_held_parse_failed",
+				slog.String("user_id", userID), slog.String("path", r.URL.Path), slog.Any("error", err))
+		}
+		renderJSON(w, http.StatusInternalServerError, models.APIError{Code: http.StatusInternalServerError, Message: "failed to parse credit balance"})
+		return
+	}
+	availableDec := balanceDec.Sub(heldDec)
+	availableFloat, _ := availableDec.Float64()
+	availableMicro := availableDec.Mul(decimal.NewFromInt(models.MicroUnit)).IntPart()
 
+	// estimateBalance.Current is intentionally the AVAILABLE figure
+	// (gross minus held) — matching the meaning the FE should render
+	// as "Available X.XXXX" on the create-job page. The Sufficient
+	// flag uses the same comparison the transactional gate uses.
 	response := estimateResponse{
 		Estimate: estimate,
 		Balance: estimateBalance{
-			Current:    balanceFloat,
-			Sufficient: balanceMicro >= estimate.TotalMicro(),
+			Current:    availableFloat,
+			Sufficient: availableMicro >= estimate.TotalMicro(),
 		},
 	}
 
