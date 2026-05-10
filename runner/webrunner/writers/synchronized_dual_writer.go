@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/google-maps-scraper/gmaps"
 	"github.com/gosom/scrapemate"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // nulEscape is the 6-character JSON escape that json.Marshal produces for
@@ -24,6 +26,11 @@ import (
 // sometimes contain NUL bytes; without stripping, the whole row fails to
 // insert and the job hangs in "scraping" forever (May 2026 prod incident).
 var nulEscape = []byte{'\\', 'u', '0', '0', '0', '0'}
+
+// jsonDiagnosticBytesCap caps the per-column base64 dump emitted on a row
+// failure. 4 KB is enough to read the offending region without exploding
+// log volume on review/menu blobs that can be hundreds of KB.
+const jsonDiagnosticBytesCap = 4096
 
 // mustMarshalJSON marshals v to JSON, logging a warning and returning
 // "null" on error. Strips the JSON-escaped NUL sequence from the output so
@@ -37,7 +44,39 @@ func mustMarshalJSON(v any) []byte {
 	if bytes.Contains(b, nulEscape) {
 		b = bytes.ReplaceAll(b, nulEscape, nil)
 	}
+	// At DEBUG level only, surface coarse byte-class signals so we can
+	// tell which non-NUL escape Postgres is rejecting next time. Cheap
+	// (small substring scans) but only worth running if the handler is
+	// actually going to record the line.
+	if slog.Default().Enabled(context.Background(), slog.LevelDebug) {
+		slog.Debug("json_marshaled",
+			slog.String("type", fmt.Sprintf("%T", v)),
+			slog.Int("length", len(b)),
+			slog.Bool("contains_nul_escape", false), // we just stripped it; report post-strip
+			slog.Bool("contains_surrogate_escape", containsSurrogateEscape(b)),
+			slog.Bool("contains_replacement_char", bytes.Contains(b, []byte("\\ufffd"))),
+			slog.Bool("contains_unicode_escape", bytes.Contains(b, []byte("\\u"))),
+		)
+	}
 	return b
+}
+
+// containsSurrogateEscape reports whether the JSON bytes carry a literal
+// `\uD8xx`-`\uDFxx` escape — the lone-surrogate range that Postgres' json
+// parser rejects with SQLSTATE 22P02. json.Marshal emits these when the
+// source string already contained a half-pair (common in scraped UTF-16
+// data round-tripped through JS). Lowercase since Go's json package
+// normalises to lowercase hex.
+func containsSurrogateEscape(b []byte) bool {
+	for _, prefix := range [][]byte{
+		[]byte("\\ud8"), []byte("\\ud9"), []byte("\\uda"), []byte("\\udb"),
+		[]byte("\\udc"), []byte("\\udd"), []byte("\\ude"), []byte("\\udf"),
+	} {
+		if bytes.Contains(b, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // SynchronizedDualWriter writes to both PostgreSQL and CSV in a synchronized way
@@ -71,6 +110,27 @@ func NewSynchronizedDualWriter(
 
 func (w *SynchronizedDualWriter) Run(ctx context.Context, in <-chan scrapemate.Result) error {
 	resultCount := 0
+	failedCount := 0
+
+	slog.Info("synchronized_dual_writer_run_started",
+		slog.String("job_id", w.jobID),
+		slog.String("user_id", w.userID),
+	)
+
+	// finishingFields builds the structured-log payload for any termination
+	// path so we always emit a single, consistent run_finishing line.
+	finishingFields := func(reason string, err error) []any {
+		fields := []any{
+			slog.String("job_id", w.jobID),
+			slog.String("exit_reason", reason),
+			slog.Int("results_written", resultCount),
+			slog.Int("rows_failed", failedCount),
+		}
+		if err != nil {
+			fields = append(fields, slog.Any("error", err))
+		}
+		return fields
+	}
 
 	for result := range in {
 		// Check for cancellation
@@ -83,8 +143,12 @@ func (w *SynchronizedDualWriter) Run(ctx context.Context, in <-chan scrapemate.R
 			// Close() on the underlying file does NOT flush encoding/csv's internal buffer.
 			w.csvWriter.Flush()
 			if err := w.csvWriter.Error(); err != nil {
+				slog.Info("synchronized_dual_writer_run_finishing",
+					finishingFields("context_cancelled_csv_flush_error", err)...)
 				return fmt.Errorf("csv flush error on context cancellation: %w", err)
 			}
+			slog.Info("synchronized_dual_writer_run_finishing",
+				finishingFields("context_cancelled", ctx.Err())...)
 			return ctx.Err()
 		default:
 		}
@@ -97,6 +161,8 @@ func (w *SynchronizedDualWriter) Run(ctx context.Context, in <-chan scrapemate.R
 		case []*gmaps.Entry:
 			entries = v
 		default:
+			slog.Info("synchronized_dual_writer_run_finishing",
+				finishingFields("invalid_data_type", nil)...)
 			return errors.New("invalid data type")
 		}
 
@@ -110,8 +176,12 @@ func (w *SynchronizedDualWriter) Run(ctx context.Context, in <-chan scrapemate.R
 			case <-ctx.Done():
 				w.csvWriter.Flush()
 				if err := w.csvWriter.Error(); err != nil {
+					slog.Info("synchronized_dual_writer_run_finishing",
+						finishingFields("context_cancelled_csv_flush_error", err)...)
 					return fmt.Errorf("csv flush error on context cancellation: %w", err)
 				}
+				slog.Info("synchronized_dual_writer_run_finishing",
+					finishingFields("context_cancelled", ctx.Err())...)
 				return ctx.Err()
 			default:
 			}
@@ -119,10 +189,14 @@ func (w *SynchronizedDualWriter) Run(ctx context.Context, in <-chan scrapemate.R
 			// Write CSV headers on first result
 			if !w.headersWritten {
 				if err := w.csvWriter.Write(entry.CsvHeaders()); err != nil {
+					slog.Info("synchronized_dual_writer_run_finishing",
+						finishingFields("csv_header_write_error", err)...)
 					return fmt.Errorf("failed to write CSV headers: %w", err)
 				}
 				w.csvWriter.Flush()
 				if err := w.csvWriter.Error(); err != nil {
+					slog.Info("synchronized_dual_writer_run_finishing",
+						finishingFields("csv_header_flush_error", err)...)
 					return fmt.Errorf("failed to flush CSV headers: %w", err)
 				}
 				w.headersWritten = true
@@ -131,6 +205,8 @@ func (w *SynchronizedDualWriter) Run(ctx context.Context, in <-chan scrapemate.R
 
 			// Guard: skip write if cancellation already triggered (max results reached)
 			if w.exitMonitor != nil && w.exitMonitor.IsCancellationTriggered() {
+				slog.Info("synchronized_dual_writer_run_finishing",
+					finishingFields("exit_monitor_cancellation", nil)...)
 				return nil
 			}
 
@@ -138,14 +214,27 @@ func (w *SynchronizedDualWriter) Run(ctx context.Context, in <-chan scrapemate.R
 				slog.String("title", entry.Title),
 			)
 
-			// Write to BOTH destinations atomically
+			// Write to BOTH destinations atomically.
+			//
+			// Per-row failures here MUST NOT kill the writer goroutine: if
+			// they did, scrapemate would keep producing results into a
+			// channel nobody reads, IncrResultsWritten would never tick,
+			// and the job would hang forever in "scraping" with no
+			// surfaced error (May 2026 prod incident: SQLSTATE 22P02 on a
+			// single row stranded the entire job). Skip the row, log
+			// loudly, and continue.
 			inserted, err := w.writeToPostgreSQL(ctx, entry)
 			if err != nil {
+				failedCount++
 				slog.Error("synchronized_dual_writer_postgres_write_failed",
+					slog.String("job_id", w.jobID),
 					slog.String("title", entry.Title),
+					slog.String("cid", entry.Cid),
+					slog.String("data_id", entry.DataID),
+					slog.Int("rows_failed", failedCount),
 					slog.Any("error", err),
 				)
-				return fmt.Errorf("PostgreSQL write failed: %w", err)
+				continue
 			}
 
 			if !inserted {
@@ -156,11 +245,20 @@ func (w *SynchronizedDualWriter) Run(ctx context.Context, in <-chan scrapemate.R
 			}
 
 			if err := w.writeToCSV(entry); err != nil {
+				// CSV row failed AFTER PG succeeded — the destinations
+				// are now out of sync for this row. Logging at ERROR
+				// surfaces the divergence; we continue rather than die so
+				// the rest of the job still completes. CSV-export users
+				// can re-export from PG if they hit this.
+				failedCount++
 				slog.Error("synchronized_dual_writer_csv_write_failed",
+					slog.String("job_id", w.jobID),
 					slog.String("title", entry.Title),
+					slog.String("cid", entry.Cid),
+					slog.Int("rows_failed", failedCount),
 					slog.Any("error", err),
 				)
-				return fmt.Errorf("CSV write failed: %w", err)
+				continue
 			}
 
 			// Both writes succeeded, increment counter
@@ -182,12 +280,18 @@ func (w *SynchronizedDualWriter) Run(ctx context.Context, in <-chan scrapemate.R
 	// Final flush
 	w.csvWriter.Flush()
 	if err := w.csvWriter.Error(); err != nil {
+		slog.Info("synchronized_dual_writer_run_finishing",
+			finishingFields("final_csv_flush_error", err)...)
 		return fmt.Errorf("final CSV flush error: %w", err)
 	}
 
 	slog.Info("synchronized_dual_writer_completed",
+		slog.String("job_id", w.jobID),
 		slog.Int("results_written", resultCount),
+		slog.Int("rows_failed", failedCount),
 	)
+	slog.Info("synchronized_dual_writer_run_finishing",
+		finishingFields("input_channel_closed", nil)...)
 	return nil
 }
 
@@ -196,19 +300,27 @@ func (w *SynchronizedDualWriter) writeToPostgreSQL(ctx context.Context, entry *g
 	dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	// Serialize JSON fields
-	openHoursJSON := mustMarshalJSON(entry.OpenHours)
-	popularTimesJSON := mustMarshalJSON(entry.PopularTimes)
-	reviewsPerRatingJSON := mustMarshalJSON(entry.ReviewsPerRating)
-	imagesJSON := mustMarshalJSON(entry.Images)
-	reservationsJSON := mustMarshalJSON(entry.Reservations)
-	orderOnlineJSON := mustMarshalJSON(entry.OrderOnline)
-	menuJSON := mustMarshalJSON(entry.Menu)
-	ownerJSON := mustMarshalJSON(entry.Owner)
-	completeAddressJSON := mustMarshalJSON(entry.CompleteAddress)
-	aboutJSON := mustMarshalJSON(entry.About)
-	userReviewsJSON := mustMarshalJSON(entry.UserReviews)
-	userReviewsExtendedJSON := mustMarshalJSON(entry.UserReviewsExtended)
+	// Serialize JSON fields. Keep an ordered list keyed by column name so
+	// that on a Postgres rejection we can dump exactly the bytes we tried
+	// to insert and pinpoint the offending column from the error
+	// position/column.
+	jsonFields := []struct {
+		column string
+		bytes  []byte
+	}{
+		{"openhours", mustMarshalJSON(entry.OpenHours)},
+		{"popular_times", mustMarshalJSON(entry.PopularTimes)},
+		{"reviews_per_rating", mustMarshalJSON(entry.ReviewsPerRating)},
+		{"images", mustMarshalJSON(entry.Images)},
+		{"reservations", mustMarshalJSON(entry.Reservations)},
+		{"order_online", mustMarshalJSON(entry.OrderOnline)},
+		{"menu", mustMarshalJSON(entry.Menu)},
+		{"owner", mustMarshalJSON(entry.Owner)},
+		{"complete_address", mustMarshalJSON(entry.CompleteAddress)},
+		{"about", mustMarshalJSON(entry.About)},
+		{"user_reviews", mustMarshalJSON(entry.UserReviews)},
+		{"user_reviews_extended", mustMarshalJSON(entry.UserReviewsExtended)},
+	}
 
 	// Convert slices to strings
 	categoriesStr := strings.Join(entry.Categories, ", ")
@@ -229,46 +341,47 @@ func (w *SynchronizedDualWriter) writeToPostgreSQL(ctx context.Context, entry *g
 	) ON CONFLICT (cid, job_id) DO NOTHING`
 
 	res, err := w.db.ExecContext(dbCtx, q,
-		w.userID,                // 1
-		w.jobID,                 // 2
-		entry.ID,                // 3
-		entry.Link,              // 4
-		entry.Cid,               // 5
-		entry.Title,             // 6
-		categoriesStr,           // 7
-		entry.Category,          // 8
-		entry.Address,           // 9
-		openHoursJSON,           // 10
-		popularTimesJSON,        // 11
-		entry.WebSite,           // 12
-		entry.Phone,             // 13
-		entry.PlusCode,          // 14
-		entry.ReviewCount,       // 15
-		entry.ReviewRating,      // 16
-		reviewsPerRatingJSON,    // 17
-		entry.Latitude,          // 18
-		entry.Longtitude,        // 19
-		entry.Status,            // 20
-		entry.Description,       // 21
-		entry.ReviewsLink,       // 22
-		entry.Thumbnail,         // 23
-		entry.Timezone,          // 24
-		entry.PriceRange,        // 25
-		entry.DataID,            // 26
-		imagesJSON,              // 27
-		reservationsJSON,        // 28
-		orderOnlineJSON,         // 29
-		menuJSON,                // 30
-		ownerJSON,               // 31
-		completeAddressJSON,     // 32
-		aboutJSON,               // 33
-		userReviewsJSON,         // 34
-		userReviewsExtendedJSON, // 35
-		emailsStr,               // 36
-		time.Now(),              // 37
+		w.userID,             // 1
+		w.jobID,              // 2
+		entry.ID,             // 3
+		entry.Link,           // 4
+		entry.Cid,            // 5
+		entry.Title,          // 6
+		categoriesStr,        // 7
+		entry.Category,       // 8
+		entry.Address,        // 9
+		jsonFields[0].bytes,  // 10  openhours
+		jsonFields[1].bytes,  // 11  popular_times
+		entry.WebSite,        // 12
+		entry.Phone,          // 13
+		entry.PlusCode,       // 14
+		entry.ReviewCount,    // 15
+		entry.ReviewRating,   // 16
+		jsonFields[2].bytes,  // 17  reviews_per_rating
+		entry.Latitude,       // 18
+		entry.Longtitude,     // 19
+		entry.Status,         // 20
+		entry.Description,    // 21
+		entry.ReviewsLink,    // 22
+		entry.Thumbnail,      // 23
+		entry.Timezone,       // 24
+		entry.PriceRange,     // 25
+		entry.DataID,         // 26
+		jsonFields[3].bytes,  // 27  images
+		jsonFields[4].bytes,  // 28  reservations
+		jsonFields[5].bytes,  // 29  order_online
+		jsonFields[6].bytes,  // 30  menu
+		jsonFields[7].bytes,  // 31  owner
+		jsonFields[8].bytes,  // 32  complete_address
+		jsonFields[9].bytes,  // 33  about
+		jsonFields[10].bytes, // 34  user_reviews
+		jsonFields[11].bytes, // 35  user_reviews_extended
+		emailsStr,            // 36
+		time.Now(),           // 37
 	)
 
 	if err != nil {
+		w.logRowFailureDiagnostics(entry, jsonFields, err)
 		return false, err
 	}
 	rowsAffected, _ := res.RowsAffected()
@@ -283,6 +396,71 @@ func (w *SynchronizedDualWriter) writeToPostgreSQL(ctx context.Context, entry *g
 		}
 	}
 	return rowsAffected > 0, nil
+}
+
+// logRowFailureDiagnostics fires once per failed INSERT and emits the data
+// we've been missing for two prod incidents: the full pgconn error
+// (Code/Detail/Hint/Position/ColumnName) plus base64-encoded dumps of
+// every JSON column we tried to insert (truncated). Base64 is used so
+// binary or invalid-UTF-8 bytes survive the JSON log encoder unchanged —
+// when Postgres rejects content, the offending bytes are by definition
+// not safe to put inside a JSON string field.
+func (w *SynchronizedDualWriter) logRowFailureDiagnostics(
+	entry *gmaps.Entry,
+	jsonFields []struct {
+		column string
+		bytes  []byte
+	},
+	err error,
+) {
+	pgFields := []any{
+		slog.String("job_id", w.jobID),
+		slog.String("title", entry.Title),
+		slog.String("cid", entry.Cid),
+		slog.String("data_id", entry.DataID),
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		pgFields = append(pgFields,
+			slog.String("pg_code", pgErr.Code),
+			slog.String("pg_severity", pgErr.Severity),
+			slog.String("pg_message", pgErr.Message),
+			slog.String("pg_detail", pgErr.Detail),
+			slog.String("pg_hint", pgErr.Hint),
+			slog.Int64("pg_position", int64(pgErr.Position)),
+			slog.String("pg_column", pgErr.ColumnName),
+			slog.String("pg_table", pgErr.TableName),
+			slog.String("pg_constraint", pgErr.ConstraintName),
+			slog.String("pg_routine", pgErr.Routine),
+		)
+	} else {
+		pgFields = append(pgFields, slog.String("pg_error_unwrap", "not_a_pgconn_PgError"))
+	}
+
+	slog.Error("synchronized_dual_writer_postgres_pgerror_detail", pgFields...)
+
+	// Per-column base64 dump. One log line per column so log aggregation
+	// can index/grep them individually and so a single oversized payload
+	// can't blow up a single line.
+	for _, f := range jsonFields {
+		dump := f.bytes
+		truncated := false
+		if len(dump) > jsonDiagnosticBytesCap {
+			dump = dump[:jsonDiagnosticBytesCap]
+			truncated = true
+		}
+		slog.Error("synchronized_dual_writer_postgres_row_dump",
+			slog.String("job_id", w.jobID),
+			slog.String("cid", entry.Cid),
+			slog.String("column", f.column),
+			slog.Int("byte_length", len(f.bytes)),
+			slog.Bool("truncated", truncated),
+			slog.Bool("contains_surrogate_escape", containsSurrogateEscape(f.bytes)),
+			slog.Bool("contains_replacement_char", bytes.Contains(f.bytes, []byte("\\ufffd"))),
+			slog.String("base64", base64.StdEncoding.EncodeToString(dump)),
+		)
+	}
 }
 
 func (w *SynchronizedDualWriter) writeToCSV(entry *gmaps.Entry) error {
