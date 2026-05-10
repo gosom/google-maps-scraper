@@ -998,7 +998,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) JobOutcome {
 		w.logger.Debug("exit_monitor_starting", slog.String("job_id", job.ID))
 
 		go exitMonitor.Run(mateCtx)
-		w.logger.Debug("mate_start_invoking", slog.String("job_id", job.ID), slog.Int("seed_jobs", len(seedJobs)))
+		w.logger.Info("mate_start_invoking", slog.String("job_id", job.ID), slog.Int("seed_jobs", len(seedJobs)))
 
 		// Channel carries both the completion signal and the error from mate.Start,
 		// eliminating the shared mateErr variable and the separate done channel.
@@ -1012,7 +1012,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) JobOutcome {
 				}
 			}()
 			resultCh <- mateResult{err: mate.Start(mateCtx, seedJobs...)}
-			w.logger.Debug("mate_start_goroutine_completed", slog.String("job_id", job.ID))
+			w.logger.Info("mate_start_goroutine_completed", slog.String("job_id", job.ID))
 		}()
 
 		// Wait for mate.Start to complete or for a backup timeout
@@ -1051,7 +1051,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) JobOutcome {
 		case res := <-resultCh:
 			// mate.Start completed normally
 			err = res.err
-			w.logger.Debug("mate_start_completed_normally", slog.String("job_id", job.ID), slog.Any("error", err))
+			w.logger.Info("mate_start_completed_normally", slog.String("job_id", job.ID), slog.Any("error", err))
 		case <-backupTimeout.C:
 			// Backup timeout - force completion
 			w.logger.Debug("backup_timeout_triggered", slog.String("job_id", job.ID))
