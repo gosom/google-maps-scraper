@@ -128,7 +128,7 @@ func (c *CostEstimate) MinTotalMicro() int64 { return c.minTotalMicro }
 func NewEstimationService(db *sql.DB, priceRepo models.PricingRuleRepository, logger *slog.Logger) *EstimationService {
 	return &EstimationService{
 		db:        db,
-		log:       logger.With(slog.String("component", "estimation")),
+		log:       logger.With(slog.String("service", "estimation")),
 		priceRepo: priceRepo,
 	}
 }

@@ -20,7 +20,7 @@ type CostsService struct {
 func NewCostsService(db *sql.DB, logger *slog.Logger) *CostsService {
 	return &CostsService{
 		db:  db,
-		log: logger.With(slog.String("component", "costs")),
+		log: logger.With(slog.String("service", "costs")),
 	}
 }
 

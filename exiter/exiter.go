@@ -178,7 +178,10 @@ func (e *exiter) IncrResultsWritten(val int) {
 		slog.Bool("cancellation_triggered", e.cancellationTriggered),
 	)
 
-	// Check if we've reached the max results limit and trigger early exit
+	// Check if we've reached the max results limit and trigger early exit.
+	// In unlimited mode (max_results=0) the predicate is always false, so
+	// we never log a "still below limit" event — that would be one DEBUG
+	// line per scraped row and contributes nothing.
 	if e.maxResults > 0 && e.resultsWritten >= e.maxResults && !e.cancellationTriggered {
 		e.cancellationTriggered = true
 		slog.Info("max_results_reached",
@@ -195,12 +198,6 @@ func (e *exiter) IncrResultsWritten(val int) {
 				slog.Int("max_results", e.maxResults),
 			)
 		}
-	} else {
-		slog.Debug("cancellation_not_triggered",
-			slog.Int("results_written", e.resultsWritten),
-			slog.Int("max_results", e.maxResults),
-			slog.Bool("cancellation_triggered", e.cancellationTriggered),
-		)
 	}
 }
 

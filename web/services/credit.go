@@ -22,7 +22,7 @@ func NewCreditService(db *sql.DB, billingSvc *billing.Service, logger *slog.Logg
 	return &CreditService{
 		db:      db,
 		billing: billingSvc,
-		log:     logger.With(slog.String("component", "credit")),
+		log:     logger.With(slog.String("service", "credit")),
 	}
 }
 

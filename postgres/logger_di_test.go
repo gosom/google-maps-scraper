@@ -8,7 +8,9 @@ import (
 )
 
 // TestMigrationRunner_LoggerDI asserts that NewMigrationRunner accepts a
-// *slog.Logger and uses it (component attribute visible in logged output).
+// *slog.Logger and tags it with module=migration (NOT component=migration —
+// `component` is owned by main.go for the runner identity, see web/web.go
+// for the same convention).
 func TestMigrationRunner_LoggerDI(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -18,10 +20,13 @@ func TestMigrationRunner_LoggerDI(t *testing.T) {
 		t.Fatal("NewMigrationRunner returned nil")
 	}
 
-	// Log through the stored logger to verify component attr is set.
 	mr.logger.Info("test_migration_logger")
-	if !strings.Contains(buf.String(), "component=migration") {
-		t.Errorf("expected 'component=migration' in logger output, got: %s", buf.String())
+	out := buf.String()
+	if !strings.Contains(out, "module=migration") {
+		t.Errorf("expected 'module=migration' in logger output, got: %s", out)
+	}
+	if strings.Contains(out, "component=migration") {
+		t.Errorf("migration must not tag itself as component=… (reserved for runner level), got: %s", out)
 	}
 }
 

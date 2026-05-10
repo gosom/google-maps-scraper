@@ -230,20 +230,6 @@ func (e *Entry) CsvHeaders() []string {
 }
 
 func (e *Entry) CsvRow() []string {
-	// DEBUG: Log final image count being written to CSV
-	if len(e.Images) > 0 {
-		slog.Debug("entry_csv_row_images",
-			slog.Int("image_count", len(e.Images)),
-			slog.String("title", e.Title),
-		)
-		if len(e.EnhancedImages) > 0 {
-			slog.Debug("entry_csv_row_enhanced_images",
-				slog.Int("enhanced_image_count", len(e.EnhancedImages)),
-				slog.Bool("has_image_extraction_metadata", e.ImageExtractionMetadata != nil),
-			)
-		}
-	}
-
 	return []string{
 		e.ID,
 		e.Link,

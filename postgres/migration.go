@@ -39,7 +39,7 @@ func NewMigrationRunner(dsn string, logger *slog.Logger) *MigrationRunner {
 	}
 	return &MigrationRunner{
 		dsn:     dsn,
-		logger:  logger.With(slog.String("component", "migration")),
+		logger:  logger.With(slog.String("module", "migration")),
 		timeout: 120 * time.Second,
 	}
 }

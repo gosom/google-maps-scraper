@@ -984,9 +984,18 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) JobOutcome {
 		// if exit monitor actually detected completion (not just timeout)
 		exitMonitorCompleted := make(chan struct{})
 
+		// naturalCompletion records that wrapperCancel fired — i.e. the
+		// exit monitor signalled "all places done" and cancelled mateCtx
+		// as the success-path termination, not as an abort. Read after
+		// mate.Start returns and threaded into classifyOutcome so a
+		// successful unlimited-mode run is not misclassified as
+		// "partial" just because mate.Start returned context.Canceled.
+		var naturalCompletion atomic.Bool
+
 		// Create a wrapper cancel function that signals exit monitor completion
 		wrapperCancel := func() {
 			w.logger.Debug("exit_monitor_completion_signaled", slog.String("job_id", job.ID))
+			naturalCompletion.Store(true)
 			select {
 			case exitMonitorCompleted <- struct{}{}:
 			default:
@@ -998,7 +1007,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) JobOutcome {
 		w.logger.Debug("exit_monitor_starting", slog.String("job_id", job.ID))
 
 		go exitMonitor.Run(mateCtx)
-		w.logger.Info("mate_start_invoking", slog.String("job_id", job.ID), slog.Int("seed_jobs", len(seedJobs)))
+		w.logger.Debug("mate_start_invoking", slog.String("job_id", job.ID), slog.Int("seed_jobs", len(seedJobs)))
 
 		// Channel carries both the completion signal and the error from mate.Start,
 		// eliminating the shared mateErr variable and the separate done channel.
@@ -1012,7 +1021,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) JobOutcome {
 				}
 			}()
 			resultCh <- mateResult{err: mate.Start(mateCtx, seedJobs...)}
-			w.logger.Info("mate_start_goroutine_completed", slog.String("job_id", job.ID))
+			w.logger.Debug("mate_start_goroutine_completed", slog.String("job_id", job.ID))
 		}()
 
 		// Wait for mate.Start to complete or for a backup timeout
@@ -1049,9 +1058,16 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) JobOutcome {
 
 		select {
 		case res := <-resultCh:
-			// mate.Start completed normally
+			// mate.Start returned via the result channel (no backup-timer
+			// or forced-completion path). The returned error is reported
+			// verbatim — for unlimited-mode jobs that completed naturally
+			// it will be `context.Canceled` because the exit monitor
+			// cancels mateCtx as the success-path termination. The
+			// classifyOutcome call below disambiguates that via the
+			// naturalCompletion flag, so a `context.Canceled` here is
+			// not by itself a failure signal.
 			err = res.err
-			w.logger.Info("mate_start_completed_normally", slog.String("job_id", job.ID), slog.Any("error", err))
+			w.logger.Debug("mate_start_returned", slog.String("job_id", job.ID), slog.Any("error", err))
 		case <-backupTimeout.C:
 			// Backup timeout - force completion
 			w.logger.Debug("backup_timeout_triggered", slog.String("job_id", job.ID))
@@ -1138,7 +1154,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) JobOutcome {
 			w.logger.Error("database_connection_nil", slog.String("job_id", job.ID))
 		}
 
-		outcome = classifyOutcome(err, userInitiatedCancel, resultCount, exitMonitor.LastSeedError())
+		outcome = classifyOutcome(err, userInitiatedCancel, naturalCompletion.Load(), resultCount, exitMonitor.LastSeedError())
 		job.Status = outcome.Status
 		job.FailureReason = outcome.FailureReason
 		job.ResultCount = outcome.ResultCount
@@ -1284,19 +1300,30 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) JobOutcome {
 		job.Status = web.StatusCompleted
 		w.logger.Debug("status_set_ok", slog.String("job_id", job.ID))
 
-		// Upload CSV to S3 and save metadata if S3 is configured.
-		// File is now fully closed and flushed to disk, safe to upload.
-		// uploadToS3AndSaveMetadata logs the specific failure mode
-		// (s3_upload_failed / s3_db_record_creation_failed) at Error with
-		// bucket+object_key context. Per the single-handling-rule we do
-		// NOT re-log the wrapped error here — emit a Warn audit line so
-		// operators can still query "jobs kept successful despite S3
-		// failure" without duplicating the Error.
+		// Upload CSV to S3 and persist a job_files row pointing at the
+		// uploaded object. File is fully closed/flushed at this point.
+		//
+		// On failure we deliberately keep the job marked Completed: the
+		// scraping itself succeeded and the CSV exists on the local VPS
+		// disk, so the legacy `/jobs/{id}/download` route still serves it
+		// (it streams from disk). The canonical `/jobs/{id}/download-url`
+		// route, however, is broken for this job — it looks up the
+		// job_files row that we never wrote, returns 404, and the
+		// frontend falls back to the legacy route. Operationally that
+		// means: a job whose S3 upload failed depends on the prod VPS
+		// keeping its disk; if the VPS is replaced or the legacy route
+		// is removed before the job is re-uploaded, the CSV becomes
+		// unreachable.
+		//
+		// uploadToS3AndSaveMetadata already logs the specific failure
+		// mode (s3_upload_failed / s3_db_record_creation_failed) at
+		// Error with bucket+object_key context, so per the single-
+		// handling rule we don't re-log the wrapped error here. The
+		// Warn line below is the audit trail operators can query as
+		// "jobs kept successful despite S3 failure".
 		if err := w.uploadToS3AndSaveMetadata(ctx, job, outpath); err != nil {
 			_ = err // already logged at Error inside uploadToS3AndSaveMetadata
 			w.logger.Warn("s3_upload_skipped_job_kept_successful", slog.String("job_id", job.ID))
-			// Don't fail the job due to S3 upload failure - the scraping was successful
-			// The CSV file will remain on local storage
 		}
 	} else {
 		job.Status = web.StatusFailed

@@ -40,7 +40,10 @@ func NewIntegrationHandler(repo models.IntegrationRepository, enc *encryption.En
 		sheetsService: sheetsService,
 		env:           env,
 		google:        googleCfg,
-		log:           logger.With(slog.String("component", "integration")),
+		// 3rd-tier tag (handler under the api module): "service" rather
+		// than "component" so we don't shadow the component=<runner>
+		// tag set in main.go or the module=api tag set in web/web.go.
+		log: logger.With(slog.String("service", "integration")),
 	}
 }
 

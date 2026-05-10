@@ -19,12 +19,20 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// nulEscape is the 6-character JSON escape that json.Marshal produces for
-// a NUL byte (0x00). Valid per the JSON spec, but rejected by Postgres'
-// json/jsonb type with SQLSTATE 22P02 ("invalid input syntax for type
-// json"). Google Maps scraped strings (review text, image alt text)
-// sometimes contain NUL bytes; without stripping, the whole row fails to
-// insert and the job hangs in "scraping" forever (May 2026 prod incident).
+// nulEscape is the 6-character JSON escape `\u0000` that json.Marshal emits
+// for a NUL byte (0x00). Valid per the JSON spec but rejected by Postgres'
+// json/jsonb input parser. Google Maps scraped strings (review text, image
+// alt text) occasionally carry NUL bytes, so we strip the escape before
+// handing the bytes to pgx.
+//
+// Defence-in-depth, not the prod fix. The May 2026 prod incident that
+// motivated this strip turned out to have a different root cause: pgx
+// running under PgBouncer transaction-mode forces simple_protocol, which
+// encodes a Go []byte as bytea — not jsonb — and fails with SQLSTATE 22P02
+// before any NUL escape could matter (see PR #63 / jackc/pgx#2231,
+// resolved by passing the marshaled bytes as `string`). The strip is kept
+// because (a) PR #60 already proved scraped data does contain NUL bytes,
+// and (b) the cost is one bytes.Contains call per row.
 var nulEscape = []byte{'\\', 'u', '0', '0', '0', '0'}
 
 // jsonDiagnosticBytesCap caps the per-column base64 dump emitted on a row
@@ -43,20 +51,6 @@ func mustMarshalJSON(v any) []byte {
 	}
 	if bytes.Contains(b, nulEscape) {
 		b = bytes.ReplaceAll(b, nulEscape, nil)
-	}
-	// At DEBUG level only, surface coarse byte-class signals so we can
-	// tell which non-NUL escape Postgres is rejecting next time. Cheap
-	// (small substring scans) but only worth running if the handler is
-	// actually going to record the line.
-	if slog.Default().Enabled(context.Background(), slog.LevelDebug) {
-		slog.Debug("json_marshaled",
-			slog.String("type", fmt.Sprintf("%T", v)),
-			slog.Int("length", len(b)),
-			slog.Bool("contains_nul_escape", false), // we just stripped it; report post-strip
-			slog.Bool("contains_surrogate_escape", containsSurrogateEscape(b)),
-			slog.Bool("contains_replacement_char", bytes.Contains(b, []byte("\\ufffd"))),
-			slog.Bool("contains_unicode_escape", bytes.Contains(b, []byte("\\u"))),
-		)
 	}
 	return b
 }

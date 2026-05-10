@@ -106,10 +106,10 @@ type UploadResult struct {
 
 // loggerFor returns the per-request logger from ctx if one is attached,
 // otherwise the constructor-injected u.log. Both already carry the
-// component=s3uploader attr.
+// module=s3uploader attr.
 func (u *Uploader) loggerFor(ctx context.Context) *slog.Logger {
 	if l := pkglogger.FromContext(ctx); l != nil && l != slog.Default() {
-		return l.With(slog.String("component", "s3uploader"))
+		return l.With(slog.String("module", "s3uploader"))
 	}
 	return u.log
 }
@@ -155,7 +155,7 @@ func New(opts ...Option) (*Uploader, error) {
 	return &Uploader{
 		client:            realClient,
 		presigner:         s3.NewPresignClient(realClient),
-		log:               c.logger.With(slog.String("component", "s3uploader")),
+		log:               c.logger.With(slog.String("module", "s3uploader")),
 		sseEnabled:        c.sseEnabled,
 		metrics:           c.metrics,
 		retryerMode:       "standard",

@@ -103,7 +103,12 @@ func New(cfg ServerConfig) (*Server, error) {
 		tmpl:     make(map[string]*template.Template),
 		db:       cfg.PgDB,
 		userRepo: cfg.UserRepo,
-		logger:   logger.With(slog.String("component", "api")),
+		// "module" rather than "component" so we don't overwrite the
+		// runner-level component tag (set in main.go). Pre-2026-05-10
+		// every log record had two `component` fields — the runner's
+		// and this one — and most aggregators silently keep only the
+		// last, so dashboards filtering on component=webrunner went blind.
+		logger: logger.With(slog.String("module", "api")),
 		srv: &http.Server{
 			Addr:              cfg.Addr,
 			ReadHeaderTimeout: 10 * time.Second,

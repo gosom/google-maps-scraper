@@ -19,7 +19,7 @@ type ResultsService struct {
 func NewResultsService(db *sql.DB, logger *slog.Logger) *ResultsService {
 	return &ResultsService{
 		db:  db,
-		log: logger.With(slog.String("component", "results")),
+		log: logger.With(slog.String("service", "results")),
 	}
 }
 

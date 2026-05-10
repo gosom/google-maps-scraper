@@ -18,6 +18,7 @@ func TestClassifyOutcome(t *testing.T) {
 		name                string
 		mateErr             error
 		userInitiatedCancel bool
+		naturalCompletion   bool
 		resultCount         int
 		seedErr             error
 		wantStatus          string
@@ -132,13 +133,44 @@ func TestClassifyOutcome(t *testing.T) {
 			wantStatus:  "completed",
 			wantCause:   CauseSuccess,
 		},
+		{
+			// May 2026 fix: in unlimited mode the exit monitor cancels
+			// mateCtx as the *successful* termination path once all
+			// places-found are scraped. Without naturalCompletion, every
+			// such job is misclassified as Partial. With it, the
+			// context.Canceled is treated identically to a clean
+			// mate.Start return. Pins the prod log we saw —
+			// places_completed=35, places_found=35, results_written=35,
+			// mate.Start returned context.Canceled, classifier must say
+			// Success.
+			name:              "natural completion via exit monitor: context.Canceled treated as success",
+			mateErr:           context.Canceled,
+			naturalCompletion: true,
+			resultCount:       35,
+			wantStatus:        "completed",
+			wantCause:         CauseSuccess,
+		},
+		{
+			// Defence: naturalCompletion must only collapse the
+			// context.Canceled branch. A non-cancel error (runtime
+			// failure) is still a failure regardless of any "we thought
+			// we were done" signal — otherwise a panic during the final
+			// 30s grace would silently report success.
+			name:              "naturalCompletion ignored when error is not context.Canceled",
+			mateErr:           errors.New("runtime panic during teardown"),
+			naturalCompletion: true,
+			resultCount:       0,
+			wantStatus:        "failed",
+			wantCause:         CauseRuntimeError,
+			wantFailureReason: "job failed due to a runtime error",
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := classifyOutcome(tc.mateErr, tc.userInitiatedCancel, tc.resultCount, tc.seedErr)
+			got := classifyOutcome(tc.mateErr, tc.userInitiatedCancel, tc.naturalCompletion, tc.resultCount, tc.seedErr)
 
 			assert.Equal(t, tc.wantStatus, got.Status, "Status mismatch")
 			assert.Equal(t, tc.wantCause, got.Cause, "Cause mismatch")

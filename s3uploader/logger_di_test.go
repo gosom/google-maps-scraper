@@ -10,7 +10,9 @@ import (
 )
 
 // TestS3Uploader_LoggerDI asserts that s3uploader.New accepts a *slog.Logger
-// and wires it with the component attribute. We skip actual AWS calls.
+// and tags it with module=s3uploader. The tag is `module`, not `component`,
+// because main.go reserves `component` for the runner identity — see
+// web/web.go for the same convention.
 func TestS3Uploader_LoggerDI(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -25,9 +27,12 @@ func TestS3Uploader_LoggerDI(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, u)
 
-	// Emit a line through the injected logger to check the component attr.
 	u.log.Info("test_s3_logger")
-	if !strings.Contains(buf.String(), "component=s3uploader") {
-		t.Errorf("expected 'component=s3uploader' in logger output, got: %s", buf.String())
+	out := buf.String()
+	if !strings.Contains(out, "module=s3uploader") {
+		t.Errorf("expected 'module=s3uploader' in logger output, got: %s", out)
+	}
+	if strings.Contains(out, "component=s3uploader") {
+		t.Errorf("s3uploader must not tag itself as component=… (reserved for runner level), got: %s", out)
 	}
 }

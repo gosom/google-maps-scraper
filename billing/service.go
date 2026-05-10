@@ -78,7 +78,7 @@ func New(db *sql.DB, cfg *config.Service, stripeSecretKey string, webhookSigning
 	if logger == nil {
 		logger = slog.Default()
 	}
-	svcLogger := logger.With(slog.String("component", "billing"))
+	svcLogger := logger.With(slog.String("module", "billing"))
 	if stripeSecretKey != "" {
 		// Emit the SDK-pinned API version at startup so ops can confirm
 		// which Stripe API contract we're talking to without reading source.

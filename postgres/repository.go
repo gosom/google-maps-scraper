@@ -33,8 +33,12 @@ func NewRepository(db *sql.DB, logger *slog.Logger) (models.JobRepository, error
 	}
 	// We don't create schema here anymore since we're using migrations
 	return &repository{
-		db:  db,
-		log: logger.With(slog.String("component", "repository")),
+		db: db,
+		// "module" not "component": main.go already tagged the runner with
+		// component=<runner>; using component again here would silently
+		// shadow the runner tag in most log aggregators (kept value is the
+		// last). See web/web.go for the same rule.
+		log: logger.With(slog.String("module", "repository")),
 	}, nil
 }
 
