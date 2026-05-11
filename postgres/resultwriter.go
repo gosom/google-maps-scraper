@@ -40,7 +40,7 @@ func (r *resultWriter) Run(ctx context.Context, in <-chan scrapemate.Result) err
 
 		buff = append(buff, entry)
 
-		if len(buff) >= maxBatchSize || time.Now().UTC().Sub(lastSave) >= time.Minute {
+		if len(buff) >= maxBatchSize || time.Since(lastSave) >= time.Minute {
 			err := r.batchSave(ctx, buff)
 			if err != nil {
 				return err
