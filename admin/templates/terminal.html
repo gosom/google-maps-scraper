@@ -1,0 +1,111 @@
+{{define "terminal.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terminal - {{.WorkerName}}</title>
+    <link rel="stylesheet" href="/admin/static/xterm.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+        #terminal { width: 100%; height: 100%; }
+        #status {
+            position: fixed; top: 0; left: 0; right: 0;
+            padding: 4px 12px; font-family: monospace; font-size: 12px;
+            background: #1a1a2e; color: #888; z-index: 10;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        #status.connected { color: #4caf50; }
+        #status.error { color: #f44336; }
+    </style>
+</head>
+<body>
+    <div id="status">
+        <span id="statusText">Connecting to {{.WorkerName}} ({{.WorkerIP}})...</span>
+        <span id="statusRight"></span>
+    </div>
+    <div id="terminal" style="padding-top: 24px;"></div>
+
+    <script src="/admin/static/xterm.min.js"></script>
+    <script src="/admin/static/xterm-addon-fit.min.js"></script>
+    <script>
+    (function() {
+        var workerID = {{.WorkerID}};
+        var workerName = "{{.WorkerName}}";
+
+        var term = new Terminal({
+            cursorBlink: true,
+            fontSize: 14,
+            fontFamily: "'Fira Code', 'Cascadia Code', 'Source Code Pro', 'Menlo', monospace",
+            theme: {
+                background: '#0d1117',
+                foreground: '#c9d1d9',
+                cursor: '#58a6ff',
+                selectionBackground: '#264f78'
+            }
+        });
+
+        var fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+
+        var termEl = document.getElementById('terminal');
+        var statusEl = document.getElementById('status');
+        var statusText = document.getElementById('statusText');
+
+        term.open(termEl);
+        fitAddon.fit();
+
+        var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        var wsURL = protocol + '//' + location.host + '/admin/workers/' + workerID + '/terminal/ws';
+        var ws = new WebSocket(wsURL);
+        ws.binaryType = 'arraybuffer';
+
+        function sendSize() {
+            var size = JSON.stringify({high: term.rows, width: term.cols});
+            var buf = new TextEncoder().encode(size);
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(buf.buffer);
+            }
+        }
+
+        ws.onopen = function() {
+            statusText.textContent = 'Connected to ' + workerName;
+            statusEl.className = 'connected';
+            sendSize();
+        };
+
+        ws.onmessage = function(ev) {
+            if (typeof ev.data === 'string') {
+                term.write(ev.data);
+            } else {
+                term.write(new Uint8Array(ev.data));
+            }
+        };
+
+        ws.onclose = function() {
+            statusText.textContent = 'Disconnected from ' + workerName;
+            statusEl.className = 'error';
+            term.write('\r\n\r\n--- Connection closed ---\r\n');
+        };
+
+        ws.onerror = function() {
+            statusText.textContent = 'Connection error';
+            statusEl.className = 'error';
+        };
+
+        term.onData(function(data) {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(data);
+            }
+        });
+
+        window.addEventListener('resize', function() {
+            fitAddon.fit();
+            sendSize();
+        });
+    })();
+    </script>
+</body>
+</html>
+{{end}}

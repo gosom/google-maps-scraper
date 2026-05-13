@@ -7,9 +7,10 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/google/uuid"
-	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/scrapemate"
 	"github.com/mcnijman/go-emailaddress"
+
+	"github.com/gosom/google-maps-scraper/exiter"
 )
 
 type EmailExtractJobOptions func(*EmailExtractJob)
@@ -17,8 +18,9 @@ type EmailExtractJobOptions func(*EmailExtractJob)
 type EmailExtractJob struct {
 	scrapemate.Job
 
-	Entry       *Entry
-	ExitMonitor exiter.Exiter
+	Entry                   *Entry
+	ExitMonitor             exiter.Exiter
+	WriterManagedCompletion bool
 }
 
 func NewEmailJob(parentID string, entry *Entry, opts ...EmailExtractJobOptions) *EmailExtractJob {
@@ -53,6 +55,12 @@ func WithEmailJobExitMonitor(exitMonitor exiter.Exiter) EmailExtractJobOptions {
 	}
 }
 
+func WithEmailJobWriterManagedCompletion() EmailExtractJobOptions {
+	return func(j *EmailExtractJob) {
+		j.WriterManagedCompletion = true
+	}
+}
+
 func (j *EmailExtractJob) Process(ctx context.Context, resp *scrapemate.Response) (any, []scrapemate.IJob, error) {
 	defer func() {
 		resp.Document = nil
@@ -60,7 +68,7 @@ func (j *EmailExtractJob) Process(ctx context.Context, resp *scrapemate.Response
 	}()
 
 	defer func() {
-		if j.ExitMonitor != nil {
+		if j.ExitMonitor != nil && !j.WriterManagedCompletion {
 			j.ExitMonitor.IncrPlacesCompleted(1)
 		}
 	}()
@@ -149,6 +157,7 @@ func normalizeGoogleURL(rawURL string) string {
 
 	if strings.HasPrefix(rawURL, "/url?q=") {
 		fullURL := "https://www.google.com" + rawURL
+
 		parsed, err := url.Parse(fullURL)
 		if err != nil {
 			return rawURL

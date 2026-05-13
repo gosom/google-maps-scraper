@@ -1,0 +1,136 @@
+{{define "2fa_setup.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    {{template "head"}}
+    <title>2FA Setup - Maps Scraper</title>
+</head>
+<body>
+    {{template "navbar" .}}
+
+    <main class="container">
+        {{if .Success}}<div class="alert alert-success">{{.Success}}</div>{{end}}
+        {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+
+        {{if .TOTPEnabled}}
+        <div class="page-header">
+            <h1>Two-Factor Authentication</h1>
+            <p><span class="status success">Enabled</span></p>
+        </div>
+
+        <div class="card">
+            <p>Your account is protected with two-factor authentication.</p>
+
+            <details>
+                <summary>Disable 2FA</summary>
+                <p><small>Warning: This will make your account less secure.</small></p>
+                <form method="POST" action="/admin/2fa/disable"
+                      onsubmit="return confirm('Disable two-factor authentication?');">
+                    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                    <label>
+                        Confirm Password
+                        <input type="password" name="password" required>
+                    </label>
+                    <button type="submit" class="btn-danger" style="width: auto;">Disable 2FA</button>
+                </form>
+            </details>
+        </div>
+
+        {{else if eq .Step "backup"}}
+        <div class="page-header">
+            <h1>Backup Codes</h1>
+            <p>Save these codes in a secure location</p>
+        </div>
+
+        <div class="card">
+            <p><strong>Important:</strong> These codes can be used if you lose access to your authenticator. Each code works only once.</p>
+
+            <div class="backup-grid">
+                {{range .BackupCodes}}
+                <code>{{.}}</code>
+                {{end}}
+            </div>
+
+            <div class="alert alert-error">
+                You will not see these codes again!
+            </div>
+
+            <form method="POST" action="/admin/2fa/setup">
+                <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                <input type="hidden" name="action" value="confirm_backup">
+                <label>
+                    <input type="checkbox" id="confirm" name="confirmed" value="yes" required>
+                    I have saved these backup codes
+                </label>
+                <button type="submit" id="btn" disabled>Enable 2FA</button>
+            </form>
+
+            <script>
+                document.getElementById('confirm').onchange = function() {
+                    document.getElementById('btn').disabled = !this.checked;
+                };
+            </script>
+        </div>
+
+        {{else if eq .Step "qr"}}
+        <div class="page-header">
+            <h1>Enable 2FA</h1>
+            <p>Scan the QR code with your authenticator app</p>
+        </div>
+
+        <div class="card">
+            <ol>
+                <li>Install an authenticator app (Google Authenticator, Authy, 1Password)</li>
+                <li>Scan the QR code below</li>
+                <li>Enter the 6-digit code to verify</li>
+            </ol>
+
+            <div class="qr-code">
+                <img src="data:image/png;base64,{{.QRCode}}" alt="QR Code" width="180" height="180">
+                <div class="secret">{{.Secret}}</div>
+            </div>
+
+            <form method="POST" action="/admin/2fa/setup">
+                <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                <input type="hidden" name="action" value="verify_totp">
+                <label>
+                    Verification Code
+                    <input type="text" name="code" class="code" required
+                           pattern="[0-9]{6}" maxlength="6" placeholder="000000"
+                           autocomplete="one-time-code">
+                </label>
+                <button type="submit">Verify</button>
+            </form>
+        </div>
+
+        {{else}}
+        <div class="page-header">
+            <h1>Enable 2FA</h1>
+            <p>Verify your password to continue</p>
+        </div>
+
+        <div class="card">
+            <p>To enable two-factor authentication, please confirm your password first.</p>
+
+            <form method="POST" action="/admin/2fa/setup">
+                <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                <input type="hidden" name="action" value="verify_password">
+                <label>
+                    Current Password
+                    <input type="password" name="password" required autofocus>
+                </label>
+                <button type="submit">Continue</button>
+            </form>
+        </div>
+        {{end}}
+
+        <p style="margin-top: 1.5rem;"><a href="/admin">&larr; Back to Dashboard</a></p>
+    </main>
+
+    <script>
+        var code = document.querySelector('.code');
+        if (code) code.oninput = function() { this.value = this.value.replace(/\D/g, ''); };
+    </script>
+</body>
+</html>
+{{end}}
