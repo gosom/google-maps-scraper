@@ -248,10 +248,6 @@ func New(cfg ServerConfig) (*Server, error) {
 		webmiddleware.RequestLogger(ans.logger),
 	)
 
-	// OAuth auth endpoint (public - initiates OAuth flow)
-	// User clicks "Connect" in the webapp and is redirected here
-	publicAPIRouter.HandleFunc("/integrations/google/auth", hg.Integration.HandleGoogleAuth).Methods(http.MethodGet)
-
 	// API routes with authentication if available
 	apiRouter := router.PathPrefix("/api/v1").Subrouter()
 
@@ -325,13 +321,11 @@ func New(cfg ServerConfig) (*Server, error) {
 		apiRouter.HandleFunc("/webhooks/{id}", hg.Webhook.RevokeWebhook).Methods(http.MethodDelete)
 	}
 
-	// Protected integration endpoints (require authentication)
-	// Callback is protected because:
-	// 1. User must be logged in to initiate OAuth
-	// 2. Browser automatically sends __session cookie with the redirect (SameSite=Lax)
-	// 3. Auth middleware verifies the session cookie
-	// 4. User ID is available in context via auth.GetUserID()
-	apiRouter.HandleFunc("/integrations/google/callback", hg.Integration.HandleGoogleCallback).Methods(http.MethodGet)
+	// Integration endpoints (authenticated). The Google OAuth callback is
+	// terminated on the Next.js frontend (so Clerk's host-only __session
+	// cookie remains in scope); the frontend then POSTs {code} here with
+	// the user's Clerk JWT as a Bearer token.
+	apiRouter.HandleFunc("/integrations/google/callback", hg.Integration.HandleGoogleCallback).Methods(http.MethodPost)
 	apiRouter.HandleFunc("/integrations/google/status", hg.Integration.HandleGetStatus).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/integrations/config", hg.Integration.HandleGetConfig).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/jobs/{id}/export/google-sheets", hg.Integration.HandleExportJob).Methods(http.MethodPost)

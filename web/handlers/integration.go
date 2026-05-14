@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -61,78 +60,23 @@ func (h *IntegrationHandler) googleConfig() *oauth2.Config {
 	}
 }
 
-func (h *IntegrationHandler) HandleGoogleAuth(w http.ResponseWriter, r *http.Request) {
-	// Generate a state token to prevent CSRF.
-	//
-	// Security: this is INTENTIONALLY uuid.New() (v4), NOT uuid.NewV7().
-	// UUIDv7 embeds a sortable Unix-millisecond timestamp in its high
-	// bits, which would leak the OAuth flow start time to anyone who
-	// observes the state value. For an opaque CSRF token, the 122 bits
-	// of UUIDv4 randomness give exactly the cryptographic property we
-	// want — unguessable and timing-free. The codebase migrated row IDs
-	// to v7 for index locality; security tokens stay on v4.
-	state := uuid.New().String()
-
-	// Store state in a secure cookie.
-	// Use the injected appenv.Environment to unconditionally set Secure in
-	// production rather than trusting the client-supplied X-Forwarded-Proto
-	// header (CWE-614). The Environment is parsed once at startup from
-	// APP_ENV; see pkg/appenv.
-	isSecure := r.TLS != nil || h.env.IsProduction()
-	http.SetCookie(w, &http.Cookie{
-		Name:     "oauth_state",
-		Value:    state,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   isSecure,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   300, // 5 minutes
-	})
-
-	// AccessTypeOffline is required to get a refresh token
-	url := h.googleConfig().AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce)
-	h.log.Info("google_oauth_initiated")
-	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
-}
-
+// HandleGoogleCallback exchanges an OAuth authorization code for tokens and
+// persists the user's Google integration. Called by the Next.js frontend
+// after it has validated the CSRF state cookie (which lives on the frontend
+// origin, where Clerk's host-only __session cookie is also scoped).
 func (h *IntegrationHandler) HandleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Verify state
-	stateCookie, err := r.Cookie("oauth_state")
-	if err != nil {
-		http.Error(w, "State cookie not found", http.StatusBadRequest)
-		return
+	var body struct {
+		Code string `json:"code"`
 	}
-
-	// Clear the cookie.
-	// Use the injected appenv.Environment (not X-Forwarded-Proto) to set
-	// Secure flag (CWE-614).
-	isSecure := r.TLS != nil || h.env.IsProduction()
-	http.SetCookie(w, &http.Cookie{
-		Name:     "oauth_state",
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   isSecure,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   -1,
-	})
-
-	if r.URL.Query().Get("state") != stateCookie.Value {
-		h.log.Warn("google_oauth_invalid_state")
-		http.Error(w, "Invalid state parameter", http.StatusBadRequest)
-		return
-	}
-
-	code := r.URL.Query().Get("code")
-	if code == "" {
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Code == "" {
 		h.log.Warn("google_oauth_missing_code")
 		http.Error(w, "Code not found", http.StatusBadRequest)
 		return
 	}
 
-	token, err := h.googleConfig().Exchange(ctx, code)
+	token, err := h.googleConfig().Exchange(ctx, body.Code)
 	if err != nil {
 		h.log.Error("google_oauth_token_exchange_failed",
 			slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
@@ -140,7 +84,6 @@ func (h *IntegrationHandler) HandleGoogleCallback(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Get user from context using auth helper
 	userIDStr, err := auth.GetUserID(ctx)
 	if err != nil {
 		http.Error(w, "User not authenticated", http.StatusUnauthorized)
@@ -188,8 +131,7 @@ func (h *IntegrationHandler) HandleGoogleCallback(w http.ResponseWriter, r *http
 	}
 
 	h.log.Info("google_oauth_integration_saved", slog.String("user_id", userIDStr))
-	// Redirect back to frontend
-	http.Redirect(w, r, "/dashboard/integrations?success=true", http.StatusTemporaryRedirect)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *IntegrationHandler) HandleGetStatus(w http.ResponseWriter, r *http.Request) {
