@@ -90,34 +90,12 @@ func (h *IntegrationHandler) HandleGoogleCallback(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Encrypt tokens if encryptor is available, otherwise store plaintext
-	accessToken := token.AccessToken
-	refreshToken := token.RefreshToken
-	if h.enc != nil {
-		encrypted, encErr := h.enc.Encrypt(token.AccessToken)
-		if encErr != nil {
-			h.log.Error("google_oauth_encrypt_access_token_failed",
-				slog.String("user_id", userIDStr), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", encErr))
-			http.Error(w, "Failed to encrypt access token", http.StatusInternalServerError)
-			return
-		}
-		accessToken = encrypted
-
-		encrypted, encErr = h.enc.Encrypt(token.RefreshToken)
-		if encErr != nil {
-			h.log.Error("google_oauth_encrypt_refresh_token_failed",
-				slog.String("user_id", userIDStr), slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", encErr))
-			http.Error(w, "Failed to encrypt refresh token", http.StatusInternalServerError)
-			return
-		}
-		refreshToken = encrypted
-	}
-
+	// Pass plaintext tokens; the repository encrypts on Save.
 	integration := &models.UserIntegration{
 		UserID:       userIDStr,
 		Provider:     "google",
-		AccessToken:  []byte(accessToken),
-		RefreshToken: []byte(refreshToken),
+		AccessToken:  []byte(token.AccessToken),
+		RefreshToken: []byte(token.RefreshToken),
 		Expiry:       token.Expiry,
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
