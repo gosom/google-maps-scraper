@@ -252,12 +252,14 @@ func ValidateJobData(d *models.JobData) error {
 		return fmt.Errorf("max_reviews exceeds maximum of %d (per place)", CapReviewsMax)
 	}
 
-	// MaxImages — per-job total across all places. 0 means "skip images".
+	// MaxImages — per place (May 2026 — Cafe Schöneberg fix). 0 means
+	// "skip images entirely"; positive N means "take at most N images
+	// per place" with the cheap JSON payload tried first.
 	if d.MaxImages < 0 {
 		return errors.New("max_images cannot be negative")
 	}
-	if d.MaxImages > CapImagesMaxTotal {
-		return fmt.Errorf("max_images exceeds maximum of %d (per-job total)", CapImagesMaxTotal)
+	if d.MaxImages > CapImagesPerPlace {
+		return fmt.Errorf("max_images exceeds maximum of %d (per place)", CapImagesPerPlace)
 	}
 
 	// Radius — bounded both directions.

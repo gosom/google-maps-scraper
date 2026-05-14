@@ -906,16 +906,11 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) JobOutcome {
 		coords = job.Data.Lat + "," + job.Data.Lon
 	}
 
-	// Per-job total image budget. When MaxImages > 0, every PlaceJob in
-	// this scrape job shares this counter; once exhausted, image extraction
-	// is skipped for the remaining places (place metadata, reviews, and
-	// contact details continue to scrape — only image extraction stops).
-	// See gmaps.PlaceJob.extractImages for the enforcement logic.
-	var imageBudget *atomic.Int64
-	if job.Data.MaxImages > 0 {
-		imageBudget = &atomic.Int64{}
-		imageBudget.Store(int64(job.Data.MaxImages))
-	}
+	// Per-place image cap. job.Data.MaxImages is the user-configured maximum
+	// number of images for EACH place; 0 means "skip images entirely" and
+	// even the free JSON-payload images get dropped before billing. See
+	// gmaps.PlaceJob.applyPerPlaceImageCap for the contract (May 2026 —
+	// Cafe Schöneberg fix; semantics changed from per-job total).
 
 	seedJobs, err := runner.CreateSeedJobs(runner.SeedJobConfig{
 		FastMode:       job.Data.FastMode,
@@ -924,7 +919,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) JobOutcome {
 		MaxDepth:       job.Data.Depth,
 		IncludeEmails:  job.Data.IncludeEmails,
 		Images:         job.Data.MaxImages > 0,
-		ImageBudget:    imageBudget,
+		ImagesPerPlace: job.Data.MaxImages,
 		Debug:          w.cfg.Debug,
 		ReviewsMax:     job.Data.MaxReviews,
 		GeoCoordinates: coords,

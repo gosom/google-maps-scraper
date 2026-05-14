@@ -49,13 +49,14 @@ type JobData struct {
 	// the client omits them.
 	Depth         int  `json:"depth" validate:"min=1,max=20"`
 	IncludeEmails bool `json:"include_emails"`
-	// MaxImages is the TOTAL number of images across all places in the job
-	// — NOT per place. The literal 40000 here mirrors utils.CapImagesMaxTotal.
-	// 0 means "skip image scraping" (the billing-safe default). Any positive
-	// value enables image scraping with a per-job total budget enforced by
-	// the runner via a shared atomic counter (cross-place). The legacy
-	// `images` boolean was dropped in migration 000033.
-	MaxImages  int    `json:"max_images"  validate:"omitempty,min=0,max=40000"`
+	// MaxImages is the per-place image cap (May 2026 — Cafe Schöneberg
+	// fix; previously per-job total). The literal 500 here mirrors
+	// utils.CapImagesPerPlace. 0 means "skip image scraping" — even the
+	// free JSON-payload images that arrive with the page load are dropped
+	// before billing, so a user who didn't ask for photos is never charged
+	// for them. A positive N means "take at most N images per place",
+	// enforced by gmaps.PlaceJob.applyPerPlaceImageCap.
+	MaxImages  int    `json:"max_images"  validate:"omitempty,min=0,max=500"`
 	MaxReviews int    `json:"max_reviews" validate:"omitempty,min=0,max=500"`
 	MaxResults int    `json:"max_results" validate:"omitempty,min=0,max=500"`
 	Lat        string `json:"lat"         validate:"omitempty,latitude"`

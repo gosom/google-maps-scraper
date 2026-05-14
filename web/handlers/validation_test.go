@@ -181,13 +181,14 @@ func TestAPIHandlers_Scrape_Validation(t *testing.T) {
 		// TestValidateJobData_RejectsMaxTimeAboveCap instead.
 		{
 			name:           "Valid ImagesMax",
-			body:           cloneBody(map[string]interface{}{"max_images": 5000}),
+			body:           cloneBody(map[string]interface{}{"max_images": 100}),
 			expectedStatus: http.StatusUnauthorized,
 		},
 		{
-			// After Task 2.4: max_images ceiling bumped 20k → 40k.
+			// May 2026 — Cafe Schöneberg fix: max_images is now PER PLACE
+			// (ceiling 500), not per-job total (was 40k). 501 must reject.
 			name:           "Invalid ImagesMax Above Cap",
-			body:           cloneBody(map[string]interface{}{"max_images": 40001}),
+			body:           cloneBody(map[string]interface{}{"max_images": 501}),
 			expectedStatus: http.StatusBadRequest,
 		},
 		{

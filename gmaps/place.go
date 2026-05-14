@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -52,12 +53,15 @@ type PlaceJob struct {
 	ExitMonitor         exiter.Exiter
 	ExtractExtraReviews bool
 	ReviewsMax          int // Maximum number of reviews to extract
-	// ImageBudget is a per-job total image budget shared with all sibling
-	// PlaceJobs in the same scrape job. When non-nil, extractImages checks
-	// the counter before scraping and decrements after — once the budget
-	// is exhausted, image extraction is skipped for the remaining places
-	// in the job. When nil, no cross-place enforcement.
-	ImageBudget *atomic.Int64
+	// ImagesPerPlace is the hard per-place cap on stored/charged images.
+	// 0 means "skip images entirely" — even the free JSON-payload images
+	// that arrive with the page load are dropped, so the user is never
+	// billed for images they didn't ask for. A positive N means "take up
+	// to N images for this place": the cheap JSON images are used first,
+	// and the browser extractor is only invoked when JSON has fewer than
+	// N. After this PlaceJob completes, len(entry.Images) ≤ ImagesPerPlace
+	// always holds — the downstream billing query trusts this invariant.
+	ImagesPerPlace int
 }
 
 func NewPlaceJob(parentID, langCode, u string, extractEmail, extractImages bool, reviewsMax int, opts ...PlaceJobOptions) *PlaceJob {
@@ -97,15 +101,50 @@ func WithPlaceJobExitMonitor(exitMonitor exiter.Exiter) PlaceJobOptions {
 	}
 }
 
-// WithPlaceJobImageBudget attaches a per-job total image budget to the
-// PlaceJob. The counter is shared via pointer with sibling PlaceJobs in
-// the same scrape job — once exhausted, image extraction is skipped for
-// the remaining places. Pass nil (or omit this option) to disable
-// cross-place image budget enforcement.
-func WithPlaceJobImageBudget(budget *atomic.Int64) PlaceJobOptions {
+// WithPlaceJobImagesPerPlace sets the per-place image cap on the PlaceJob.
+// 0 means "no images at all" (the toggle-off case); a positive N means
+// "store at most N images for this place".
+func WithPlaceJobImagesPerPlace(n int) PlaceJobOptions {
 	return func(j *PlaceJob) {
-		j.ImageBudget = budget
+		j.ImagesPerPlace = n
 	}
+}
+
+// applyPerPlaceImageCap enforces the per-place image invariant on a parsed
+// Entry. With limit == 0 the JSON-payload images are dropped entirely
+// (toggle off); with limit > 0 the slice is truncated and CLONED so the
+// original (up-to-80-entry) backing array — including the discarded URL
+// strings in its tail — can be garbage-collected immediately rather than
+// being held by the trimmed slice header. Idempotent.
+func applyPerPlaceImageCap(entry *Entry, limit int) {
+	if entry == nil {
+		return
+	}
+	if limit <= 0 {
+		entry.Images = nil
+		return
+	}
+	if len(entry.Images) > limit {
+		// slices.Clone copies into a new backing array so the discarded
+		// tail (and its URL strings) becomes unreachable. slices.Clip
+		// alone would only adjust the slice's cap on the SAME array,
+		// keeping the tail strings alive until the entry is GC'd.
+		entry.Images = slices.Clone(entry.Images[:limit])
+	}
+}
+
+// remainingImageBudget returns 0 when the JSON-payload images have already
+// met or overshot the per-place cap; otherwise returns the number of slots
+// left for the browser extractor to fill. Saturating subtraction; never
+// returns negative.
+func remainingImageBudget(have, limit int) int {
+	if limit <= 0 {
+		return 0
+	}
+	if have >= limit {
+		return 0
+	}
+	return limit - have
 }
 
 // processExtractedImages converts and integrates extracted image data into the entry
@@ -255,8 +294,25 @@ func (j *PlaceJob) Process(ctx context.Context, resp *scrapemate.Response) (any,
 	// Successful JSON extraction and parsing
 	entry = parsedEntry
 
+	// Per-place image cap enforcement (post-EntryFromJSON).
+	//
+	// The Google Maps JSON page payload ships an unbounded `images` array
+	// (8–80+ items for a typical café). Before May 2026 these flowed
+	// straight to the database and got billed even when image enrichment
+	// was disabled (the Cafe Schöneberg bug — 504 images charged on a job
+	// configured for "10 photos per place"). The cap below clamps the
+	// JSON-payload images BEFORE they reach processExtractedImages, which
+	// then knows how much room is left for browser-extracted enhancements.
+	applyPerPlaceImageCap(&entry, j.ImagesPerPlace)
+
 	// Integrate enhanced image data if available
 	j.processExtractedImages(ctx, &entry, resp)
+
+	// Defence-in-depth: processExtractedImages merges enhanced images on
+	// top of the (already-capped) JSON images. Re-apply the cap so the
+	// final stored slice still respects the per-place invariant even when
+	// a browser-side extractor overshoots (race conditions, late merges).
+	applyPerPlaceImageCap(&entry, j.ImagesPerPlace)
 
 	entry.ID = j.ParentID
 
@@ -312,36 +368,62 @@ func (j *PlaceJob) Process(ctx context.Context, resp *scrapemate.Response) (any,
 	return &entry, nil, nil
 }
 
-// extractImages performs enhanced image extraction if enabled.
+// extractImages performs enhanced (browser-based) image extraction when
+// the per-place cap still has room left over after the free JSON-payload
+// images have been counted.
 //
-// When j.ImageBudget is non-nil, the budget is checked BEFORE scraping
-// (skip if exhausted) and decremented AFTER scraping by the number of
-// images actually extracted. This is the cross-place enforcement that
-// bounds total image extraction across an entire scrape job — see §2 of
-// docs/superpowers/plans/2026-04-08-api-production-readiness-audit.md
-// for the rationale.
+// Per-place semantics (locked May 2026 after the Cafe Schöneberg bug):
 //
-// Race-safety note: Load() and Add() are independent operations, so two
-// concurrent PlaceJobs can both observe a non-zero budget at the same
-// instant and both decide to scrape, even if the post-scrape decrement
-// would push the counter below zero. The result is a small overshoot
-// bounded by `concurrency × images_per_place`. This is acceptable: the
-// goal is bounding billing exposure, not exact accounting, and the API
-// already enforces a hard cap of 20000 at the validator layer.
+//   - ImagesPerPlace == 0 → toggle off; do nothing.
+//   - JSON payload already has ≥ N images for this place → do nothing
+//     (the cheaper path covered the cap; running the browser extractor
+//     would burn ~30s per place for results we'd immediately discard).
+//   - JSON has < N → run the browser extractor and TRUNCATE its result
+//     to the remaining budget so the merged entry.Images can never
+//     exceed N.
+//
+// The truncation here is the primary enforcement; PlaceJob.Process
+// re-applies applyPerPlaceImageCap after the merge as defence in depth.
 func (j *PlaceJob) extractImages(ctx context.Context, page playwright.Page, resp *scrapemate.Response) {
 	log := scrapemate.GetLoggerFromContext(ctx)
 
-	if !j.ExtractImages {
+	if !j.ExtractImages || j.ImagesPerPlace <= 0 {
 		return
 	}
 
-	// Cross-place per-job total budget check (Task 2.3).
-	if j.ImageBudget != nil && j.ImageBudget.Load() <= 0 {
-		log.Info("image_budget_exhausted", "job_id", j.ID)
+	// Count the JSON-payload images we already kept after applyPerPlaceImageCap
+	// in Process(). resp.Meta["json_image_count"] is populated by
+	// BrowserActions' peek-parse; if absent we fall back to 0, which makes
+	// the browser extractor request the full per-place budget — correctness
+	// is still preserved because PlaceJob.Process re-applies the cap after
+	// the merge. Log a debug line on miss so a future refactor that changes
+	// the meta-key type (e.g. int → int64) doesn't go silently undetected.
+	have := 0
+	if v, ok := resp.Meta["json_image_count"].(int); ok {
+		have = v
+	} else {
+		log.Debug("json_image_count_unavailable",
+			"job_id", j.ID,
+			"reason", "meta key absent or wrong type — extractor will receive full per-place budget; post-merge cap will rescue correctness")
+	}
+
+	// Clamp `have` to the cap before logging so the "have"/"remaining"
+	// numbers in subsequent log lines reflect the post-cap reality, not
+	// the raw peek count. Without this, a JSON payload of 80 with a cap
+	// of 10 would log have=80 even though only 10 are kept.
+	if have > j.ImagesPerPlace {
+		have = j.ImagesPerPlace
+	}
+
+	remaining := remainingImageBudget(have, j.ImagesPerPlace)
+	if remaining == 0 {
+		log.Info("image_budget_filled_from_json",
+			"job_id", j.ID, "have", have, "cap", j.ImagesPerPlace)
 		return
 	}
 
-	log.Info("image_extraction_started", "job_id", j.ID)
+	log.Info("image_extraction_started",
+		"job_id", j.ID, "have", have, "cap", j.ImagesPerPlace, "remaining", remaining)
 
 	// Create a separate context for image extraction with optimized timeout
 	imageCtx, imageCancel := context.WithTimeout(ctx, 30*time.Second) // Fast extraction should complete quickly
@@ -355,11 +437,12 @@ func (j *PlaceJob) extractImages(ctx context.Context, page playwright.Page, resp
 		return
 	}
 
-	// Decrement the per-job total budget by the number of images we just
-	// extracted. The next PlaceJob to call extractImages will observe the
-	// reduced counter and bail early if the budget is exhausted.
-	if j.ImageBudget != nil && len(imageResult) > 0 {
-		j.ImageBudget.Add(-int64(len(imageResult)))
+	// Truncate to the remaining budget so the merge in
+	// processExtractedImages cannot push entry.Images above the per-place
+	// cap. The extractor returns images in deterministic order from the
+	// gallery, so taking the first `remaining` is stable across re-runs.
+	if len(imageResult) > remaining {
+		imageResult = imageResult[:remaining]
 	}
 
 	// Store images data and metadata for processing in Process method
@@ -426,6 +509,22 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 	}
 
 	resp.Meta["json"] = raw
+
+	// Peek at the JSON-payload image count before deciding whether to run
+	// the slow browser extractor. EntryFromJSON is the source of truth for
+	// images.length (it filters invalid URLs), and a second parse in
+	// Process() rebuilds the full entry — so this is a small duplicate
+	// parse that saves up to ~30s per place when JSON already covers the
+	// per-place cap. See PlaceJob.extractImages for how this is consumed.
+	if peekEntry, peekErr := EntryFromJSON(raw); peekErr == nil {
+		resp.Meta["json_image_count"] = len(peekEntry.Images)
+	} else {
+		// Process() will surface the real parsing error with full context
+		// via the "parsing_failed" fallback path — this debug line is
+		// purely so JSON-shape regressions are visible at the peek site.
+		scrapemate.GetLoggerFromContext(ctx).Debug("json_image_peek_failed",
+			"job_id", j.ID, "error", peekErr)
+	}
 
 	// Extract images using the enhanced approach (only if ExtractImages is enabled)
 	j.extractImages(ctx, page, &resp)

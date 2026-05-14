@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -34,13 +33,12 @@ type GmapJob struct {
 	ExitMonitor         exiter.Exiter
 	ExtractExtraReviews bool
 	ReviewsMax          int // Maximum number of reviews to extract
-	// ImageBudget is the per-job total image budget shared across every
-	// PlaceJob spawned by this GmapJob. When non-nil, the scraper checks
-	// the counter before extracting images for each place and decrements
-	// after, stopping image extraction once the budget is exhausted. When
-	// nil, no cross-place enforcement (images are extracted unbounded —
-	// CLI/lambda mode).
-	ImageBudget *atomic.Int64
+	// ImagesPerPlace is the hard per-place image cap propagated to every
+	// PlaceJob this GmapJob spawns. 0 = skip images entirely (toggle off),
+	// positive = take at most N images per place. Replaces the legacy
+	// per-job-total ImageBudget *atomic.Int64 (May 2026 — Cafe Schöneberg
+	// fix; see PlaceJob.applyPerPlaceImageCap for the contract).
+	ImagesPerPlace int
 }
 
 func NewGmapJob(
@@ -120,13 +118,13 @@ func WithDebug() GmapJobOptions {
 	}
 }
 
-// WithImageBudget attaches a per-job total image budget to the GmapJob and
-// every PlaceJob it spawns. The counter is shared across places via pointer
-// — see PlaceJob.extractImages for the enforcement logic. Pass nil (or omit
-// this option) to disable cross-place image budget enforcement.
-func WithImageBudget(budget *atomic.Int64) GmapJobOptions {
+// WithImagesPerPlace sets the per-place image cap on the GmapJob; the same
+// value is forwarded to every PlaceJob spawned from this seed. 0 means
+// "skip images entirely". See PlaceJob.applyPerPlaceImageCap for the
+// downstream enforcement.
+func WithImagesPerPlace(n int) GmapJobOptions {
 	return func(j *GmapJob) {
-		j.ImageBudget = budget
+		j.ImagesPerPlace = n
 	}
 }
 
@@ -208,8 +206,8 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 		if j.ExitMonitor != nil {
 			jopts = append(jopts, WithPlaceJobExitMonitor(j.ExitMonitor))
 		}
-		if j.ImageBudget != nil {
-			jopts = append(jopts, WithPlaceJobImageBudget(j.ImageBudget))
+		if j.ImagesPerPlace > 0 {
+			jopts = append(jopts, WithPlaceJobImagesPerPlace(j.ImagesPerPlace))
 		}
 
 		log.Debug("gmap_job_creating_single_place_job",
@@ -252,8 +250,8 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 				if j.ExitMonitor != nil {
 					jopts = append(jopts, WithPlaceJobExitMonitor(j.ExitMonitor))
 				}
-				if j.ImageBudget != nil {
-					jopts = append(jopts, WithPlaceJobImageBudget(j.ImageBudget))
+				if j.ImagesPerPlace > 0 {
+					jopts = append(jopts, WithPlaceJobImagesPerPlace(j.ImagesPerPlace))
 				}
 
 				log.Debug("gmap_job_creating_place_job_from_search_result",

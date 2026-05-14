@@ -9,7 +9,6 @@ import (
 	"plugin"
 	"strconv"
 	"strings"
-	"sync/atomic"
 
 	"github.com/gosom/google-maps-scraper/deduper"
 	"github.com/gosom/google-maps-scraper/exiter"
@@ -24,17 +23,18 @@ type SeedJobConfig struct {
 	Input         io.Reader
 	MaxDepth      int
 	IncludeEmails bool
-	// Images enables image extraction at all. When false, no images are
-	// scraped regardless of ImageBudget. When true, images are scraped
-	// subject to the ImageBudget cross-place enforcement (if non-nil).
+	// Images enables image extraction at all. When false (or when
+	// ImagesPerPlace is 0), no images are scraped and the JSON-payload
+	// images are dropped in PlaceJob.Process so the user is not billed
+	// for images they didn't ask for.
 	Images bool
-	// ImageBudget is the per-job total image budget shared across every
-	// PlaceJob in this seed batch. When non-nil, the scraper checks the
-	// counter before extracting images for each place and decrements after,
-	// stopping image extraction once the budget is exhausted. Place metadata,
-	// reviews, and contact details continue to scrape — only image extraction
-	// stops. When nil (CLI mode), no cross-place enforcement.
-	ImageBudget    *atomic.Int64
+	// ImagesPerPlace is the hard per-place image cap. 0 = skip images;
+	// positive = take at most N images per place (cheap JSON first,
+	// browser extractor only when JSON has fewer than N). Replaces the
+	// legacy per-job-total ImageBudget *atomic.Int64 — see
+	// gmaps.PlaceJob.applyPerPlaceImageCap for the contract (May 2026,
+	// Cafe Schöneberg fix).
+	ImagesPerPlace int
 	Debug          bool
 	ReviewsMax     int
 	GeoCoordinates string
@@ -127,11 +127,10 @@ func CreateSeedJobs(cfg SeedJobConfig) (jobs []scrapemate.IJob, err error) {
 				opts = append(opts, gmaps.WithDebug())
 			}
 
-			// Per-job total image budget (cross-place enforcement). When the
-			// counter reaches zero, image extraction is skipped for all
-			// subsequent places — see gmaps.PlaceJob.extractImages.
-			if cfg.ImageBudget != nil {
-				opts = append(opts, gmaps.WithImageBudget(cfg.ImageBudget))
+			// Per-place image cap propagated to every PlaceJob spawned by
+			// this seed — see gmaps.PlaceJob.applyPerPlaceImageCap.
+			if cfg.ImagesPerPlace > 0 {
+				opts = append(opts, gmaps.WithImagesPerPlace(cfg.ImagesPerPlace))
 			}
 
 			job = gmaps.NewGmapJob(id, cfg.LangCode, query, cfg.MaxDepth, cfg.IncludeEmails, cfg.Images, cfg.ReviewsMax, cfg.GeoCoordinates, cfg.Zoom, opts...)

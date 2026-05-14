@@ -49,7 +49,7 @@ type estimateRequest struct {
 	Keywords      []string `json:"keywords" validate:"required,min=1,max=5,dive,min=1,max=200"`
 	Depth         int      `json:"depth" validate:"min=0,max=20"`
 	IncludeEmails bool     `json:"include_emails"`
-	MaxImages     *int     `json:"max_images,omitempty" validate:"omitempty,min=0,max=40000"`
+	MaxImages     *int     `json:"max_images,omitempty" validate:"omitempty,min=0,max=500"`
 	MaxReviews    *int     `json:"max_reviews,omitempty" validate:"omitempty,min=0,max=500"`
 	MaxResults    *int     `json:"max_results,omitempty" validate:"omitempty,min=1,max=500"`
 }
@@ -156,7 +156,13 @@ func (h *APIHandlers) Scrape(w http.ResponseWriter, r *http.Request) {
 		//                   the user-visible cost (0.127) didn't match the
 		//                   create endpoint's silent 1.727.
 		//
-		//   MaxImages=0   → same as MaxReviews. AvgImagesPerPlace=30.
+		//   MaxImages=0   → same as MaxReviews ("toggle off" — pass &0,
+		//                   skip the AvgImagesPerPlace=30 fallback). NOTE:
+		//                   May 2026 — Cafe Schöneberg fix — semantics
+		//                   switched from per-job-total to per-place. The
+		//                   estimator now multiplies by primaryEstimate,
+		//                   so under-quoting a 10/place × 40 places job is
+		//                   no longer possible.
 		//
 		// ApplyJobDataDefaults at the entry point already pins the
 		// "0 means toggle off" convention for MaxReviews/MaxImages, so we

@@ -262,11 +262,13 @@ func (s *EstimationService) EstimateJobCost(
 		reviewsPerPlace = *maxReviews
 	}
 
-	// Same pattern for images: nil = "no limit" → estimate at average.
-	imagesTotal := 0
+	// max_images is interpreted per-place (May 2026 — Cafe Schöneberg
+	// fix; previously per-job total). nil = "no limit" → estimate at
+	// the per-place average; positive value = honest per-place cap.
+	imagesPerPlace := 0
 	maxImagesProvided := maxImages != nil
 	if maxImagesProvided {
-		imagesTotal = *maxImages
+		imagesPerPlace = *maxImages
 	}
 
 	// Load unit prices. Bubble up ErrPricingUnavailable so the HTTP
@@ -327,20 +329,24 @@ func (s *EstimationService) EstimateJobCost(
 			contactMicro = int64(places) * priceContactDetails
 		}
 		if reviewsPerPlace > 0 {
-			reviewsMicro = int64(places*reviewsPerPlace) * priceReview
+			reviewsMicro = int64(places) * int64(reviewsPerPlace) * priceReview
 		} else if !maxReviewsProvided {
 			// "No limit" — estimate at realistic average
-			reviewsMicro = int64(places*AvgReviewsPerPlace) * priceReview
+			reviewsMicro = int64(places) * int64(AvgReviewsPerPlace) * priceReview
 		}
-		if imagesTotal > 0 {
-			estImages := places * AvgImagesPerPlace
-			if estImages > imagesTotal {
-				estImages = imagesTotal
-			}
-			imagesMicro = int64(estImages) * priceImage
+		if imagesPerPlace > 0 {
+			// Per-place math: every place is allowed up to N images,
+			// and every image is charged. The old per-job-total cap
+			// (min(places × Avg, N)) silently under-quoted any job
+			// where N > Avg — the Cafe Schöneberg bug.
+			//
+			// Widen each factor to int64 BEFORE multiplying so a future
+			// cap relaxation can't silently overflow. Pattern mirrors
+			// the placesMicro / contactMicro lines above.
+			imagesMicro = int64(places) * int64(imagesPerPlace) * priceImage
 		} else if !maxImagesProvided {
-			// "No limit" — estimate at realistic average
-			imagesMicro = int64(places*AvgImagesPerPlace) * priceImage
+			// "No limit" — estimate at realistic per-place average.
+			imagesMicro = int64(places) * int64(AvgImagesPerPlace) * priceImage
 		}
 		total = jobStart + placesMicro + contactMicro + reviewsMicro + imagesMicro
 		breakdown = [5]int64{jobStart, placesMicro, contactMicro, reviewsMicro, imagesMicro}
@@ -359,11 +365,8 @@ func (s *EstimationService) EstimateJobCost(
 		estimatedReviews = primaryEstimate * AvgReviewsPerPlace
 	}
 	estimatedImages := 0
-	if imagesTotal > 0 {
-		estimatedImages = primaryEstimate * AvgImagesPerPlace
-		if estimatedImages > imagesTotal {
-			estimatedImages = imagesTotal
-		}
+	if imagesPerPlace > 0 {
+		estimatedImages = primaryEstimate * imagesPerPlace
 	} else if !maxImagesProvided {
 		estimatedImages = primaryEstimate * AvgImagesPerPlace
 	}

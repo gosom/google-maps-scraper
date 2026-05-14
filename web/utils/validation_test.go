@@ -88,10 +88,10 @@ func TestApplyJobDataDefaults_PreservesNonZeroFields(t *testing.T) {
 		MaxResults: 250,
 		MaxTime:    durSec(900 * time.Second),
 		MaxReviews: 30,
-		MaxImages:  5000,
+		MaxImages:  100,
 	}
 	ApplyJobDataDefaults(d)
-	if d.Depth != 12 || d.MaxResults != 250 || d.MaxTime != durSec(900*time.Second) || d.MaxReviews != 30 || d.MaxImages != 5000 {
+	if d.Depth != 12 || d.MaxResults != 250 || d.MaxTime != durSec(900*time.Second) || d.MaxReviews != 30 || d.MaxImages != 100 {
 		t.Errorf("ApplyJobDataDefaults overwrote a non-zero field: %+v", d)
 	}
 }
@@ -135,19 +135,20 @@ func TestValidateJobData_AcceptsMaxTimeAtCap_OneHour(t *testing.T) {
 	}
 }
 
-// TestValidateJobData_RejectsImagesMaxAbove40k_NewCeiling locks the new
-// 40 000 ceiling for images_max (was 20 000). Sized for production
-// concurrency 8 × max_time 1h ≈ 480 places × ~80 images/place.
-func TestValidateJobData_RejectsImagesMaxAbove40k_NewCeiling(t *testing.T) {
+// TestValidateJobData_RejectsImagesMaxAbove500_PerPlaceCeiling locks the
+// per-place ceiling for max_images (May 2026 — Cafe Schöneberg fix).
+// Sized to match the frontend "no limit" preset; a single Google Maps
+// business does not have more than a few hundred photos.
+func TestValidateJobData_RejectsImagesMaxAbove500_PerPlaceCeiling(t *testing.T) {
 	t.Parallel()
 	d := newValidJobData()
-	d.MaxImages = 40_001
+	d.MaxImages = 501
 	err := ValidateJobData(d)
 	if err == nil {
-		t.Fatal("expected error for images_max=40001, got nil")
+		t.Fatal("expected error for max_images=501, got nil")
 	}
-	if !strings.Contains(err.Error(), "40000") {
-		t.Errorf("expected error to mention cap 40000, got: %v", err)
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("expected error to mention cap 500, got: %v", err)
 	}
 }
 
@@ -194,8 +195,8 @@ func TestValidateJobData_RejectsImagesMaxAboveCap(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for images_max=50000, got nil")
 	}
-	if !strings.Contains(err.Error(), "40000") {
-		t.Errorf("expected error to mention cap 40000, got: %v", err)
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("expected error to mention cap 500, got: %v", err)
 	}
 }
 
