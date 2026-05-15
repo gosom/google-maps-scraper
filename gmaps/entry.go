@@ -550,12 +550,14 @@ func parseReviews(reviewsI []any) []Review {
 		if src == "" {
 			src = "unknown"
 		}
+
 		review.Source = src
 
 		scale := int(getNthElementAndCast[float64](el, 1, 13, 4))
 		if scale == 0 {
 			scale = 5
 		}
+
 		review.RatingScale = scale
 
 		review.Language = getNthElementAndCast[string](el, 2, 14, 0)
@@ -564,6 +566,7 @@ func parseReviews(reviewsI []any) []Review {
 		review.TextTranslated = getNthElementAndCast[string](el, 2, 15, 1, 0)
 
 		r2 := getNthElementAndCast[[]any](el, 2)
+
 		isAggregator := len(r2) > 0 && r2[0] == nil
 		if isAggregator {
 			review.RatingFloat = getNthElementAndCast[float64](el, 2, 8, 1)

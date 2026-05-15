@@ -69,6 +69,7 @@ func loadReviewsFixture(t *testing.T, filename string) []Review {
 	require.NoError(t, err)
 
 	var reviewsI []any
+
 	require.NoError(t, json.Unmarshal(raw, &reviewsI))
 
 	return parseReviews(reviewsI)
