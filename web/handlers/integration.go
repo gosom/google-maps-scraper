@@ -52,8 +52,11 @@ func (h *IntegrationHandler) googleConfig() *oauth2.Config {
 		ClientSecret: h.google.ClientSecret,
 		RedirectURL:  h.google.RedirectURL,
 		Scopes: []string{
-			"https://www.googleapis.com/auth/spreadsheets",
-			"https://www.googleapis.com/auth/drive.file", // Allows creating files/folders and managing them
+			// drive.file is the minimum scope needed: it lets us create new
+			// spreadsheets on the user's Drive (via Files.Create with the
+			// google-apps.spreadsheet MIME type) and read/write only those
+			// files. We never touch the user's other Drive content.
+			"https://www.googleapis.com/auth/drive.file",
 			"https://www.googleapis.com/auth/userinfo.email",
 		},
 		Endpoint: google.Endpoint,
