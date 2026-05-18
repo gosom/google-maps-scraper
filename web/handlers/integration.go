@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"github.com/gorilla/mux"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+	"google.golang.org/api/googleapi"
 
 	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/pkg/appenv"
@@ -90,6 +92,36 @@ func (h *IntegrationHandler) HandleGoogleCallback(w http.ResponseWriter, r *http
 	userIDStr, err := auth.GetUserID(ctx)
 	if err != nil {
 		http.Error(w, "User not authenticated", http.StatusUnauthorized)
+		return
+	}
+
+	// Google's "Granular Permissions" consent screen (mandatory since 2024)
+	// lets users uncheck individual non-identity scopes. If the user dismissed
+	// the Drive permission, the access token will lack auth/drive.file and any
+	// later Sheets export will fail with 403 ACCESS_TOKEN_SCOPE_INSUFFICIENT.
+	// Validate at callback time so we only persist usable integrations and the
+	// user gets an actionable error instead of a delayed "something went wrong".
+	const requiredScope = "https://www.googleapis.com/auth/drive.file"
+	grantedScope, _ := token.Extra("scope").(string)
+	hasRequiredScope := false
+	for _, s := range strings.Fields(grantedScope) {
+		if s == requiredScope {
+			hasRequiredScope = true
+			break
+		}
+	}
+	if !hasRequiredScope {
+		h.log.Warn("google_oauth_missing_required_scope",
+			slog.String("user_id", userIDStr),
+			slog.String("granted_scope", grantedScope),
+			slog.String("required_scope", requiredScope))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"error":         "missing_required_scope",
+			"missing_scope": requiredScope,
+			"message":       "Drive permission missing. Without it, we can't save exports to Google Sheets. Reconnect Google and tick the Drive checkbox.",
+		})
 		return
 	}
 
@@ -241,6 +273,27 @@ func (h *IntegrationHandler) HandleExportJob(w http.ResponseWriter, r *http.Requ
 		h.log.Error("google_sheets_upload_failed",
 			slog.String("user_id", userID), slog.String("job_id", jobID), slog.String("filename", filename),
 			slog.String("path", r.URL.Path), slog.String("method", r.Method), slog.Any("error", err))
+
+		// Detect Google's 403 ACCESS_TOKEN_SCOPE_INSUFFICIENT and return a
+		// structured error the frontend can map to a "reconnect your Google
+		// account" prompt. This happens when the user unchecked the Drive
+		// checkbox on Google's Granular Permissions screen at connect time,
+		// so the stored token has no drive.file scope.
+		var ge *googleapi.Error
+		if errors.As(err, &ge) && ge.Code == http.StatusForbidden {
+			for _, e := range ge.Errors {
+				if e.Reason == "insufficientPermissions" {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusUnprocessableEntity)
+					_ = json.NewEncoder(w).Encode(map[string]string{
+						"error":   "needs_reconnect",
+						"message": "Drive permission missing. We can't save this export to Google Sheets. Reconnect Google from Integrations and tick the Drive checkbox.",
+					})
+					return
+				}
+			}
+		}
+
 		http.Error(w, "Failed to upload to Google Sheets", http.StatusInternalServerError)
 		return
 	}
