@@ -116,7 +116,7 @@ func (m *mockDeliveryRepo) CountRecentByIP(ctx context.Context, resolvedIP strin
 // ---------------------------------------------------------------------------
 
 type mockConfigRepo struct {
-	getByIDFn                    func(ctx context.Context, id string) (*models.WebhookConfig, error)
+	getByIDFn                    func(ctx context.Context, id string, ownerUserID string) (*models.WebhookConfig, error)
 	createFn                     func(ctx context.Context, cfg *models.WebhookConfig) error
 	listByUserIDFn               func(ctx context.Context, userID string) ([]*models.WebhookConfig, error)
 	listActiveByUserIDFn         func(ctx context.Context, userID string) ([]*models.WebhookConfig, error)
@@ -125,9 +125,9 @@ type mockConfigRepo struct {
 	listActiveWithSecretByUserID func(ctx context.Context, userID string) ([]*models.WebhookConfig, error)
 }
 
-func (m *mockConfigRepo) GetByID(ctx context.Context, id string) (*models.WebhookConfig, error) {
+func (m *mockConfigRepo) GetByID(ctx context.Context, id string, ownerUserID string) (*models.WebhookConfig, error) {
 	if m.getByIDFn != nil {
-		return m.getByIDFn(ctx, id)
+		return m.getByIDFn(ctx, id, ownerUserID)
 	}
 	return nil, models.ErrWebhookConfigNotFound
 }
@@ -355,7 +355,7 @@ func TestDeliverOne_Success(t *testing.T) {
 	}
 
 	cr := &mockConfigRepo{
-		getByIDFn: func(_ context.Context, id string) (*models.WebhookConfig, error) {
+		getByIDFn: func(_ context.Context, id string, _ string) (*models.WebhookConfig, error) {
 			return baseConfig(t, srv.URL), nil
 		},
 	}
@@ -410,7 +410,7 @@ func TestDeliverOne_SignatureCorrect(t *testing.T) {
 		countRecentByIPFn:     func(_ context.Context, _ string, _ time.Time) (int, error) { return 0, nil },
 	}
 	cr := &mockConfigRepo{
-		getByIDFn: func(_ context.Context, _ string) (*models.WebhookConfig, error) {
+		getByIDFn: func(_ context.Context, _ string, _ string) (*models.WebhookConfig, error) {
 			return baseConfig(t, srv.URL), nil
 		},
 	}
@@ -470,7 +470,7 @@ func TestDeliverOne_Non2xx_Retries(t *testing.T) {
 		countRecentByIPFn:     func(_ context.Context, _ string, _ time.Time) (int, error) { return 0, nil },
 	}
 	cr := &mockConfigRepo{
-		getByIDFn: func(_ context.Context, _ string) (*models.WebhookConfig, error) {
+		getByIDFn: func(_ context.Context, _ string, _ string) (*models.WebhookConfig, error) {
 			return baseConfig(t, srv.URL), nil
 		},
 	}
@@ -514,7 +514,7 @@ func TestDeliverOne_MaxAttemptsExhausted(t *testing.T) {
 		countRecentByIPFn:     func(_ context.Context, _ string, _ time.Time) (int, error) { return 0, nil },
 	}
 	cr := &mockConfigRepo{
-		getByIDFn: func(_ context.Context, _ string) (*models.WebhookConfig, error) {
+		getByIDFn: func(_ context.Context, _ string, _ string) (*models.WebhookConfig, error) {
 			return baseConfig(t, srv.URL), nil
 		},
 	}
@@ -554,7 +554,7 @@ func TestDeliverOne_RevokedConfig(t *testing.T) {
 
 	revokedAt := time.Now().UTC().Add(-1 * time.Hour)
 	cr := &mockConfigRepo{
-		getByIDFn: func(_ context.Context, _ string) (*models.WebhookConfig, error) {
+		getByIDFn: func(_ context.Context, _ string, _ string) (*models.WebhookConfig, error) {
 			cfg := baseConfig(t, srv.URL)
 			cfg.RevokedAt = &revokedAt
 			return cfg, nil
@@ -579,7 +579,7 @@ func TestDeliverOne_ConfigNotFound(t *testing.T) {
 		},
 	}
 	cr := &mockConfigRepo{
-		getByIDFn: func(_ context.Context, _ string) (*models.WebhookConfig, error) {
+		getByIDFn: func(_ context.Context, _ string, _ string) (*models.WebhookConfig, error) {
 			return nil, models.ErrWebhookConfigNotFound
 		},
 	}
@@ -612,7 +612,7 @@ func TestDeliverOne_CrossUserMismatch(t *testing.T) {
 		countRecentByIPFn:     func(_ context.Context, _ string, _ time.Time) (int, error) { return 0, nil },
 	}
 	cr := &mockConfigRepo{
-		getByIDFn: func(_ context.Context, _ string) (*models.WebhookConfig, error) {
+		getByIDFn: func(_ context.Context, _ string, _ string) (*models.WebhookConfig, error) {
 			cfg := baseConfig(t, srv.URL)
 			cfg.UserID = "user_attacker_999" // Different user than the job owner
 			return cfg, nil
@@ -656,7 +656,7 @@ func TestDeliverOne_RateLimitUserExceeded(t *testing.T) {
 		},
 	}
 	cr := &mockConfigRepo{
-		getByIDFn: func(_ context.Context, _ string) (*models.WebhookConfig, error) {
+		getByIDFn: func(_ context.Context, _ string, _ string) (*models.WebhookConfig, error) {
 			return baseConfig(t, srv.URL), nil
 		},
 	}
@@ -704,7 +704,7 @@ func TestDeliverOne_RateLimitIPExceeded(t *testing.T) {
 		},
 	}
 	cr := &mockConfigRepo{
-		getByIDFn: func(_ context.Context, _ string) (*models.WebhookConfig, error) {
+		getByIDFn: func(_ context.Context, _ string, _ string) (*models.WebhookConfig, error) {
 			return baseConfig(t, srv.URL), nil
 		},
 	}
@@ -768,7 +768,7 @@ func TestProcessBatch_ConcurrencyLimit(t *testing.T) {
 		countRecentByIPFn:     func(_ context.Context, _ string, _ time.Time) (int, error) { return 0, nil },
 	}
 	cr := &mockConfigRepo{
-		getByIDFn: func(_ context.Context, _ string) (*models.WebhookConfig, error) {
+		getByIDFn: func(_ context.Context, _ string, _ string) (*models.WebhookConfig, error) {
 			return baseConfig(t, srv.URL), nil
 		},
 	}

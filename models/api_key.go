@@ -34,8 +34,10 @@ type APIKeyRepository interface {
 	// Create inserts a new API key
 	Create(ctx context.Context, apiKey *APIKey) error
 
-	// GetByID retrieves an API key by ID
-	GetByID(ctx context.Context, id string) (*APIKey, error)
+	// GetByID retrieves an API key by ID. When ownerUserID is non-empty, the
+	// lookup is scoped to that user (defense-in-depth against IDOR). Pass ""
+	// only from trusted internal contexts that already enforce ownership.
+	GetByID(ctx context.Context, id string, ownerUserID string) (*APIKey, error)
 
 	// GetByLookupHash retrieves an active API key by its lookup hash
 	GetByLookupHash(ctx context.Context, lookupHash string) (*APIKey, error)

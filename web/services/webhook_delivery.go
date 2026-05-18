@@ -109,8 +109,9 @@ func (w *WebhookDeliveryWorker) deliverOne(ctx context.Context, delivery *models
 		slog.Int("attempt", delivery.Attempts),
 	)
 
-	// 1. Fetch webhook config.
-	config, err := w.configRepo.GetByID(ctx, delivery.WebhookConfigID)
+	// 1. Fetch webhook config. Trusted internal worker — ownership is verified
+	// downstream by the explicit config.UserID != job.UserID cross-check below.
+	config, err := w.configRepo.GetByID(ctx, delivery.WebhookConfigID, "")
 	if err != nil {
 		log.Error("webhook_config_fetch_failed", slog.Any("error", err))
 		w.markFailed(ctx, delivery, log)

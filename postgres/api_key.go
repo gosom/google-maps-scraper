@@ -57,15 +57,18 @@ func (r *apiKeyRepository) Create(ctx context.Context, apiKey *models.APIKey) er
 }
 
 // GetByID retrieves an API key by its UUID.
-func (r *apiKeyRepository) GetByID(ctx context.Context, id string) (*models.APIKey, error) {
+// When ownerUserID is non-empty the query is scoped to that user (defense-in-depth
+// against IDOR). Pass "" only from trusted internal contexts that enforce
+// ownership elsewhere.
+func (r *apiKeyRepository) GetByID(ctx context.Context, id string, ownerUserID string) (*models.APIKey, error) {
 	const q = `
 		SELECT id, user_id, name, lookup_hash, key_hash, key_salt, hash_algorithm,
 		       key_hint_prefix, key_hint_suffix, last_used_at, last_used_ip, usage_count,
 		       created_at, revoked_at, scopes
 		FROM api_keys
-		WHERE id = $1`
+		WHERE id = $1 AND (user_id = $2 OR $2 = '')`
 
-	return r.scanOne(r.db.QueryRowContext(ctx, q, id))
+	return r.scanOne(r.db.QueryRowContext(ctx, q, id, ownerUserID))
 }
 
 // GetByLookupHash retrieves an active (non-revoked) API key by its HMAC lookup hash.

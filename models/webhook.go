@@ -58,8 +58,11 @@ type WebhookConfigRepository interface {
 	// Create inserts a new webhook config.
 	Create(ctx context.Context, cfg *WebhookConfig) error
 
-	// GetByID retrieves a webhook config by its UUID.
-	GetByID(ctx context.Context, id string) (*WebhookConfig, error)
+	// GetByID retrieves a webhook config by its UUID. When ownerUserID is
+	// non-empty, the lookup is scoped to that user (defense-in-depth against
+	// IDOR); pass "" only from trusted internal contexts (e.g. the delivery
+	// worker) where ownership is enforced elsewhere.
+	GetByID(ctx context.Context, id string, ownerUserID string) (*WebhookConfig, error)
 
 	// ListByUserID retrieves all webhook configs for a user (including revoked).
 	ListByUserID(ctx context.Context, userID string) ([]*WebhookConfig, error)

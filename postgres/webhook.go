@@ -50,15 +50,19 @@ func (r *webhookConfigRepository) Create(ctx context.Context, cfg *models.Webhoo
 }
 
 // GetByID returns a webhook config including its encrypted_secret.
-// Only call after verifying ownership (the delivery worker needs the secret to sign payloads).
-func (r *webhookConfigRepository) GetByID(ctx context.Context, id string) (*models.WebhookConfig, error) {
+// When ownerUserID is non-empty the query is scoped to that user (defense-in-depth
+// against IDOR from a handler that forgets its own ownership check). Pass ""
+// only from trusted internal contexts (e.g. the delivery worker) that enforce
+// ownership elsewhere — the worker needs the secret to sign payloads regardless
+// of which user owns the config.
+func (r *webhookConfigRepository) GetByID(ctx context.Context, id string, ownerUserID string) (*models.WebhookConfig, error) {
 	const q = `
 		SELECT id, user_id, name, url, encrypted_secret, resolved_ip,
 		       verified_at, created_at, updated_at, revoked_at
 		FROM webhook_configs
-		WHERE id = $1`
+		WHERE id = $1 AND (user_id = $2 OR $2 = '')`
 
-	return r.scanOne(r.db.QueryRowContext(ctx, q, id))
+	return r.scanOne(r.db.QueryRowContext(ctx, q, id, ownerUserID))
 }
 
 func (r *webhookConfigRepository) ListByUserID(ctx context.Context, userID string) ([]*models.WebhookConfig, error) {

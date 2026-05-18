@@ -31,7 +31,7 @@ const (
 type mockWebhookConfigRepo struct {
 	configs       []*models.WebhookConfig
 	createErr     error
-	getByIDFunc   func(ctx context.Context, id string) (*models.WebhookConfig, error)
+	getByIDFunc   func(ctx context.Context, id string, ownerUserID string) (*models.WebhookConfig, error)
 	listByUserErr error
 	listActiveErr error
 	updateErr     error
@@ -44,12 +44,12 @@ func (m *mockWebhookConfigRepo) Create(_ context.Context, cfg *models.WebhookCon
 	return m.createErr
 }
 
-func (m *mockWebhookConfigRepo) GetByID(ctx context.Context, id string) (*models.WebhookConfig, error) {
+func (m *mockWebhookConfigRepo) GetByID(ctx context.Context, id string, ownerUserID string) (*models.WebhookConfig, error) {
 	if m.getByIDFunc != nil {
-		return m.getByIDFunc(ctx, id)
+		return m.getByIDFunc(ctx, id, ownerUserID)
 	}
 	for _, c := range m.configs {
-		if c.ID == id {
+		if c.ID == id && (ownerUserID == "" || c.UserID == ownerUserID) {
 			return c, nil
 		}
 	}
