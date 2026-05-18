@@ -59,7 +59,12 @@ func (h *IntegrationHandler) googleConfig() *oauth2.Config {
 			// google-apps.spreadsheet MIME type) and read/write only those
 			// files. We never touch the user's other Drive content.
 			"https://www.googleapis.com/auth/drive.file",
-			"https://www.googleapis.com/auth/userinfo.email",
+			// Modern OIDC scopes ("openid" + "email") replace the legacy
+			// userinfo.email alias that Google deprecated in 2014. Same
+			// consent screen for the user; we use the email to display the
+			// connected account on the Integrations page.
+			"openid",
+			"email",
 		},
 		Endpoint: google.Endpoint,
 	}
