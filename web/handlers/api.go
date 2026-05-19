@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"reflect"
+	"strings"
 	"time"
 
 	"github.com/go-playground/validator/v10"
@@ -18,7 +20,23 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-var validate = validator.New()
+var validate = newValidator()
+
+// newValidator wires a process-wide validator that surfaces JSON tag names
+// (e.g. "max_results") in error messages instead of the Go struct field names
+// (e.g. "MaxResults"). Without this, the lowercased struct name collapses
+// snake_case into the awful "maxresults", which we shipped to production.
+func newValidator() *validator.Validate {
+	v := validator.New()
+	v.RegisterTagNameFunc(func(fld reflect.StructField) string {
+		name := strings.SplitN(fld.Tag.Get("json"), ",", 2)[0]
+		if name == "-" || name == "" {
+			return fld.Name
+		}
+		return name
+	})
+	return v
+}
 
 // internalError logs err at ERROR level and writes a sanitized 500 response to w.
 // The raw error is never sent to the client; only the generic userMsg is.

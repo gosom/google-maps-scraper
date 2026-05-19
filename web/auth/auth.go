@@ -175,6 +175,19 @@ func (m *AuthMiddleware) authenticateRequest(next http.Handler) http.Handler {
 			}
 		}
 
+		// If no Authorization/X-API-Key was provided AND there's no Clerk
+		// __session cookie either, emit 401 directly. Without this early
+		// return the request falls through to Clerk's middleware, which
+		// surfaces a 403 -- inconsistent with the 401 we return on an
+		// invalid token. REST convention: 401 for missing/invalid creds,
+		// 403 for present-but-insufficient (already used by RequireRole).
+		if bearerToken == "" {
+			if cookie, err := r.Cookie("__session"); err != nil || cookie.Value == "" {
+				writeUnauthorized(w, "missing authorization token")
+				return
+			}
+		}
+
 		if m.apiKeyRepo != nil && len(m.serverSecret) > 0 && strings.HasPrefix(bearerToken, APIKeyPrefix) {
 			userID, keyID, err := ValidateAPIKey(r.Context(), bearerToken, m.serverSecret, m.apiKeyRepo)
 			if err != nil {
