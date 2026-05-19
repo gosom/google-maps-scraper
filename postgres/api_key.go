@@ -40,6 +40,11 @@ func (r *apiKeyRepository) Create(ctx context.Context, apiKey *models.APIKey) er
 		return err
 	}
 
+	// pgx binds a []byte parameter as bytea by default, which PostgreSQL
+	// then refuses to coerce into the JSONB `scopes` column ("invalid input
+	// syntax for type json", SQLSTATE 22P02). Pass the marshalled JSON as
+	// a string instead — pgx binds it as text and PostgreSQL parses it as
+	// JSON. Same trick the jobs table uses in postgres/repository.go.
 	_, err = r.db.ExecContext(ctx, q,
 		apiKey.ID,
 		apiKey.UserID,
@@ -51,7 +56,7 @@ func (r *apiKeyRepository) Create(ctx context.Context, apiKey *models.APIKey) er
 		apiKey.KeyHintPrefix,
 		apiKey.KeyHintSuffix,
 		apiKey.CreatedAt,
-		scopesJSON,
+		string(scopesJSON),
 	)
 	return err
 }
