@@ -33,6 +33,12 @@ type CreditBalanceResponse struct {
 	CreditHeld            string `json:"credit_held"`
 	CreditAvailable       string `json:"credit_available"`
 	TotalCreditsPurchased string `json:"total_credits_purchased"`
+	// TotalCreditsConsumed is the running total of credits spent on jobs,
+	// including credits funded by signup bonuses and adjustments. The
+	// underlying users.total_credits_consumed column is incremented in the
+	// same transactions that debit credit_balance, so this is the
+	// authoritative "how much have I spent" figure.
+	TotalCreditsConsumed string `json:"total_credits_consumed"`
 }
 
 type CheckoutSessionRequest struct {

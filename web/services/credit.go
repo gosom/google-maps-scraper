@@ -48,7 +48,8 @@ func (s *CreditService) GetBalance(ctx context.Context, userID string) (models.C
 	    credit_balance::text,
 	    COALESCE(credit_held_precise, 0)::text,
 	    (credit_balance - COALESCE(credit_held_precise, 0))::text,
-	    total_credits_purchased::text
+	    total_credits_purchased::text,
+	    total_credits_consumed::text
 	FROM users WHERE id=$1`
 	if err := s.db.QueryRowContext(ctx, q, userID).Scan(
 		&resp.UserID,
@@ -56,6 +57,7 @@ func (s *CreditService) GetBalance(ctx context.Context, userID string) (models.C
 		&resp.CreditHeld,
 		&resp.CreditAvailable,
 		&resp.TotalCreditsPurchased,
+		&resp.TotalCreditsConsumed,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			s.log.Debug("credit_balance_not_found", slog.String("user_id", userID))
@@ -65,6 +67,7 @@ func (s *CreditService) GetBalance(ctx context.Context, userID string) (models.C
 				CreditHeld:            "0",
 				CreditAvailable:       "0",
 				TotalCreditsPurchased: "0",
+				TotalCreditsConsumed:  "0",
 			}
 			return resp, nil
 		}
