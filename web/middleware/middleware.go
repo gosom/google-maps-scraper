@@ -9,11 +9,13 @@ import (
 	"net/http"
 	"runtime/debug"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/gosom/google-maps-scraper/models"
 	pkglogger "github.com/gosom/google-maps-scraper/pkg/logger"
 	"github.com/gosom/google-maps-scraper/web/auth"
 	"golang.org/x/time/rate"
@@ -21,6 +23,33 @@ import (
 
 // retryAfterSec is the value placed in the Retry-After header on 429 responses.
 const retryAfterSec = "1"
+
+// rateLimitPolicyName is the policy label used in the modern IETF
+// `RateLimit` / `RateLimit-Policy` structured-field headers (draft-10,
+// Sept 2025). One label per request because we expose a single
+// composite "API" policy to clients regardless of which internal bucket
+// served them — future work can expand this to per-route policies.
+const rateLimitPolicyName = "api"
+
+// rateLimitCtxKey is the context key under which the dispatcher stashes
+// the chosen bucket's snapshot for the RateLimitHeaders middleware to
+// read. Private type to prevent collisions and keep the symbol unreachable
+// from outside the package (no direct context.WithValue from callers).
+type rateLimitCtxKey struct{}
+
+// snapshotWithContext returns a new context with snap stored under
+// rateLimitCtxKey. Used by the dispatcher in PerAPIKeyRateLimit.
+func snapshotWithContext(ctx context.Context, snap LimiterSnapshot) context.Context {
+	return context.WithValue(ctx, rateLimitCtxKey{}, snap)
+}
+
+// snapshotFromContext extracts the LimiterSnapshot stored by the
+// dispatcher, returning ok=false when no limiter ran on this request
+// (e.g. public routes). Callers should skip header emission in that case.
+func snapshotFromContext(ctx context.Context) (LimiterSnapshot, bool) {
+	s, ok := ctx.Value(rateLimitCtxKey{}).(LimiterSnapshot)
+	return s, ok
+}
 
 // RequireRole returns middleware that rejects requests unless the authenticated
 // user has the specified role. The role is read from the request context
@@ -342,6 +371,90 @@ func newKeyRateLimiter(r rate.Limit, b int, ttl time.Duration) *keyRateLimiter {
 	return krl
 }
 
+// RateLimitHeaders writes the IETF `RateLimit` / `RateLimit-Policy`
+// structured-field headers (draft-ietf-httpapi-ratelimit-headers-10) and
+// the legacy `X-RateLimit-Limit/-Remaining/-Reset` triplet on every
+// response that travelled through a rate limiter in this package.
+//
+// Must be installed AFTER the limiter middleware in the chain so the
+// snapshot is already in the request context by the time we run. Writes
+// headers BEFORE calling next — Go buffers them until the downstream
+// handler calls WriteHeader, so the limiter info goes out with the body.
+//
+// On the 429 path the dispatcher writes the same headers inline (see
+// rateLimitJSON); this middleware exists only for the success path.
+func RateLimitHeaders() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if snap, ok := snapshotFromContext(r.Context()); ok {
+				writeRateLimitHeaders(w, snap)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// applyAndSnapshot is the standard "consume a token, then report state"
+// shape used by every rate-limit middleware in this file. Centralising the
+// pair means every limiter pathway emits a snapshot suitable for the
+// RateLimit response headers, and removes the risk of "we counted but
+// didn't snapshot" drift between sites. Locks the bucket twice (Allow,
+// Tokens) — at the per-request frequencies we operate at the contention
+// is irrelevant; benchmark before optimising.
+func applyAndSnapshot(krl *keyRateLimiter, key string) (bool, LimiterSnapshot) {
+	allowed := krl.get(key).Allow()
+	return allowed, krl.Snapshot(key)
+}
+
+// LimiterSnapshot is the rate-limit state at a point in time, suitable for
+// rendering as RateLimit / X-RateLimit-* response headers. Limit and Burst
+// describe the policy (constants for the lifetime of the limiter); Remaining
+// is the integer floor of tokens currently in the bucket; ResetSeconds is
+// the ceiling of seconds until a fully-drained bucket would refill to Burst.
+// Zero value is fine and is treated by RateLimitHeaders as "no policy"
+// (skips emission) — that's the right behaviour for routes without a
+// limiter in the chain.
+type LimiterSnapshot struct {
+	Limit        rate.Limit
+	Burst        int
+	Remaining    int
+	ResetSeconds int
+}
+
+// Snapshot returns the current state of the bucket for `key` WITHOUT
+// consuming a token. Safe to call from a response-header writer that runs
+// after the request has been admitted (or rejected) by Allow().
+//
+// rate.Limiter.Tokens() is the source of truth; we floor it for "remaining"
+// because tokens can be fractional during refill, but clients want a
+// whole-number budget.
+func (krl *keyRateLimiter) Snapshot(key string) LimiterSnapshot {
+	lim := krl.get(key)
+	tokens := lim.Tokens()
+	remaining := int(tokens) // truncation toward zero
+	if remaining < 0 {
+		remaining = 0
+	}
+	resetSeconds := 0
+	if krl.r > 0 {
+		deficit := float64(krl.b) - tokens
+		if deficit > 0 {
+			// Ceil(deficit/rate) without importing math: integer-divide
+			// after a +near-1 nudge that keeps exact integers stable.
+			resetSeconds = int(deficit/float64(krl.r) + 0.9999)
+			if resetSeconds < 1 {
+				resetSeconds = 1
+			}
+		}
+	}
+	return LimiterSnapshot{
+		Limit:        krl.r,
+		Burst:        krl.b,
+		Remaining:    remaining,
+		ResetSeconds: resetSeconds,
+	}
+}
+
 func (krl *keyRateLimiter) get(key string) *rate.Limiter {
 	krl.mu.Lock()
 	defer krl.mu.Unlock()
@@ -396,8 +509,49 @@ func (krl *keyRateLimiter) cleanup() {
 	}
 }
 
-// rateLimitJSON writes a 429 JSON response with a Retry-After header.
-func rateLimitJSON(w http.ResponseWriter) {
+// writeRateLimitHeaders emits the IETF `RateLimit` / `RateLimit-Policy`
+// structured-field headers (draft-ietf-httpapi-ratelimit-headers-10) plus
+// the legacy `X-RateLimit-Limit` / `-Remaining` / `-Reset` triplet that
+// most HTTP client libraries still parse natively. Called both from the
+// 429 path (inline, before WriteHeader) and from the success path via the
+// RateLimitHeaders middleware. Zero-snapshot means "no policy ran" — skip.
+func writeRateLimitHeaders(w http.ResponseWriter, s LimiterSnapshot) {
+	if s.Limit == 0 && s.Burst == 0 {
+		return
+	}
+	// Window = the time it takes a fully-drained bucket to refill to Burst.
+	// Ceiling division; minimum 1 so we never emit "w=0" (clients would
+	// divide by it). `win` rather than `w` to avoid shadowing the
+	// http.ResponseWriter parameter — easy to introduce when the
+	// header-write lines below get moved or wrapped.
+	window := 1
+	if s.Limit > 0 {
+		win := int(float64(s.Burst)/float64(s.Limit) + 0.9999)
+		if win > window {
+			window = win
+		}
+	}
+	// The policy name is emitted as a bare structured-field key/token, not
+	// as a quoted string. RFC 8941 §3.2 says a Dictionary member-name is a
+	// `key` (lcalpha-leading), and `sf-item`s in a List use the same token
+	// shape by convention. The IETF rate-limit draft's own examples are
+	// `default;q=100;w=10` and `default;r=50;t=30` — no quotes.
+	policy := fmt.Sprintf("%s;q=%d;w=%d", rateLimitPolicyName, s.Burst, window)
+	current := fmt.Sprintf("%s;r=%d;t=%d", rateLimitPolicyName, s.Remaining, s.ResetSeconds)
+	w.Header().Set("RateLimit-Policy", policy)
+	w.Header().Set("RateLimit", current)
+	w.Header().Set("X-RateLimit-Limit", strconv.Itoa(s.Burst))
+	w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(s.Remaining))
+	w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(time.Duration(s.ResetSeconds)*time.Second).Unix(), 10))
+}
+
+// rateLimitJSON writes a 429 JSON response with a Retry-After header
+// and the RateLimit-* family so the client knows when to retry without
+// guessing. snap is the post-Allow snapshot of the bucket that just
+// denied the request — pass the zero value on the rare paths where a
+// snapshot is unavailable; the headers will be skipped.
+func rateLimitJSON(w http.ResponseWriter, snap LimiterSnapshot) {
+	writeRateLimitHeaders(w, snap)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Retry-After", retryAfterSec)
 	w.WriteHeader(http.StatusTooManyRequests)
@@ -430,16 +584,17 @@ func PerIPRateLimit(r rate.Limit, b int) func(http.Handler) http.Handler {
 			if err != nil {
 				ip = r.RemoteAddr
 			}
-			if !krl.get(ip).Allow() {
+			allowed, snap := applyAndSnapshot(krl, ip)
+			if !allowed {
 				slog.Warn("rate_limit_exceeded",
 					slog.String("key", ip),
 					slog.String("path", r.URL.Path),
 					slog.String("method", r.Method),
 				)
-				rateLimitJSON(w)
+				rateLimitJSON(w, snap)
 				return
 			}
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r.WithContext(snapshotWithContext(r.Context(), snap)))
 		})
 	}
 }
@@ -460,16 +615,17 @@ func PerUserRateLimit(r rate.Limit, b int) func(http.Handler) http.Handler {
 				}
 				key = "ip:" + ip
 			}
-			if !krl.get(key).Allow() {
+			allowed, snap := applyAndSnapshot(krl, key)
+			if !allowed {
 				slog.Warn("rate_limit_exceeded",
 					slog.String("key", key),
 					slog.String("path", req.URL.Path),
 					slog.String("method", req.Method),
 				)
-				rateLimitJSON(w)
+				rateLimitJSON(w, snap)
 				return
 			}
-			next.ServeHTTP(w, req)
+			next.ServeHTTP(w, req.WithContext(snapshotWithContext(req.Context(), snap)))
 		})
 	}
 }
@@ -500,24 +656,33 @@ func PerAPIKeyRateLimit(
 
 			if apiKeyID != "" {
 				// API key authenticated: apply tier-specific limit keyed on key UUID.
-				tier := auth.GetAPIKeyPlanTier(req.Context())
-				var allowed bool
-				switch tier {
-				case "paid":
-					allowed = paidKRL.get(apiKeyID).Allow()
-				default: // "free" or unset
-					allowed = freeKRL.get(apiKeyID).Allow()
+				// Tier comes from the auth middleware, which loads the user row and
+				// stashes models.UserTierFree / models.UserTierPaid in the context
+				// (see web/auth/auth.go withUserContext). A missing or empty value
+				// falls back to free — the safe default for an authorisation
+				// decision: a malformed tier must never grant the looser bucket.
+				tier := auth.GetUserTier(req.Context())
+				krl := freeKRL
+				if tier == models.UserTierPaid {
+					krl = paidKRL
 				}
+				allowed, snap := applyAndSnapshot(krl, apiKeyID)
 				if !allowed {
+					// tier is included so ops can debug "is paid user X actually
+					// getting paid quotas?" from log aggregation alone, and so a
+					// future "paid users hitting the free bucket" alert is easy
+					// to wire up — the lack of this signal is what let the
+					// "tier never propagated" bug live for as long as it did.
 					slog.Warn("rate_limit_exceeded",
 						slog.String("key", apiKeyID),
+						slog.String("tier", tier),
 						slog.String("path", req.URL.Path),
 						slog.String("method", req.Method),
 					)
-					rateLimitJSON(w)
+					rateLimitJSON(w, snap)
 					return
 				}
-				next.ServeHTTP(w, req)
+				next.ServeHTTP(w, req.WithContext(snapshotWithContext(req.Context(), snap)))
 				return
 			}
 
@@ -530,16 +695,17 @@ func PerAPIKeyRateLimit(
 				}
 				key = "ip:" + ip
 			}
-			if !fallbackKRL.get(key).Allow() {
+			allowed, snap := applyAndSnapshot(fallbackKRL, key)
+			if !allowed {
 				slog.Warn("rate_limit_exceeded",
 					slog.String("key", key),
 					slog.String("path", req.URL.Path),
 					slog.String("method", req.Method),
 				)
-				rateLimitJSON(w)
+				rateLimitJSON(w, snap)
 				return
 			}
-			next.ServeHTTP(w, req)
+			next.ServeHTTP(w, req.WithContext(snapshotWithContext(req.Context(), snap)))
 		})
 	}
 }

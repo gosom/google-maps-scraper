@@ -10,6 +10,8 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/gosom/google-maps-scraper/models"
 )
 
 // openUserTestDB opens a DB connection from PG_TEST_DSN and skips the test
@@ -175,6 +177,119 @@ func TestGetByID_IncludesStripeCustomerID(t *testing.T) {
 	}
 	if *user.StripeCustomerID != stripeCustomerID {
 		t.Errorf("expected StripeCustomerID=%q, got %q", stripeCustomerID, *user.StripeCustomerID)
+	}
+}
+
+// TestGetByID_TierResolution covers the rate-limiter tier signal: a user with
+// total_credits_purchased = 0 is free; any positive value flips them to paid.
+// Refund-driven demotion is intentionally NOT tested here because the
+// product spec says paid users stay paid for life — refunds reduce balance
+// but don't reset total_credits_purchased back to zero.
+func TestGetByID_TierResolution(t *testing.T) {
+	t.Parallel()
+	db := openUserTestDB(t)
+	ctx := context.Background()
+	repo := NewUserRepository(db)
+	userID := seedTestUser(t, db) // total_credits_purchased defaults to 0
+
+	// Default: no purchases → free tier.
+	got, err := repo.GetByID(ctx, userID)
+	if err != nil {
+		t.Fatalf("initial GetByID failed: %v", err)
+	}
+	if got.Tier != models.UserTierFree {
+		t.Errorf("brand-new user: expected Tier=%q, got %q", models.UserTierFree, got.Tier)
+	}
+
+	// Simulate a Stripe purchase by writing the column directly. The real path
+	// runs through billing/service.go; this test isolates the repository.
+	if _, err := db.ExecContext(ctx,
+		`UPDATE users SET total_credits_purchased = 1.50 WHERE id = $1`, userID); err != nil {
+		t.Fatalf("update total_credits_purchased: %v", err)
+	}
+
+	got, err = repo.GetByID(ctx, userID)
+	if err != nil {
+		t.Fatalf("post-purchase GetByID failed: %v", err)
+	}
+	if got.Tier != models.UserTierPaid {
+		t.Errorf("after first purchase: expected Tier=%q, got %q", models.UserTierPaid, got.Tier)
+	}
+}
+
+// TestGetByID_RefundDoesNotDemoteTier locks in the product invariant: once a
+// user makes a successful Stripe payment they keep the paid tier for life,
+// even if the payment is later refunded. The refund path in billing/service.go
+// touches credit_balance and refund_deficit_credits, not
+// total_credits_purchased — but a future bug there must NOT silently demote
+// a paying customer back to the free rate limit. This test pins the
+// monotonic-counter behaviour at the projection level.
+func TestGetByID_RefundDoesNotDemoteTier(t *testing.T) {
+	t.Parallel()
+	db := openUserTestDB(t)
+	ctx := context.Background()
+	repo := NewUserRepository(db)
+	userID := seedTestUser(t, db)
+
+	// Simulate a successful purchase.
+	if _, err := db.ExecContext(ctx,
+		`UPDATE users SET total_credits_purchased = 5.00 WHERE id = $1`, userID); err != nil {
+		t.Fatalf("seed purchase: %v", err)
+	}
+	got, err := repo.GetByID(ctx, userID)
+	if err != nil {
+		t.Fatalf("post-purchase GetByID: %v", err)
+	}
+	if got.Tier != models.UserTierPaid {
+		t.Fatalf("setup: expected paid before refund, got %q", got.Tier)
+	}
+
+	// Simulate the refund: credit_balance drops, refund_deficit_credits rises,
+	// total_credits_purchased is intentionally NOT touched (monotonic counter).
+	if _, err := db.ExecContext(ctx,
+		`UPDATE users SET credit_balance = 0, refund_deficit_credits = 5.00 WHERE id = $1`, userID); err != nil {
+		t.Fatalf("seed refund: %v", err)
+	}
+
+	got, err = repo.GetByID(ctx, userID)
+	if err != nil {
+		t.Fatalf("post-refund GetByID: %v", err)
+	}
+	if got.Tier != models.UserTierPaid {
+		t.Errorf("refund must not demote: expected Tier=%q, got %q", models.UserTierPaid, got.Tier)
+	}
+}
+
+// TestGetByEmail_TierResolution mirrors TestGetByID_TierResolution against the
+// GetByEmail path so both User-returning queries are covered by the same
+// invariant.
+func TestGetByEmail_TierResolution(t *testing.T) {
+	t.Parallel()
+	db := openUserTestDB(t)
+	ctx := context.Background()
+	repo := NewUserRepository(db)
+	userID := seedTestUser(t, db)
+	email := userID + "@test.invalid"
+
+	got, err := repo.GetByEmail(ctx, email)
+	if err != nil {
+		t.Fatalf("GetByEmail: %v", err)
+	}
+	if got.Tier != models.UserTierFree {
+		t.Errorf("expected Tier=%q, got %q", models.UserTierFree, got.Tier)
+	}
+
+	if _, err := db.ExecContext(ctx,
+		`UPDATE users SET total_credits_purchased = 9.99 WHERE id = $1`, userID); err != nil {
+		t.Fatalf("update total_credits_purchased: %v", err)
+	}
+
+	got, err = repo.GetByEmail(ctx, email)
+	if err != nil {
+		t.Fatalf("post-purchase GetByEmail: %v", err)
+	}
+	if got.Tier != models.UserTierPaid {
+		t.Errorf("expected Tier=%q, got %q", models.UserTierPaid, got.Tier)
 	}
 }
 

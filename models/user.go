@@ -11,6 +11,21 @@ const (
 	RoleAdmin = "admin"
 )
 
+// Tier constants for API rate-limit bucketing.
+//
+// A user is paid the moment total_credits_purchased first goes above zero
+// (i.e. the first successful Stripe payment). Refunds do NOT demote a paid
+// user back to free: once they've paid, they keep the higher quota for the
+// life of their account. Signup bonuses and other non-Stripe credit grants
+// keep the user on the free tier.
+//
+// Tier is computed by the postgres layer on every User read; it is not a
+// persisted column and not part of the JSON API surface.
+const (
+	UserTierFree = "free"
+	UserTierPaid = "paid"
+)
+
 // User represents a registered user in the system
 type User struct {
 	ID    string `json:"id"`
@@ -31,6 +46,22 @@ type User struct {
 	RefundDeficitCredits float64   `json:"refund_deficit_credits"`
 	CreatedAt            time.Time `json:"created_at"`
 	UpdatedAt            time.Time `json:"updated_at"`
+
+	// Tier is the user's billing tier (UserTierFree or UserTierPaid).
+	// Computed from users.total_credits_purchased > 0 on every DB read;
+	// not stored as its own column and not exposed in API responses (the
+	// `json:"-"` tag keeps it server-side). Consumed by the API rate
+	// limiter to grant paid customers their higher quota.
+	//
+	// Race note: the underlying column is updated by a Stripe webhook
+	// handler with no FOR UPDATE on the read path here. A request that
+	// arrives mid-transaction will see the pre-commit snapshot (Tier=free)
+	// for one or two more requests until the webhook commits. That's a
+	// brief tightening of rate limits on the first paid request burst —
+	// acceptable, NOT a bug to "fix" with a SHARE lock. The webhook also
+	// only ever increments (never decrements), so once Tier=paid for a
+	// user, it stays paid.
+	Tier string `json:"-"`
 }
 
 // UserRepository manages user operations

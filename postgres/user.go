@@ -40,40 +40,65 @@ func NewUserRepository(db *sql.DB) UserRepository {
 	return &userRepository{db: db}
 }
 
-// GetByID retrieves a user by ID
-func (repo *userRepository) GetByID(ctx context.Context, id string) (User, error) {
-	const q = `SELECT id, email, role, stripe_customer_id, COALESCE(refund_deficit_credits, 0)::float8, created_at, updated_at FROM users WHERE id = $1`
+// userSelectColumns is the canonical projection used by every User-returning
+// query in this repository. Kept in one place so adding a column on the User
+// struct only requires updating one constant + the matching Scan helper.
+//
+// `(total_credits_purchased > 0)` is a server-side boolean that drives the
+// User.Tier computation in scanUser. Comparing NUMERIC(18,6) values is exact
+// (Postgres NUMERIC is decimal, not float), and the column is NOT NULL with
+// a CHECK (>= 0) constraint (see migration 000012), so no COALESCE needed.
+// The boolean roundtrip avoids shipping the raw amount across the wire just
+// to compare it to zero.
+const userSelectColumns = `id, email, role, stripe_customer_id,
+	COALESCE(refund_deficit_credits, 0)::float8,
+	created_at, updated_at,
+	(total_credits_purchased > 0)`
 
-	row := repo.db.QueryRowContext(ctx, q, id)
+// rowScanner is the subset of *sql.Row / *sql.Rows we need; lets scanUser work
+// with both single-row and multi-row queries.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
 
-	var user User
-	err := row.Scan(&user.ID, &user.Email, &user.Role, &user.StripeCustomerID, &user.RefundDeficitCredits, &user.CreatedAt, &user.UpdatedAt)
+// scanUser scans one row produced by a SELECT with userSelectColumns into a
+// fully-populated User, computing Tier from the trailing boolean column.
+// Returns ErrUserNotFound when the underlying row is empty so callers don't
+// have to re-implement the sentinel translation.
+func scanUser(row rowScanner) (User, error) {
+	var (
+		user         User
+		hasPurchased bool
+	)
+	err := row.Scan(
+		&user.ID, &user.Email, &user.Role, &user.StripeCustomerID,
+		&user.RefundDeficitCredits, &user.CreatedAt, &user.UpdatedAt,
+		&hasPurchased,
+	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return User{}, ErrUserNotFound
 		}
 		return User{}, err
 	}
-
+	if hasPurchased {
+		user.Tier = models.UserTierPaid
+	} else {
+		user.Tier = models.UserTierFree
+	}
 	return user, nil
+}
+
+// GetByID retrieves a user by ID
+func (repo *userRepository) GetByID(ctx context.Context, id string) (User, error) {
+	const q = `SELECT ` + userSelectColumns + ` FROM users WHERE id = $1`
+	return scanUser(repo.db.QueryRowContext(ctx, q, id))
 }
 
 // GetByEmail retrieves a user by email
 func (repo *userRepository) GetByEmail(ctx context.Context, email string) (User, error) {
-	const q = `SELECT id, email, role, stripe_customer_id, COALESCE(refund_deficit_credits, 0)::float8, created_at, updated_at FROM users WHERE email = $1`
-
-	row := repo.db.QueryRowContext(ctx, q, email)
-
-	var user User
-	err := row.Scan(&user.ID, &user.Email, &user.Role, &user.StripeCustomerID, &user.RefundDeficitCredits, &user.CreatedAt, &user.UpdatedAt)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return User{}, ErrUserNotFound
-		}
-		return User{}, err
-	}
-
-	return user, nil
+	const q = `SELECT ` + userSelectColumns + ` FROM users WHERE email = $1`
+	return scanUser(repo.db.QueryRowContext(ctx, q, email))
 }
 
 // Create inserts a new user. The role column is intentionally omitted so new

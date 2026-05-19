@@ -123,6 +123,9 @@ type mockConfigRepo struct {
 	updateFn                     func(ctx context.Context, cfg *models.WebhookConfig) error
 	revokeFn                     func(ctx context.Context, id string, ownerUserID string) error
 	listActiveWithSecretByUserID func(ctx context.Context, userID string) ([]*models.WebhookConfig, error)
+	recordSuccessFn              func(ctx context.Context, configID string) error
+	recordFailureFn              func(ctx context.Context, configID, reason string) (string, bool, error)
+	reenableFn                   func(ctx context.Context, configID, ownerUserID string) error
 }
 
 func (m *mockConfigRepo) GetByID(ctx context.Context, id string, ownerUserID string) (*models.WebhookConfig, error) {
@@ -172,6 +175,27 @@ func (m *mockConfigRepo) ListActiveWithSecretByUserID(ctx context.Context, userI
 		return m.listActiveWithSecretByUserID(ctx, userID)
 	}
 	return nil, nil
+}
+
+func (m *mockConfigRepo) RecordDeliverySuccess(ctx context.Context, configID string) error {
+	if m.recordSuccessFn != nil {
+		return m.recordSuccessFn(ctx, configID)
+	}
+	return nil
+}
+
+func (m *mockConfigRepo) RecordDeliveryFailure(ctx context.Context, configID, reason string) (string, bool, error) {
+	if m.recordFailureFn != nil {
+		return m.recordFailureFn(ctx, configID, reason)
+	}
+	return models.WebhookHealthHealthy, false, nil
+}
+
+func (m *mockConfigRepo) Reenable(ctx context.Context, configID, ownerUserID string) error {
+	if m.reenableFn != nil {
+		return m.reenableFn(ctx, configID, ownerUserID)
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -822,4 +846,214 @@ func TestRun_ContextCancellation(t *testing.T) {
 	case <-time.After(1 * time.Second):
 		t.Fatal("Run did not return within 1 second after context cancellation")
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Circuit breaker integration
+// ---------------------------------------------------------------------------
+
+// TestDeliverOne_DisabledConfig is the pre-delivery gate test: a config
+// whose breaker has tripped must not be POSTed to. Different from revoked
+// because the user might re-enable it later; we mark this specific job's
+// delivery failed but do NOT increment the breaker (it's already disabled).
+func TestDeliverOne_DisabledConfig(t *testing.T) {
+	var (
+		requestReceived     bool
+		markFailedCalled    bool
+		recordFailureCalled bool
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestReceived = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	dr := &mockDeliveryRepo{
+		markFailedFn: func(_ context.Context, _, _ string) error {
+			markFailedCalled = true
+			return nil
+		},
+	}
+	disabledAt := time.Now().UTC().Add(-1 * time.Hour)
+	reason := "10_consecutive_failures"
+	cr := &mockConfigRepo{
+		getByIDFn: func(_ context.Context, _ string, _ string) (*models.WebhookConfig, error) {
+			cfg := baseConfig(t, srv.URL)
+			cfg.HealthState = models.WebhookHealthDisabled
+			cfg.DisabledAt = &disabledAt
+			cfg.DisabledReason = &reason
+			return cfg, nil
+		},
+		recordFailureFn: func(_ context.Context, _, _ string) (string, bool, error) {
+			recordFailureCalled = true
+			return models.WebhookHealthDisabled, false, nil
+		},
+	}
+	jr := &mockJobRepo{}
+
+	w := newTestWorker(dr, cr, jr)
+	w.deliverOne(context.Background(), baseDelivery())
+
+	assert.True(t, markFailedCalled, "MarkFailed should be called for disabled config")
+	assert.False(t, requestReceived, "no HTTP request should be sent to disabled config")
+	assert.False(t, recordFailureCalled, "breaker counter must not tick on already-disabled config (would spam logs and risk re-fire)")
+}
+
+// TestDeliverOne_2xxResetsBreakerState confirms that a successful delivery
+// calls RecordDeliverySuccess, which is the only mechanism that auto-clears
+// a "degraded" health_state without admin intervention.
+func TestDeliverOne_2xxResetsBreakerState(t *testing.T) {
+	var recordSuccessCalledFor string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	dr := &mockDeliveryRepo{
+		countRecentByUserIDFn: func(_ context.Context, _ string, _ time.Time) (int, error) { return 0, nil },
+		countRecentByIPFn:     func(_ context.Context, _ string, _ time.Time) (int, error) { return 0, nil },
+		markDeliveredFn:       func(_ context.Context, _, _ string) error { return nil },
+	}
+	cr := &mockConfigRepo{
+		getByIDFn: func(_ context.Context, _ string, _ string) (*models.WebhookConfig, error) {
+			cfg := baseConfig(t, srv.URL)
+			// Simulate a config that had been degraded — success must reset it.
+			cfg.HealthState = models.WebhookHealthDegraded
+			cfg.ConsecutiveFailures = 6
+			return cfg, nil
+		},
+		recordSuccessFn: func(_ context.Context, configID string) error {
+			recordSuccessCalledFor = configID
+			return nil
+		},
+	}
+	jr := &mockJobRepo{
+		getFn: func(_ context.Context, _ string, _ string) (models.Job, error) { return baseJob(), nil },
+	}
+
+	w := newTestWorker(dr, cr, jr)
+	w.deliverOne(context.Background(), baseDelivery())
+
+	assert.Equal(t, testConfigID, recordSuccessCalledFor, "RecordDeliverySuccess must be called for the delivered config")
+}
+
+// TestDeliverOne_ExhaustedRetriesTicksBreaker confirms the threshold-tick
+// behavior: when this delivery has burnt its full retry budget, the
+// breaker counter increments. This is the ONLY path that ticks the
+// counter, by design — intermediate retries inside one delivery do not.
+func TestDeliverOne_ExhaustedRetriesTicksBreaker(t *testing.T) {
+	var (
+		recordFailureCalled bool
+		recordFailureReason string
+		markFailedCalled    bool
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	dr := &mockDeliveryRepo{
+		countRecentByUserIDFn: func(_ context.Context, _ string, _ time.Time) (int, error) { return 0, nil },
+		countRecentByIPFn:     func(_ context.Context, _ string, _ time.Time) (int, error) { return 0, nil },
+		markFailedFn: func(_ context.Context, _, _ string) error {
+			markFailedCalled = true
+			return nil
+		},
+	}
+	cr := &mockConfigRepo{
+		getByIDFn: func(_ context.Context, _ string, _ string) (*models.WebhookConfig, error) {
+			return baseConfig(t, srv.URL), nil
+		},
+		recordFailureFn: func(_ context.Context, _, reason string) (string, bool, error) {
+			recordFailureCalled = true
+			recordFailureReason = reason
+			return models.WebhookHealthDegraded, false, nil
+		},
+	}
+	jr := &mockJobRepo{
+		getFn: func(_ context.Context, _ string, _ string) (models.Job, error) { return baseJob(), nil },
+	}
+
+	delivery := baseDelivery()
+	delivery.Attempts = 5
+	delivery.MaxAttempts = 5
+
+	w := newTestWorker(dr, cr, jr)
+	w.deliverOne(context.Background(), delivery)
+
+	assert.True(t, recordFailureCalled, "RecordDeliveryFailure must be called when retries are exhausted")
+	// Server returns 500 — classifyFailure must tag the breaker trip with
+	// the actual failure mode so disabled_reason retains forensic value
+	// (vs an opaque "you crossed the threshold" tag).
+	assert.Equal(t, "http_5xx", recordFailureReason, "disable reason must classify the last failure mode")
+	assert.True(t, markFailedCalled, "MarkFailed should still be called on the delivery row")
+}
+
+// TestClassifyFailure pins the disabled_reason taxonomy. These strings
+// ship to webhook_configs.disabled_reason and clients may end up
+// surfacing them in dashboards — changing them silently would break
+// downstream consumers, so the table doubles as the contract.
+func TestClassifyFailure(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		want   string
+	}{
+		{"transport_error_when_no_response", 0, "transport_error"},
+		{"5xx", 500, "http_5xx"},
+		{"5xx_boundary_503", 503, "http_5xx"},
+		{"4xx", 404, "http_4xx"},
+		{"4xx_boundary_400", 400, "http_4xx"},
+		{"3xx_falls_back_to_non_2xx", 301, "non_2xx"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyFailure(tc.status); got != tc.want {
+				t.Errorf("classifyFailure(%d) = %q, want %q", tc.status, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDeliverOne_IntermediateRetryDoesNotTickBreaker is the inverse
+// guarantee: a non-2xx response that still has retry budget left must
+// NOT tick the breaker, otherwise a single broken endpoint trips the
+// circuit at attempt N rather than after N jobs as intended.
+func TestDeliverOne_IntermediateRetryDoesNotTickBreaker(t *testing.T) {
+	var recordFailureCalled bool
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer srv.Close()
+
+	dr := &mockDeliveryRepo{
+		countRecentByUserIDFn: func(_ context.Context, _ string, _ time.Time) (int, error) { return 0, nil },
+		countRecentByIPFn:     func(_ context.Context, _ string, _ time.Time) (int, error) { return 0, nil },
+		setNextRetryFn:        func(_ context.Context, _, _ string, _ time.Time) error { return nil },
+	}
+	cr := &mockConfigRepo{
+		getByIDFn: func(_ context.Context, _ string, _ string) (*models.WebhookConfig, error) {
+			return baseConfig(t, srv.URL), nil
+		},
+		recordFailureFn: func(_ context.Context, _, _ string) (string, bool, error) {
+			recordFailureCalled = true
+			return models.WebhookHealthHealthy, false, nil
+		},
+	}
+	jr := &mockJobRepo{
+		getFn: func(_ context.Context, _ string, _ string) (models.Job, error) { return baseJob(), nil },
+	}
+
+	delivery := baseDelivery()
+	delivery.Attempts = 1 // plenty of retries left
+	delivery.MaxAttempts = 5
+
+	w := newTestWorker(dr, cr, jr)
+	w.deliverOne(context.Background(), delivery)
+
+	assert.False(t, recordFailureCalled, "intermediate retries must NOT tick the breaker — see threshold semantics in models/webhook.go")
 }

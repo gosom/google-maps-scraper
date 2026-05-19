@@ -262,6 +262,11 @@ func New(cfg ServerConfig) (*Server, error) {
 		webmiddleware.MaxBodySize(1<<20), // 1 MB max body (CWE-400)
 		// API key: free=2 req/s burst 5, paid=10 req/s burst 30; session fallback=5 req/s burst 20 (CWE-307)
 		webmiddleware.PerAPIKeyRateLimit(rate.Limit(2), 5, rate.Limit(10), 30, rate.Limit(5), 20),
+		// Write IETF + legacy RateLimit-* response headers on the success
+		// path. Must sit AFTER the limiter so the snapshot is in context;
+		// the 429 path writes the same header set inline from the
+		// dispatcher (see middleware.rateLimitJSON).
+		webmiddleware.RateLimitHeaders(),
 		webmiddleware.RequestID,
 		webmiddleware.InjectLogger(ans.logger),
 		webmiddleware.RequestLogger(ans.logger),

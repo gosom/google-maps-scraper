@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/gosom/google-maps-scraper/models"
 	"github.com/gosom/google-maps-scraper/web/auth"
 	"golang.org/x/time/rate"
 )
@@ -250,11 +251,13 @@ func TestPerIPRateLimit_Returns429WhenExceeded(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // injectAPIKey adds API key context values so PerAPIKeyRateLimit treats the
-// request as API-key-authenticated.
+// request as API-key-authenticated. The tier is set on UserTierKey because
+// the dispatcher reads tier from the user (not the API key) — see the
+// matching auth-middleware behaviour in web/auth/auth.go withUserContext.
 func injectAPIKey(r *http.Request, keyID, tier string) *http.Request {
 	ctx := r.Context()
 	ctx = context.WithValue(ctx, auth.APIKeyIDKey, keyID)
-	ctx = context.WithValue(ctx, auth.APIKeyPlanTierKey, tier)
+	ctx = context.WithValue(ctx, auth.UserTierKey, tier)
 	ctx = context.WithValue(ctx, auth.UserIDKey, "user-123")
 	return r.WithContext(ctx)
 }
@@ -305,6 +308,68 @@ func TestPerAPIKeyRateLimit_FreeKeyReturns429WhenExceeded(t *testing.T) {
 	}
 	if rr.Header().Get("Retry-After") == "" {
 		t.Error("expected Retry-After header on 429")
+	}
+}
+
+// TestPerAPIKeyRateLimit_TierSelection_TableDriven locks in the tier dispatcher
+// contract: paid users hit the paid bucket; everyone else (free, empty,
+// malformed) hits the free bucket. The "must NOT auto-promote on missing
+// tier" case is the security-critical one — losing this regression would
+// mean a DB hiccup hands every user the paid quota.
+func TestPerAPIKeyRateLimit_TierSelection_TableDriven(t *testing.T) {
+	tests := []struct {
+		name     string
+		tier     string
+		wantCode int
+		// reasoning is included so a future maintainer reading a test failure
+		// understands the invariant, not just the expected value.
+		reasoning string
+	}{
+		{
+			name:      "explicit paid uses paid bucket (200)",
+			tier:      models.UserTierPaid,
+			wantCode:  http.StatusOK,
+			reasoning: "paid is the only value that should grant the looser limit",
+		},
+		{
+			name:      "explicit free uses free bucket (429)",
+			tier:      models.UserTierFree,
+			wantCode:  http.StatusTooManyRequests,
+			reasoning: "free → free bucket, which is configured at rate 0 burst 0",
+		},
+		{
+			name:      "empty tier defaults to free bucket (429)",
+			tier:      "",
+			wantCode:  http.StatusTooManyRequests,
+			reasoning: "missing tier → safe default (free), never auto-promote",
+		},
+		{
+			name:      "unknown tier value defaults to free bucket (429)",
+			tier:      "enterprise",
+			wantCode:  http.StatusTooManyRequests,
+			reasoning: "garbled value → safe default (free), defensive against future bug",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := PerAPIKeyRateLimit(
+				rate.Limit(0), 0, // free: always denies
+				rate.Limit(100), 100, // paid: generous
+				rate.Limit(100), 100,
+			)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.RemoteAddr = "1.2.3.4:1234"
+			req = injectAPIKey(req, "key-uuid-tier-test-"+tt.name, tt.tier)
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+
+			if rr.Code != tt.wantCode {
+				t.Errorf("tier=%q (%s): want %d, got %d", tt.tier, tt.reasoning, tt.wantCode, rr.Code)
+			}
+		})
 	}
 }
 

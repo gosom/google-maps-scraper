@@ -34,18 +34,27 @@ type createWebhookResponse struct {
 }
 
 type listWebhookItem struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	URL        string `json:"url"`
-	VerifiedAt string `json:"verified_at,omitempty"`
-	CreatedAt  string `json:"created_at"`
-	UpdatedAt  string `json:"updated_at"`
-	RevokedAt  string `json:"revoked_at,omitempty"`
+	ID                  string `json:"id"`
+	Name                string `json:"name"`
+	URL                 string `json:"url"`
+	VerifiedAt          string `json:"verified_at,omitempty"`
+	CreatedAt           string `json:"created_at"`
+	UpdatedAt           string `json:"updated_at"`
+	RevokedAt           string `json:"revoked_at,omitempty"`
+	HealthState         string `json:"health_state"`
+	ConsecutiveFailures int    `json:"consecutive_failures"`
+	DisabledAt          string `json:"disabled_at,omitempty"`
+	DisabledReason      string `json:"disabled_reason,omitempty"`
 }
 
 type updateWebhookRequest struct {
 	Name string `json:"name,omitempty"`
 	URL  string `json:"url,omitempty"`
+	// Reenable, when true, clears any circuit-breaker disabled state on
+	// the config. Pointer so a missing field is distinguishable from an
+	// explicit `false` (which is a no-op rather than a re-disable — only
+	// the worker can disable).
+	Reenable *bool `json:"reenable,omitempty"`
 }
 
 // ---- handlers ----
@@ -69,17 +78,25 @@ func (h *WebhookHandlers) ListWebhooks(w http.ResponseWriter, r *http.Request) {
 	items := make([]listWebhookItem, 0, len(configs))
 	for _, c := range configs {
 		item := listWebhookItem{
-			ID:        c.ID,
-			Name:      c.Name,
-			URL:       c.URL,
-			CreatedAt: c.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
-			UpdatedAt: c.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+			ID:                  c.ID,
+			Name:                c.Name,
+			URL:                 c.URL,
+			CreatedAt:           c.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+			UpdatedAt:           c.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+			HealthState:         c.HealthState,
+			ConsecutiveFailures: c.ConsecutiveFailures,
 		}
 		if c.VerifiedAt != nil {
 			item.VerifiedAt = c.VerifiedAt.UTC().Format("2006-01-02T15:04:05Z")
 		}
 		if c.RevokedAt != nil {
 			item.RevokedAt = c.RevokedAt.UTC().Format("2006-01-02T15:04:05Z")
+		}
+		if c.DisabledAt != nil {
+			item.DisabledAt = c.DisabledAt.UTC().Format("2006-01-02T15:04:05Z")
+		}
+		if c.DisabledReason != nil {
+			item.DisabledReason = *c.DisabledReason
 		}
 		items = append(items, item)
 	}
@@ -282,6 +299,26 @@ func (h *WebhookHandlers) UpdateWebhook(w http.ResponseWriter, r *http.Request) 
 		urlChanged = true
 	}
 
+	// Reenable BEFORE Update so a partial-write failure can't leave the
+	// row in a "metadata changed but still disabled" state — the user's
+	// mental model on a PATCH that contains both is "fix everything", and
+	// having only the metadata land would confuse the retry. If Reenable
+	// returns NotFound (e.g. revoked between GetByID and now), bail
+	// before touching anything else.
+	reenabled := false
+	if req.Reenable != nil && *req.Reenable {
+		if err := h.Deps.WebhookConfigRepo.Reenable(r.Context(), webhookID, userID); err != nil {
+			if errors.Is(err, models.ErrWebhookConfigNotFound) {
+				renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: "webhook config not found or already revoked"})
+				return
+			}
+			internalError(w, h.Deps.Logger, err, "failed to reenable webhook config",
+				slog.String("user_id", userID), slog.String("webhook_id", webhookID), slog.String("path", r.URL.Path), slog.String("method", r.Method))
+			return
+		}
+		reenabled = true
+	}
+
 	if err := h.Deps.WebhookConfigRepo.Update(r.Context(), existing); err != nil {
 		if errors.Is(err, models.ErrWebhookConfigNotFound) {
 			renderJSON(w, http.StatusNotFound, models.APIError{Code: http.StatusNotFound, Message: "webhook config not found or already revoked"})
@@ -293,7 +330,12 @@ func (h *WebhookHandlers) UpdateWebhook(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if h.Deps.Logger != nil {
-		h.Deps.Logger.Info("webhook_config_updated", slog.String("user_id", userID), slog.String("webhook_id", webhookID), slog.Bool("url_changed", urlChanged))
+		h.Deps.Logger.Info("webhook_config_updated",
+			slog.String("user_id", userID),
+			slog.String("webhook_id", webhookID),
+			slog.Bool("url_changed", urlChanged),
+			slog.Bool("reenabled", reenabled),
+		)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
