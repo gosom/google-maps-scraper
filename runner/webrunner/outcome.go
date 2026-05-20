@@ -24,6 +24,12 @@ const (
 	CauseHardTimeout   TerminalCause = "hard_timeout"   // job's allowed_seconds budget expired
 	CauseRuntimeError  TerminalCause = "runtime_error"  // unexpected error from mate.Start
 	CausePartial       TerminalCause = "partial"        // timed out / cancelled but produced results
+	// CauseProxyPoolExhausted is set when proxypool.Pool.Acquire returns
+	// ErrPoolExhausted — every proxy is cooling or quarantined and the
+	// scrape cannot proceed. Operator-visible: indicates the entire pool
+	// has been burned by the target (typically Google detecting datacenter
+	// IPs across the whole Decodo allocation).
+	CauseProxyPoolExhausted TerminalCause = "proxy_pool_exhausted"
 )
 
 // JobOutcome is the discriminated result of one scrape job.

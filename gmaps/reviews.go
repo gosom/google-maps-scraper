@@ -1,6 +1,7 @@
 package gmaps
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gosom/google-maps-scraper/proxypool"
 	"github.com/gosom/scrapemate"
 	"github.com/gosom/scrapemate/adapters/fetchers/stealth"
 	"github.com/playwright-community/playwright-go"
@@ -261,7 +263,7 @@ func (f *fetcher) fetchReviewPage(ctx context.Context, u string) ([]byte, error)
 			"search_job_id", f.params.searchJobID,
 			"place_url", f.params.mapURL,
 			"place_name", f.params.placeName,
-			"proxy_used", proxyHostForLog(f.params.proxyURL),
+			"proxy_used", cmp.Or(proxypool.HostOf(f.params.proxyURL), "direct"),
 			"error", err,
 		)
 		scrapemate.GetLoggerFromContext(ctx).Debug("authenticated_review_fetch_failed_falling_back", args...)
@@ -348,26 +350,19 @@ func newCookieFetchClient(proxyURL string) (*http.Client, error) {
 	}
 	pu, err := url.Parse(proxyURL)
 	if err != nil {
-		return nil, fmt.Errorf("parse proxy URL: %w", err)
+		// CRITICAL: do NOT wrap err with %w — url.Parse returns *url.Error
+		// whose Error() formats as "parse <full-URL>: <inner>". The full
+		// URL includes any user:password@ userinfo. Wrapping leaks
+		// credentials into structured logs (emitReviewExtractionFailed
+		// writes this error verbatim into the "error" log field).
+		// Surface the host:port (via proxypool.HostOf) and the inner
+		// error class only.
+		return nil, fmt.Errorf("parse proxy URL %s: invalid proxy URL syntax", proxypool.HostOf(proxyURL))
 	}
 	return &http.Client{
 		Timeout:   30 * time.Second,
 		Transport: &http.Transport{Proxy: http.ProxyURL(pu)},
 	}, nil
-}
-
-// proxyHostForLog returns a credential-free host:port suitable for log fields.
-// Returns "direct" when no proxy is configured. Strips userinfo so we never
-// emit proxy passwords into Loki / Grafana.
-func proxyHostForLog(proxyURL string) string {
-	if proxyURL == "" {
-		return "direct"
-	}
-	pu, err := url.Parse(proxyURL)
-	if err != nil || pu.Host == "" {
-		return "invalid"
-	}
-	return pu.Host
 }
 
 func extractNextPageToken(data []byte) string {

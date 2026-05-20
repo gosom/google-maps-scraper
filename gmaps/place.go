@@ -10,6 +10,7 @@ package gmaps
 // - Performance optimized with concurrent processing
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/google-maps-scraper/gmaps/images"
+	"github.com/gosom/google-maps-scraper/proxypool"
 )
 
 // reviewFetchBudget caps how long an individual place's review-fetch is
@@ -47,6 +49,25 @@ var (
 // ResetReviewCircuitBreaker resets the counter. Call at job start.
 func ResetReviewCircuitBreaker() {
 	reviewEmptyCount.Store(0)
+}
+
+// ReviewEmptyCount returns the current value of the per-job review
+// empty-response counter. Used by the webrunner at job end to decide
+// whether to classify the assigned proxy as SoftReject — see the proxy
+// pool integration in docs/superpowers/plans/2026-05-20-proxy-pool-with-health-tracking.md
+//
+// Callers should read this only AFTER mate.Start has returned; reading
+// during a scrape gives a racy mid-scrape view.
+func ReviewEmptyCount() int32 {
+	return reviewEmptyCount.Load()
+}
+
+// ReviewCircuitBreakerThreshold returns the empty-response count that
+// trips the review circuit breaker. Stable across the process lifetime.
+// Exposed so callers can compare against ReviewEmptyCount() at job end
+// without hardcoding the threshold.
+func ReviewCircuitBreakerThreshold() int32 {
+	return reviewCircuitBreakerThreshold
 }
 
 type PlaceJobOptions func(*PlaceJob)
@@ -901,7 +922,7 @@ func emitReviewAPIEmptyResponse(ctx context.Context, j *PlaceJob, reviewCountOnP
 		"response_bytes", responseBytes,
 		"consecutive_empty", consecutiveEmpty,
 		"response_sample", responseSampleForLog(body, 256),
-		"proxy_used", proxyHostForLog(j.ProxyURL),
+		"proxy_used", cmp.Or(proxypool.HostOf(j.ProxyURL), "direct"),
 		"possible_cause", "expired cookies, IP blocked, rate limited, or proxy returning stub",
 	)
 	scrapemate.GetLoggerFromContext(ctx).Warn("review_api_empty_response", args...)

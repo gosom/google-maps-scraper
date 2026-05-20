@@ -61,27 +61,6 @@ func TestPickProxyURL_EmptyPool(t *testing.T) {
 	}
 }
 
-// TestProxyHostForLog covers the credential-stripping helper local to the
-// webrunner. Mirrors the gmaps equivalent — duplicated here to avoid widening
-// the gmaps public API surface for a 10-line helper. If either copy drifts,
-// the log shape diverges between the two packages.
-func TestProxyHostForLog(t *testing.T) {
-	cases := []struct {
-		in   string
-		want string
-	}{
-		{"", ""},
-		{"http://gate.example.com:10001", "gate.example.com:10001"},
-		{"http://u:secret@gate.example.com:10001", "gate.example.com:10001"},
-		{"://malformed", "invalid"},
-	}
-	for _, c := range cases {
-		got := proxyHostForLog(c.in)
-		if got != c.want {
-			t.Errorf("proxyHostForLog(%q) = %q, want %q", c.in, got, c.want)
-		}
-		if got == "secret" || got == "u:secret" {
-			t.Errorf("credentials leaked for input %q: %q", c.in, got)
-		}
-	}
-}
+// (TestProxyHostForLog removed — coverage is now in proxypool.TestHostOf;
+// the local proxyHostForLog helper was deleted in favor of the exported
+// proxypool.HostOf.)
