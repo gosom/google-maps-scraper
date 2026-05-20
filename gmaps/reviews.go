@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -28,6 +27,33 @@ type fetchReviewsParams struct {
 	reviewCount int
 	maxReviews  int    // Maximum number of reviews to fetch
 	langCode    string // Language code for the review API (e.g., "en", "de")
+
+	// Logging context — populated by the caller in place.go. Optional in CLI
+	// scrapes where these fields are unknown; emit helpers (see
+	// userArgsFromParams) omit user_id/job_id entirely when empty to avoid
+	// polluting per-user Grafana queries with empty-string buckets.
+	placeJobID  string
+	searchJobID string
+	placeName   string
+	// userID and userJobID are propagated from PlaceJob.UserID / PlaceJob.UserJobID.
+	// They are emitted explicitly in all reviews.go log calls because
+	// scrapemate replaces the ctx-bound logger per job (scrapemate.go:312),
+	// stripping the .With(job_id, user_id) attributes set by the webrunner.
+	userID    string
+	userJobID string
+}
+
+// userArgsFromParams returns the user_id/job_id args for a fetchReviewsParams,
+// omitting any empty values. See userArgs in place.go for rationale.
+func userArgsFromParams(p *fetchReviewsParams) []any {
+	args := make([]any, 0, 4)
+	if p.userJobID != "" {
+		args = append(args, "job_id", p.userJobID)
+	}
+	if p.userID != "" {
+		args = append(args, "user_id", p.userID)
+	}
+	return args
 }
 
 type fetchReviewsResponse struct {
@@ -70,6 +96,16 @@ func (f *fetcher) fetch(ctx context.Context) (fetchReviewsResponse, error) {
 
 	reviewURL, err := f.generateURL(f.params.mapURL, "", pageSize, requestIDForSession)
 	if err != nil {
+		args := userArgsFromParams(&f.params)
+		args = append(args,
+			"place_job_id", f.params.placeJobID,
+			"search_job_id", f.params.searchJobID,
+			"place_url", f.params.mapURL,
+			"place_name", f.params.placeName,
+			"next_page_token", "",
+			"error", err,
+		)
+		scrapemate.GetLoggerFromContext(ctx).Error("reviews_generate_url_failed", args...)
 		return fetchReviewsResponse{}, fmt.Errorf("failed to generate initial URL: %v", err)
 	}
 
@@ -118,20 +154,32 @@ func (f *fetcher) fetch(ctx context.Context) (fetchReviewsResponse, error) {
 
 		reviewURL, err = f.generateURL(f.params.mapURL, nextPageToken, currentPageSize, requestIDForSession)
 		if err != nil {
-			slog.Error("reviews_generate_url_failed",
-				slog.String("next_page_token", nextPageToken),
-				slog.Any("error", err),
+			args := userArgsFromParams(&f.params)
+			args = append(args,
+				"place_job_id", f.params.placeJobID,
+				"search_job_id", f.params.searchJobID,
+				"place_url", f.params.mapURL,
+				"place_name", f.params.placeName,
+				"next_page_token", nextPageToken,
+				"error", err,
 			)
+			scrapemate.GetLoggerFromContext(ctx).Error("reviews_generate_url_failed", args...)
 			break
 		}
 
 		currentPageBody, err = f.fetchReviewPage(ctx, reviewURL)
 		if err != nil {
-			slog.Error("reviews_fetch_page_failed",
-				slog.String("next_page_token", nextPageToken),
-				slog.String("review_url", reviewURL),
-				slog.Any("error", err),
+			args := userArgsFromParams(&f.params)
+			args = append(args,
+				"place_job_id", f.params.placeJobID,
+				"search_job_id", f.params.searchJobID,
+				"place_url", f.params.mapURL,
+				"place_name", f.params.placeName,
+				"next_page_token", nextPageToken,
+				"review_url", reviewURL,
+				"error", err,
 			)
+			scrapemate.GetLoggerFromContext(ctx).Error("reviews_fetch_page_failed", args...)
 			break
 		}
 
@@ -186,7 +234,15 @@ func (f *fetcher) fetchReviewPage(ctx context.Context, u string) ([]byte, error)
 		if err == nil {
 			return body, nil
 		}
-		slog.Debug("authenticated_review_fetch_failed_falling_back", slog.Any("error", err))
+		args := userArgsFromParams(&f.params)
+		args = append(args,
+			"place_job_id", f.params.placeJobID,
+			"search_job_id", f.params.searchJobID,
+			"place_url", f.params.mapURL,
+			"place_name", f.params.placeName,
+			"error", err,
+		)
+		scrapemate.GetLoggerFromContext(ctx).Debug("authenticated_review_fetch_failed_falling_back", args...)
 	}
 
 	// Fallback to unauthenticated stealth fetch

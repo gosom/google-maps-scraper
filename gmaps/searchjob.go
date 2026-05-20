@@ -35,6 +35,13 @@ type SearchJob struct {
 
 	params      *MapSearchParams
 	ExitMonitor exiter.Exiter
+
+	// UserID and UserJobID mirror the same fields on GmapJob. SearchJob does
+	// not currently spawn PlaceJobs, but the fields are kept for symmetry so
+	// CreateSeedJobs can populate them on both paths and future code can
+	// propagate them without a schema change.
+	UserID    string
+	UserJobID string
 }
 
 func NewSearchJob(params *MapSearchParams, opts ...SearchJobOptions) *SearchJob {
@@ -67,6 +74,17 @@ func NewSearchJob(params *MapSearchParams, opts ...SearchJobOptions) *SearchJob 
 func WithSearchJobExitMonitor(exitMonitor exiter.Exiter) SearchJobOptions {
 	return func(j *SearchJob) {
 		j.ExitMonitor = exitMonitor
+	}
+}
+
+// WithSearchJobUserContext propagates the user-facing job identifiers to the
+// SearchJob. Mirrors WithUserContext on GmapJob. SearchJob does not currently
+// spawn PlaceJobs directly, but the fields are stored for symmetry and future
+// use.
+func WithSearchJobUserContext(userID, userJobID string) SearchJobOptions {
+	return func(j *SearchJob) {
+		j.UserID = userID
+		j.UserJobID = userJobID
 	}
 }
 

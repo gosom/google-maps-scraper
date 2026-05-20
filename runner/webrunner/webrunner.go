@@ -32,6 +32,7 @@ import (
 	"github.com/gosom/google-maps-scraper/tlmt"
 	"github.com/gosom/google-maps-scraper/web"
 	webservices "github.com/gosom/google-maps-scraper/web/services"
+	"github.com/gosom/kit/logging"
 	"github.com/gosom/scrapemate"
 	"github.com/gosom/scrapemate/adapters/writers/csvwriter"
 	"github.com/gosom/scrapemate/scrapemateapp"
@@ -206,6 +207,18 @@ func New(cfg *runner.Config, appCfg *pkgconfig.Config, logger *slog.Logger) (run
 	if cfg.Dsn == "" {
 		return nil, fmt.Errorf("PostgreSQL DSN is required")
 	}
+
+	// Install our slog-backed adapter as the gosom/kit default BEFORE any
+	// scrapemate is constructed. scrapemate's DoJob (scrapemate.go:312)
+	// replaces the ctx logger with one derived from s.log = logging.Get()
+	// — by default that's gosom/kit's zerolog adapter, which emits the
+	// message under the JSON key "message" rather than slog's "msg". Every
+	// per-job log line emitted via scrapemate.GetLoggerFromContext therefore
+	// bypasses our pipeline (wrong key, wrong destination, breaks all LogQL
+	// recipes in docs/observability/review-scraping.md). Setting the default
+	// here makes scrapemate inherit our slog handler — output uses "msg"
+	// and lands in the same destination as webrunner lifecycle logs.
+	logging.SetDefault(pkglogger.NewSlogAdapter(logger))
 
 	if err := os.MkdirAll(appCfg.DataFolder, os.ModePerm); err != nil {
 		return nil, err
@@ -934,6 +947,8 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) JobOutcome {
 		ExitMonitor:  exitMonitor,
 		ExtraReviews: job.Data.MaxReviews > 0,
 		MaxResults:   job.Data.MaxResults,
+		UserID:       job.UserID,
+		UserJobID:    job.ID,
 	})
 	if err != nil {
 		outcome = OutcomeFailed(CauseRuntimeError, "job configuration failed", err)

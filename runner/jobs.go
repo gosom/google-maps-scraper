@@ -44,6 +44,11 @@ type SeedJobConfig struct {
 	ExitMonitor    exiter.Exiter
 	ExtraReviews   bool
 	MaxResults     int
+	// UserID and UserJobID are propagated to every seed job so that log lines
+	// emitted deep in gmaps code paths carry the user-facing identifiers even
+	// though scrapemate replaces the ctx-bound logger per job.
+	UserID    string
+	UserJobID string
 }
 
 func CreateSeedJobs(cfg SeedJobConfig) (jobs []scrapemate.IJob, err error) {
@@ -133,6 +138,12 @@ func CreateSeedJobs(cfg SeedJobConfig) (jobs []scrapemate.IJob, err error) {
 				opts = append(opts, gmaps.WithImagesPerPlace(cfg.ImagesPerPlace))
 			}
 
+			// Propagate user context so gmaps log lines carry user_id and the
+			// user-facing job_id even though scrapemate replaces the ctx logger.
+			if cfg.UserID != "" || cfg.UserJobID != "" {
+				opts = append(opts, gmaps.WithUserContext(cfg.UserID, cfg.UserJobID))
+			}
+
 			job = gmaps.NewGmapJob(id, cfg.LangCode, query, cfg.MaxDepth, cfg.IncludeEmails, cfg.Images, cfg.ReviewsMax, cfg.GeoCoordinates, cfg.Zoom, opts...)
 		} else {
 			jparams := gmaps.MapSearchParams{
@@ -152,6 +163,10 @@ func CreateSeedJobs(cfg SeedJobConfig) (jobs []scrapemate.IJob, err error) {
 
 			if cfg.ExitMonitor != nil {
 				opts = append(opts, gmaps.WithSearchJobExitMonitor(cfg.ExitMonitor))
+			}
+
+			if cfg.UserID != "" || cfg.UserJobID != "" {
+				opts = append(opts, gmaps.WithSearchJobUserContext(cfg.UserID, cfg.UserJobID))
 			}
 
 			job = gmaps.NewSearchJob(&jparams, opts...)

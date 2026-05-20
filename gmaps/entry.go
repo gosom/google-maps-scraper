@@ -1,10 +1,10 @@
 package gmaps
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"iter"
-	"log/slog"
 	"math"
 	"net/url"
 	"runtime/debug"
@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gosom/scrapemate"
 )
 
 type Image struct {
@@ -267,15 +269,29 @@ func (e *Entry) CsvRow() []string {
 	}
 }
 
-func (e *Entry) AddExtraReviews(pages [][]byte) {
+// AddExtraReviews parses review pages and appends successfully-parsed reviews
+// to e.UserReviewsExtended. Parse failures on individual pages are logged via
+// the ctx-bound scrapemate logger carrying place context from j (place_job_id,
+// search_job_id, place_url) plus user_id and the user-facing job_id from
+// j.UserID / j.UserJobID (propagated by the webrunner via WithPlaceJobUserContext,
+// not from ctx With-attributes, because scrapemate replaces the ctx logger per
+// job); the method continues on error so a single corrupt page doesn't drop
+// the entire batch.
+func (e *Entry) AddExtraReviews(ctx context.Context, j *PlaceJob, pages [][]byte) {
 	for i, page := range pages {
 		reviews, err := extractReviews(page)
 		if err != nil {
-			slog.Warn("review_page_parse_failed",
-				slog.Int("page", i+1),
-				slog.Int("total_pages", len(pages)),
-				slog.Any("error", err),
+			args := userArgs(j)
+			args = append(args,
+				"place_job_id", j.ID,
+				"search_job_id", j.ParentID,
+				"place_url", j.GetURL(),
+				"place_name", e.Title,
+				"page", i+1,
+				"total_pages", len(pages),
+				"error", err,
 			)
+			scrapemate.GetLoggerFromContext(ctx).Warn("review_page_parse_failed", args...)
 			continue
 		}
 		e.UserReviewsExtended = append(e.UserReviewsExtended, reviews...)

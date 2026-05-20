@@ -39,6 +39,19 @@ type GmapJob struct {
 	// per-job-total ImageBudget *atomic.Int64 (May 2026 — Cafe Schöneberg
 	// fix; see PlaceJob.applyPerPlaceImageCap for the contract).
 	ImagesPerPlace int
+
+	// UserID is the Clerk user identifier. Propagated to every PlaceJob
+	// spawned from this seed so gmaps log lines carry user context even
+	// though scrapemate replaces the ctx-bound logger per job. Empty in
+	// CLI/standalone scrapes — emit helpers omit the "user_id" field
+	// entirely in that case to avoid polluting per-user Grafana queries.
+	UserID string
+	// UserJobID is the user-facing jobs.id from the DB. Propagated to
+	// PlaceJob.UserJobID so all gmaps log lines use the same "job_id" value
+	// that appears in webrunner lifecycle logs — enabling drill-down in Loki.
+	// Empty in CLI/standalone scrapes — emit helpers omit the "job_id"
+	// field entirely in that case.
+	UserJobID string
 }
 
 func NewGmapJob(
@@ -128,6 +141,18 @@ func WithImagesPerPlace(n int) GmapJobOptions {
 	}
 }
 
+// WithUserContext propagates the user-facing job identifiers to the GmapJob
+// so they can be forwarded to every PlaceJob it spawns. This is required
+// because scrapemate replaces the ctx-bound logger per job (see
+// scrapemate.go:312), stripping the .With(job_id, user_id) attributes set
+// by the webrunner. The fix is to carry the values in the struct.
+func WithUserContext(userID, userJobID string) GmapJobOptions {
+	return func(j *GmapJob) {
+		j.UserID = userID
+		j.UserJobID = userJobID
+	}
+}
+
 func (j *GmapJob) UseInResults() bool {
 	return false
 }
@@ -209,6 +234,9 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 		if j.ImagesPerPlace > 0 {
 			jopts = append(jopts, WithPlaceJobImagesPerPlace(j.ImagesPerPlace))
 		}
+		if j.UserID != "" || j.UserJobID != "" {
+			jopts = append(jopts, WithPlaceJobUserContext(j.UserID, j.UserJobID))
+		}
 
 		log.Debug("gmap_job_creating_single_place_job",
 			slog.String("job_id", j.ID),
@@ -252,6 +280,9 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 				}
 				if j.ImagesPerPlace > 0 {
 					jopts = append(jopts, WithPlaceJobImagesPerPlace(j.ImagesPerPlace))
+				}
+				if j.UserID != "" || j.UserJobID != "" {
+					jopts = append(jopts, WithPlaceJobUserContext(j.UserID, j.UserJobID))
 				}
 
 				log.Debug("gmap_job_creating_place_job_from_search_result",
