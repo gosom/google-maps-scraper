@@ -1,6 +1,7 @@
 package gmaps_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"testing"
@@ -201,6 +202,35 @@ func Test_EntryFromJSONRaw2(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Greater(t, len(entry.About), 0)
+}
+
+func Test_EntryMarshalEmitsBothLongitudeKeys(t *testing.T) {
+	entry := gmaps.Entry{Title: "x", Category: "y", Latitude: 1.5, Longtitude: 2.5}
+
+	raw, err := json.Marshal(entry)
+	require.NoError(t, err)
+
+	var got map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &got))
+
+	require.JSONEq(t, "2.5", string(got["longtitude"]), "legacy key preserved")
+	require.JSONEq(t, "2.5", string(got["longitude"]), "correctly spelled alias emitted")
+}
+
+func Test_EntryUnmarshalAcceptsEitherLongitudeKey(t *testing.T) {
+	var legacy gmaps.Entry
+	require.NoError(t, json.Unmarshal([]byte(`{"longtitude":42.5}`), &legacy))
+	require.Equal(t, 42.5, legacy.Longtitude)
+
+	var modern gmaps.Entry
+	require.NoError(t, json.Unmarshal([]byte(`{"longitude":42.5}`), &modern))
+	require.Equal(t, 42.5, modern.Longtitude)
+
+	// When both are present, the legacy spelling wins so existing files
+	// round-trip byte-identical.
+	var both gmaps.Entry
+	require.NoError(t, json.Unmarshal([]byte(`{"longtitude":1.0,"longitude":2.0}`), &both))
+	require.Equal(t, 1.0, both.Longtitude)
 }
 
 func Test_EntryFromJsonC(t *testing.T) {
