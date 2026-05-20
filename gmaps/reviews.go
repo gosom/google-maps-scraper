@@ -1,7 +1,6 @@
 package gmaps
 
 import (
-	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -17,7 +16,6 @@ import (
 
 	"github.com/gosom/google-maps-scraper/proxypool"
 	"github.com/gosom/scrapemate"
-	"github.com/gosom/scrapemate/adapters/fetchers/stealth"
 	"github.com/playwright-community/playwright-go"
 )
 
@@ -72,7 +70,6 @@ type fetchReviewsResponse struct {
 }
 
 type fetcher struct {
-	httpClient scrapemate.HTTPFetcher
 	// cookieFetchClient is the *http.Client used by fetchWithCookies for every
 	// paginated review-page request. Built once in newReviewFetcher and reused
 	// across all f.fetch() pages so the connection pool (which lives on
@@ -89,7 +86,6 @@ func newReviewFetcher(params fetchReviewsParams) (*fetcher, error) {
 	}
 	return &fetcher{
 		params:            params,
-		httpClient:        stealth.New("firefox", nil),
 		cookieFetchClient: cookieClient,
 	}, nil
 }
@@ -247,65 +243,58 @@ func (f *fetcher) generateURL(mapURL, pageToken string, pageSize int, requestID 
 }
 
 func (f *fetcher) fetchReviewPage(ctx context.Context, u string) ([]byte, error) {
-	// Try authenticated fetch with Google cookies (bypasses restricted view).
-	// Reuses f.cookieFetchClient which was built once per fetcher in
-	// newReviewFetcher — so paginated review-page requests share a single
-	// connection pool. The client's transport is pinned to f.params.proxyURL
-	// when non-empty (see fetchReviewsParams.proxyURL).
-	if cookieHeader := GetCookieHeader(); cookieHeader != "" {
-		body, err := fetchWithCookies(ctx, u, cookieHeader, f.cookieFetchClient)
-		if err == nil {
-			return body, nil
-		}
-		args := userArgsFromParams(&f.params)
-		args = append(args,
-			"place_job_id", f.params.placeJobID,
-			"search_job_id", f.params.searchJobID,
-			"place_url", f.params.mapURL,
-			"place_name", f.params.placeName,
-			"proxy_used", cmp.Or(proxypool.HostOf(f.params.proxyURL), "direct"),
-			"error", err,
-		)
-		scrapemate.GetLoggerFromContext(ctx).Debug("authenticated_review_fetch_failed_falling_back", args...)
+	// Authenticated fetch with Google cookies. Reuses f.cookieFetchClient
+	// which was built once per fetcher in newReviewFetcher — so paginated
+	// review-page requests share a single connection pool. The client's
+	// transport is pinned to f.params.proxyURL when non-empty (see
+	// fetchReviewsParams.proxyURL).
+	//
+	// We intentionally do NOT fall back to an unauthenticated stealth fetch
+	// on error: that path bypasses both cookies and the proxy and returns the
+	// same 33-byte stub Google serves to anonymous callers, which masks the
+	// real failure and pollutes the review_circuit_breaker tally. Surface
+	// the cookied error directly.
+	cookies, err := LoadGoogleCookies()
+	if err != nil {
+		return nil, fmt.Errorf("load google cookies: %w", err)
 	}
-
-	// Fallback to unauthenticated stealth fetch
-	job := scrapemate.Job{
-		Method: "GET",
-		URL:    u,
+	if len(cookies) == 0 {
+		return nil, errors.New("google cookies not configured")
 	}
-
-	resp := f.httpClient.Fetch(ctx, &job)
-	if resp.Error != nil {
-		return nil, fmt.Errorf("fetch error for %s: %w", u, resp.Error)
-	}
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("%s: unexpected status code: %d", u, resp.StatusCode)
-	}
-
-	return resp.Body, nil
+	return fetchWithCookies(ctx, u, cookies, f.cookieFetchClient, time.Now)
 }
 
-// fetchWithCookies performs an HTTP GET with Google auth cookies using the
-// supplied *http.Client. The client carries the per-scrape proxy configuration
-// (pinned via newCookieFetchClient) and a shared connection pool that survives
-// across paginated review-page fetches — see fetcher.cookieFetchClient.
+// fetchWithCookies performs an authenticated GET against Google's review RPC.
+// It sends:
+//   - Cookie:         the loaded Google session cookies
+//   - Authorization:  SAPISIDHASH / SAPISID1PHASH / SAPISID3PHASH (see
+//     applyGoogleAuthHeaders). REQUIRED — without it Google returns the
+//     33-byte unauthenticated stub `)]}'\n[null,null,null,null,null,1]` even
+//     with valid cookies.
+//   - Origin / Referer / X-Goog-AuthUser / X-Same-Domain: matching what
+//     Chrome sends from www.google.com.
 //
-// Routing through a proxy matters because Google's /maps/rpc/listugcposts
-// soft-rejects requests from datacenter IPs even with valid cookies; the fix
-// is to share the upstream identity that browser navigation already uses.
-// See fetchReviewsParams.proxyURL for the byte-level reproduction.
-func fetchWithCookies(ctx context.Context, u string, cookieHeader string, client *http.Client) ([]byte, error) {
+// The client carries the per-scrape proxy configuration (pinned via
+// newCookieFetchClient) and a shared connection pool that survives across
+// paginated review-page fetches — see fetcher.cookieFetchClient. Routing
+// through a proxy matters because Google soft-rejects datacenter IPs on
+// /maps/rpc/listugcposts; the fix is to share the upstream identity that
+// browser navigation already uses.
+//
+// `now` is injected for deterministic tests; production callers pass
+// time.Now (the function value, not the result — we want a fresh timestamp
+// per request because SAPISIDHASH validity is short-lived).
+func fetchWithCookies(ctx context.Context, u string, cookies []CookieEntry, client *http.Client, now func() time.Time) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("Cookie", cookieHeader)
+	req.Header.Set("Cookie", cookieHeaderFromEntries(cookies))
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.5")
+	applyGoogleAuthHeaders(req, cookies, now())
 
 	resp, err := client.Do(req)
 	if err != nil {

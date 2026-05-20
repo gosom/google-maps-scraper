@@ -132,11 +132,21 @@ func GetCookieHeader() string {
 	if err != nil || len(cookies) == 0 {
 		return ""
 	}
+	return cookieHeaderFromEntries(cookies)
+}
 
-	var parts []string
+// cookieHeaderFromEntries serializes cookie entries into the RFC 6265
+// `Name=Value; Name=Value; …` Cookie header format. Entries with empty
+// Name or Value are skipped — emitting `Name=` is permitted by the RFC
+// but some Google endpoints treat it as a malformed header and fall back
+// to the unauthenticated response path.
+func cookieHeaderFromEntries(cookies []CookieEntry) string {
+	parts := make([]string, 0, len(cookies))
 	for _, c := range cookies {
-		parts = append(parts, fmt.Sprintf("%s=%s", c.Name, c.Value))
+		if c.Name == "" || c.Value == "" {
+			continue
+		}
+		parts = append(parts, c.Name+"="+c.Value)
 	}
-
 	return strings.Join(parts, "; ")
 }

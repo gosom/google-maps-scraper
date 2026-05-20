@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // TestNewCookieFetchClient_NoProxyURL_FallsBackToDefaultTransport verifies
@@ -116,7 +117,7 @@ func TestFetchWithCookies_RoutesThroughProxy(t *testing.T) {
 		t.Fatalf("newCookieFetchClient: %v", err)
 	}
 
-	body, err := fetchWithCookies(context.Background(), upstreamURL, "sid=abc", client)
+	body, err := fetchWithCookies(context.Background(), upstreamURL, []CookieEntry{{Name: "sid", Value: "abc"}}, client, time.Now)
 	if err != nil {
 		t.Fatalf("fetchWithCookies returned error: %v", err)
 	}

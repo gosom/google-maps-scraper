@@ -39,7 +39,7 @@ func TestFetchWithCookies_DiesOnParentContextCancel(t *testing.T) {
 		cancel()
 	}()
 
-	_, err := fetchWithCookies(parent, srv.URL, "sess=abc", &http.Client{Timeout: 5 * time.Second})
+	_, err := fetchWithCookies(parent, srv.URL, []CookieEntry{{Name: "sess", Value: "abc"}}, &http.Client{Timeout: 5 * time.Second}, time.Now)
 	if err == nil {
 		t.Fatal("expected an error when parent context is cancelled mid-fetch, got nil")
 	}
@@ -77,7 +77,7 @@ func TestFetchWithCookies_SurvivesParentCancel_WithDetachedContext(t *testing.T)
 	fetchCtx, fetchCancel := context.WithTimeout(context.WithoutCancel(parent), 2*time.Second)
 	defer fetchCancel()
 
-	body, err := fetchWithCookies(fetchCtx, srv.URL, "sess=abc", &http.Client{Timeout: 5 * time.Second})
+	body, err := fetchWithCookies(fetchCtx, srv.URL, []CookieEntry{{Name: "sess", Value: "abc"}}, &http.Client{Timeout: 5 * time.Second}, time.Now)
 	if err != nil {
 		t.Fatalf("expected success with detached context, got error: %v", err)
 	}
