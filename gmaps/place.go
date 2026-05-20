@@ -29,6 +29,14 @@ import (
 	"github.com/gosom/google-maps-scraper/gmaps/images"
 )
 
+// reviewFetchBudget caps how long an individual place's review-fetch is
+// allowed to run after detaching from the parent context. The parent is
+// detached so that ExitMonitor cancellations (post-max_results) don't kill
+// in-flight review HTTP requests on sibling workers; the cap ensures we
+// can't run forever if the request itself hangs. 25 s comfortably covers
+// the multi-page review pagination for places up to ~500 reviews.
+const reviewFetchBudget = 25 * time.Second
+
 // reviewCircuitBreaker tracks consecutive empty review API responses.
 // When it reaches the threshold, review extraction is skipped for remaining places.
 // Reset to 0 at the start of each scraping job (via ResetReviewCircuitBreaker).
@@ -571,7 +579,18 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 
 			reviewFetcher := newReviewFetcher(params)
 
-			reviewData, err := reviewFetcher.fetch(ctx)
+			// Bug B fix: detach from parent ctx cancellation but cap with
+			// a local budget. When the ExitMonitor cancels mateCtx after
+			// max_results is hit, sibling workers still in BrowserActions
+			// would otherwise have their in-flight review HTTP requests
+			// die (azuretls surfaces ctx.Canceled as "timeout"). The local
+			// budget lets the fetch complete; the outer BrowserActions is
+			// already bounded by allowedSeconds and the webrunner's 30s
+			// forced-completion grace, so this can't run indefinitely.
+			fetchCtx, fetchCancel := context.WithTimeout(context.WithoutCancel(ctx), reviewFetchBudget)
+			defer fetchCancel()
+
+			reviewData, err := reviewFetcher.fetch(fetchCtx)
 			if err != nil {
 				slog.Warn("review_extraction_failed",
 					slog.String("job_id", j.ID),
@@ -617,7 +636,10 @@ func (j *PlaceJob) extractJSON(page playwright.Page) ([]byte, error) {
 		retryInterval = 200 * time.Millisecond
 	)
 
-	var lastErr error
+	var (
+		lastErr     error
+		lastPartial []byte // best-effort fallback if no full payload arrives
+	)
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		rawI, err := page.Evaluate(js)
@@ -627,33 +649,78 @@ func (j *PlaceJob) extractJSON(page playwright.Page) ([]byte, error) {
 			continue
 		}
 
+		var candidate []byte
 		switch v := rawI.(type) {
 		case string:
 			const prefix = ")]}'"
 			v = strings.TrimSpace(strings.TrimPrefix(v, prefix))
 			if v != "" && (strings.HasPrefix(v, "[") || strings.HasPrefix(v, "{")) {
-				return []byte(v), nil
+				candidate = []byte(v)
 			}
 		case []byte:
 			if len(v) > 0 {
-				return v, nil
+				candidate = v
 			}
 		case nil:
 			// keep retrying
 		default:
-			// Try to marshal complex types
 			if b, mErr := json.Marshal(v); mErr == nil && len(b) > 0 && string(b) != "null" {
-				return b, nil
+				candidate = b
 			}
 		}
 
+		if candidate != nil {
+			if isCompletePlacePayload(candidate) {
+				return candidate, nil
+			}
+			// Partial preview payload — APP_INITIALIZATION_STATE has hydrated
+			// the search-preview entry but not the place-detail entry yet.
+			// Keep polling; if the detail never arrives we'll fall back to
+			// this so downstream still gets a usable Entry.
+			lastPartial = candidate
+		}
+
 		time.Sleep(retryInterval)
+	}
+
+	if lastPartial != nil {
+		slog.Warn("extract_json_partial_payload_accepted",
+			slog.String("job_id", j.ID),
+			slog.String("place_url", j.GetURL()),
+			slog.Int("bytes", len(lastPartial)),
+			slog.String("detail", "APP_INITIALIZATION_STATE never fully hydrated within 15×200ms; review_count and reviews_per_rating will be empty"),
+		)
+		return lastPartial, nil
 	}
 
 	if lastErr != nil {
 		return nil, lastErr
 	}
 	return nil, fmt.Errorf("empty app state after extraction")
+}
+
+// isCompletePlacePayload reports whether the extracted raw JSON contains the
+// full place-detail payload (darray[4] holds rating + review_count + more)
+// rather than the partial search-preview payload (darray[4] holds rating
+// only). Empirically verified against captured dumps: complete payloads have
+// len(darray[4]) >= 9; partial previews have len(darray[4]) == 8.
+func isCompletePlacePayload(raw []byte) bool {
+	var jd []any
+	if err := json.Unmarshal(raw, &jd); err != nil {
+		return false
+	}
+	if len(jd) <= 6 {
+		return false
+	}
+	darray, ok := jd[6].([]any)
+	if !ok || len(darray) <= 4 {
+		return false
+	}
+	four, ok := darray[4].([]any)
+	if !ok {
+		return false
+	}
+	return len(four) >= 9
 }
 
 func (j *PlaceJob) getReviewCount(data []byte) int {
