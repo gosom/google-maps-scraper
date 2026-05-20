@@ -3,10 +3,15 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/google-maps-scraper/gmaps"
 	"github.com/gosom/scrapemate"
@@ -92,6 +98,57 @@ type googlePhoto struct {
 	// Non-Google extension: directly-usable image URL. Google's API requires a
 	// follow-up /v1/{name}/media call; we already have the URL from the scrape.
 	ImageURL string `json:"imageUrl,omitempty"`
+}
+
+// ====================================================================
+// searchText request / response types
+// ====================================================================
+
+type searchTextRequest struct {
+	TextQuery           string               `json:"textQuery"`
+	LocationRestriction *locationRestriction `json:"locationRestriction,omitempty"`
+	PageToken           string               `json:"pageToken,omitempty"`
+}
+
+type locationRestriction struct {
+	Rectangle struct {
+		Low  latLng `json:"low"`
+		High latLng `json:"high"`
+	} `json:"rectangle"`
+}
+
+type latLng struct {
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+}
+
+type searchTextResponse struct {
+	Places        []*googlePlace `json:"places"`
+	NextPageToken string         `json:"nextPageToken,omitempty"`
+}
+
+// ====================================================================
+// search result cache
+// ====================================================================
+
+const (
+	searchPageSize = 20
+	searchCacheTTL = 5 * time.Minute
+)
+
+type cachedSearch struct {
+	places    []*googlePlace
+	createdAt time.Time
+}
+
+var (
+	searchResultCache sync.Map // sha256key -> *cachedSearch
+	searchTokenCache  sync.Map // UUID token -> tokenEntry
+)
+
+type tokenEntry struct {
+	key    string
+	offset int
 }
 
 // ====================================================================
@@ -392,6 +449,214 @@ func countryNames(c string) (long, short string) {
 	}
 }
 
+// parseAddressString does best-effort parsing of a comma-separated address
+// string (e.g. "10 Durand Rd, Maplewood, NJ 07040, United States") into
+// googleAddrComp components matching the Google Places API shape.
+func parseAddressString(addr string) []googleAddrComp {
+	parts := strings.Split(addr, ", ")
+	n := len(parts)
+	if n < 2 {
+		return nil
+	}
+
+	var comps []googleAddrComp
+	prepend := func(c googleAddrComp) { comps = append([]googleAddrComp{c}, comps...) }
+
+	// Country (last segment)
+	countryLong, countryShort := countryNames(parts[n-1])
+	prepend(googleAddrComp{
+		LongText: countryLong, ShortText: countryShort,
+		Types: []string{"country", "political"}, LanguageCode: "en",
+	})
+
+	remaining := parts[:n-1]
+
+	// State + optional ZIP ("NJ 07040" or "NJ")
+	if len(remaining) >= 1 {
+		sv := remaining[len(remaining)-1]
+		remaining = remaining[:len(remaining)-1]
+		stateParts := strings.SplitN(sv, " ", 2)
+		stateLong, stateShort := stateNames(stateParts[0])
+		prepend(googleAddrComp{
+			LongText: stateLong, ShortText: stateShort,
+			Types: []string{"administrative_area_level_1", "political"}, LanguageCode: "en",
+		})
+		if len(stateParts) == 2 {
+			zip := stateParts[1]
+			prepend(googleAddrComp{
+				LongText: zip, ShortText: zip,
+				Types: []string{"postal_code"}, LanguageCode: "en-US",
+			})
+		}
+	}
+
+	// City
+	if len(remaining) >= 1 {
+		city := remaining[len(remaining)-1]
+		remaining = remaining[:len(remaining)-1]
+		prepend(googleAddrComp{
+			LongText: city, ShortText: city,
+			Types: []string{"locality", "political"}, LanguageCode: "en",
+		})
+	}
+
+	// Street (anything left)
+	if len(remaining) >= 1 {
+		street := strings.Join(remaining, ", ")
+		if m := streetRe.FindStringSubmatch(street); m != nil {
+			prepend(googleAddrComp{
+				LongText: m[2], ShortText: shortRoute(m[2]),
+				Types: []string{"route"}, LanguageCode: "en",
+			})
+			prepend(googleAddrComp{
+				LongText: m[1], ShortText: m[1],
+				Types: []string{"street_number"}, LanguageCode: "en-US",
+			})
+		} else {
+			prepend(googleAddrComp{
+				LongText: street, ShortText: street,
+				Types: []string{"route"}, LanguageCode: "en",
+			})
+		}
+	}
+
+	return comps
+}
+
+// dataIDToPlaceID converts a DataID (e.g. "0x89c3ab...:0xaea7...") into the
+// standard Google Place ID (ChIJ...) format.
+//
+// The ChIJ encoding is a base64-encoded protobuf outer message:
+//   field 1 (wire 2, len 18): inner message
+//     field 1 (wire 1, fixed64): first hex value (little-endian)
+//     field 2 (wire 1, fixed64): second hex value (little-endian)
+func dataIDToPlaceID(dataID string) string {
+	if !strings.HasPrefix(dataID, "0x") || !strings.Contains(dataID, ":") {
+		return dataID
+	}
+	parts := strings.SplitN(dataID, ":", 2)
+	v1, err1 := strconv.ParseUint(strings.TrimPrefix(parts[0], "0x"), 16, 64)
+	v2, err2 := strconv.ParseUint(strings.TrimPrefix(parts[1], "0x"), 16, 64)
+	if err1 != nil || err2 != nil {
+		return dataID
+	}
+
+	inner := make([]byte, 18)
+	inner[0] = 0x09 // field 1, wire type 1 (fixed64)
+	binary.LittleEndian.PutUint64(inner[1:9], v1)
+	inner[9] = 0x11 // field 2, wire type 1 (fixed64)
+	binary.LittleEndian.PutUint64(inner[10:18], v2)
+
+	outer := make([]byte, 20)
+	outer[0] = 0x0A // field 1, wire type 2 (length-delimited)
+	outer[1] = 0x12 // length = 18
+	copy(outer[2:], inner)
+
+	return base64.RawStdEncoding.EncodeToString(outer)
+}
+
+// convertEntryToPlace converts a search-result Entry (from SearchJob / ParseSearchResults)
+// into a googlePlace. It only populates fields available from the search listing.
+func convertEntryToPlace(e *gmaps.Entry) *googlePlace {
+	id := dataIDToPlaceID(e.DataID)
+	if id == "" {
+		id = e.ID
+	}
+	p := &googlePlace{
+		ID:               id,
+		FormattedAddress: e.Address,
+		BusinessStatus:   mapBusinessStatus(e.Status),
+		Types:            convertTypes(e.Categories, e.Category),
+		Rating:           e.ReviewRating,
+		UserRatingCount:  e.ReviewCount,
+	}
+	if e.Title != "" {
+		p.DisplayName = &googleLocalizedText{Text: e.Title, LanguageCode: "en"}
+	}
+	if e.Latitude != 0 || e.Longtitude != 0 {
+		p.Location = &googleLocation{Latitude: e.Latitude, Longitude: e.Longtitude}
+	}
+	if comps := parseAddressString(e.Address); len(comps) > 0 {
+		p.AddressComponents = comps
+	}
+	return p
+}
+
+// haversineDist returns the great-circle distance in km between two lat/lon points.
+func haversineDist(a, b latLng) float64 {
+	const R = 6371.0
+	dLat := (b.Latitude - a.Latitude) * math.Pi / 180
+	dLon := (b.Longitude - a.Longitude) * math.Pi / 180
+	x := math.Sin(dLat/2)*math.Sin(dLat/2) +
+		math.Cos(a.Latitude*math.Pi/180)*math.Cos(b.Latitude*math.Pi/180)*
+			math.Sin(dLon/2)*math.Sin(dLon/2)
+	return R * 2 * math.Atan2(math.Sqrt(x), math.Sqrt(1-x))
+}
+
+func searchCacheKey(textQuery string, lr *locationRestriction) string {
+	h := sha256.Sum256([]byte(fmt.Sprintf("%s|%+v", textQuery, lr)))
+	return hex.EncodeToString(h[:])
+}
+
+func newPageToken(cacheKey string, offset int) string {
+	token := uuid.New().String()
+	searchTokenCache.Store(token, tokenEntry{key: cacheKey, offset: offset})
+	return token
+}
+
+func lookupPageToken(token string) (key string, offset int, ok bool) {
+	v, exists := searchTokenCache.Load(token)
+	if !exists {
+		return
+	}
+	t := v.(tokenEntry)
+	return t.key, t.offset, true
+}
+
+func respondSearchPage(w http.ResponseWriter, places []*googlePlace, key string, offset int) {
+	end := offset + searchPageSize
+	if end > len(places) {
+		end = len(places)
+	}
+	resp := searchTextResponse{Places: places[offset:end]}
+	if end < len(places) {
+		resp.NextPageToken = newPageToken(key, end)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// ====================================================================
+// searchWriter — collects []*gmaps.Entry from SearchJob results
+// ====================================================================
+
+type searchWriter struct {
+	mu      sync.Mutex
+	entries []*gmaps.Entry
+}
+
+func (sw *searchWriter) Run(_ context.Context, in <-chan scrapemate.Result) error {
+	for result := range in {
+		entries, ok := result.Data.([]*gmaps.Entry)
+		if !ok {
+			// SearchJob returns []*Entry wrapped as []any sometimes — handle both
+			if raw, ok2 := result.Data.([]any); ok2 {
+				for _, v := range raw {
+					if e, ok3 := v.(*gmaps.Entry); ok3 {
+						entries = append(entries, e)
+					}
+				}
+			}
+		}
+		if len(entries) > 0 {
+			sw.mu.Lock()
+			sw.entries = append(sw.entries, entries...)
+			sw.mu.Unlock()
+		}
+	}
+	return nil
+}
+
 // ====================================================================
 // scrapemate.ResultWriter that emits Google-format JSON Lines
 // ====================================================================
@@ -488,6 +753,23 @@ func (m *memWriter) Run(_ context.Context, in <-chan scrapemate.Result) error {
 	return nil
 }
 
+// buildPlaceURL converts a place ID to the right Google Maps URL.
+// Handles three formats:
+//   - ChIJ...   → place_id: navigation
+//   - 0xHEX:0xHEX  → CID decimal navigation (DataID format from SearchJob)
+//   - anything else → place_id: navigation (fallback)
+func buildPlaceURL(placeID string) string {
+	if strings.HasPrefix(placeID, "0x") && strings.Contains(placeID, ":") {
+		parts := strings.SplitN(placeID, ":", 2)
+		hexCID := strings.TrimPrefix(parts[1], "0x")
+		if cid, err := strconv.ParseUint(hexCID, 16, 64); err == nil {
+			return fmt.Sprintf("https://maps.google.com/?cid=%d", cid)
+		}
+	}
+	return fmt.Sprintf("https://www.google.com/maps/place/?q=%s",
+		url.QueryEscape("place_id:"+placeID))
+}
+
 // ====================================================================
 // HTTP server mode
 // ====================================================================
@@ -541,8 +823,7 @@ func runServer(port, concurrency int, langCode string, extractEmail, extraReview
 		}
 		defer app.Close()
 
-		u := fmt.Sprintf("https://www.google.com/maps/place/?q=%s",
-			url.QueryEscape("place_id:"+placeID))
+		u := buildPlaceURL(placeID)
 		job := gmaps.NewPlaceJob(placeID, langCode, u, extractEmail, extraReviews)
 
 		if err := app.Start(ctx, job); err != nil && err != context.Canceled && err != context.DeadlineExceeded {
@@ -558,6 +839,78 @@ func runServer(port, concurrency int, langCode string, extractEmail, extraReview
 		default:
 			http.Error(w, "place not found", http.StatusNotFound)
 		}
+	})
+
+	mux.HandleFunc("POST /v1/places:searchText", func(w http.ResponseWriter, r *http.Request) {
+		var req searchTextRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.TextQuery == "" {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+
+		// Serve from page-token cache
+		if req.PageToken != "" {
+			if key, offset, ok := lookupPageToken(req.PageToken); ok {
+				if v, ok2 := searchResultCache.Load(key); ok2 {
+					c := v.(*cachedSearch)
+					if time.Since(c.createdAt) < searchCacheTTL {
+						respondSearchPage(w, c.places, key, offset)
+						return
+					}
+				}
+			}
+			// token expired or unknown — fall through to fresh search
+		}
+
+		// Build location params
+		params := &gmaps.MapSearchParams{Query: req.TextQuery, Hl: langCode}
+		if req.LocationRestriction != nil {
+			rect := req.LocationRestriction.Rectangle
+			params.Location = gmaps.MapLocation{
+				Lat:     (rect.Low.Latitude + rect.High.Latitude) / 2,
+				Lon:     (rect.Low.Longitude + rect.High.Longitude) / 2,
+				ZoomLvl: 14,
+				Radius:  haversineDist(rect.Low, rect.High) / 2 * 1000, // km → meters
+			}
+		} else {
+			params.Location = gmaps.MapLocation{Lat: 0, Lon: 0, ZoomLvl: 2, Radius: 20_037_000} // half Earth in meters
+		}
+
+		sw := &searchWriter{}
+		matecfg, err := scrapemateapp.NewConfig(
+			[]scrapemate.ResultWriter{sw},
+			scrapemateapp.WithConcurrency(1),
+			scrapemateapp.WithExitOnInactivity(30*time.Second),
+		)
+		if err != nil {
+			log.Printf("[searchText] config: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		app, err := scrapemateapp.NewScrapeMateApp(matecfg)
+		if err != nil {
+			log.Printf("[searchText] app: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		defer app.Close()
+
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+
+		if err := app.Start(ctx, gmaps.NewSearchJob(params)); err != nil &&
+			err != context.Canceled && err != context.DeadlineExceeded {
+			log.Printf("[searchText] scrape: %v", err)
+		}
+
+		places := make([]*googlePlace, 0, len(sw.entries))
+		for _, e := range sw.entries {
+			places = append(places, convertEntryToPlace(e))
+		}
+
+		key := searchCacheKey(req.TextQuery, req.LocationRestriction)
+		searchResultCache.Store(key, &cachedSearch{places: places, createdAt: time.Now()})
+		respondSearchPage(w, places, key, 0)
 	})
 
 	addr := fmt.Sprintf(":%d", port)
