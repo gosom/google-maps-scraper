@@ -100,7 +100,10 @@ func TestReviewsGenerateURLFailed_LogContext(t *testing.T) {
 		userJobID:   "USER-JOB-R",
 	}
 	// page is nil — fetch must not deref it before the URL error path
-	f := newReviewFetcher(params)
+	f, ferr := newReviewFetcher(params)
+	if ferr != nil {
+		t.Fatalf("newReviewFetcher: %v", ferr)
+	}
 	_, err := f.fetch(ctx)
 	if err == nil {
 		t.Fatal("expected fetch to fail on unparseable URL")
@@ -183,7 +186,7 @@ func TestReviewExtractionLogs_AllCarryUserAndSearchContext(t *testing.T) {
 		{
 			name: "api_empty_response",
 			emit: func(ctx context.Context, j *PlaceJob) {
-				emitReviewAPIEmptyResponse(ctx, j, 271, 33, 1)
+				emitReviewAPIEmptyResponse(ctx, j, 271, 33, 1, []byte(")]}'\n[null,null,null,null,null,1]"))
 			},
 			want: "review_api_empty_response",
 		},

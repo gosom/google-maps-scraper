@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -895,7 +896,17 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) JobOutcome {
 	dedup := deduper.New()
 	exitMonitor := exiter.New()
 
-	mate, err := w.setupMate(jobCtx, outfile, job, exitMonitor)
+	// Pick the per-scrape upstream proxy assignment once (round-robin over
+	// the configured pool). Used in two places: passed to scrapemate via
+	// setupMate (browser navigation + stealth HTTP fetches), and threaded
+	// through CreateSeedJobs → GmapJob.ProxyURL → PlaceJob.ProxyURL so the
+	// cookie-authenticated review-RPC fetch in gmaps/reviews.go routes
+	// through the same proxy. Without this, that one HTTP call bypassed
+	// the proxy entirely and Google soft-rejected it from prod's datacenter
+	// IP — see gmaps/reviews.go fetchReviewsParams.proxyURL for the trace.
+	jobProxy := w.pickProxyURL()
+
+	mate, err := w.setupMate(jobCtx, outfile, job, exitMonitor, jobProxy)
 	if err != nil {
 		outcome = OutcomeFailed(CauseRuntimeError, "job initialization failed", err)
 		job.Status = outcome.Status
@@ -949,6 +960,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) JobOutcome {
 		MaxResults:   job.Data.MaxResults,
 		UserID:       job.UserID,
 		UserJobID:    job.ID,
+		ProxyURL:     jobProxy.URL,
 	})
 	if err != nil {
 		outcome = OutcomeFailed(CauseRuntimeError, "job configuration failed", err)
@@ -1484,7 +1496,52 @@ func (w *webrunner) releaseHoldAndLogBilling(job *web.Job) {
 	)
 }
 
-func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job, exitMonitor exiter.Exiter) (*scrapemateapp.ScrapemateApp, error) {
+// proxyAssignment is the result of rotating the per-scrape upstream proxy.
+// Carries the URL plus enough metadata (1-based index, pool size) for the
+// `proxy_assigned` debug log to remain backward-compatible with LogQL
+// recipes shipped in PR #80's docs/observability/review-scraping.md, which
+// grep on `index=` and `of=`.
+type proxyAssignment struct {
+	URL      string // empty when the proxy pool is empty
+	Index    int    // 1-based index into the pool; 0 when URL == ""
+	PoolSize int    // total proxies configured
+}
+
+// pickProxyURL atomically rotates and returns the next upstream proxy
+// assignment, or a zero-value proxyAssignment when no proxies are configured.
+// The same URL is consumed by both setupMate (via scrapemateapp.WithProxies)
+// and the seed-job constructor (via runner.SeedJobConfig.ProxyURL), so
+// browser navigation and the cookie-authenticated review-RPC fetch share
+// one identity per scrape.
+// proxyHostForLog returns a credential-free host:port from a proxy URL,
+// suitable for the `proxy_host` field on the proxy_assigned debug log. Local
+// to webrunner so we don't widen the gmaps public surface; mirrors the helper
+// of the same name in gmaps/reviews.go.
+func proxyHostForLog(proxyURL string) string {
+	if proxyURL == "" {
+		return ""
+	}
+	pu, err := url.Parse(proxyURL)
+	if err != nil || pu.Host == "" {
+		return "invalid"
+	}
+	return pu.Host
+}
+
+func (w *webrunner) pickProxyURL() proxyAssignment {
+	n := len(w.proxyURLs)
+	if n == 0 {
+		return proxyAssignment{}
+	}
+	idx := int(w.proxyIndex.Add(1)-1) % n
+	return proxyAssignment{
+		URL:      w.proxyURLs[idx],
+		Index:    idx + 1,
+		PoolSize: n,
+	}
+}
+
+func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job, exitMonitor exiter.Exiter, proxy proxyAssignment) (*scrapemateapp.ScrapemateApp, error) {
 	// Calculate per-job concurrency based on total concurrency and max concurrent jobs
 	// This ensures we don't overwhelm the system when running multiple jobs simultaneously
 	maxConcurrentJobs := 1
@@ -1541,14 +1598,24 @@ func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job,
 		}
 	}
 
-	// Handle proxy configuration: round-robin assign one upstream proxy per
-	// job. scrapemate v0.9.6+ runs an internal local proxy that handles
+	// Handle proxy configuration. The assignment is selected once per scrape
+	// by the caller (see pickProxyURL) so this code path uses the SAME proxy
+	// that SeedJobConfig.ProxyURL threads down to the review-RPC fetch —
+	// keeping the entire scrape on a single upstream identity.
+	// scrapemate v0.9.6+ runs an internal local proxy that handles
 	// playwright's authenticated-proxy bug, so passing the upstream URL
 	// directly (with creds inline) is the correct shape.
-	if n := len(w.proxyURLs); n > 0 {
-		idx := int(w.proxyIndex.Add(1)-1) % n
-		opts = append(opts, scrapemateapp.WithProxies([]string{w.proxyURLs[idx]}))
-		w.logger.Debug("proxy_assigned", slog.String("job_id", job.ID), slog.Int("index", idx+1), slog.Int("of", n))
+	if proxy.URL != "" {
+		opts = append(opts, scrapemateapp.WithProxies([]string{proxy.URL}))
+		// `index` / `of` are preserved from the pre-fix log shape so LogQL
+		// recipes in docs/observability/review-scraping.md keep matching;
+		// `proxy_host` is the new credential-free identifier (host:port).
+		w.logger.Debug("proxy_assigned",
+			slog.String("job_id", job.ID),
+			slog.Int("index", proxy.Index),
+			slog.Int("of", proxy.PoolSize),
+			slog.String("proxy_host", proxyHostForLog(proxy.URL)),
+		)
 	} else if len(job.Data.Proxies) > 0 {
 		// User-supplied proxies (job.Data.Proxies) are intentionally NOT forwarded to the scraper.
 		// The production proxy system uses admin-configured proxyPool only. Passing user-supplied

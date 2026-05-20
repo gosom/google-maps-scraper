@@ -52,6 +52,15 @@ type GmapJob struct {
 	// Empty in CLI/standalone scrapes — emit helpers omit the "job_id"
 	// field entirely in that case.
 	UserJobID string
+
+	// ProxyURL is the upstream HTTP proxy URL selected once per scrape by the
+	// webrunner (round-robin over the configured proxy pool). Forwarded to
+	// every PlaceJob spawned from this seed so that the cookie-authenticated
+	// review-RPC fetch in gmaps/reviews.go uses the same proxy already
+	// configured on scrapemate for browser navigation. Empty in CLI/standalone
+	// scrapes — fetchWithCookies then falls back to direct egress, which is
+	// the prior default. See PlaceJob.ProxyURL.
+	ProxyURL string
 }
 
 func NewGmapJob(
@@ -153,6 +162,16 @@ func WithUserContext(userID, userJobID string) GmapJobOptions {
 	}
 }
 
+// WithProxyURL sets the upstream HTTP proxy URL on the GmapJob so it can be
+// forwarded to every PlaceJob spawned from this seed via
+// WithPlaceJobProxyURL. Empty preserves the prior default (direct egress for
+// the cookie-authenticated review-RPC fetch). See GmapJob.ProxyURL.
+func WithProxyURL(proxyURL string) GmapJobOptions {
+	return func(j *GmapJob) {
+		j.ProxyURL = proxyURL
+	}
+}
+
 func (j *GmapJob) UseInResults() bool {
 	return false
 }
@@ -237,6 +256,9 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 		if j.UserID != "" || j.UserJobID != "" {
 			jopts = append(jopts, WithPlaceJobUserContext(j.UserID, j.UserJobID))
 		}
+		if j.ProxyURL != "" {
+			jopts = append(jopts, WithPlaceJobProxyURL(j.ProxyURL))
+		}
 
 		log.Debug("gmap_job_creating_single_place_job",
 			slog.String("job_id", j.ID),
@@ -283,6 +305,9 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 				}
 				if j.UserID != "" || j.UserJobID != "" {
 					jopts = append(jopts, WithPlaceJobUserContext(j.UserID, j.UserJobID))
+				}
+				if j.ProxyURL != "" {
+					jopts = append(jopts, WithPlaceJobProxyURL(j.ProxyURL))
 				}
 
 				log.Debug("gmap_job_creating_place_job_from_search_result",

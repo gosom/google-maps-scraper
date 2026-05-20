@@ -83,6 +83,16 @@ type PlaceJob struct {
 	// Empty in CLI/standalone scrapes — emit helpers (see userArgs) omit
 	// the "job_id" field entirely in that case.
 	UserJobID string
+
+	// ProxyURL is the upstream HTTP proxy URL this PlaceJob's
+	// cookie-authenticated review-RPC requests should egress through. Empty
+	// means direct egress (the prior, default behavior). Set by the webrunner
+	// via WithPlaceJobProxyURL so path A (fetchWithCookies in reviews.go)
+	// uses the same per-scrape rotated proxy already applied to browser
+	// navigation via scrapemate. Without this, prod requests bypassed the
+	// proxy entirely and Google soft-rejected them on the datacenter IP —
+	// see fetchReviewsParams.proxyURL for the byte-level reproduction.
+	ProxyURL string
 }
 
 func NewPlaceJob(parentID, langCode, u string, extractEmail, extractImages bool, reviewsMax int, opts ...PlaceJobOptions) *PlaceJob {
@@ -138,6 +148,16 @@ func WithPlaceJobUserContext(userID, userJobID string) PlaceJobOptions {
 	return func(j *PlaceJob) {
 		j.UserID = userID
 		j.UserJobID = userJobID
+	}
+}
+
+// WithPlaceJobProxyURL sets the upstream HTTP proxy URL used by the
+// cookie-authenticated review-RPC fetch (fetchWithCookies). Empty string is
+// equivalent to omitting the option and preserves the prior direct-egress
+// behavior. See PlaceJob.ProxyURL for why this matters.
+func WithPlaceJobProxyURL(proxyURL string) PlaceJobOptions {
+	return func(j *PlaceJob) {
+		j.ProxyURL = proxyURL
 	}
 }
 
@@ -604,9 +624,17 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 				placeName:   "", // entry.Title is set later in Process — left empty
 				userID:      j.UserID,
 				userJobID:   j.UserJobID,
+				proxyURL:    j.ProxyURL,
 			}
 
-			reviewFetcher := newReviewFetcher(params)
+			reviewFetcher, err := newReviewFetcher(params)
+			if err != nil {
+				// Bad proxy URL or other init failure. Skip reviews for this
+				// place but let the rest of the place data persist — matches
+				// the existing "fail open" stance of the review pipeline.
+				emitReviewExtractionFailed(ctx, j, err)
+				return
+			}
 
 			// Bug B fix: detach from parent ctx cancellation but cap with
 			// a local budget. When the ExitMonitor cancels mateCtx after
@@ -626,14 +654,19 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 			}
 
 			// Detect "silent empty" responses — Google returns HTTP 200 with empty data
-			// when cookies are expired or IP is blocked, instead of an error.
+			// when cookies are expired, IP is blocked, or proxy/upstream returns a
+			// stub. The 33-byte case we hit in May 2026 was Google's
+			// `)]}'\n[null,null,null,null,null,1]` unauthenticated stub returned
+			// from prod's datacenter IP — see PlaceJob.ProxyURL.
 			if len(reviewData.pages) == 0 || (len(reviewData.pages) == 1 && len(reviewData.pages[0]) < 100) {
 				responseBytes := 0
+				var sample []byte
 				if len(reviewData.pages) > 0 {
 					responseBytes = len(reviewData.pages[0])
+					sample = reviewData.pages[0]
 				}
 				count := reviewEmptyCount.Add(1)
-				emitReviewAPIEmptyResponse(ctx, j, reviewCount, responseBytes, int(count))
+				emitReviewAPIEmptyResponse(ctx, j, reviewCount, responseBytes, int(count), sample)
 				return
 			}
 
@@ -851,9 +884,14 @@ func emitReviewExtractionFailed(ctx context.Context, j *PlaceJob, err error) {
 	scrapemate.GetLoggerFromContext(ctx).Warn("review_extraction_failed", args...)
 }
 
-// emitReviewAPIEmptyResponse is called when Google returns HTTP 200 with empty
-// review data (silent failure indicating expired cookies or IP block).
-func emitReviewAPIEmptyResponse(ctx context.Context, j *PlaceJob, reviewCountOnPage, responseBytes, consecutiveEmpty int) {
+// emitReviewAPIEmptyResponse is called when the review-RPC returned HTTP 200
+// with a payload too short to be real review data. The `response_sample` field
+// is critical for root-cause analysis: the exact bytes Google returned let
+// operators distinguish "unauthenticated stub" from "rate-limited stub" from
+// "consent-required redirect" from "JSON shape change" without spelunking
+// further. Captured at 256 bytes — enough to recognize any known stub
+// signature, small enough to keep log lines under Loki's per-line limit.
+func emitReviewAPIEmptyResponse(ctx context.Context, j *PlaceJob, reviewCountOnPage, responseBytes, consecutiveEmpty int, body []byte) {
 	args := userArgs(j)
 	args = append(args,
 		"place_job_id", j.ID,
@@ -862,9 +900,44 @@ func emitReviewAPIEmptyResponse(ctx context.Context, j *PlaceJob, reviewCountOnP
 		"review_count_on_page", reviewCountOnPage,
 		"response_bytes", responseBytes,
 		"consecutive_empty", consecutiveEmpty,
-		"possible_cause", "expired cookies, IP blocked, or rate limited",
+		"response_sample", responseSampleForLog(body, 256),
+		"proxy_used", proxyHostForLog(j.ProxyURL),
+		"possible_cause", "expired cookies, IP blocked, rate limited, or proxy returning stub",
 	)
 	scrapemate.GetLoggerFromContext(ctx).Warn("review_api_empty_response", args...)
+}
+
+// responseSampleForLog returns a printable representation of the first n bytes
+// of body, with control characters escaped so the value stays on a single log
+// line and JSON-decodes cleanly in Loki/Grafana. Empty body yields "".
+func responseSampleForLog(body []byte, n int) string {
+	if len(body) == 0 {
+		return ""
+	}
+	if len(body) < n {
+		n = len(body)
+	}
+	var b strings.Builder
+	b.Grow(n + 8)
+	for _, c := range body[:n] {
+		switch {
+		case c == '\n':
+			b.WriteString(`\n`)
+		case c == '\r':
+			b.WriteString(`\r`)
+		case c == '\t':
+			b.WriteString(`\t`)
+		case c == '"':
+			b.WriteString(`\"`)
+		case c == '\\':
+			b.WriteString(`\\`)
+		case c < 0x20 || c == 0x7f:
+			b.WriteString(fmt.Sprintf(`\x%02x`, c))
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
 }
 
 func (j *PlaceJob) getReviewCount(data []byte) int {

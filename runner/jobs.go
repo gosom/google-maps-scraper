@@ -49,6 +49,14 @@ type SeedJobConfig struct {
 	// though scrapemate replaces the ctx-bound logger per job.
 	UserID    string
 	UserJobID string
+
+	// ProxyURL is the upstream HTTP proxy URL selected for this scrape (the
+	// per-job rotated one already applied to scrapemate via WithProxies).
+	// Forwarded to GmapJob.ProxyURL → PlaceJob.ProxyURL → reviews.go's
+	// fetchWithCookies so the cookie-authenticated review-RPC request egresses
+	// through the same proxy as browser navigation. Empty preserves the
+	// pre-fix behavior (direct egress) — used by CLI/standalone runs.
+	ProxyURL string
 }
 
 func CreateSeedJobs(cfg SeedJobConfig) (jobs []scrapemate.IJob, err error) {
@@ -142,6 +150,13 @@ func CreateSeedJobs(cfg SeedJobConfig) (jobs []scrapemate.IJob, err error) {
 			// user-facing job_id even though scrapemate replaces the ctx logger.
 			if cfg.UserID != "" || cfg.UserJobID != "" {
 				opts = append(opts, gmaps.WithUserContext(cfg.UserID, cfg.UserJobID))
+			}
+
+			// Propagate the per-scrape rotated proxy URL so PlaceJob.ProxyURL
+			// carries it down to reviews.go's fetchWithCookies — see
+			// SeedJobConfig.ProxyURL.
+			if cfg.ProxyURL != "" {
+				opts = append(opts, gmaps.WithProxyURL(cfg.ProxyURL))
 			}
 
 			job = gmaps.NewGmapJob(id, cfg.LangCode, query, cfg.MaxDepth, cfg.IncludeEmails, cfg.Images, cfg.ReviewsMax, cfg.GeoCoordinates, cfg.Zoom, opts...)
