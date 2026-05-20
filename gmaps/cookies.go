@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/playwright-community/playwright-go"
 )
@@ -25,52 +26,104 @@ type CookieEntry struct {
 	SameSite string  `json:"sameSite,omitempty"`
 }
 
+// cookiesCache is the mtime-keyed cache for parsed cookies. Holding the
+// mutex across the read+parse is acceptable: cookie reloads are rare
+// (operator action) and review fetches happen at most a few times per
+// second per process, dominated by network I/O.
 var (
-	googleCookies     []CookieEntry
-	googleCookiesOnce sync.Once
-	googleCookiesErr  error
-	cookiesFilePath   string
+	cookiesMu       sync.RWMutex
+	cookiesEntries  []CookieEntry
+	cookiesMtime    time.Time
+	cookiesFilePath string
 )
 
 // SetCookiesFile sets the path to the cookies JSON file.
 // Must be called before any cookie loading happens.
 func SetCookiesFile(path string) {
+	cookiesMu.Lock()
+	defer cookiesMu.Unlock()
+	if path != cookiesFilePath {
+		// Path change invalidates the cache — different file may have a
+		// coincidentally identical mtime.
+		cookiesEntries = nil
+		cookiesMtime = time.Time{}
+	}
 	cookiesFilePath = path
 }
 
-// LoadGoogleCookies loads cookies from the configured JSON file (once).
+// LoadGoogleCookies returns the parsed cookies. It re-reads from disk only
+// when the file's mtime has changed since the last successful load, so a
+// fresh cookie dump on a running prod box takes effect on the next request
+// without a backend restart.
+//
+// Concurrency: serialized through cookiesMu. Callers receive a freshly
+// allocated slice (not aliasing the cache) — safe to mutate or hand off.
 func LoadGoogleCookies() ([]CookieEntry, error) {
-	googleCookiesOnce.Do(func() {
-		if cookiesFilePath == "" {
-			googleCookiesErr = fmt.Errorf("no cookies file configured")
-			return
+	cookiesMu.RLock()
+	path := cookiesFilePath
+	cachedMtime := cookiesMtime
+	cookiesMu.RUnlock()
+
+	if path == "" {
+		return nil, fmt.Errorf("no cookies file configured")
+	}
+
+	st, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("stat cookies file %s: %w", path, err)
+	}
+
+	if st.ModTime().Equal(cachedMtime) {
+		// Cache hit — return a copy under read lock.
+		cookiesMu.RLock()
+		out := append([]CookieEntry(nil), cookiesEntries...)
+		cookiesMu.RUnlock()
+		return out, nil
+	}
+
+	// Cache miss / file changed — re-read under write lock.
+	cookiesMu.Lock()
+	defer cookiesMu.Unlock()
+	// Double-check after acquiring write lock: another goroutine may have
+	// already refreshed the cache.
+	if st.ModTime().Equal(cookiesMtime) {
+		return append([]CookieEntry(nil), cookiesEntries...), nil
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read cookies file %s: %w", path, err)
+	}
+
+	var parsed []CookieEntry
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return nil, fmt.Errorf("parse cookies file: %w", err)
+	}
+
+	filtered := make([]CookieEntry, 0, len(parsed))
+	for _, c := range parsed {
+		if strings.Contains(c.Domain, "google") {
+			filtered = append(filtered, c)
 		}
+	}
 
-		data, err := os.ReadFile(cookiesFilePath)
-		if err != nil {
-			googleCookiesErr = fmt.Errorf("failed to read cookies file %s: %w", cookiesFilePath, err)
-			return
-		}
+	cookiesEntries = filtered
+	cookiesMtime = st.ModTime()
+	slog.Info("google_cookies_loaded",
+		slog.Int("total", len(parsed)),
+		slog.Int("google_filtered", len(filtered)),
+		slog.Time("file_mtime", st.ModTime()),
+	)
 
-		var cookies []CookieEntry
-		if err := json.Unmarshal(data, &cookies); err != nil {
-			googleCookiesErr = fmt.Errorf("failed to parse cookies file: %w", err)
-			return
-		}
+	return append([]CookieEntry(nil), filtered...), nil
+}
 
-		// Filter to only Google-related cookies
-		var filtered []CookieEntry
-		for _, c := range cookies {
-			if strings.Contains(c.Domain, "google") {
-				filtered = append(filtered, c)
-			}
-		}
-
-		googleCookies = filtered
-		slog.Info("google_cookies_loaded", slog.Int("total", len(cookies)), slog.Int("google_filtered", len(filtered)))
-	})
-
-	return googleCookies, googleCookiesErr
+// resetCookiesCacheForTest clears the package-level cookie cache. Test-only.
+func resetCookiesCacheForTest() {
+	cookiesMu.Lock()
+	defer cookiesMu.Unlock()
+	cookiesEntries = nil
+	cookiesMtime = time.Time{}
 }
 
 // InjectCookiesIntoPage adds Google cookies to a Playwright page's browser context.
