@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Image struct {
@@ -56,7 +57,12 @@ type Review struct {
 	Description    string
 	Images         []string
 	When           string
+	PublishedAt    *time.Time `json:"published_at,omitempty"`
 }
+
+const reviewPublishedAtFutureSkew = 24 * time.Hour
+
+var earliestReviewPublishedAt = time.Date(2007, time.January, 1, 0, 0, 0, 0, time.UTC)
 
 type Entry struct {
 	ID         string              `json:"input_id"`
@@ -467,65 +473,13 @@ func parseReviews(reviewsI []any) []Review {
 			}
 		}
 
-		// Try multiple paths for date (relative time)
-		// Path 1: el[1][6] = "7 months ago"
-		// Path 2: el[2][1][3][8][0] = "4 years ago"
-var relativeDate string
-		date16 := getNthElementAndCast[string](el, 1, 6)
-		date33 := getNthElementAndCast[string](el, 3, 3)
-		date213080 := getNthElementAndCast[string](el, 2, 1, 3, 8, 0)
-
-		// Try multiple paths for date (relative time)
-		if date16 != "" {
-			relativeDate = date16
-		} else if date33 != "" {
-			relativeDate = date33
-		} else if date213080 != "" {
-			relativeDate = date213080
-		}
-
-		// Try multiple paths for profile picture
-		profilePic, err := decodeURL(getNthElementAndCast[string](el, 1, 4, 5, 1))
-		if err != nil || profilePic == "" {
-			profilePic = getNthElementAndCast[string](el, 1, 2, 0)
-			if profilePic == "" {
-				profilePic = getNthElementAndCast[string](el, 0, 2, 0)
-			}
-		}
-
-		// Try multiple paths for author name
-		authorName := getNthElementAndCast[string](el, 1, 4, 5, 0)
-		if authorName == "" {
-			authorName = getNthElementAndCast[string](el, 1, 4, 4)
-			if authorName == "" {
-				authorName = getNthElementAndCast[string](el, 0, 1)
-			}
-		}
-
-		// Try multiple paths for rating
-		rating := int(getNthElementAndCast[float64](el, 2, 0, 0))
-		if rating == 0 {
-			rating = int(getNthElementAndCast[float64](el, 2, 0))
-			if rating == 0 {
-				rating = int(getNthElementAndCast[float64](el, 1, 0, 0))
-			}
-		}
-
-		// Try multiple paths for description
-		description := getNthElementAndCast[string](el, 2, 15, 0, 0)
-		if description == "" {
-			description = getNthElementAndCast[string](el, 2, 15, 0)
-			if description == "" {
-				description = getNthElementAndCast[string](el, 3, 0)
-			}
-		}
-
 		review := Review{
-			Name:           authorName,
-			ProfilePicture: profilePic,
-			When:           relativeDate,
-			Rating:         rating,
-			Description:    description,
+			Name:           reviewAuthorName(el),
+			ProfilePicture: reviewProfilePicture(el),
+			When:           reviewRelativeDate(el),
+			PublishedAt:    reviewPublishedAt(el),
+			Rating:         reviewRating(el),
+			Description:    reviewDescription(el),
 		}
 
 		if review.Name == "" {
@@ -548,6 +502,91 @@ var relativeDate string
 	}
 
 	return ans
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+
+	return ""
+}
+
+func reviewRelativeDate(el []any) string {
+	return firstNonEmpty(
+		getNthElementAndCast[string](el, 1, 6),
+		getNthElementAndCast[string](el, 3, 3),
+		getNthElementAndCast[string](el, 2, 1, 3, 8, 0),
+	)
+}
+
+func reviewPublishedAt(el []any) *time.Time {
+	timestampMicros := firstNonZero(
+		getNthElementAndCast[float64](el, 1, 2),
+		getNthElementAndCast[float64](el, 1, 3),
+	)
+	if timestampMicros == 0 {
+		return nil
+	}
+
+	publishedAt := time.UnixMicro(int64(timestampMicros)).UTC()
+	if publishedAt.Before(earliestReviewPublishedAt) {
+		return nil
+	}
+
+	if publishedAt.After(time.Now().UTC().Add(reviewPublishedAtFutureSkew)) {
+		return nil
+	}
+
+	return &publishedAt
+}
+
+func reviewProfilePicture(el []any) string {
+	profilePic, err := decodeURL(getNthElementAndCast[string](el, 1, 4, 5, 1))
+	if err == nil && profilePic != "" {
+		return profilePic
+	}
+
+	return firstNonEmpty(
+		getNthElementAndCast[string](el, 1, 2, 0),
+		getNthElementAndCast[string](el, 0, 2, 0),
+	)
+}
+
+func reviewAuthorName(el []any) string {
+	return firstNonEmpty(
+		getNthElementAndCast[string](el, 1, 4, 5, 0),
+		getNthElementAndCast[string](el, 1, 4, 4),
+		getNthElementAndCast[string](el, 0, 1),
+	)
+}
+
+func reviewRating(el []any) int {
+	return int(firstNonZero(
+		getNthElementAndCast[float64](el, 2, 0, 0),
+		getNthElementAndCast[float64](el, 2, 0),
+		getNthElementAndCast[float64](el, 1, 0, 0),
+	))
+}
+
+func firstNonZero(values ...float64) float64 {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+
+	return 0
+}
+
+func reviewDescription(el []any) string {
+	return firstNonEmpty(
+		getNthElementAndCast[string](el, 2, 15, 0, 0),
+		getNthElementAndCast[string](el, 2, 15, 0),
+		getNthElementAndCast[string](el, 3, 0),
+	)
 }
 
 type getLinkSourceParams struct {
