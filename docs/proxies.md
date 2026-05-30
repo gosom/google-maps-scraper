@@ -41,7 +41,6 @@ docker run \
 |---|---|---|
 | RapidProxy | Residential proxy provider supporting this project | [Visit RapidProxy](https://www.rapidproxy.io/?ref=gosom) |
 | Webshare | Proxy provider with HTTP and SOCKS5 support | [Visit Webshare](https://www.webshare.io/?referral_code=0q3l81eet8mp) |
-| Legion Proxy | Residential proxy provider supporting this project | [Visit Legion Proxy](https://legionproxy.io/?utm_source=github&utm_campaign=gmaps) |
 | Decodo | Proxy provider supporting this project | [Visit Decodo](https://visit.decodo.com/APVbbx) |
 | Evomi | Proxy provider supporting this project | [Visit Evomi](https://evomi.com?utm_source=github&utm_medium=banner&utm_campaign=gosom-maps) |
 
