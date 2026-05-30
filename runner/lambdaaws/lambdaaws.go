@@ -145,6 +145,14 @@ func (l *lambdaAwsRunner) getApp(_ context.Context, input lInput, out io.Writer)
 		scrapemateapp.DisableImages(),
 	))
 
+	if input.MaxPagesPerBrowser > 1 {
+		opts = append(opts, scrapemateapp.WithMaxPagesPerBrowser(input.MaxPagesPerBrowser))
+	}
+
+	if input.BrowserPoolSize > 0 {
+		opts = append(opts, scrapemateapp.WithBrowserPoolSize(input.BrowserPoolSize))
+	}
+
 	if !input.DisablePageReuse {
 		opts = append(opts, scrapemateapp.WithPageReuseLimit(2))
 		opts = append(opts, scrapemateapp.WithBrowserReuseLimit(200))

@@ -17,7 +17,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/gosom/go-leadsdb v0.0.0-20251228094956-ed313efc171f
-	github.com/gosom/scrapemate v1.1.0
+	github.com/gosom/scrapemate v1.2.0
 	github.com/hetznercloud/hcloud-go/v2 v2.36.0
 	github.com/jackc/pgx/v5 v5.9.0
 	github.com/mattn/go-runewidth v0.0.16
@@ -199,8 +199,8 @@ require (
 	github.com/maratori/testableexamples v1.0.0 // indirect
 	github.com/maratori/testpackage v1.1.1 // indirect
 	github.com/matoous/godox v1.1.0 // indirect
-	github.com/mattn/go-colorable v0.1.14 // indirect
-	github.com/mattn/go-isatty v0.0.21 // indirect
+	github.com/mattn/go-colorable v0.1.15 // indirect
+	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/mgechev/revive v1.7.0 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
@@ -235,7 +235,7 @@ require (
 	github.com/riverqueue/river/rivershared v0.30.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
-	github.com/rs/zerolog v1.35.0 // indirect
+	github.com/rs/zerolog v1.35.1 // indirect
 	github.com/ryancurrah/gomodguard v1.3.5 // indirect
 	github.com/ryanrolds/sqlclosecheck v0.5.1 // indirect
 	github.com/sanposhiho/wastedassign/v2 v2.1.0 // indirect
@@ -316,5 +316,3 @@ tool (
 	github.com/golangci/golangci-lint/cmd/golangci-lint
 	golang.org/x/vuln/cmd/govulncheck
 )
-
-//replace github.com/gosom/scrapemate v1.0.0 => ../scrapemate
