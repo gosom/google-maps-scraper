@@ -73,13 +73,13 @@ type Review struct {
 	TextOriginal        string  `json:"text_original"`
 	TextTranslated      string  `json:"text_translated"`
 
-	ReplyText                string `json:"reply_text,omitempty"`
-	ReplyTextOriginal        string `json:"reply_text_original,omitempty"`
-	ReplyLanguage            string `json:"reply_language,omitempty"`
-	ReplyTranslatedLang      string `json:"reply_translated_lang,omitempty"`
-	ReplyPostedAtUnixMicros  int64  `json:"reply_posted_at_unix_micros,omitempty"`
-	ReplyUpdatedAtUnixMicros int64  `json:"reply_updated_at_unix_micros,omitempty"`
-	PublishedAt    *time.Time `json:"published_at,omitempty"`
+	ReplyText                string     `json:"reply_text,omitempty"`
+	ReplyTextOriginal        string     `json:"reply_text_original,omitempty"`
+	ReplyLanguage            string     `json:"reply_language,omitempty"`
+	ReplyTranslatedLang      string     `json:"reply_translated_lang,omitempty"`
+	ReplyPostedAtUnixMicros  int64      `json:"reply_posted_at_unix_micros,omitempty"`
+	ReplyUpdatedAtUnixMicros int64      `json:"reply_updated_at_unix_micros,omitempty"`
+	PublishedAt              *time.Time `json:"published_at,omitempty"`
 }
 
 const reviewPublishedAtFutureSkew = 24 * time.Hour
@@ -97,38 +97,38 @@ type Entry struct {
 	OpenHours  map[string][]string `json:"open_hours"`
 	// PopularTImes is a map with keys the days of the week
 	// and value is a map with key the hour and value the traffic in that time
-	PopularTimes        map[string]map[int]int `json:"popular_times"`
-	WebSite             string                 `json:"web_site"`
-	Phone               string                 `json:"phone"`
-	PlusCode            string                 `json:"plus_code"`
-	ReviewCount         int                    `json:"review_count"`
-	ReviewRating        float64                `json:"review_rating"`
-	ReviewsPerRating    map[int]int            `json:"reviews_per_rating"`
-	Latitude            float64                `json:"latitude"`
+	PopularTimes     map[string]map[int]int `json:"popular_times"`
+	WebSite          string                 `json:"web_site"`
+	Phone            string                 `json:"phone"`
+	PlusCode         string                 `json:"plus_code"`
+	ReviewCount      int                    `json:"review_count"`
+	ReviewRating     float64                `json:"review_rating"`
+	ReviewsPerRating map[int]int            `json:"reviews_per_rating"`
+	Latitude         float64                `json:"latitude"`
 	// Longtitude holds the longitude. The struct field and the legacy JSON
 	// key are misspelled ("longtitude"); MarshalJSON also emits the correctly
 	// spelled "longitude" key, and UnmarshalJSON accepts either. The field
 	// name is kept for backwards compatibility with existing imports.
-	Longtitude          float64                `json:"longtitude"`
-	Status              string                 `json:"status"`
-	Description         string                 `json:"description"`
-	ReviewsLink         string                 `json:"reviews_link"`
-	Thumbnail           string                 `json:"thumbnail"`
-	Timezone            string                 `json:"timezone"`
-	PriceRange          string                 `json:"price_range"`
-	DataID              string                 `json:"data_id"`
-	StreetViewURL       string                 `json:"street_view_url"`
-	PlaceID             string                 `json:"place_id"`
-	Images              []Image                `json:"images"`
-	Reservations        []LinkSource           `json:"reservations"`
-	OrderOnline         []LinkSource           `json:"order_online"`
-	Menu                LinkSource             `json:"menu"`
-	Owner               Owner                  `json:"owner"`
-	CompleteAddress     Address                `json:"complete_address"`
-	About               []About                `json:"about"`
-	UserReviews         []Review               `json:"user_reviews"`
-	UserReviewsExtended []Review               `json:"user_reviews_extended"`
-	Emails              []string               `json:"emails"`
+	Longtitude          float64      `json:"longtitude"`
+	Status              string       `json:"status"`
+	Description         string       `json:"description"`
+	ReviewsLink         string       `json:"reviews_link"`
+	Thumbnail           string       `json:"thumbnail"`
+	Timezone            string       `json:"timezone"`
+	PriceRange          string       `json:"price_range"`
+	DataID              string       `json:"data_id"`
+	StreetViewURL       string       `json:"street_view_url"`
+	PlaceID             string       `json:"place_id"`
+	Images              []Image      `json:"images"`
+	Reservations        []LinkSource `json:"reservations"`
+	OrderOnline         []LinkSource `json:"order_online"`
+	Menu                LinkSource   `json:"menu"`
+	Owner               Owner        `json:"owner"`
+	CompleteAddress     Address      `json:"complete_address"`
+	About               []About      `json:"about"`
+	UserReviews         []Review     `json:"user_reviews"`
+	UserReviewsExtended []Review     `json:"user_reviews_extended"`
+	Emails              []string     `json:"emails"`
 }
 
 // entryAlias is used inside Marshal/UnmarshalJSON to avoid infinite recursion
@@ -138,6 +138,8 @@ type entryAlias Entry
 // MarshalJSON emits both the legacy "longtitude" key (preserved for backwards
 // compatibility) and the correctly spelled "longitude" key so downstream
 // consumers can migrate without a flag day.
+//
+//nolint:gocritic // value receiver preserves json.Marshaler behavior for Entry values.
 func (e Entry) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Longitude float64 `json:"longitude"`
@@ -161,9 +163,11 @@ func (e *Entry) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}
+
 	if e.Longtitude == 0 && aux.Longitude != nil {
 		e.Longtitude = *aux.Longitude
 	}
+
 	return nil
 }
 
@@ -581,7 +585,7 @@ func parseReviews(reviewsI []any) []Review {
 		if isAggregator {
 			review.RatingFloat = getNthElementAndCast[float64](el, 2, 8, 1)
 		} else {
-			review.RatingFloat = float64(rating)
+			review.RatingFloat = float64(review.Rating)
 		}
 
 		r3 := getNthElementAndCast[[]any](el, 3)
