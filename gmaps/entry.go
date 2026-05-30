@@ -60,6 +60,25 @@ type Review struct {
 	Description    string
 	Images         []string
 	When           string
+
+	ReviewID            string  `json:"review_id"`
+	Source              string  `json:"source"`
+	RatingScale         int     `json:"rating_scale"`
+	RatingFloat         float64 `json:"rating_float"`
+	AuthorURL           string  `json:"author_url"`
+	PostedAtUnixMicros  int64   `json:"posted_at_unix_micros"`
+	UpdatedAtUnixMicros int64   `json:"updated_at_unix_micros"`
+	Language            string  `json:"language"`
+	TranslatedLang      string  `json:"translated_lang"`
+	TextOriginal        string  `json:"text_original"`
+	TextTranslated      string  `json:"text_translated"`
+
+	ReplyText                string `json:"reply_text,omitempty"`
+	ReplyTextOriginal        string `json:"reply_text_original,omitempty"`
+	ReplyLanguage            string `json:"reply_language,omitempty"`
+	ReplyTranslatedLang      string `json:"reply_translated_lang,omitempty"`
+	ReplyPostedAtUnixMicros  int64  `json:"reply_posted_at_unix_micros,omitempty"`
+	ReplyUpdatedAtUnixMicros int64  `json:"reply_updated_at_unix_micros,omitempty"`
 	PublishedAt    *time.Time `json:"published_at,omitempty"`
 }
 
@@ -529,6 +548,50 @@ func parseReviews(reviewsI []any) []Review {
 			PublishedAt:    reviewPublishedAt(el),
 			Rating:         reviewRating(el),
 			Description:    reviewDescription(el),
+		}
+
+		// Extended metadata
+		review.ReviewID = getNthElementAndCast[string](el, 0)
+		review.PostedAtUnixMicros = int64(getNthElementAndCast[float64](el, 1, 2))
+		review.UpdatedAtUnixMicros = int64(getNthElementAndCast[float64](el, 1, 3))
+		review.AuthorURL = getNthElementAndCast[string](el, 1, 4, 2, 0)
+
+		src := getNthElementAndCast[string](el, 1, 13, 0)
+		if src == "" {
+			src = "unknown"
+		}
+
+		review.Source = src
+
+		scale := int(getNthElementAndCast[float64](el, 1, 13, 4))
+		if scale == 0 {
+			scale = 5
+		}
+
+		review.RatingScale = scale
+
+		review.Language = getNthElementAndCast[string](el, 2, 14, 0)
+		review.TranslatedLang = getNthElementAndCast[string](el, 2, 14, 1)
+		review.TextOriginal = getNthElementAndCast[string](el, 2, 15, 0, 0)
+		review.TextTranslated = getNthElementAndCast[string](el, 2, 15, 1, 0)
+
+		r2 := getNthElementAndCast[[]any](el, 2)
+
+		isAggregator := len(r2) > 0 && r2[0] == nil
+		if isAggregator {
+			review.RatingFloat = getNthElementAndCast[float64](el, 2, 8, 1)
+		} else {
+			review.RatingFloat = float64(rating)
+		}
+
+		r3 := getNthElementAndCast[[]any](el, 3)
+		if len(r3) >= 15 && r3[1] != nil {
+			review.ReplyPostedAtUnixMicros = int64(getNthElementAndCast[float64](el, 3, 1))
+			review.ReplyUpdatedAtUnixMicros = int64(getNthElementAndCast[float64](el, 3, 2))
+			review.ReplyLanguage = getNthElementAndCast[string](el, 3, 13, 0)
+			review.ReplyTranslatedLang = getNthElementAndCast[string](el, 3, 13, 1)
+			review.ReplyTextOriginal = getNthElementAndCast[string](el, 3, 14, 0, 0)
+			review.ReplyText = getNthElementAndCast[string](el, 3, 14, 1, 0)
 		}
 
 		if review.Name == "" {
