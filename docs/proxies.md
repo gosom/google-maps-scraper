@@ -39,6 +39,7 @@ docker run \
 
 | Provider | Notes | Link |
 |---|---|---|
+| NetNut | Premium residential proxy network and web data collection infrastructure | [Visit NetNut](https://netnut.io/?ref=y2fmmzz) / [Learn more](../netnut.md) |
 | RapidProxy | Residential proxy provider supporting this project | [Visit RapidProxy](https://www.rapidproxy.io/?ref=gosom) |
 | Webshare | Proxy provider with HTTP and SOCKS5 support | [Visit Webshare](https://www.webshare.io/?referral_code=0q3l81eet8mp) |
 | BirdProxies | Residential and ISP proxy provider supporting this project | [Visit BirdProxies](https://birdproxies.com/?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom-google-maps-scraper) / [Discord](https://discord.com/invite/birdproxies) |
