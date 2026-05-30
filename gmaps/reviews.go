@@ -16,11 +16,10 @@ import (
 
 	"github.com/gosom/scrapemate"
 	"github.com/gosom/scrapemate/adapters/fetchers/stealth"
-	"github.com/playwright-community/playwright-go"
 )
 
 type fetchReviewsParams struct {
-	page        playwright.Page
+	page        scrapemate.BrowserPage
 	mapURL      string
 	reviewCount int
 }
@@ -123,7 +122,7 @@ func (f *fetcher) fetchWithBrowser(_ context.Context, initialURL, requestID stri
 		}
 	}`, initialURL)
 
-	result, err := page.Evaluate(jsCode)
+	result, err := page.Eval(jsCode)
 	if err != nil {
 		return ans, fmt.Errorf("browser fetch failed: %w", err)
 	}
@@ -167,7 +166,7 @@ func (f *fetcher) fetchWithBrowser(_ context.Context, initialURL, requestID stri
 			}
 		}`, nextURL)
 
-		result, err = page.Evaluate(jsCode)
+		result, err = page.Eval(jsCode)
 		if err != nil {
 			break
 		}
@@ -199,6 +198,7 @@ const hexMatchPattern = `0x[0-9a-fA-F]+:0x[0-9a-fA-F]+` // Hex format place ID
 // extractPlaceID extracts the place ID from various Google Maps URL formats
 func extractPlaceID(mapURL string) (string, error) {
 	patternsOnce.Do(func() {
+		patterns = make(map[string]*regexp.Regexp)
 		// Try multiple patterns for extracting place ID
 		avail := []string{
 			`!1s([^!]+)`,                             // Standard format: !1s0x...
@@ -207,6 +207,7 @@ func extractPlaceID(mapURL string) (string, error) {
 			hexMatchPattern,                          // Hex format place ID
 		}
 
+		patterns = make(map[string]*regexp.Regexp)
 		for _, p := range avail {
 			patterns[p] = regexp.MustCompile(p)
 		}
@@ -356,11 +357,11 @@ func ConvertDOMReviewsToReviews(domReviews []DOMReview) []Review {
 
 // extractReviewsFromPage extracts reviews directly from the page DOM
 // This is a fallback when the RPC API fails
-func extractReviewsFromPage(ctx context.Context, page playwright.Page) ([]DOMReview, error) {
+func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([]DOMReview, error) {
 	log.Printf("Attempting DOM-based review extraction")
 
 	// First, try to click the reviews section to open the reviews panel
-	clickedReviews, _ := page.Evaluate(`() => {
+	clickedReviews, _ := page.Eval(`() => {
 		try {
 			// Method 1: Click on the reviews count/link in the place info
 			const reviewsButtons = document.querySelectorAll('button[jsaction*="reviewChart"], button[jsaction*="reviews"]');
@@ -426,7 +427,7 @@ func extractReviewsFromPage(ctx context.Context, page playwright.Page) ([]DOMRev
 		}
 
 		// Extract reviews from the DOM - updated for Dec 2025 Google Maps structure
-		reviewsJSON, err := page.Evaluate(`() => {
+		reviewsJSON, err := page.Eval(`() => {
 			try {
 				const reviews = [];
 
@@ -689,7 +690,7 @@ func extractReviewsFromPage(ctx context.Context, page playwright.Page) ([]DOMRev
 		}
 
 		// Scroll to load more reviews
-		_, _ = page.Evaluate(`() => {
+		_, _ = page.Eval(`() => {
 			try {
 				// Try multiple scroll containers
 				const selectors = [

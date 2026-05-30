@@ -10,8 +10,11 @@ import (
 	"time"
 
 	"github.com/gosom/scrapemate"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/gosom/google-maps-scraper/gmaps"
+	"github.com/gosom/google-maps-scraper/internal/jsonbsanitize"
+	"github.com/gosom/google-maps-scraper/log"
 )
 
 func NewResultWriter(db *sql.DB) scrapemate.ResultWriter {
@@ -70,7 +73,7 @@ func (r *resultWriter) batchSave(ctx context.Context, entries []*gmaps.Entry) er
 	args := make([]interface{}, 0, len(entries))
 
 	for i, entry := range entries {
-		data, err := json.Marshal(entry)
+		data, err := marshalEntry(entry)
 		if err != nil {
 			return err
 		}
@@ -87,16 +90,97 @@ func (r *resultWriter) batchSave(ctx context.Context, entries []*gmaps.Entry) er
 		return err
 	}
 
+	committed := false
 	defer func() {
-		_ = tx.Rollback()
+		if !committed {
+			_ = tx.Rollback()
+		}
 	}()
 
 	_, err = tx.ExecContext(ctx, q, args...)
 	if err != nil {
+		if isJSONBNULByteError(err) {
+			_ = tx.Rollback()
+			return r.saveRowsOneByOne(ctx, entries)
+		}
+
 		return err
 	}
 
 	err = tx.Commit()
+	if err == nil {
+		committed = true
+	}
 
 	return err
+}
+
+func marshalEntry(entry *gmaps.Entry) ([]byte, error) {
+	jsonbsanitize.StripNULFromEntry(entry)
+
+	return json.Marshal(entry)
+}
+
+func (r *resultWriter) saveRowsOneByOne(ctx context.Context, entries []*gmaps.Entry) error {
+	const q = `INSERT INTO results
+		(data)
+		VALUES
+		($1) ON CONFLICT DO NOTHING`
+
+	skipped := 0
+
+	for _, entry := range entries {
+		data, err := marshalEntry(entry)
+		if err != nil {
+			return err
+		}
+
+		_, err = r.db.ExecContext(ctx, q, data)
+		if err == nil {
+			continue
+		}
+
+		if isJSONBNULByteError(err) {
+			skipped++
+
+			log.Warn("skipping invalid result row during database insert",
+				"id", entry.ID,
+				"title", entry.Title,
+				"error", err,
+			)
+
+			continue
+		}
+
+		return err
+	}
+
+	if skipped > 0 {
+		log.Warn("skipped result rows due to invalid jsonb payload",
+			"count", skipped,
+		)
+	}
+
+	return nil
+}
+
+func isJSONBNULByteError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		if pgErr.Code != "22P05" {
+			return false
+		}
+
+		msg := strings.ToLower(pgErr.Message)
+		detail := strings.ToLower(pgErr.Detail)
+
+		return strings.Contains(msg, "unsupported unicode escape sequence") &&
+			strings.Contains(detail, "cannot be converted to text")
+	}
+
+	return false
 }

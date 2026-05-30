@@ -3,7 +3,6 @@ package exiter
 import (
 	"context"
 	"sync"
-	"time"
 )
 
 type Exiter interface {
@@ -23,11 +22,13 @@ type exiter struct {
 
 	mu         *sync.Mutex
 	cancelFunc context.CancelFunc
+	doneCh     chan struct{}
 }
 
 func New() Exiter {
 	return &exiter{
-		mu: &sync.Mutex{},
+		mu:     &sync.Mutex{},
+		doneCh: make(chan struct{}, 1),
 	}
 }
 
@@ -47,9 +48,16 @@ func (e *exiter) SetCancelFunc(fn context.CancelFunc) {
 
 func (e *exiter) IncrSeedCompleted(val int) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-
 	e.seedCompleted += val
+	done := e.seedCompleted >= e.seedCount && e.placesCompleted >= e.placesFound
+	e.mu.Unlock()
+
+	if done {
+		select {
+		case e.doneCh <- struct{}{}:
+		default:
+		}
+	}
 }
 
 func (e *exiter) IncrPlacesFound(val int) {
@@ -61,40 +69,25 @@ func (e *exiter) IncrPlacesFound(val int) {
 
 func (e *exiter) IncrPlacesCompleted(val int) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-
 	e.placesCompleted += val
-}
+	done := e.seedCompleted >= e.seedCount && e.placesCompleted >= e.placesFound
+	e.mu.Unlock()
 
-func (e *exiter) Run(ctx context.Context) {
-	ticker := time.NewTicker(time.Second * 5)
-	defer ticker.Stop()
-
-	for {
+	if done {
 		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if e.isDone() {
-				e.cancelFunc()
-
-				return
-			}
+		case e.doneCh <- struct{}{}:
+		default:
 		}
 	}
 }
 
-func (e *exiter) isDone() bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	if e.seedCompleted != e.seedCount {
-		return false
+func (e *exiter) Run(ctx context.Context) {
+	select {
+	case <-ctx.Done():
+		return
+	case <-e.doneCh:
+		if e.cancelFunc != nil {
+			e.cancelFunc()
+		}
 	}
-
-	if e.placesFound != e.placesCompleted {
-		return false
-	}
-
-	return true
 }

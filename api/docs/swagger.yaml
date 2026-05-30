@@ -1,0 +1,321 @@
+basePath: /
+definitions:
+  api.DeleteJobResponse:
+    description: Response returned after successfully queueing a job for deletion
+    properties:
+      message:
+        description: Status message
+        example: deletion queued
+        type: string
+    type: object
+  api.ErrorResponse:
+    description: Error response returned when a request fails
+    properties:
+      message:
+        example: invalid request body
+        type: string
+    type: object
+  api.HealthCheckResponse:
+    description: Health check response indicating service status
+    properties:
+      status:
+        example: ok
+        type: string
+    type: object
+  api.JobStatusResponse:
+    description: Detailed status of a scrape job including results when completed
+    properties:
+      completed_at:
+        description: When the job completed
+        example: "2024-01-15T10:35:00Z"
+        type: string
+      created_at:
+        description: When the job was created
+        example: "2024-01-15T10:30:00Z"
+        type: string
+      error:
+        description: Error message if job failed
+        example: ""
+        type: string
+      job_id:
+        description: Unique job identifier
+        example: kYzR8xLmNpQvWjX3
+        type: string
+      keyword:
+        description: Search keyword used for this job
+        example: restaurants in New York
+        type: string
+      result_count:
+        description: Number of results found
+        example: 25
+        type: integer
+      results:
+        description: Scrape results (array of place data)
+      started_at:
+        description: When the job started processing
+        example: "2024-01-15T10:30:05Z"
+        type: string
+      status:
+        description: Current job status (pending, running, completed, failed)
+        example: completed
+        type: string
+    type: object
+  api.JobSummary:
+    description: Summary of a job without the full result data
+    properties:
+      completed_at:
+        description: When the job completed
+        example: "2024-01-15T10:35:00Z"
+        type: string
+      created_at:
+        description: When the job was created
+        example: "2024-01-15T10:30:00Z"
+        type: string
+      error:
+        description: Error message if job failed
+        example: ""
+        type: string
+      job_id:
+        description: Unique job identifier (encoded)
+        example: kYzR8xLmNpQvWjX3
+        type: string
+      keyword:
+        description: Search keyword used for this job
+        example: restaurants in New York
+        type: string
+      result_count:
+        description: Number of results found
+        example: 25
+        type: integer
+      started_at:
+        description: When the job started processing
+        example: "2024-01-15T10:30:05Z"
+        type: string
+      status:
+        description: Current job status
+        example: completed
+        type: string
+    type: object
+  api.ListJobsResponse:
+    description: Paginated list of jobs with cursor for next page
+    properties:
+      has_more:
+        description: Whether there are more results
+        example: true
+        type: boolean
+      jobs:
+        description: List of jobs
+        items:
+          $ref: '#/definitions/api.JobSummary'
+        type: array
+      next_cursor:
+        description: Cursor for next page (empty if no more results)
+        example: eyJpZCI6MTIzfQ==
+        type: string
+    type: object
+  api.ScrapeRequest:
+    description: Request body for submitting a scrape job
+    properties:
+      email:
+        description: Whether to extract email addresses from websites
+        example: false
+        type: boolean
+      extra_reviews:
+        description: Extract additional reviews
+        example: false
+        type: boolean
+      fast_mode:
+        description: Use fast mode (stealth HTTP instead of browser)
+        example: false
+        type: boolean
+      geo_coordinates:
+        description: Geographic coordinates in "lat,lon" format
+        example: 40.7128,-74.0060
+        type: string
+      keyword:
+        description: Search keyword (e.g., "restaurants in New York")
+        example: restaurants in New York
+        type: string
+      lang:
+        description: 'Language code for results (default: "en")'
+        example: en
+        type: string
+      max_depth:
+        description: 'Maximum depth for pagination (default: 1, max: 100)'
+        example: 1
+        type: integer
+      radius:
+        description: Search radius in kilometers
+        example: 5
+        type: number
+      timeout:
+        description: 'Job timeout in seconds (1-300, default: 300)'
+        example: 300
+        type: integer
+      zoom:
+        description: Zoom level for map search (1-21)
+        example: 14
+        type: integer
+    type: object
+  api.ScrapeResponse:
+    description: Response returned after successfully submitting a scrape job
+    properties:
+      job_id:
+        description: Unique job identifier
+        example: kYzR8xLmNpQvWjX3
+        type: string
+      status:
+        description: Current job status
+        example: pending
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact:
+    name: API Support
+    url: https://github.com/gosom/google-maps-scraper
+  description: API for scraping Google Maps data asynchronously
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  title: Google Maps Scraper Pro API
+  version: "1.0"
+paths:
+  /api/v1/health:
+    get:
+      description: Check if the API service is healthy
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.HealthCheckResponse'
+      summary: Health check
+      tags:
+      - health
+  /api/v1/jobs:
+    get:
+      description: List all scrape jobs with pagination and optional state filtering
+      parameters:
+      - description: Filter by state (available, running, completed, cancelled, discarded,
+          pending, retryable, scheduled)
+        in: query
+        name: state
+        type: string
+      - description: 'Number of jobs to return (default: 20, max: 100)'
+        in: query
+        name: limit
+        type: integer
+      - description: Cursor for pagination
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.ListJobsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: List jobs
+      tags:
+      - scrape
+  /api/v1/jobs/{job_id}:
+    delete:
+      description: Queues deletion of a job and its results. Running jobs are cancelled
+        first.
+      parameters:
+      - description: Job ID
+        in: path
+        name: job_id
+        required: true
+        type: string
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/api.DeleteJobResponse'
+        "400":
+          description: Invalid job ID
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Job not found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Delete a job
+      tags:
+      - scrape
+    get:
+      description: Get the status and results of a scrape job
+      parameters:
+      - description: Job ID
+        in: path
+        name: job_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.JobStatusResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get job status
+      tags:
+      - scrape
+  /api/v1/scrape:
+    post:
+      consumes:
+      - application/json
+      description: Submit a new Google Maps scrape job for processing
+      parameters:
+      - description: Scrape request parameters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.ScrapeRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/api.ScrapeResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Submit a scrape job
+      tags:
+      - scrape
+schemes:
+- http
+- https
+swagger: "2.0"

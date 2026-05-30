@@ -1,0 +1,34 @@
+{{define "login.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    {{template "head"}}
+    <title>Login - Maps Scraper</title>
+</head>
+<body class="auth-layout">
+    <div class="auth-card">
+        <header>
+            <h1>Maps Scraper</h1>
+            <p>Sign in to continue</p>
+        </header>
+
+        {{if .Error}}
+        <div class="alert alert-error">{{.Error}}</div>
+        {{end}}
+
+        <form method="POST" action="/admin/login">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <label>
+                Username
+                <input type="text" name="username" required autocomplete="username" autofocus>
+            </label>
+            <label>
+                Password
+                <input type="password" name="password" required autocomplete="current-password">
+            </label>
+            <button type="submit">Sign in</button>
+        </form>
+    </div>
+</body>
+</html>
+{{end}}

@@ -3,13 +3,11 @@ package gmaps
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/gosom/scrapemate"
-	"github.com/playwright-community/playwright-go"
 
 	"github.com/gosom/google-maps-scraper/exiter"
 )
@@ -19,10 +17,11 @@ type PlaceJobOptions func(*PlaceJob)
 type PlaceJob struct {
 	scrapemate.Job
 
-	UsageInResultststs  bool
-	ExtractEmail        bool
-	ExitMonitor         exiter.Exiter
-	ExtractExtraReviews bool
+	UsageInResultststs      bool
+	ExtractEmail            bool
+	ExitMonitor             exiter.Exiter
+	ExtractExtraReviews     bool
+	WriterManagedCompletion bool
 }
 
 func NewPlaceJob(parentID, langCode, u string, extractEmail, extraExtraReviews bool, opts ...PlaceJobOptions) *PlaceJob {
@@ -60,6 +59,16 @@ func WithPlaceJobExitMonitor(exitMonitor exiter.Exiter) PlaceJobOptions {
 	}
 }
 
+func WithPlaceJobWriterManagedCompletion() PlaceJobOptions {
+	return func(j *PlaceJob) {
+		j.WriterManagedCompletion = true
+	}
+}
+
+func (j *PlaceJob) ProcessOnFetchError() bool {
+	return true
+}
+
 func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, []scrapemate.IJob, error) {
 	defer func() {
 		resp.Document = nil
@@ -67,13 +76,29 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 		resp.Meta = nil
 	}()
 
+	if resp.Error != nil {
+		if j.ExitMonitor != nil {
+			j.ExitMonitor.IncrPlacesCompleted(1)
+		}
+
+		return nil, nil, resp.Error
+	}
+
 	raw, ok := resp.Meta["json"].([]byte)
 	if !ok {
+		if j.ExitMonitor != nil {
+			j.ExitMonitor.IncrPlacesCompleted(1)
+		}
+
 		return nil, nil, fmt.Errorf("could not convert to []byte")
 	}
 
 	entry, err := EntryFromJSON(raw)
 	if err != nil {
+		if j.ExitMonitor != nil {
+			j.ExitMonitor.IncrPlacesCompleted(1)
+		}
+
 		return nil, nil, err
 	}
 
@@ -102,24 +127,26 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 			opts = append(opts, WithEmailJobExitMonitor(j.ExitMonitor))
 		}
 
+		if j.WriterManagedCompletion {
+			opts = append(opts, WithEmailJobWriterManagedCompletion())
+		}
+
 		emailJob := NewEmailJob(j.ID, &entry, opts...)
 
 		j.UsageInResultststs = false
 
 		return nil, []scrapemate.IJob{emailJob}, nil
-	} else if j.ExitMonitor != nil {
+	} else if j.ExitMonitor != nil && !j.WriterManagedCompletion {
 		j.ExitMonitor.IncrPlacesCompleted(1)
 	}
 
 	return &entry, nil, err
 }
 
-func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scrapemate.Response {
+func (j *PlaceJob) BrowserActions(ctx context.Context, page scrapemate.BrowserPage) scrapemate.Response {
 	var resp scrapemate.Response
 
-	pageResponse, err := page.Goto(j.GetURL(), playwright.PageGotoOptions{
-		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
-	})
+	pageResponse, err := page.Goto(j.GetURL(), scrapemate.WaitUntilDOMContentLoaded)
 	if err != nil {
 		resp.Error = err
 
@@ -128,25 +155,14 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 
 	clickRejectCookiesIfRequired(page)
 
-	const defaultTimeout = 5000
+	const defaultTimeout = 5 * time.Second
 
-	err = page.WaitForURL(page.URL(), playwright.PageWaitForURLOptions{
-		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
-		Timeout:   playwright.Float(defaultTimeout),
-	})
-	if err != nil {
-		resp.Error = err
+	// Ignore WaitForURL errors — Google Maps may redirect slowly especially via proxy
+	_ = page.WaitForURL(page.URL(), defaultTimeout)
 
-		return resp
-	}
-
-	resp.URL = pageResponse.URL()
-	resp.StatusCode = pageResponse.Status()
-	resp.Headers = make(http.Header, len(pageResponse.Headers()))
-
-	for k, v := range pageResponse.Headers() {
-		resp.Headers.Add(k, v)
-	}
+	resp.URL = pageResponse.URL
+	resp.StatusCode = pageResponse.StatusCode
+	resp.Headers = pageResponse.Headers
 
 	raw, err := j.extractJSON(page)
 	if err != nil {
@@ -163,7 +179,7 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 
 	if j.ExtractExtraReviews {
 		reviewCount := j.getReviewCount(raw)
-		if reviewCount > 8 { // we have more reviews
+		if reviewCount > 0 { // download reviews for any place that has them
 			params := fetchReviewsParams{
 				page:        page,
 				mapURL:      page.URL(),
@@ -187,23 +203,40 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page playwright.Page) scr
 	return resp
 }
 
-func (j *PlaceJob) getRaw(ctx context.Context, page playwright.Page) (any, error) {
+func (j *PlaceJob) getRaw(ctx context.Context, page scrapemate.BrowserPage) (any, error) {
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, fmt.Errorf("timeout while getting raw data: %w", ctx.Err())
 		default:
-			raw, err := page.Evaluate(js)
-			if err == nil && raw != nil {
-				return raw, nil
+			raw, err := page.Eval(js)
+			if err != nil {
+				// Continue retrying on error
+				<-time.After(time.Millisecond * 200)
+				continue
 			}
 
-			<-time.After(time.Millisecond * 200)
+			// Check for valid non-null result.
+			// JS null may arrive as nil, and empty strings are not useful here.
+			if raw == nil {
+				<-time.After(time.Millisecond * 200)
+				continue
+			}
+
+			// If it's a string, make sure it's not empty
+			if str, ok := raw.(string); ok {
+				if str == "" {
+					<-time.After(time.Millisecond * 200)
+					continue
+				}
+			}
+
+			return raw, nil
 		}
 	}
 }
 
-func (j *PlaceJob) extractJSON(page playwright.Page) ([]byte, error) {
+func (j *PlaceJob) extractJSON(page scrapemate.BrowserPage) ([]byte, error) {
 	const maxRetries = 2
 
 	for attempt := range maxRetries {
@@ -215,9 +248,7 @@ func (j *PlaceJob) extractJSON(page playwright.Page) ([]byte, error) {
 		if err != nil {
 			// On timeout, try reloading the page
 			if attempt < maxRetries-1 {
-				if _, reloadErr := page.Reload(playwright.PageReloadOptions{
-					WaitUntil: playwright.WaitUntilStateDomcontentloaded,
-				}); reloadErr == nil {
+				if reloadErr := page.Reload(scrapemate.WaitUntilDOMContentLoaded); reloadErr == nil {
 					continue
 				}
 			}
@@ -227,9 +258,7 @@ func (j *PlaceJob) extractJSON(page playwright.Page) ([]byte, error) {
 
 		if rawI == nil {
 			if attempt < maxRetries-1 {
-				if _, reloadErr := page.Reload(playwright.PageReloadOptions{
-					WaitUntil: playwright.WaitUntilStateDomcontentloaded,
-				}); reloadErr == nil {
+				if reloadErr := page.Reload(scrapemate.WaitUntilDOMContentLoaded); reloadErr == nil {
 					continue
 				}
 			}
