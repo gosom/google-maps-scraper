@@ -18,18 +18,24 @@ import (
 )
 
 func NewResultWriter(db *sql.DB) scrapemate.ResultWriter {
-	return &resultWriter{db: db}
+	return &resultWriter{
+		db:           db,
+		now:          time.Now,
+		saveInterval: time.Minute,
+	}
 }
 
 type resultWriter struct {
-	db *sql.DB
+	db           *sql.DB
+	now          func() time.Time
+	saveInterval time.Duration
 }
 
 func (r *resultWriter) Run(ctx context.Context, in <-chan scrapemate.Result) error {
 	const maxBatchSize = 50
 
 	buff := make([]*gmaps.Entry, 0, 50)
-	lastSave := time.Now().UTC()
+	lastSave := r.currentTime()
 
 	for result := range in {
 		entry, ok := result.Data.(*gmaps.Entry)
@@ -40,13 +46,14 @@ func (r *resultWriter) Run(ctx context.Context, in <-chan scrapemate.Result) err
 
 		buff = append(buff, entry)
 
-		if len(buff) >= maxBatchSize || time.Since(lastSave) >= time.Minute {
+		if len(buff) >= maxBatchSize || r.currentTime().Sub(lastSave) >= r.saveEvery() {
 			err := r.batchSave(ctx, buff)
 			if err != nil {
 				return err
 			}
 
 			buff = buff[:0]
+			lastSave = r.currentTime()
 		}
 	}
 
@@ -58,6 +65,22 @@ func (r *resultWriter) Run(ctx context.Context, in <-chan scrapemate.Result) err
 	}
 
 	return nil
+}
+
+func (r *resultWriter) currentTime() time.Time {
+	if r.now == nil {
+		return time.Now()
+	}
+
+	return r.now()
+}
+
+func (r *resultWriter) saveEvery() time.Duration {
+	if r.saveInterval == 0 {
+		return time.Minute
+	}
+
+	return r.saveInterval
 }
 
 func (r *resultWriter) batchSave(ctx context.Context, entries []*gmaps.Entry) error {
