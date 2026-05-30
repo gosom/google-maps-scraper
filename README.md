@@ -35,6 +35,16 @@ If this project is useful to you, a GitHub star helps others discover it. Sponso
 
 <p align="center"><i>This project is made possible by our amazing sponsors</i></p>
 
+### [NetNut – Limitless Web Data Collection](https://netnut.io/?ref=y2fmmzz)
+
+[![NetNut – Limitless Web Data Collection](./img/netnut-banner.png)](https://netnut.io/?ref=y2fmmzz)
+
+Built on a fully owned premium residential proxies network infrastructure powering enterprise-grade Website Unblocker, SERP APIs, LLM scraper, ecommerce data collection, and ready-to-use datasets.
+
+[**Visit NetNut →**](https://netnut.io/?ref=y2fmmzz) | [Learn more](netnut.md)
+
+---
+
 ### [Scrap.io](https://scrap.io?utm_medium=ads&utm_source=github_gosom_gmap_scraper) - Extract ALL Google Maps listings at country-scale
 
 [![Scrap.io - Extract ALL Google Maps Listings](./img/premium_scrap_io.png)](https://scrap.io?utm_medium=ads&utm_source=github_gosom_gmap_scraper)
@@ -107,11 +117,13 @@ The most affordable premium proxies across 195 countries & 80+ million IPs, plus
 
 ---
 
-### [Legion Proxy](https://legionproxy.io/?utm_source=github&utm_campaign=gmaps) - Residential proxies for Google Maps Scraper
+### [BirdProxies](https://birdproxies.com/?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom-google-maps-scraper) - Residential and ISP proxies
 
-74M+ real residential IPs, HTTP/3 & UDP support, SOCKS5-ready, 195+ countries. Works out of the box with Google Maps Scraper. [**Get 1GB free →**](https://legionproxy.io/?utm_source=github&utm_campaign=gmaps)
+[![BirdProxies](./img/birdproxies.png)](https://birdproxies.com/?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom-google-maps-scraper)
 
-[![Legion Proxy](./img/legion-proxy.png)](https://legionproxy.io/?utm_source=github&utm_campaign=gmaps)
+Hey, we built BirdProxies because proxies shouldn't be complicated or overpriced. Fast residential and ISP proxies in 195+ locations, fair pricing, and real support. Try our FlappyBird game on the landing page for free data!
+
+[**Visit BirdProxies →**](https://birdproxies.com/?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom-google-maps-scraper) | [Join Discord](https://discord.com/invite/birdproxies)
 
 ---
 
@@ -307,7 +319,7 @@ docker pull gosom/google-maps-scraper
 
 ### Build from Source
 
-Requirements: Go 1.25.6+
+Requirements: Go 1.26.3+
 
 ```bash
 git clone https://github.com/gosom/google-maps-scraper.git
