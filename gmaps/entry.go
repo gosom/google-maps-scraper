@@ -83,6 +83,10 @@ type Entry struct {
 	ReviewRating        float64                `json:"review_rating"`
 	ReviewsPerRating    map[int]int            `json:"reviews_per_rating"`
 	Latitude            float64                `json:"latitude"`
+	// Longtitude holds the longitude. The struct field and the legacy JSON
+	// key are misspelled ("longtitude"); MarshalJSON also emits the correctly
+	// spelled "longitude" key, and UnmarshalJSON accepts either. The field
+	// name is kept for backwards compatibility with existing imports.
 	Longtitude          float64                `json:"longtitude"`
 	Status              string                 `json:"status"`
 	Description         string                 `json:"description"`
@@ -102,6 +106,42 @@ type Entry struct {
 	UserReviews         []Review               `json:"user_reviews"`
 	UserReviewsExtended []Review               `json:"user_reviews_extended"`
 	Emails              []string               `json:"emails"`
+}
+
+// entryAlias is used inside Marshal/UnmarshalJSON to avoid infinite recursion
+// while still benefiting from the struct's json tags for every other field.
+type entryAlias Entry
+
+// MarshalJSON emits both the legacy "longtitude" key (preserved for backwards
+// compatibility) and the correctly spelled "longitude" key so downstream
+// consumers can migrate without a flag day.
+func (e Entry) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Longitude float64 `json:"longitude"`
+		entryAlias
+	}{
+		Longitude:  e.Longtitude,
+		entryAlias: entryAlias(e),
+	})
+}
+
+// UnmarshalJSON accepts either "longtitude" (legacy) or "longitude" (preferred)
+// as the longitude key. "longtitude" wins when both are present so existing
+// data files keep round-tripping byte-identical.
+func (e *Entry) UnmarshalJSON(data []byte) error {
+	aux := struct {
+		Longitude *float64 `json:"longitude"`
+		*entryAlias
+	}{
+		entryAlias: (*entryAlias)(e),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if e.Longtitude == 0 && aux.Longitude != nil {
+		e.Longtitude = *aux.Longitude
+	}
+	return nil
 }
 
 func (e *Entry) haversineDistance(lat, lon float64) float64 {
