@@ -95,6 +95,7 @@ type Entry struct {
 	UserReviews         []Review               `json:"user_reviews"`
 	UserReviewsExtended []Review               `json:"user_reviews_extended"`
 	Emails              []string               `json:"emails"`
+	Albums              []PhotoAlbum           `json:"albums"`
 }
 
 func (e *Entry) haversineDistance(lat, lon float64) float64 {
