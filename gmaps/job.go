@@ -40,7 +40,19 @@ func NewGmapJob(
 	zoom int,
 	opts ...GmapJobOptions,
 ) *GmapJob {
-	query = url.QueryEscape(query)
+	var mapURL string
+
+	switch {
+	case isGoogleMapsURL(query):
+		mapURL = strings.TrimSpace(query)
+	case geoCoordinates != "" && zoom > 0:
+		query = url.QueryEscape(query)
+		mapURL = fmt.Sprintf("https://www.google.com/maps/search/%s/@%s,%dz", query, strings.ReplaceAll(geoCoordinates, " ", ""), zoom)
+	default:
+		// Warning: geo and zoom MUST be both set or not
+		query = url.QueryEscape(query)
+		mapURL = fmt.Sprintf("https://www.google.com/maps/search/%s", query)
+	}
 
 	const (
 		maxRetries = 3
@@ -49,14 +61,6 @@ func NewGmapJob(
 
 	if id == "" {
 		id = uuid.New().String()
-	}
-
-	mapURL := ""
-	if geoCoordinates != "" && zoom > 0 {
-		mapURL = fmt.Sprintf("https://www.google.com/maps/search/%s/@%s,%dz", query, strings.ReplaceAll(geoCoordinates, " ", ""), zoom)
-	} else {
-		// Warning: geo and zoom MUST be both set or not
-		mapURL = fmt.Sprintf("https://www.google.com/maps/search/%s", query)
 	}
 
 	job := GmapJob{
@@ -385,4 +389,32 @@ func scroll(ctx context.Context,
 	}
 
 	return cnt, nil
+}
+
+func isGoogleMapsURL(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+
+	if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
+		u, err := url.Parse(s)
+		if err != nil {
+			return false
+		}
+
+		host := strings.ToLower(u.Hostname())
+		if host == "maps.app.goo.gl" {
+			return true
+		}
+
+		return (host == "google.com" || strings.HasSuffix(host, ".google.com")) &&
+			(strings.Contains(u.EscapedPath(), "/maps") || strings.Contains(u.Path, "/maps"))
+	}
+
+	if strings.HasPrefix(s, "maps.app.goo.gl") {
+		return true
+	}
+
+	return false
 }

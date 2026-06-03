@@ -20,6 +20,7 @@ import (
 	"github.com/gosom/google-maps-scraper/tlmt"
 	"github.com/gosom/google-maps-scraper/tlmt/gonoop"
 	"github.com/gosom/google-maps-scraper/tlmt/goposthog"
+	"github.com/gosom/scrapemate/scrapemateapp"
 )
 
 const (
@@ -82,6 +83,8 @@ type Config struct {
 	ExtraReviews             bool
 	ExtraPhotos              bool
 	LeadsDBAPIKey            string
+	BrowserPoolSize          int
+	MaxPagesPerBrowser       int
 
 	// Grid scraping — divide a bounding box into cells to bypass the ~120
 	// results-per-search limit imposed by Google Maps.
@@ -139,6 +142,8 @@ func ParseConfig() *Config {
 	flag.StringVar(&cfg.LeadsDBAPIKey, "leadsdb-api-key", "", "LeadsDB API key for exporting results to LeadsDB")
 	flag.StringVar(&cfg.GridBBox, "grid-bbox", "", "bounding box for grid scraping: 'minLat,minLon,maxLat,maxLon' (e.g. '40.30,-3.80,40.50,-3.60')")
 	flag.Float64Var(&cfg.GridCellKm, "grid-cell", 1.0, "grid cell size in km [default: 1.0]. Use with -grid-bbox")
+	flag.IntVar(&cfg.BrowserPoolSize, "browser-pool-size", 0, "number of browser contexts for JS mode; 0 derives from concurrency and pages-per-browser")
+	flag.IntVar(&cfg.MaxPagesPerBrowser, "pages-per-browser", 1, "maximum concurrent pages per browser context in JS mode")
 	flag.BoolVar(&cfg.Version, "version", false, "returns the version of the tool")
 
 	flag.Parse()
@@ -327,6 +332,18 @@ func banner(messages []string, width int) string {
 	builder.WriteString("╚" + strings.Repeat("═", width-2) + "╝\n")
 
 	return builder.String()
+}
+
+func AppendBrowserCapacityOptions(opts []func(*scrapemateapp.Config) error, cfg *Config) []func(*scrapemateapp.Config) error {
+	if cfg.MaxPagesPerBrowser > 1 {
+		opts = append(opts, scrapemateapp.WithMaxPagesPerBrowser(cfg.MaxPagesPerBrowser))
+	}
+
+	if cfg.BrowserPoolSize > 0 {
+		opts = append(opts, scrapemateapp.WithBrowserPoolSize(cfg.BrowserPoolSize))
+	}
+
+	return opts
 }
 
 func Banner() {

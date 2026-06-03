@@ -1,6 +1,6 @@
 module github.com/gosom/google-maps-scraper
 
-go 1.26.2
+go 1.26.3
 
 require (
 	github.com/PuerkitoBio/goquery v1.12.0
@@ -17,7 +17,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/gosom/go-leadsdb v0.0.0-20251228094956-ed313efc171f
-	github.com/gosom/scrapemate v1.1.0
+	github.com/gosom/scrapemate v1.2.0
 	github.com/hetznercloud/hcloud-go/v2 v2.36.0
 	github.com/jackc/pgx/v5 v5.9.0
 	github.com/mattn/go-runewidth v0.0.16
@@ -36,9 +36,9 @@ require (
 	github.com/swaggo/http-swagger/v2 v2.0.2
 	github.com/swaggo/swag v1.16.6
 	github.com/urfave/cli/v3 v3.6.2
-	golang.org/x/crypto v0.50.0
+	golang.org/x/crypto v0.52.0
 	golang.org/x/sync v0.20.0
-	golang.org/x/term v0.42.0
+	golang.org/x/term v0.43.0
 	modernc.org/sqlite v1.37.0
 	riverqueue.com/riverui v0.14.0
 )
@@ -199,8 +199,8 @@ require (
 	github.com/maratori/testableexamples v1.0.0 // indirect
 	github.com/maratori/testpackage v1.1.1 // indirect
 	github.com/matoous/godox v1.1.0 // indirect
-	github.com/mattn/go-colorable v0.1.14 // indirect
-	github.com/mattn/go-isatty v0.0.21 // indirect
+	github.com/mattn/go-colorable v0.1.15 // indirect
+	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/mgechev/revive v1.7.0 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
@@ -235,7 +235,7 @@ require (
 	github.com/riverqueue/river/rivershared v0.30.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
-	github.com/rs/zerolog v1.35.0 // indirect
+	github.com/rs/zerolog v1.35.1 // indirect
 	github.com/ryancurrah/gomodguard v1.3.5 // indirect
 	github.com/ryanrolds/sqlclosecheck v0.5.1 // indirect
 	github.com/sanposhiho/wastedassign/v2 v2.1.0 // indirect
@@ -292,11 +292,11 @@ require (
 	golang.org/x/exp v0.0.0-20250506013437-ce4c2cf36ca6 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20250210185358-939b2ce775ac // indirect
 	golang.org/x/mod v0.35.0 // indirect
-	golang.org/x/net v0.53.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
-	golang.org/x/sys v0.43.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260409153401-be6f6cb8b1fa // indirect
-	golang.org/x/text v0.36.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
 	golang.org/x/time v0.10.0 // indirect
 	golang.org/x/tools v0.44.0 // indirect
 	golang.org/x/vuln v1.1.4 // indirect
@@ -316,5 +316,3 @@ tool (
 	github.com/golangci/golangci-lint/cmd/golangci-lint
 	golang.org/x/vuln/cmd/govulncheck
 )
-
-//replace github.com/gosom/scrapemate v1.0.0 => ../scrapemate

@@ -120,15 +120,18 @@ func (i *invoker) setPayloads(cfg *runner.Config) error {
 		// When we reach chunkSize or EOF, create a new payload
 		if len(currentChunk) >= chunkSize {
 			payload := lInput{
-				JobID:        jobID,
-				Part:         chunkNumber,
-				BucketName:   cfg.S3Bucket,
-				Keywords:     currentChunk,
-				Depth:        cfg.MaxDepth,
-				Concurrency:  cfg.Concurrency,
-				Language:     cfg.LangCode,
-				FunctionName: cfg.FunctionName,
-				ExtraReviews: cfg.ExtraReviews,
+				JobID:              jobID,
+				Part:               chunkNumber,
+				BucketName:         cfg.S3Bucket,
+				Keywords:           currentChunk,
+				Depth:              cfg.MaxDepth,
+				Concurrency:        cfg.Concurrency,
+				Language:           cfg.LangCode,
+				FunctionName:       cfg.FunctionName,
+				DisablePageReuse:   cfg.DisablePageReuse,
+				ExtraReviews:       cfg.ExtraReviews,
+				BrowserPoolSize:    cfg.BrowserPoolSize,
+				MaxPagesPerBrowser: cfg.MaxPagesPerBrowser,
 			}
 			i.payloads = append(i.payloads, payload)
 
@@ -139,15 +142,18 @@ func (i *invoker) setPayloads(cfg *runner.Config) error {
 
 	if len(currentChunk) > 0 {
 		payload := lInput{
-			JobID:        jobID,
-			Part:         chunkNumber,
-			BucketName:   cfg.S3Bucket,
-			Keywords:     currentChunk,
-			Depth:        cfg.MaxDepth,
-			Concurrency:  cfg.Concurrency,
-			Language:     cfg.LangCode,
-			FunctionName: cfg.FunctionName,
-			ExtraReviews: cfg.ExtraReviews,
+			JobID:              jobID,
+			Part:               chunkNumber,
+			BucketName:         cfg.S3Bucket,
+			Keywords:           currentChunk,
+			Depth:              cfg.MaxDepth,
+			Concurrency:        cfg.Concurrency,
+			Language:           cfg.LangCode,
+			FunctionName:       cfg.FunctionName,
+			DisablePageReuse:   cfg.DisablePageReuse,
+			ExtraReviews:       cfg.ExtraReviews,
+			BrowserPoolSize:    cfg.BrowserPoolSize,
+			MaxPagesPerBrowser: cfg.MaxPagesPerBrowser,
 		}
 		i.payloads = append(i.payloads, payload)
 	}

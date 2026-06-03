@@ -4,13 +4,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"iter"
+	"log"
 	"math"
 	"net/url"
+	"regexp"
 	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
+
+var panoidRegex = regexp.MustCompile(`panoid=([^&]+)`)
 
 type Image struct {
 	Title string `json:"title"`
@@ -55,7 +60,31 @@ type Review struct {
 	Description    string
 	Images         []string
 	When           string
+
+	ReviewID            string  `json:"review_id"`
+	Source              string  `json:"source"`
+	RatingScale         int     `json:"rating_scale"`
+	RatingFloat         float64 `json:"rating_float"`
+	AuthorURL           string  `json:"author_url"`
+	PostedAtUnixMicros  int64   `json:"posted_at_unix_micros"`
+	UpdatedAtUnixMicros int64   `json:"updated_at_unix_micros"`
+	Language            string  `json:"language"`
+	TranslatedLang      string  `json:"translated_lang"`
+	TextOriginal        string  `json:"text_original"`
+	TextTranslated      string  `json:"text_translated"`
+
+	ReplyText                string     `json:"reply_text,omitempty"`
+	ReplyTextOriginal        string     `json:"reply_text_original,omitempty"`
+	ReplyLanguage            string     `json:"reply_language,omitempty"`
+	ReplyTranslatedLang      string     `json:"reply_translated_lang,omitempty"`
+	ReplyPostedAtUnixMicros  int64      `json:"reply_posted_at_unix_micros,omitempty"`
+	ReplyUpdatedAtUnixMicros int64      `json:"reply_updated_at_unix_micros,omitempty"`
+	PublishedAt              *time.Time `json:"published_at,omitempty"`
 }
+
+const reviewPublishedAtFutureSkew = 24 * time.Hour
+
+var earliestReviewPublishedAt = time.Date(2007, time.January, 1, 0, 0, 0, 0, time.UTC)
 
 type Entry struct {
 	ID         string              `json:"input_id"`
@@ -68,34 +97,78 @@ type Entry struct {
 	OpenHours  map[string][]string `json:"open_hours"`
 	// PopularTImes is a map with keys the days of the week
 	// and value is a map with key the hour and value the traffic in that time
-	PopularTimes        map[string]map[int]int `json:"popular_times"`
-	WebSite             string                 `json:"web_site"`
-	Phone               string                 `json:"phone"`
-	PlusCode            string                 `json:"plus_code"`
-	ReviewCount         int                    `json:"review_count"`
-	ReviewRating        float64                `json:"review_rating"`
-	ReviewsPerRating    map[int]int            `json:"reviews_per_rating"`
-	Latitude            float64                `json:"latitude"`
-	Longtitude          float64                `json:"longtitude"`
-	Status              string                 `json:"status"`
-	Description         string                 `json:"description"`
-	ReviewsLink         string                 `json:"reviews_link"`
-	Thumbnail           string                 `json:"thumbnail"`
-	Timezone            string                 `json:"timezone"`
-	PriceRange          string                 `json:"price_range"`
-	DataID              string                 `json:"data_id"`
-	PlaceID             string                 `json:"place_id"`
-	Images              []Image                `json:"images"`
-	Reservations        []LinkSource           `json:"reservations"`
-	OrderOnline         []LinkSource           `json:"order_online"`
-	Menu                LinkSource             `json:"menu"`
-	Owner               Owner                  `json:"owner"`
-	CompleteAddress     Address                `json:"complete_address"`
-	About               []About                `json:"about"`
-	UserReviews         []Review               `json:"user_reviews"`
-	UserReviewsExtended []Review               `json:"user_reviews_extended"`
-	Emails              []string               `json:"emails"`
-	Albums              []PhotoAlbum           `json:"albums"`
+	PopularTimes     map[string]map[int]int `json:"popular_times"`
+	WebSite          string                 `json:"web_site"`
+	Phone            string                 `json:"phone"`
+	PlusCode         string                 `json:"plus_code"`
+	ReviewCount      int                    `json:"review_count"`
+	ReviewRating     float64                `json:"review_rating"`
+	ReviewsPerRating map[int]int            `json:"reviews_per_rating"`
+	Latitude         float64                `json:"latitude"`
+	// Longtitude holds the longitude. The struct field and the legacy JSON
+	// key are misspelled ("longtitude"); MarshalJSON also emits the correctly
+	// spelled "longitude" key, and UnmarshalJSON accepts either. The field
+	// name is kept for backwards compatibility with existing imports.
+	Longtitude          float64      `json:"longtitude"`
+	Status              string       `json:"status"`
+	Description         string       `json:"description"`
+	ReviewsLink         string       `json:"reviews_link"`
+	Thumbnail           string       `json:"thumbnail"`
+	Timezone            string       `json:"timezone"`
+	PriceRange          string       `json:"price_range"`
+	DataID              string       `json:"data_id"`
+	StreetViewURL       string       `json:"street_view_url"`
+	PlaceID             string       `json:"place_id"`
+	Images              []Image      `json:"images"`
+	Reservations        []LinkSource `json:"reservations"`
+	OrderOnline         []LinkSource `json:"order_online"`
+	Menu                LinkSource   `json:"menu"`
+	Owner               Owner        `json:"owner"`
+	CompleteAddress     Address      `json:"complete_address"`
+	About               []About      `json:"about"`
+	UserReviews         []Review     `json:"user_reviews"`
+	UserReviewsExtended []Review     `json:"user_reviews_extended"`
+	Emails              []string     `json:"emails"`
+}
+
+// entryAlias is used inside Marshal/UnmarshalJSON to avoid infinite recursion
+// while still benefiting from the struct's json tags for every other field.
+type entryAlias Entry
+
+// MarshalJSON emits both the legacy "longtitude" key (preserved for backwards
+// compatibility) and the correctly spelled "longitude" key so downstream
+// consumers can migrate without a flag day.
+//
+//nolint:gocritic // value receiver preserves json.Marshaler behavior for Entry values.
+func (e Entry) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Longitude float64 `json:"longitude"`
+		entryAlias
+	}{
+		Longitude:  e.Longtitude,
+		entryAlias: entryAlias(e),
+	})
+}
+
+// UnmarshalJSON accepts either "longtitude" (legacy) or "longitude" (preferred)
+// as the longitude key. "longtitude" wins when both are present so existing
+// data files keep round-tripping byte-identical.
+func (e *Entry) UnmarshalJSON(data []byte) error {
+	aux := struct {
+		Longitude *float64 `json:"longitude"`
+		*entryAlias
+	}{
+		entryAlias: (*entryAlias)(e),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	if e.Longtitude == 0 && aux.Longitude != nil {
+		e.Longtitude = *aux.Longitude
+	}
+
+	return nil
 }
 
 func (e *Entry) haversineDistance(lat, lon float64) float64 {
@@ -182,6 +255,7 @@ func (e *Entry) CsvHeaders() []string {
 		"timezone",
 		"price_range",
 		"data_id",
+		"street_view_url",
 		"place_id",
 		"images",
 		"reservations",
@@ -221,6 +295,7 @@ func (e *Entry) CsvRow() []string {
 		e.Timezone,
 		e.PriceRange,
 		e.DataID,
+		e.StreetViewURL,
 		e.PlaceID,
 		stringify(e.Images),
 		stringify(e.Reservations),
@@ -259,11 +334,12 @@ func extractReviews(data []byte) []Review {
 
 	var jd []any
 	if err := json.Unmarshal(data, &jd); err != nil {
-		fmt.Printf("Error unmarshalling RPC JSON: %v (data len: %d)\n", err, len(data))
+		log.Printf("DEBUG: Error unmarshalling RPC JSON: %v (data len: %d)", err, len(data))
 		return nil
 	}
 
 	if len(jd) < 3 {
+		log.Printf("DEBUG: RPC response has only %d elements, expected 3+", len(jd))
 		return nil
 	}
 
@@ -361,6 +437,9 @@ func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error)
 			Image: items[i].Link,
 		}
 	}
+
+	// Extract Street View URL from images
+	entry.StreetViewURL = extractStreetViewURL(entry.Images)
 
 	entry.Reservations = getLinkSource(getLinkSourceParams{
 		arr:    getNthElementAndCast[[]any](darray, 46),
@@ -466,60 +545,57 @@ func parseReviews(reviewsI []any) []Review {
 			}
 		}
 
-		// Try multiple paths for the timestamp
-		time := getNthElementAndCast[[]any](el, 2, 2, 0, 1, 21, 6, 8)
-		if len(time) == 0 {
-			time = getNthElementAndCast[[]any](el, 2, 2, 0, 1, 6, 8)
-		}
-
-		// Try multiple paths for profile picture
-		profilePic, err := decodeURL(getNthElementAndCast[string](el, 1, 4, 5, 1))
-		if err != nil || profilePic == "" {
-			profilePic = getNthElementAndCast[string](el, 1, 2, 0)
-			if profilePic == "" {
-				profilePic = getNthElementAndCast[string](el, 0, 2, 0)
-			}
-		}
-
-		// Try multiple paths for author name
-		authorName := getNthElementAndCast[string](el, 1, 4, 5, 0)
-		if authorName == "" {
-			authorName = getNthElementAndCast[string](el, 1, 4, 4)
-			if authorName == "" {
-				authorName = getNthElementAndCast[string](el, 0, 1)
-			}
-		}
-
-		// Try multiple paths for rating
-		rating := int(getNthElementAndCast[float64](el, 2, 0, 0))
-		if rating == 0 {
-			rating = int(getNthElementAndCast[float64](el, 2, 0))
-			if rating == 0 {
-				rating = int(getNthElementAndCast[float64](el, 1, 0, 0))
-			}
-		}
-
-		// Try multiple paths for description
-		description := getNthElementAndCast[string](el, 2, 15, 0, 0)
-		if description == "" {
-			description = getNthElementAndCast[string](el, 2, 15, 0)
-			if description == "" {
-				description = getNthElementAndCast[string](el, 3, 0)
-			}
-		}
-
 		review := Review{
-			Name:           authorName,
-			ProfilePicture: profilePic,
-			When: func() string {
-				if len(time) < 3 {
-					return ""
-				}
+			Name:           reviewAuthorName(el),
+			ProfilePicture: reviewProfilePicture(el),
+			When:           reviewRelativeDate(el),
+			PublishedAt:    reviewPublishedAt(el),
+			Rating:         reviewRating(el),
+			Description:    reviewDescription(el),
+		}
 
-				return fmt.Sprintf("%v-%v-%v", time[0], time[1], time[2])
-			}(),
-			Rating:      rating,
-			Description: description,
+		// Extended metadata
+		review.ReviewID = getNthElementAndCast[string](el, 0)
+		review.PostedAtUnixMicros = int64(getNthElementAndCast[float64](el, 1, 2))
+		review.UpdatedAtUnixMicros = int64(getNthElementAndCast[float64](el, 1, 3))
+		review.AuthorURL = getNthElementAndCast[string](el, 1, 4, 2, 0)
+
+		src := getNthElementAndCast[string](el, 1, 13, 0)
+		if src == "" {
+			src = "unknown"
+		}
+
+		review.Source = src
+
+		scale := int(getNthElementAndCast[float64](el, 1, 13, 4))
+		if scale == 0 {
+			scale = 5
+		}
+
+		review.RatingScale = scale
+
+		review.Language = getNthElementAndCast[string](el, 2, 14, 0)
+		review.TranslatedLang = getNthElementAndCast[string](el, 2, 14, 1)
+		review.TextOriginal = getNthElementAndCast[string](el, 2, 15, 0, 0)
+		review.TextTranslated = getNthElementAndCast[string](el, 2, 15, 1, 0)
+
+		r2 := getNthElementAndCast[[]any](el, 2)
+
+		isAggregator := len(r2) > 0 && r2[0] == nil
+		if isAggregator {
+			review.RatingFloat = getNthElementAndCast[float64](el, 2, 8, 1)
+		} else {
+			review.RatingFloat = float64(review.Rating)
+		}
+
+		r3 := getNthElementAndCast[[]any](el, 3)
+		if len(r3) >= 15 && r3[1] != nil {
+			review.ReplyPostedAtUnixMicros = int64(getNthElementAndCast[float64](el, 3, 1))
+			review.ReplyUpdatedAtUnixMicros = int64(getNthElementAndCast[float64](el, 3, 2))
+			review.ReplyLanguage = getNthElementAndCast[string](el, 3, 13, 0)
+			review.ReplyTranslatedLang = getNthElementAndCast[string](el, 3, 13, 1)
+			review.ReplyTextOriginal = getNthElementAndCast[string](el, 3, 14, 0, 0)
+			review.ReplyText = getNthElementAndCast[string](el, 3, 14, 1, 0)
 		}
 
 		if review.Name == "" {
@@ -542,6 +618,91 @@ func parseReviews(reviewsI []any) []Review {
 	}
 
 	return ans
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+
+	return ""
+}
+
+func reviewRelativeDate(el []any) string {
+	return firstNonEmpty(
+		getNthElementAndCast[string](el, 1, 6),
+		getNthElementAndCast[string](el, 3, 3),
+		getNthElementAndCast[string](el, 2, 1, 3, 8, 0),
+	)
+}
+
+func reviewPublishedAt(el []any) *time.Time {
+	timestampMicros := firstNonZero(
+		getNthElementAndCast[float64](el, 1, 2),
+		getNthElementAndCast[float64](el, 1, 3),
+	)
+	if timestampMicros == 0 {
+		return nil
+	}
+
+	publishedAt := time.UnixMicro(int64(timestampMicros)).UTC()
+	if publishedAt.Before(earliestReviewPublishedAt) {
+		return nil
+	}
+
+	if publishedAt.After(time.Now().UTC().Add(reviewPublishedAtFutureSkew)) {
+		return nil
+	}
+
+	return &publishedAt
+}
+
+func reviewProfilePicture(el []any) string {
+	profilePic, err := decodeURL(getNthElementAndCast[string](el, 1, 4, 5, 1))
+	if err == nil && profilePic != "" {
+		return profilePic
+	}
+
+	return firstNonEmpty(
+		getNthElementAndCast[string](el, 1, 2, 0),
+		getNthElementAndCast[string](el, 0, 2, 0),
+	)
+}
+
+func reviewAuthorName(el []any) string {
+	return firstNonEmpty(
+		getNthElementAndCast[string](el, 1, 4, 5, 0),
+		getNthElementAndCast[string](el, 1, 4, 4),
+		getNthElementAndCast[string](el, 0, 1),
+	)
+}
+
+func reviewRating(el []any) int {
+	return int(firstNonZero(
+		getNthElementAndCast[float64](el, 2, 0, 0),
+		getNthElementAndCast[float64](el, 2, 0),
+		getNthElementAndCast[float64](el, 1, 0, 0),
+	))
+}
+
+func firstNonZero(values ...float64) float64 {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+
+	return 0
+}
+
+func reviewDescription(el []any) string {
+	return firstNonEmpty(
+		getNthElementAndCast[string](el, 2, 15, 0, 0),
+		getNthElementAndCast[string](el, 2, 15, 0),
+		getNthElementAndCast[string](el, 3, 0),
+	)
 }
 
 type getLinkSourceParams struct {
@@ -747,6 +908,20 @@ func stringify(v any) string {
 		d, _ := json.Marshal(v)
 		return string(d)
 	}
+}
+
+// extractStreetViewURL finds the Street View image and extracts the panoid to create a proper URL
+func extractStreetViewURL(images []Image) string {
+	for _, img := range images {
+		if strings.Contains(img.Title, "Street View") {
+			matches := panoidRegex.FindStringSubmatch(img.Image)
+			if len(matches) > 1 {
+				return fmt.Sprintf("https://www.google.com/maps/@?api=1&map_action=pano&pano=%s", matches[1])
+			}
+		}
+	}
+
+	return ""
 }
 
 func decodeURL(url string) (string, error) {

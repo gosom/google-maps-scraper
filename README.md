@@ -35,6 +35,16 @@ If this project is useful to you, a GitHub star helps others discover it. Sponso
 
 <p align="center"><i>This project is made possible by our amazing sponsors</i></p>
 
+### [NetNut – Limitless Web Data Collection](https://netnut.io/?ref=y2fmmzz)
+
+[![NetNut – Limitless Web Data Collection](./img/netnut-banner.png)](https://netnut.io/?ref=y2fmmzz)
+
+Built on a fully owned premium residential proxies network infrastructure powering enterprise-grade Website Unblocker, SERP APIs, LLM scraper, ecommerce data collection, and ready-to-use datasets.
+
+[**Visit NetNut →**](https://netnut.io/?ref=y2fmmzz) | [Learn more](netnut.md)
+
+---
+
 ### [Scrap.io](https://scrap.io?utm_medium=ads&utm_source=github_gosom_gmap_scraper) - Extract ALL Google Maps listings at country-scale
 
 [![Scrap.io - Extract ALL Google Maps Listings](./img/premium_scrap_io.png)](https://scrap.io?utm_medium=ads&utm_source=github_gosom_gmap_scraper)
@@ -107,11 +117,13 @@ The most affordable premium proxies across 195 countries & 80+ million IPs, plus
 
 ---
 
-### [Legion Proxy](https://legionproxy.io/?utm_source=github&utm_campaign=gmaps) - Residential proxies for Google Maps Scraper
+### [BirdProxies](https://birdproxies.com/?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom-google-maps-scraper) - Residential and ISP proxies
 
-74M+ real residential IPs, HTTP/3 & UDP support, SOCKS5-ready, 195+ countries. Works out of the box with Google Maps Scraper. [**Get 1GB free →**](https://legionproxy.io/?utm_source=github&utm_campaign=gmaps)
+[![BirdProxies](./img/birdproxies.png)](https://birdproxies.com/?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom-google-maps-scraper)
 
-[![Legion Proxy](./img/legion-proxy.png)](https://legionproxy.io/?utm_source=github&utm_campaign=gmaps)
+Hey, we built BirdProxies because proxies shouldn't be complicated or overpriced. Fast residential and ISP proxies in 195+ locations, fair pricing, and real support. Try our FlappyBird game on the landing page for free data!
+
+[**Visit BirdProxies →**](https://birdproxies.com/?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom-google-maps-scraper) | [Join Discord](https://discord.com/invite/birdproxies)
 
 ---
 
@@ -207,6 +219,8 @@ Useful options:
 | Write JSON instead of CSV | `-json -results /out/results.json` |
 | Collect extra reviews | `-extra-reviews -json -results /out/results.json` |
 | Increase concurrency | `-c 4`, `-c 8`, or `-c 16` |
+| Run multiple pages per browser | `-pages-per-browser 4` |
+| Limit browser processes | `-browser-pool-size 2` |
 | Use proxies | `-proxies "http://user:pass@host:port,socks5://host:port"` |
 
 `-c` controls how many scrape jobs run in parallel. Higher concurrency can finish large input files faster, but it also uses more CPU/RAM and can increase blocking or failures, especially without proxies. Start with the default for a first run. For larger jobs on a capable machine, try `-c 4`, `-c 8`, or `-c 16` and measure the result.
@@ -307,7 +321,7 @@ docker pull gosom/google-maps-scraper
 
 ### Build from Source
 
-Requirements: Go 1.25.6+
+Requirements: Go 1.26.3+
 
 ```bash
 git clone https://github.com/gosom/google-maps-scraper.git
@@ -387,6 +401,17 @@ go build
 Matsuhisa Athens #!#MyCustomID
 ```
 
+**Direct Google Maps URLs:** Input lines can be regular search queries or direct Google Maps URLs. Supported URL formats include:
+
+```text
+https://www.google.com/maps/search/pizza
+https://www.google.com/maps/place/Empire+State+Building/@40.7484405,-73.9856632
+https://maps.google.com/maps?z=16&q=Empire+State+Building
+maps.app.goo.gl/abc123
+```
+
+URLs on `google.com` subdomains must include a scheme (`http://` or `https://`) and a `/maps` path. Short `maps.app.goo.gl` links are also supported without a scheme.
+
 ---
 
 ## Configuration
@@ -436,6 +461,8 @@ Advanced:
   -fast-mode                      Quick mode with reduced data
   -debug                          Show browser window
   -writer string                  Custom writer plugin (format: 'dir:pluginName')
+  -browser-pool-size int          Number of browser processes to launch (default: 0, derived from -c and -pages-per-browser)
+  -pages-per-browser int          Max concurrent pages per browser process (default: 1)
 
 Notes:
   -grid-bbox requires a valid zoom level (1-21)
@@ -512,6 +539,45 @@ Command example:
 Notes:
 - `-grid-bbox` guides where searches are launched from, but results are not strictly clipped to the box.
 - For strict distance filtering, use `-fast-mode` with `-geo` + `-radius` (or post-filter by latitude/longitude).
+
+---
+
+### Browser Page Concurrency
+
+With the default `-pages-per-browser 1`, each concurrent job (`-c`) effectively uses its own browser process with a single page tab. This can be inefficient because browser pages can be CPU- and memory-heavy, and each browser process adds overhead.
+
+The `-pages-per-browser` flag lets you run multiple page tabs inside the same browser process, reducing overhead. Leave `-browser-pool-size` at `0` to derive the browser count from concurrency and pages per browser, or set it explicitly to cap the number of browser processes independently of concurrency.
+
+**How the flags interact:**
+
+| Flag | What it controls |
+|------|------------------|
+| `-c` | Total number of concurrent scrape jobs |
+| `-browser-pool-size` | Number of browser processes to launch (default: `0`, derived from `-c` and `-pages-per-browser`) |
+| `-pages-per-browser` | Number of page tabs per browser process (default: 1) |
+
+When `-pages-per-browser` is greater than 1, the scraper opens multiple tabs within each browser process and routes jobs through a shared page pool. This can significantly increase job throughput on the same hardware.
+
+**Example — 8 concurrent jobs across 2 browsers with 4 tabs each:**
+
+```bash
+./google-maps-scraper \
+  -c 8 \
+  -browser-pool-size 2 \
+  -pages-per-browser 4 \
+  -input queries.txt \
+  -results results.csv \
+  -depth 1
+```
+
+**Tuning guidance:**
+
+- Start with `-c 4 -browser-pool-size 1 -pages-per-browser 4` for a 4:1 page-to-browser ratio.
+- Monitor CPU and RAM usage with `htop` or `docker stats`; browser resource use varies significantly by workload, Chromium version, and page count.
+- If memory is the bottleneck, keep `-browser-pool-size` low and reduce `-c` or `-pages-per-browser`.
+- If CPU is the bottleneck, reduce the total number of active pages by lowering `-c` or `-pages-per-browser`.
+- The product `-browser-pool-size × -pages-per-browser` should roughly equal or exceed `-c` to keep all jobs busy.
+- Setting an explicit `-browser-pool-size` is most useful in containerized environments (Docker, Kubernetes) where you want predictable resource usage.
 
 ---
 
