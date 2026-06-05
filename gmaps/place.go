@@ -125,7 +125,14 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 	domReviews, ok := resp.Meta["dom_reviews"].([]DOMReview)
 	if ok && len(domReviews) > 0 {
 		convertedReviews := ConvertDOMReviewsToReviews(domReviews)
-		entry.UserReviewsExtended = append(entry.UserReviewsExtended, convertedReviews...)
+		remaining := maxExtendedReviews - len(entry.UserReviewsExtended)
+		if remaining > 0 {
+			if len(convertedReviews) > remaining {
+				convertedReviews = convertedReviews[:remaining]
+			}
+
+			entry.UserReviewsExtended = append(entry.UserReviewsExtended, convertedReviews...)
+		}
 	}
 
 	if albums, ok := resp.Meta["photo_albums"].([]PhotoAlbum); ok && len(albums) > 0 {

@@ -126,9 +126,10 @@ type Entry struct {
 	Owner               Owner        `json:"owner"`
 	CompleteAddress     Address      `json:"complete_address"`
 	About               []About      `json:"about"`
-	UserReviews         []Review     `json:"user_reviews"`
+	UserReviews         []Review     `json:"user_reviews,omitempty"`
 	UserReviewsExtended []Review     `json:"user_reviews_extended"`
 	Emails              []string     `json:"emails"`
+	Albums              []PhotoAlbum `json:"albums,omitempty"`
 }
 
 // entryAlias is used inside Marshal/UnmarshalJSON to avoid infinite recursion
@@ -316,8 +317,17 @@ func (e *Entry) AddExtraReviews(pages [][]byte) {
 	}
 
 	for _, page := range pages {
+		remaining := maxExtendedReviews - len(e.UserReviewsExtended)
+		if remaining <= 0 {
+			return
+		}
+
 		reviews := extractReviews(page)
 		if len(reviews) > 0 {
+			if len(reviews) > remaining {
+				reviews = reviews[:remaining]
+			}
+
 			e.UserReviewsExtended = append(e.UserReviewsExtended, reviews...)
 		}
 	}
@@ -515,19 +525,7 @@ func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error)
 		5: int(getNthElementAndCast[float64](darray, 175, 3, 4)),
 	}
 
-	// Parse inline reviews from the page data
-	reviewsI := getNthElementAndCast[[]any](darray, 175, 9, 0, 0)
-	if len(reviewsI) > 0 {
-		entry.UserReviews = parseReviews(reviewsI)
-	} else {
-		// Try alternative location for reviews
-		reviewsI = getNthElementAndCast[[]any](darray, 175, 9, 0)
-		if len(reviewsI) > 0 {
-			entry.UserReviews = parseReviews(reviewsI)
-		} else {
-			entry.UserReviews = make([]Review, 0)
-		}
-	}
+	entry.UserReviews = nil
 
 	return entry, nil
 }

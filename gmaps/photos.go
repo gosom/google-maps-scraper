@@ -25,6 +25,10 @@ type PhotoAlbum struct {
 
 const maxPhotosPerAlbum = 20
 
+// maxMenuPhotos caps the Menu album to the N most recently uploaded photos so
+// the stored menu reflects current pricing/items rather than stale shots.
+const maxMenuPhotos = 6
+
 type photoBrowserState struct {
 	URL          string     `json:"url"`
 	TabLabels    []string   `json:"tab_labels"`
@@ -198,6 +202,93 @@ var photoScrollJS = photoEval(`
 	scroller.scrollTop = Math.min(scroller.scrollTop + step, scroller.scrollHeight);
 	return scroller.scrollTop > prevTop;
 `)
+
+// photoMarkGridJS captures a content signature of the album currently shown in
+// the grid: the first few photo URLs. Google Maps virtualizes/recycles the grid
+// nodes (it swaps background-image on existing nodes rather than creating new
+// ones), so node-identity tricks are unreliable. Comparing the leading URLs is
+// a stable way to tell whether a tab switch actually changed the content.
+var photoMarkGridJS = photoEval(`
+	const grid = findPhotoGrid();
+	if (!grid) return JSON.stringify({ ok: false, baseline_firsts: [] });
+	const urls = collectURLs(grid);
+	return JSON.stringify({ ok: true, baseline_firsts: urls.slice(0, 4) });
+`)
+
+// photoRefreshStateJS reports the currently selected tab and a content signature
+// (the first few photo URLs) of the grid, so the caller can detect when the
+// grid has actually re-rendered for a newly selected album.
+var photoRefreshStateJS = photoEval(`
+	const tablist = findPhotoTablist();
+	let selectedTab = "";
+	if (tablist) {
+		const selected = tabsOf(tablist).find((tab) => tab.getAttribute('aria-selected') === 'true');
+		if (selected) selectedTab = tabLabel(selected);
+	}
+	const grid = findPhotoGrid();
+	if (!grid) {
+		return JSON.stringify({ selected_tab: selectedTab, has_grid: false, firsts: [] });
+	}
+	const urls = collectURLs(grid);
+	return JSON.stringify({ selected_tab: selectedTab, has_grid: true, firsts: urls.slice(0, 4) });
+`)
+
+// photoDatesJS walks every photo tile currently in the open album, clicks each
+// one to surface its "Image capture: Mon YYYY" date in the detail panel, and
+// returns [{url, date}] pairs. Google Maps orders album tiles by relevance, not
+// recency, and only exposes a photo's date once it is selected — so reading the
+// dates is the only way to find the most recently uploaded photos. This is an
+// async function: scrapemate/playwright awaits the returned promise.
+const photoDatesJS = `async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  const styleURL = (el) => {
+    const bg = el && el.style && el.style.backgroundImage;
+    if (!bg) return "";
+    const m = bg.match(/url\(["']?([^"')]+)["']?\)/);
+    return m && m[1] ? m[1] : "";
+  };
+
+  const isPhotoURL = (u) =>
+    !!u && (u.includes("googleusercontent") || u.includes("streetviewpixels-pa.googleapis.com"));
+
+  const tileURL = (el) => {
+    const inner = el.querySelector('[style*="background-image"]');
+    let u = styleURL(inner) || styleURL(el);
+    if (!u) {
+      const img = el.querySelector("img");
+      if (img && img.src) u = img.src;
+    }
+    return isPhotoURL(u) ? u : "";
+  };
+
+  const readDate = () => {
+    const info = document.querySelector('[role="contentinfo"]') || document.body;
+    const nodes = info.querySelectorAll("*");
+    for (const e of nodes) {
+      if (e.children.length !== 0) continue;
+      const t = (e.textContent || "").trim();
+      const m = t.match(/Image capture:\s*([A-Z][a-z]{2})\s+(20\d\d)/);
+      if (m) return m[1] + " " + m[2];
+    }
+    return "";
+  };
+
+  const items = Array.from(document.querySelectorAll("a.MIgS0d"));
+  const out = [];
+  for (let i = 0; i < items.length && i < 25; i++) {
+    const el = items[i];
+    const url = tileURL(el);
+    if (!url) continue;
+    try { el.scrollIntoView({ block: "center" }); } catch (e) {}
+    el.click();
+    await sleep(450);
+    let date = readDate();
+    if (!date) { await sleep(350); date = readDate(); }
+    out.push({ url: url, date: date });
+  }
+  return JSON.stringify(out);
+}`
 
 func photoEval(body string) string {
 	return photoEvalPrelude + body + photoEvalPostlude
@@ -381,13 +472,143 @@ func normalizePhotoLabel(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
 }
 
-func photoSignature(state photoBrowserState) string {
-	return fmt.Sprintf("%s|%d|%d|%s",
-		strings.ToLower(state.SelectedTab),
-		state.GridItems,
-		state.URLCount,
-		strings.Join(state.SampleURLs, "|"),
-	)
+type photoMarkResult struct {
+	OK             bool     `json:"ok"`
+	BaselineFirsts []string `json:"baseline_firsts"`
+}
+
+type photoRefreshState struct {
+	SelectedTab string   `json:"selected_tab"`
+	HasGrid     bool     `json:"has_grid"`
+	Firsts      []string `json:"firsts"`
+}
+
+// photoSigEqual reports whether two album content signatures (leading URL
+// lists) are identical. An empty signature never matches, so an unloaded grid
+// is never considered "equal" to a real album.
+func photoSigEqual(a, b []string) bool {
+	if len(a) == 0 || len(b) == 0 || len(a) != len(b) {
+		return false
+	}
+
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
+func markPhotoGrid(page scrapemate.BrowserPage) (scrapemate.BrowserPage, photoMarkResult, error) {
+	nextPage, raw, err := evalJSONString(page, photoMarkGridJS)
+	if err != nil {
+		return nextPage, photoMarkResult{}, err
+	}
+
+	var res photoMarkResult
+	if err := json.Unmarshal([]byte(raw), &res); err != nil {
+		return nextPage, res, fmt.Errorf("parse photo mark: %w", err)
+	}
+
+	return nextPage, res, nil
+}
+
+func getPhotoRefreshState(page scrapemate.BrowserPage) (scrapemate.BrowserPage, photoRefreshState, error) {
+	nextPage, raw, err := evalJSONString(page, photoRefreshStateJS)
+	if err != nil {
+		return nextPage, photoRefreshState{}, err
+	}
+
+	var st photoRefreshState
+	if err := json.Unmarshal([]byte(raw), &st); err != nil {
+		return nextPage, st, fmt.Errorf("parse photo refresh state: %w", err)
+	}
+
+	return nextPage, st, nil
+}
+
+type datedPhoto struct {
+	URL  string `json:"url"`
+	Date string `json:"date"`
+}
+
+var photoMonthIndex = map[string]int{
+	"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+	"jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+// photoDateKey converts "Mon YYYY" into a sortable integer (year*12+month).
+// Unparseable/missing dates return -1 so they sort after every dated photo.
+func photoDateKey(date string) int {
+	fields := strings.Fields(strings.TrimSpace(date))
+	if len(fields) != 2 {
+		return -1
+	}
+
+	month, ok := photoMonthIndex[strings.ToLower(fields[0])]
+	if !ok {
+		return -1
+	}
+
+	year := 0
+	for _, r := range fields[1] {
+		if r < '0' || r > '9' {
+			return -1
+		}
+		year = year*10 + int(r-'0')
+	}
+
+	return year*12 + month
+}
+
+// getDatedPhotos clicks through every tile in the currently open album to read
+// each photo's capture date, returning them in the album's native (relevance)
+// order. Best-effort: returns whatever it managed to read.
+func getDatedPhotos(page scrapemate.BrowserPage) (scrapemate.BrowserPage, []datedPhoto, error) {
+	nextPage, raw, err := evalJSONString(page, photoDatesJS)
+	if err != nil {
+		return nextPage, nil, err
+	}
+
+	var photos []datedPhoto
+	if err := json.Unmarshal([]byte(raw), &photos); err != nil {
+		return nextPage, nil, fmt.Errorf("parse dated photos: %w", err)
+	}
+
+	return nextPage, photos, nil
+}
+
+// latestPhotoURLs sorts dated photos newest-first (stable: ties keep relevance
+// order) and returns up to limit normalized URLs.
+func latestPhotoURLs(photos []datedPhoto, limit int) []string {
+	indexed := make([]int, len(photos))
+	for i := range indexed {
+		indexed[i] = i
+	}
+
+	sort.SliceStable(indexed, func(a, b int) bool {
+		return photoDateKey(photos[indexed[a]].Date) > photoDateKey(photos[indexed[b]].Date)
+	})
+
+	urls := make([]string, 0, limit)
+	seen := make(map[string]struct{}, limit)
+	for _, idx := range indexed {
+		normalized := normalizePhotoURL(photos[idx].URL)
+		if normalized == "" {
+			continue
+		}
+		if _, dup := seen[normalized]; dup {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		urls = append(urls, normalized)
+		if len(urls) >= limit {
+			break
+		}
+	}
+
+	return urls
 }
 
 func normalizePhotoURL(raw string) string {
@@ -507,37 +728,87 @@ func waitForPhotoViewer(ctx context.Context, page scrapemate.BrowserPage, timeou
 	return page, lastState, fmt.Errorf("photo extractor: photo tablist not found")
 }
 
-func waitForPhotoTab(ctx context.Context, page scrapemate.BrowserPage, title, beforeSignature string, timeout time.Duration) (scrapemate.BrowserPage, photoBrowserState, error) {
+func waitForPhotoTabRefresh(
+	ctx context.Context,
+	page scrapemate.BrowserPage,
+	title string,
+	baseline []string,
+	timeout time.Duration,
+) (scrapemate.BrowserPage, photoRefreshState, error) {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
-	var lastState photoBrowserState
-	attempts := 0
+	var lastState photoRefreshState
+	var prevFirsts []string
+	stableCount := 0
 
 	for time.Now().Before(deadline) {
 		if err := ctx.Err(); err != nil {
 			return page, lastState, err
 		}
 
-		nextPage, state, err := getPhotoState(page)
+		nextPage, st, err := getPhotoRefreshState(page)
 		page = nextPage
-		if err == nil {
-			lastState = state
-			if strings.EqualFold(state.SelectedTab, title) && (photoSignature(state) != beforeSignature || attempts >= 3) {
-				return page, state, nil
-			}
-		} else {
+		if err != nil {
 			lastErr = err
+			time.Sleep(200 * time.Millisecond)
+
+			continue
 		}
 
-		attempts++
-		time.Sleep(250 * time.Millisecond)
+		lastState = st
+
+		// Track how long the visible content signature has been stable. A grid
+		// mid-swap keeps changing between polls; we only trust settled content.
+		if len(st.Firsts) > 0 && photoSigEqual(st.Firsts, prevFirsts) {
+			stableCount++
+		} else {
+			stableCount = 0
+		}
+		prevFirsts = st.Firsts
+
+		if !strings.EqualFold(st.SelectedTab, title) || !st.HasGrid || len(st.Firsts) == 0 {
+			time.Sleep(200 * time.Millisecond)
+
+			continue
+		}
+
+		settled := stableCount >= 1 // same signature on two consecutive polls
+
+		// A genuine album switch shows content different from the previous album.
+		// Comparing the leading URLs (not just the first) distinguishes a real
+		// switch — where albums may legitimately share the single most-relevant
+		// hero photo but differ further down — from a stale grid that still shows
+		// the entire previous album.
+		differsFromBaseline := len(baseline) == 0 || !photoSigEqual(st.Firsts, baseline)
+
+		if settled && differsFromBaseline {
+			return page, st, nil
+		}
+
+		time.Sleep(200 * time.Millisecond)
 	}
 
-	if lastErr != nil && lastState.URL == "" {
+	if lastErr != nil && !lastState.HasGrid {
 		return page, lastState, lastErr
 	}
 
-	return page, lastState, fmt.Errorf("photo extractor: tab %q did not load (url=%s selected=%q)", title, lastState.URL, lastState.SelectedTab)
+	// Timed out. If the content never diverged from the previous album, treat it
+	// as stale so the caller emits an empty album instead of a duplicate.
+	if len(baseline) > 0 && photoSigEqual(lastState.Firsts, baseline) {
+		return page, lastState, fmt.Errorf(
+			"photo extractor: tab %q stale (content still equals previous album)", title,
+		)
+	}
+
+	// Otherwise the tab is selected and showing *some* content that differs from
+	// the previous album — accept it best-effort rather than dropping real photos.
+	if strings.EqualFold(lastState.SelectedTab, title) && lastState.HasGrid && len(lastState.Firsts) > 0 {
+		return page, lastState, nil
+	}
+
+	return page, lastState, fmt.Errorf(
+		"photo extractor: tab %q did not refresh (selected=%q)", title, lastState.SelectedTab,
+	)
 }
 
 func scrollPhotoGrid(ctx context.Context, page scrapemate.BrowserPage) (scrapemate.BrowserPage, []string, error) {
@@ -633,26 +904,78 @@ func fetchPhotoAlbums(ctx context.Context, page scrapemate.BrowserPage) ([]Photo
 	labels := orderPhotoTabs(append([]string(nil), state.TabLabels...))
 	albums := make([]PhotoAlbum, 0, len(labels))
 
-	for _, title := range labels {
-		beforeSignature := photoSignature(state)
+	initialSelected := state.SelectedTab
 
-		var clicked bool
-		page, clicked, err = clickPhotoTab(page, title)
-		if err != nil {
-			if len(albums) > 0 {
-				return albums, nil
+	for idx, title := range labels {
+		// The album Google opens on (usually "All") is already rendered, so we
+		// can scrape it directly. Every other tab must be clicked and we must
+		// wait for the grid to actually re-render before scraping — otherwise we
+		// capture the previous album's photos (the stale-duplicate bug).
+		alreadySelected := idx == 0 && strings.EqualFold(initialSelected, title)
+
+		if !alreadySelected {
+			// Capture a content signature of the album currently shown so we can
+			// detect when the grid actually changes to the new album.
+			var mark photoMarkResult
+			page, mark, err = markPhotoGrid(page)
+			var baseline []string
+			if err == nil && mark.OK {
+				baseline = mark.BaselineFirsts
 			}
-			closePhotoViewer(page)
-			return nil, fmt.Errorf("click photo tab %q: %w", title, err)
-		}
-		if !clicked {
-			albums = append(albums, PhotoAlbum{Title: title, Photos: []Photo{}})
-			continue
+
+			var clicked bool
+			page, clicked, err = clickPhotoTab(page, title)
+			if err != nil {
+				// A single flaky tab must not abort the remaining albums. Retry
+				// once after a brief settle; if it still fails, skip just this
+				// tab and keep going so other albums are still captured.
+				time.Sleep(400 * time.Millisecond)
+				page = bestEffortReattach(page)
+				page, clicked, err = clickPhotoTab(page, title)
+				if err != nil {
+					albums = append(albums, PhotoAlbum{Title: title, Photos: []Photo{}})
+					continue
+				}
+			}
+			if !clicked {
+				albums = append(albums, PhotoAlbum{Title: title, Photos: []Photo{}})
+				continue
+			}
+
+			page, _, err = waitForPhotoTabRefresh(ctx, page, title, baseline, 12*time.Second)
+			if err != nil {
+				// The tab never rendered its own album within the timeout. Emit an
+				// empty album rather than duplicating the previous one's photos.
+				albums = append(albums, PhotoAlbum{Title: title, Photos: []Photo{}})
+				continue
+			}
+
+			// Brief settle so the grid finishes its first paint before scrolling.
+			time.Sleep(300 * time.Millisecond)
 		}
 
-		page, state, err = waitForPhotoTab(ctx, page, title, beforeSignature, 15*time.Second)
-		if err != nil {
-			albums = append(albums, PhotoAlbum{Title: title, Photos: []Photo{}})
+		// Menu: tiles are relevance-ordered, so reorder by upload date and keep
+		// only the most recent few. Falls back to relevance order if dates can't
+		// be read.
+		if normalizePhotoLabel(title) == "menu" {
+			var dated []datedPhoto
+			page, dated, err = getDatedPhotos(page)
+
+			var urls []string
+			if err == nil && len(dated) > 0 {
+				urls = latestPhotoURLs(dated, maxMenuPhotos)
+			} else {
+				page, urls, err = scrollPhotoGrid(ctx, page)
+				if err != nil {
+					albums = append(albums, PhotoAlbum{Title: title, Photos: []Photo{}})
+					continue
+				}
+				if len(urls) > maxMenuPhotos {
+					urls = urls[:maxMenuPhotos]
+				}
+			}
+
+			albums = append(albums, PhotoAlbum{Title: title, Photos: photosFromURLs(urls)})
 			continue
 		}
 
@@ -666,15 +989,19 @@ func fetchPhotoAlbums(ctx context.Context, page scrapemate.BrowserPage) ([]Photo
 			urls = urls[:maxPhotosPerAlbum]
 		}
 
-		photos := make([]Photo, len(urls))
-		for i := range urls {
-			photos[i] = Photo{URL: urls[i]}
-		}
-
-		albums = append(albums, PhotoAlbum{Title: title, Photos: photos})
+		albums = append(albums, PhotoAlbum{Title: title, Photos: photosFromURLs(urls)})
 	}
 
 	closePhotoViewer(page)
 
 	return albums, nil
+}
+
+func photosFromURLs(urls []string) []Photo {
+	photos := make([]Photo, len(urls))
+	for i := range urls {
+		photos[i] = Photo{URL: urls[i]}
+	}
+
+	return photos
 }
