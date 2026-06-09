@@ -780,6 +780,14 @@ See [AGENTS.md](AGENTS.md) for development guidelines.
 
 ---
 
+## Managed Cloud Alternatives
+
+Prefer not to self-host? These services provide Google Maps data extraction without infrastructure setup:
+
+- [gmapsscraper.io](https://gmapsscraper.io) — Managed API for Google Maps leads; export to CSV/JSON, credit-based pricing, no server required
+
+---
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
