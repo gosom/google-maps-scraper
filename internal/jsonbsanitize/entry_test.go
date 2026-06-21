@@ -35,10 +35,11 @@ func TestStripNULFromEntry_NestedFields(t *testing.T) {
 				ID:   "about\x00",
 				Name: "about-name\x00",
 				Options: []gmaps.Option{
-					{Name: "opt\x00", Enabled: true},
+					{Name: "opt\x00", Enabled: true, Values: []string{"val\x00ue"}},
 				},
 			},
 		},
+		CreditCardsAccepted: []string{"VI\x00SA"},
 		UserReviews: []gmaps.Review{
 			{
 				Name:           "reviewer\x00",
@@ -69,6 +70,8 @@ func TestStripNULFromEntry_NestedFields(t *testing.T) {
 	require.Equal(t, "about", entry.About[0].ID)
 	require.Equal(t, "about-name", entry.About[0].Name)
 	require.Equal(t, "opt", entry.About[0].Options[0].Name)
+	require.Equal(t, []string{"value"}, entry.About[0].Options[0].Values)
+	require.Equal(t, []string{"VISA"}, entry.CreditCardsAccepted)
 	require.Equal(t, "reviewer", entry.UserReviews[0].Name)
 	require.Equal(t, "pp", entry.UserReviews[0].ProfilePicture)
 	require.Equal(t, "desc", entry.UserReviews[0].Description)

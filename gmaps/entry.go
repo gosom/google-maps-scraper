@@ -43,8 +43,9 @@ type Address struct {
 }
 
 type Option struct {
-	Name    string `json:"name"`
-	Enabled bool   `json:"enabled"`
+	Name    string   `json:"name"`
+	Enabled bool     `json:"enabled"`
+	Values  []string `json:"values,omitempty"`
 }
 
 type About struct {
@@ -125,6 +126,7 @@ type Entry struct {
 	Menu                LinkSource   `json:"menu"`
 	Owner               Owner        `json:"owner"`
 	CompleteAddress     Address      `json:"complete_address"`
+	CreditCardsAccepted []string     `json:"credit_cards_accepted"`
 	About               []About      `json:"about"`
 	UserReviews         []Review     `json:"user_reviews"`
 	UserReviewsExtended []Review     `json:"user_reviews_extended"`
@@ -263,6 +265,7 @@ func (e *Entry) CsvHeaders() []string {
 		"menu",
 		"owner",
 		"complete_address",
+		"credit_cards_accepted",
 		"about",
 		"user_reviews",
 		"user_reviews_extended",
@@ -303,6 +306,7 @@ func (e *Entry) CsvRow() []string {
 		stringify(e.Menu),
 		stringify(e.Owner),
 		stringify(e.CompleteAddress),
+		stringSliceToString(e.CreditCardsAccepted),
 		stringify(e.About),
 		stringify(e.UserReviews),
 		stringify(e.UserReviewsExtended),
@@ -497,10 +501,15 @@ func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error)
 			opt := Option{
 				Enabled: (getNthElementAndCast[float64](optsI, j, 2, 1, 0, 0)) == 1,
 				Name:    getNthElementAndCast[string](optsI, j, 1),
+				Values:  getOptionValues(getNthElementAndCast[[]any](optsI, j)),
 			}
 
 			if opt.Name != "" {
-				about.Options = append(about.Options, opt)
+				addOrMergeOption(&about.Options, opt)
+			}
+
+			if about.ID == "payments" && opt.Name == "Credit cards" && len(opt.Values) > 0 {
+				entry.CreditCardsAccepted = mergeStringSlices(entry.CreditCardsAccepted, opt.Values)
 			}
 		}
 
@@ -894,6 +903,49 @@ func getNthElementAndCast[T any](arr []any, indexes ...int) T {
 
 func stringSliceToString(s []string) string {
 	return strings.Join(s, ", ")
+}
+
+func addOrMergeOption(options *[]Option, opt Option) {
+	for i := range *options {
+		if (*options)[i].Name != opt.Name {
+			continue
+		}
+
+		(*options)[i].Enabled = (*options)[i].Enabled || opt.Enabled
+		(*options)[i].Values = mergeStringSlices((*options)[i].Values, opt.Values)
+
+		return
+	}
+
+	*options = append(*options, opt)
+}
+
+func getOptionValues(opt []any) []string {
+	valuesI := getNthElementAndCast[[]any](opt, 2, 4, 1, 0, 0)
+	values := make([]string, 0, len(valuesI))
+
+	for i := range valuesI {
+		value := getNthElementAndCast[string](valuesI, i, 2)
+		if value == "" {
+			value = getNthElementAndCast[string](valuesI, i, 3)
+		}
+
+		if value != "" {
+			values = append(values, value)
+		}
+	}
+
+	return values
+}
+
+func mergeStringSlices(current, next []string) []string {
+	for _, value := range next {
+		if !slices.Contains(current, value) {
+			current = append(current, value)
+		}
+	}
+
+	return current
 }
 
 func stringify(v any) string {

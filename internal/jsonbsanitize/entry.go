@@ -38,6 +38,7 @@ func StripNULFromEntry(entry *gmaps.Entry) {
 	entry.PlaceID = cleanString(entry.PlaceID)
 
 	cleanStringSlice(entry.Categories)
+	cleanStringSlice(entry.CreditCardsAccepted)
 	cleanStringSlice(entry.Emails)
 
 	entry.OpenHours = cleanOpenHours(entry.OpenHours)
@@ -146,6 +147,7 @@ func cleanAbout(items []gmaps.About) {
 
 		for j := range items[i].Options {
 			items[i].Options[j].Name = cleanString(items[i].Options[j].Name)
+			cleanStringSlice(items[i].Options[j].Values)
 		}
 	}
 }
