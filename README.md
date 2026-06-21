@@ -355,7 +355,7 @@ go build
 ## Extracted Data Points
 
 <details>
-<summary><strong>Click to expand all 33 data points</strong></summary>
+<summary><strong>Click to expand all 36 data points</strong></summary>
 
 | # | Field | Description |
 |---|-------|-------------|
@@ -382,17 +382,19 @@ go build
 | 21 | `timezone` | Business timezone |
 | 22 | `price_range` | Price level ($, $$, $$$) |
 | 23 | `data_id` | Internal Google Maps identifier |
-| 24 | `images` | Associated image URLs |
-| 25 | `reservations` | Reservation booking link |
-| 26 | `order_online` | Online ordering link |
-| 27 | `menu` | Menu link |
-| 28 | `owner` | Owner-claimed status |
-| 29 | `complete_address` | Full formatted address |
-| 30 | `about` | Additional business info |
-| 31 | `user_reviews` | Customer reviews (text, rating, timestamp) |
-| 32 | `emails` | Extracted email addresses (requires `-email` flag) |
-| 33 | `user_reviews_extended` | Extended reviews up to ~300 (requires `-extra-reviews`) |
-| 34 | `place_id` | Google's unique place id |
+| 24 | `street_view_url` | Street View URL |
+| 25 | `place_id` | Google's unique place id |
+| 26 | `images` | Associated image URLs |
+| 27 | `reservations` | Reservation booking link |
+| 28 | `order_online` | Online ordering link |
+| 29 | `menu` | Menu link |
+| 30 | `owner` | Owner-claimed status |
+| 31 | `complete_address` | Full formatted address |
+| 32 | `credit_cards_accepted` | Accepted credit card networks |
+| 33 | `about` | Additional business info |
+| 34 | `user_reviews` | Customer reviews (text, rating, timestamp) |
+| 35 | `user_reviews_extended` | Extended reviews up to ~300 (requires `-extra-reviews`) |
+| 36 | `emails` | Extracted email addresses (requires `-email` flag) |
 
 </details>
 

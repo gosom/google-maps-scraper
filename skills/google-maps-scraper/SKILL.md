@@ -239,7 +239,7 @@ These additional flags can be added to the docker command:
 ## CSV Columns Reference
 
 The full list of available CSV columns:
-`input_id`, `link`, `title`, `category`, `address`, `open_hours`, `popular_times`, `website`, `phone`, `plus_code`, `review_count`, `review_rating`, `reviews_per_rating`, `latitude`, `longitude`, `cid`, `status`, `description`, `reviews_link`, `thumbnail`, `timezone`, `price_range`, `data_id`, `images`, `reservations`, `order_online`, `menu`, `owner`, `complete_address`, `about`, `user_reviews`, `emails`
+`input_id`, `link`, `title`, `category`, `address`, `open_hours`, `popular_times`, `website`, `phone`, `plus_code`, `review_count`, `review_rating`, `reviews_per_rating`, `latitude`, `longitude`, `cid`, `status`, `description`, `reviews_link`, `thumbnail`, `timezone`, `price_range`, `data_id`, `street_view_url`, `place_id`, `images`, `reservations`, `order_online`, `menu`, `owner`, `complete_address`, `credit_cards_accepted`, `about`, `user_reviews`, `user_reviews_extended`, `emails`
 
 ## Error Handling
 

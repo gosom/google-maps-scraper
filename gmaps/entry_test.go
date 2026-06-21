@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"testing"
 
 	"github.com/PuerkitoBio/goquery"
@@ -122,6 +123,7 @@ func Test_EntryFromJSON(t *testing.T) {
 			State:      "",
 			Country:    "CY",
 		},
+		CreditCardsAccepted: []string{"Mastercard"},
 		ReviewsPerRating: map[int]int{
 			1: 37,
 			2: 16,
@@ -202,6 +204,65 @@ func Test_EntryFromJSONRaw2(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Greater(t, len(entry.About), 0)
+}
+
+func Test_EntryFromJSONExtractsAcceptedCreditCards(t *testing.T) {
+	raw, err := os.ReadFile("../testdata/panic2.json")
+	require.NoError(t, err)
+	require.NotEmpty(t, raw)
+
+	entry, err := gmaps.EntryFromJSON(raw)
+	require.NoError(t, err)
+
+	require.Equal(t, []string{"American Express", "Diners Club", "Mastercard", "VISA"}, entry.CreditCardsAccepted)
+}
+
+func Test_EntryFromJSONMergesDuplicateAboutOptions(t *testing.T) {
+	raw, err := os.ReadFile("../testdata/panic2.json")
+	require.NoError(t, err)
+	require.NotEmpty(t, raw)
+
+	entry, err := gmaps.EntryFromJSON(raw)
+	require.NoError(t, err)
+
+	var payments gmaps.About
+
+	for _, about := range entry.About {
+		if about.ID == "payments" {
+			payments = about
+			break
+		}
+	}
+
+	require.NotEmpty(t, payments.ID)
+
+	creditCardsCount := 0
+
+	var creditCards gmaps.Option
+
+	for _, opt := range payments.Options {
+		if opt.Name == "Credit cards" {
+			creditCardsCount++
+			creditCards = opt
+		}
+	}
+
+	require.Equal(t, 1, creditCardsCount)
+	require.True(t, creditCards.Enabled)
+	require.Equal(t, []string{"American Express", "Diners Club", "Mastercard", "VISA"}, creditCards.Values)
+}
+
+func Test_EntryCSVIncludesCreditCardsAccepted(t *testing.T) {
+	entry := gmaps.Entry{
+		CreditCardsAccepted: []string{"American Express", "Mastercard", "VISA"},
+	}
+
+	require.Contains(t, entry.CsvHeaders(), "credit_cards_accepted")
+	require.Equal(t, len(entry.CsvHeaders()), len(entry.CsvRow()))
+	require.Equal(t,
+		"American Express, Mastercard, VISA",
+		entry.CsvRow()[slices.Index(entry.CsvHeaders(), "credit_cards_accepted")],
+	)
 }
 
 func Test_EntryMarshalEmitsBothLongitudeKeys(t *testing.T) {
