@@ -25,9 +25,15 @@ import (
 )
 
 type webrunner struct {
-	srv *web.Server
-	svc *web.Service
-	cfg *runner.Config
+	srv       *web.Server
+	svc       *web.Service
+	cfg       *runner.Config
+	setupMate func(context.Context, io.Writer, *web.Job) (mateRunner, error)
+}
+
+type mateRunner interface {
+	Start(context.Context, ...scrapemate.IJob) error
+	Close() error
 }
 
 func New(cfg *runner.Config) (runner.Runner, error) {
@@ -56,9 +62,10 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 	}
 
 	ans := webrunner{
-		srv: srv,
-		svc: svc,
-		cfg: cfg,
+		srv:       srv,
+		svc:       svc,
+		cfg:       cfg,
+		setupMate: defaultSetupMate(cfg),
 	}
 
 	return &ans, nil
@@ -155,7 +162,12 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		_ = outfile.Close()
 	}()
 
-	mate, err := w.setupMate(ctx, outfile, job)
+	setupMate := w.setupMate
+	if setupMate == nil {
+		setupMate = defaultSetupMate(w.cfg)
+	}
+
+	mate, err := setupMate(ctx, outfile, job)
 	if err != nil {
 		job.Status = web.StatusFailed
 
@@ -242,63 +254,63 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		cancel()
 	}
 
-	mate.Close()
-
 	job.Status = web.StatusOK
 
 	return w.svc.Update(ctx, job)
 }
 
-func (w *webrunner) setupMate(_ context.Context, writer io.Writer, job *web.Job) (*scrapemateapp.ScrapemateApp, error) {
-	opts := []func(*scrapemateapp.Config) error{
-		scrapemateapp.WithConcurrency(w.cfg.Concurrency),
-		scrapemateapp.WithExitOnInactivity(time.Minute * 3),
-	}
+func defaultSetupMate(cfg *runner.Config) func(context.Context, io.Writer, *web.Job) (mateRunner, error) {
+	return func(_ context.Context, writer io.Writer, job *web.Job) (mateRunner, error) {
+		opts := []func(*scrapemateapp.Config) error{
+			scrapemateapp.WithConcurrency(cfg.Concurrency),
+			scrapemateapp.WithExitOnInactivity(time.Minute * 3),
+		}
 
-	if !job.Data.FastMode {
-		opts = append(opts,
-			scrapemateapp.WithJS(scrapemateapp.DisableImages()),
+		if !job.Data.FastMode {
+			opts = append(opts,
+				scrapemateapp.WithJS(scrapemateapp.DisableImages()),
+			)
+		} else {
+			opts = append(opts,
+				scrapemateapp.WithStealth("firefox"),
+			)
+		}
+
+		opts = runner.AppendBrowserCapacityOptions(opts, cfg)
+
+		hasProxy := false
+
+		if len(cfg.Proxies) > 0 {
+			opts = append(opts, scrapemateapp.WithProxies(cfg.Proxies))
+			hasProxy = true
+		} else if len(job.Data.Proxies) > 0 {
+			opts = append(opts,
+				scrapemateapp.WithProxies(job.Data.Proxies),
+			)
+			hasProxy = true
+		}
+
+		if !cfg.DisablePageReuse {
+			opts = append(opts,
+				scrapemateapp.WithPageReuseLimit(2),
+				scrapemateapp.WithBrowserReuseLimit(200),
+			)
+		}
+
+		log.Printf("job %s has proxy: %v", job.ID, hasProxy)
+
+		csvWriter := csvwriter.NewCsvWriter(csv.NewWriter(writer))
+
+		writers := []scrapemate.ResultWriter{csvWriter}
+
+		matecfg, err := scrapemateapp.NewConfig(
+			writers,
+			opts...,
 		)
-	} else {
-		opts = append(opts,
-			scrapemateapp.WithStealth("firefox"),
-		)
+		if err != nil {
+			return nil, err
+		}
+
+		return scrapemateapp.NewScrapeMateApp(matecfg)
 	}
-
-	opts = runner.AppendBrowserCapacityOptions(opts, w.cfg)
-
-	hasProxy := false
-
-	if len(w.cfg.Proxies) > 0 {
-		opts = append(opts, scrapemateapp.WithProxies(w.cfg.Proxies))
-		hasProxy = true
-	} else if len(job.Data.Proxies) > 0 {
-		opts = append(opts,
-			scrapemateapp.WithProxies(job.Data.Proxies),
-		)
-		hasProxy = true
-	}
-
-	if !w.cfg.DisablePageReuse {
-		opts = append(opts,
-			scrapemateapp.WithPageReuseLimit(2),
-			scrapemateapp.WithPageReuseLimit(200),
-		)
-	}
-
-	log.Printf("job %s has proxy: %v", job.ID, hasProxy)
-
-	csvWriter := csvwriter.NewCsvWriter(csv.NewWriter(writer))
-
-	writers := []scrapemate.ResultWriter{csvWriter}
-
-	matecfg, err := scrapemateapp.NewConfig(
-		writers,
-		opts...,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	return scrapemateapp.NewScrapeMateApp(matecfg)
 }
