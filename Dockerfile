@@ -13,9 +13,9 @@ RUN export PATH=$PATH:/usr/local/go/bin:/root/go/bin \
        else \
          GO_ARCH="amd64"; \
        fi \
-    && wget -q "https://go.dev/dl/go1.26.3.linux-${GO_ARCH}.tar.gz" \
-    && tar -C /usr/local -xzf "go1.26.3.linux-${GO_ARCH}.tar.gz" \
-    && rm "go1.26.3.linux-${GO_ARCH}.tar.gz" \
+    && wget -q "https://go.dev/dl/go1.26.4.linux-${GO_ARCH}.tar.gz" \
+    && tar -C /usr/local -xzf "go1.26.4.linux-${GO_ARCH}.tar.gz" \
+    && rm "go1.26.4.linux-${GO_ARCH}.tar.gz" \
     # ... (Rest des ursprünglichen RUN-Befehls: Nodejs, Playwright, etc.)
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
@@ -26,7 +26,7 @@ RUN export PATH=$PATH:/usr/local/go/bin:/root/go/bin \
     && playwright install chromium --with-deps
 
 # Build stage
-FROM golang:1.26.3-trixie AS builder
+FROM golang:1.26.4-trixie AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download

@@ -1,6 +1,6 @@
 module github.com/gosom/google-maps-scraper
 
-go 1.26.3
+go 1.26.4
 
 require (
 	github.com/PuerkitoBio/goquery v1.12.0
@@ -17,7 +17,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/gosom/go-leadsdb v0.0.0-20251228094956-ed313efc171f
-	github.com/gosom/scrapemate v1.2.0
+	github.com/gosom/scrapemate v1.2.1
 	github.com/hetznercloud/hcloud-go/v2 v2.36.0
 	github.com/jackc/pgx/v5 v5.9.0
 	github.com/mattn/go-runewidth v0.0.16
