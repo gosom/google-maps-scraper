@@ -1,3 +1,7 @@
+```bash
+go build -o bin/placebyid ./cmd/placebyid/ && ./bin/placebyid -serve -port 3001 -c 2
+```
+
 # Google Maps Scraper
 
 <p align="center">
