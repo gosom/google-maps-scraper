@@ -3,6 +3,7 @@ package gmaps
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -186,8 +187,28 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 	return nil, next, nil
 }
 
+func warmupConsent(page scrapemate.BrowserPage) error {
+	_, err := page.Goto("https://www.google.com/maps", scrapemate.WaitUntilDOMContentLoaded)
+	if err != nil {
+		return err
+	}
+
+	if strings.Contains(page.URL(), "consent.google") {
+		log.Println("consent detected, clicking reject")
+		clickRejectCookiesIfRequired(page)
+		_ = page.WaitForURL("**google.com/maps**", 30*time.Second)
+	}
+
+	return nil
+}
+
 func (j *GmapJob) BrowserActions(ctx context.Context, page scrapemate.BrowserPage) scrapemate.Response {
 	var resp scrapemate.Response
+
+	if err := warmupConsent(page); err != nil {
+		resp.Error = err
+		return resp
+	}
 
 	pageResponse, err := page.Goto(j.GetFullURL(), scrapemate.WaitUntilDOMContentLoaded)
 	if err != nil {
