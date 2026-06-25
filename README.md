@@ -101,11 +101,11 @@ Unlock global access with consistent, high-speed connections from $0.65/GB, 90M+
 
 ---
 
-### [LeadsDB](https://getleadsdb.com/) - Your Central Database for Business Leads
+### [TalorData](https://talordata.com/?campaignid=f01u8cHondg2qA47&utm_source=github&utm_term=googlemaps) - Fast SERP API for Google Maps and Search Data
 
-[![LeadsDB](./img/leadsdb-banner.png)](https://getleadsdb.com/)
+[![TalorData](./img/talordata.png)](https://talordata.com/?campaignid=f01u8cHondg2qA47&utm_source=github&utm_term=googlemaps)
 
-Push leads via API or AI agent, remove duplicates automatically, and export when ready. [**Start free →**](https://getleadsdb.com/)
+Real-time SERP data APIs for Google Maps and search results, with structured JSON / HTML responses and 1,000 free API responses to start. [**Start using TalorData →**](https://talordata.com/?campaignid=f01u8cHondg2qA47&utm_source=github&utm_term=googlemaps) | [Learn more](talordata.md)
 
 ---
 
@@ -124,6 +124,14 @@ The most affordable premium proxies across 195 countries & 80+ million IPs, plus
 Hey, we built BirdProxies because proxies shouldn't be complicated or overpriced. Fast residential and ISP proxies in 195+ locations, fair pricing, and real support. Try our FlappyBird game on the landing page for free data!
 
 [**Visit BirdProxies →**](https://birdproxies.com/?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom-google-maps-scraper) | [Join Discord](https://discord.com/invite/birdproxies)
+
+---
+
+### [Proxidize](https://proxidize.com/) - Proxies for Google Maps Scraping
+
+[![Proxidize | Proxies for Google Maps Scraping](./img/proxidize-banner.png)](https://proxidize.com/)
+
+Mobile and residential proxies for Google Maps scraping, local SEO, lead generation, and data collection. Use code `gmaps20` for 20% off. [**Visit Proxidize →**](https://proxidize.com/)
 
 ---
 
