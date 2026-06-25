@@ -127,11 +127,11 @@ Hey, we built BirdProxies because proxies shouldn't be complicated or overpriced
 
 ---
 
-### [Proxidize](https://proxidize.com/) - Proxies for Google Maps Scraping
+### [Proxidize](https://proxidize.com/?utm_source=github&utm_medium=sponsorship&utm_campaign=google_maps_scraper&utm_content=gosom) - Proxies for Google Maps Scraping
 
-[![Proxidize | Proxies for Google Maps Scraping](./img/proxidize-banner.png)](https://proxidize.com/)
+[![Proxidize | Proxies for Google Maps Scraping](./img/proxidize-banner.png)](https://proxidize.com/?utm_source=github&utm_medium=sponsorship&utm_campaign=google_maps_scraper&utm_content=gosom)
 
-Mobile and residential proxies for Google Maps scraping, local SEO, lead generation, and data collection. Use code `gmaps20` for 20% off. [**Visit Proxidize →**](https://proxidize.com/)
+Mobile and residential proxies for Google Maps scraping, local SEO, lead generation, and data collection. Use code `gmaps20` for 20% off. [**Visit Proxidize →**](https://proxidize.com/?utm_source=github&utm_medium=sponsorship&utm_campaign=google_maps_scraper&utm_content=gosom)
 
 ---
 
