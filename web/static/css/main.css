@@ -355,3 +355,112 @@ nav a:hover {
     transform: translateY(-1px);
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
+
+/* Job map view */
+.view-button {
+    background-color: #2c7be5;
+    color: #fff;
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
+.view-button:hover {
+    background-color: #1a68d1;
+}
+
+.map-modal {
+    display: flex;
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgba(0, 0, 0, 0.6);
+    justify-content: center;
+    align-items: center;
+}
+
+.map-modal-content {
+    background: #fff;
+    width: 90vw;
+    height: 85vh;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.map-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.map-modal-header h2 {
+    margin: 0;
+    font-size: 1.1rem;
+}
+
+.map-modal-close {
+    background: none;
+    border: none;
+    font-size: 1.6rem;
+    line-height: 1;
+    cursor: pointer;
+    color: #555;
+}
+
+.map-modal-body {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+}
+
+#job-map {
+    flex: 3;
+    height: 100%;
+}
+
+#job-places-list {
+    flex: 1;
+    min-width: 240px;
+    max-width: 360px;
+    overflow-y: auto;
+    border-left: 1px solid #e0e0e0;
+    padding: 8px;
+}
+
+.place-item {
+    padding: 8px;
+    border-bottom: 1px solid #f0f0f0;
+    cursor: pointer;
+}
+
+.place-item:hover {
+    background: #f5f8ff;
+}
+
+.place-title {
+    font-weight: 600;
+}
+
+.place-address {
+    font-size: 0.85rem;
+    color: #666;
+}
+
+.place-rating {
+    font-size: 0.85rem;
+    color: #d98300;
+}
+
+.map-loading,
+.map-empty,
+.map-error {
+    padding: 12px;
+    color: #666;
+}
+
+.map-error {
+    color: #c0392b;
+}

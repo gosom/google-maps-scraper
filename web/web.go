@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -63,6 +64,11 @@ func New(svc *Service, addr string) (*Server, error) {
 		ans.delete(w, r)
 	})
 	mux.HandleFunc("/jobs", ans.getJobs)
+	mux.HandleFunc("/view", func(w http.ResponseWriter, r *http.Request) {
+		r = requestWithID(r)
+
+		ans.viewJob(w, r)
+	})
 	mux.HandleFunc("/", ans.index)
 
 	// api routes
@@ -125,6 +131,7 @@ func New(svc *Service, addr string) (*Server, error) {
 		"static/templates/index.html",
 		"static/templates/job_rows.html",
 		"static/templates/job_row.html",
+		"static/templates/job_view.html",
 		"static/templates/redoc.html",
 	}
 
@@ -581,6 +588,38 @@ func (s *Server) apiGetJob(w http.ResponseWriter, r *http.Request) {
 	renderJSON(w, http.StatusOK, job)
 }
 
+// viewJob renders the map modal fragment for a job, embedding the job's places
+// directly so the client needs no separate data request.
+func (s *Server) viewJob(w http.ResponseWriter, r *http.Request) {
+	id, ok := getIDFromRequest(r)
+	if !ok {
+		http.Error(w, "Invalid ID", http.StatusUnprocessableEntity)
+
+		return
+	}
+
+	places, err := s.svc.GetPlaces(r.Context(), id.String())
+	if err != nil {
+		if !errors.Is(err, ErrPlacesNotFound) {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+
+			return
+		}
+
+		// No CSV yet: render the modal with an empty state rather than an error.
+		places = []Place{}
+	}
+
+	tmpl, ok := s.tmpl["static/templates/job_view.html"]
+	if !ok {
+		http.Error(w, "missing tpl", http.StatusInternalServerError)
+
+		return
+	}
+
+	_ = tmpl.Execute(w, places)
+}
+
 func (s *Server) apiDeleteJob(w http.ResponseWriter, r *http.Request) {
 	id, ok := getIDFromRequest(r)
 	if !ok {
@@ -629,8 +668,8 @@ func securityHeaders(next http.Handler) http.Handler {
 			"default-src 'self'; "+
 				"script-src 'self' cdn.redoc.ly cdnjs.cloudflare.com 'unsafe-inline' 'unsafe-eval'; "+
 				"worker-src 'self' blob:; "+
-				"style-src 'self' 'unsafe-inline' fonts.googleapis.com; "+
-				"img-src 'self' data: cdn.redoc.ly; "+
+				"style-src 'self' 'unsafe-inline' fonts.googleapis.com cdnjs.cloudflare.com; "+
+				"img-src 'self' data: cdn.redoc.ly cdnjs.cloudflare.com *.tile.openstreetmap.org; "+
 				"font-src 'self' fonts.gstatic.com; "+
 				"connect-src 'self'")
 
