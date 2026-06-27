@@ -21,6 +21,7 @@ type PlaceJob struct {
 	ExtractEmail            bool
 	ExitMonitor             exiter.Exiter
 	ExtractExtraReviews     bool
+	ExtractExtraPhotos      bool
 	WriterManagedCompletion bool
 }
 
@@ -62,6 +63,12 @@ func WithPlaceJobExitMonitor(exitMonitor exiter.Exiter) PlaceJobOptions {
 func WithPlaceJobWriterManagedCompletion() PlaceJobOptions {
 	return func(j *PlaceJob) {
 		j.WriterManagedCompletion = true
+	}
+}
+
+func WithPlaceJobExtraPhotos() PlaceJobOptions {
+	return func(j *PlaceJob) {
+		j.ExtractExtraPhotos = true
 	}
 }
 
@@ -118,7 +125,18 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 	domReviews, ok := resp.Meta["dom_reviews"].([]DOMReview)
 	if ok && len(domReviews) > 0 {
 		convertedReviews := ConvertDOMReviewsToReviews(domReviews)
-		entry.UserReviewsExtended = append(entry.UserReviewsExtended, convertedReviews...)
+		remaining := maxExtendedReviews - len(entry.UserReviewsExtended)
+		if remaining > 0 {
+			if len(convertedReviews) > remaining {
+				convertedReviews = convertedReviews[:remaining]
+			}
+
+			entry.UserReviewsExtended = append(entry.UserReviewsExtended, convertedReviews...)
+		}
+	}
+
+	if albums, ok := resp.Meta["photo_albums"].([]PhotoAlbum); ok && len(albums) > 0 {
+		entry.Albums = albums
 	}
 
 	if j.ExtractEmail && entry.IsWebsiteValidForEmail() {
@@ -197,6 +215,15 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page scrapemate.BrowserPa
 			case len(domReviews) > 0:
 				resp.Meta["dom_reviews"] = domReviews
 			}
+		}
+	}
+
+	if j.ExtractExtraPhotos {
+		albums, err := fetchPhotoAlbums(ctx, page)
+		if err != nil {
+			fmt.Printf("Warning: photo album extraction failed: %v\n", err)
+		} else if len(albums) > 0 {
+			resp.Meta["photo_albums"] = albums
 		}
 	}
 
