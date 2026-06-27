@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 )
@@ -101,11 +102,22 @@ func parsePlaces(r io.Reader) ([]Place, error) {
 			continue
 		}
 
+		if !finite(lat) || !finite(lon) {
+			continue
+		}
+
+		if lat < -90 || lat > 90 || lon < -180 || lon > 180 {
+			continue
+		}
+
 		if lat == 0 && lon == 0 {
 			continue
 		}
 
 		rating, _ := strconv.ParseFloat(get(row, "review_rating"), 64)
+		if !finite(rating) {
+			rating = 0
+		}
 
 		places = append(places, Place{
 			Title:        get(row, "title"),
@@ -121,4 +133,9 @@ func parsePlaces(r io.Reader) ([]Place, error) {
 	}
 
 	return places, nil
+}
+
+// finite reports whether f is a usable, real number (not NaN or ±Inf).
+func finite(f float64) bool {
+	return !math.IsNaN(f) && !math.IsInf(f, 0)
 }
