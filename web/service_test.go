@@ -68,6 +68,34 @@ func TestGetPlacesSkipsRowsWithoutCoords(t *testing.T) {
 	}
 }
 
+func TestGetPlacesSkipsNonFiniteAndOutOfRangeCoords(t *testing.T) {
+	dir := t.TempDir()
+	svc := NewService(nil, dir)
+
+	csv := "title,latitude,longitude,review_rating\n" +
+		"NaN,NaN,2.5,3\n" +
+		"Inf,Inf,2.5,3\n" +
+		"OutOfRange,91,200,3\n" +
+		"BadRating,1.5,2.5,NaN\n" +
+		"Good,1.5,2.5,4.5\n"
+	writeCSV(t, dir, "job-nf", csv)
+
+	places, err := svc.GetPlaces(context.Background(), "job-nf")
+	if err != nil {
+		t.Fatalf("GetPlaces: %v", err)
+	}
+
+	if len(places) != 2 {
+		t.Fatalf("expected 2 places (BadRating + Good), got %d: %+v", len(places), places)
+	}
+
+	for _, p := range places {
+		if p.Title == "BadRating" && p.ReviewRating != 0 {
+			t.Fatalf("non-finite rating should be sanitized to 0, got %v", p.ReviewRating)
+		}
+	}
+}
+
 func TestGetPlacesMissingCSV(t *testing.T) {
 	svc := NewService(nil, t.TempDir())
 
