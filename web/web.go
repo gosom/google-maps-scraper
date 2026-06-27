@@ -591,13 +591,18 @@ func (s *Server) apiGetJob(w http.ResponseWriter, r *http.Request) {
 // viewJob renders the map modal fragment for a job, embedding the job's places
 // directly so the client needs no separate data request.
 func (s *Server) viewJob(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+
+		return
+	}
+
 	id, ok := getIDFromRequest(r)
 	if !ok {
 		http.Error(w, "Invalid ID", http.StatusUnprocessableEntity)
 
 		return
 	}
-
 	places, err := s.svc.GetPlaces(r.Context(), id.String())
 	if err != nil {
 		if !errors.Is(err, ErrPlacesNotFound) {
