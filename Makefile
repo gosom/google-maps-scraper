@@ -1,5 +1,5 @@
 APP_NAME := google_maps_scraper
-VERSION := 1.16.0
+VERSION := 1.16.1
 
 default: help
 
