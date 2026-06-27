@@ -606,7 +606,8 @@ func (s *Server) viewJob(w http.ResponseWriter, r *http.Request) {
 	places, err := s.svc.GetPlaces(r.Context(), id.String())
 	if err != nil {
 		if !errors.Is(err, ErrPlacesNotFound) {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("view job %s: %v", id, err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
 
 			return
 		}
