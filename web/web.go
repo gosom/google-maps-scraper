@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"encoding/json"
@@ -603,7 +604,9 @@ func (s *Server) viewJob(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
+
 	places, err := s.svc.GetPlaces(r.Context(), id.String())
+
 	if err != nil {
 		if !errors.Is(err, ErrPlacesNotFound) {
 			log.Printf("view job %s: %v", id, err)
@@ -623,7 +626,15 @@ func (s *Server) viewJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = tmpl.Execute(w, places)
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, places); err != nil {
+		log.Printf("view job %s: render: %v", id, err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+
+		return
+	}
+
+	_, _ = buf.WriteTo(w)
 }
 
 func (s *Server) apiDeleteJob(w http.ResponseWriter, r *http.Request) {
