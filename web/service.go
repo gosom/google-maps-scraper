@@ -33,11 +33,10 @@ func (s *Service) Get(ctx context.Context, id string) (Job, error) {
 }
 
 func (s *Service) Delete(ctx context.Context, id string) error {
-	if strings.Contains(id, "/") || strings.Contains(id, "\\") || strings.Contains(id, "..") {
-		return fmt.Errorf("invalid file name")
+	datapath, err := s.csvPath(id)
+	if err != nil {
+		return err
 	}
-
-	datapath := filepath.Join(s.dataFolder, id+".csv")
 
 	if _, err := os.Stat(datapath); err == nil {
 		if err := os.Remove(datapath); err != nil {
@@ -58,12 +57,21 @@ func (s *Service) SelectPending(ctx context.Context) ([]Job, error) {
 	return s.repo.Select(ctx, SelectParams{Status: StatusPending, Limit: 1})
 }
 
-func (s *Service) GetCSV(_ context.Context, id string) (string, error) {
+// csvPath returns the on-disk path of a job's CSV output, rejecting ids that
+// could escape the data folder.
+func (s *Service) csvPath(id string) (string, error) {
 	if strings.Contains(id, "/") || strings.Contains(id, "\\") || strings.Contains(id, "..") {
 		return "", fmt.Errorf("invalid file name")
 	}
 
-	datapath := filepath.Join(s.dataFolder, id+".csv")
+	return filepath.Join(s.dataFolder, id+".csv"), nil
+}
+
+func (s *Service) GetCSV(_ context.Context, id string) (string, error) {
+	datapath, err := s.csvPath(id)
+	if err != nil {
+		return "", err
+	}
 
 	if _, err := os.Stat(datapath); os.IsNotExist(err) {
 		return "", fmt.Errorf("csv file not found for job %s", id)

@@ -8,6 +8,10 @@
     </td>
     <td>
         {{ if eq .Status "ok" }}
+            <button type="button" class="button view-button"
+                    hx-get="/view?id={{.ID}}"
+                    hx-target="#map-modal-container"
+                    hx-swap="innerHTML">View</button>
             <a href="/download?id={{.ID}}" download class="button download-button">Download</a>
         {{ end }}
         <button hx-delete="/delete?id={{.ID}}" 
