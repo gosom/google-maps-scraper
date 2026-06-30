@@ -418,7 +418,7 @@ func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error)
 	entry.Latitude = getNthElementAndCast[float64](darray, 9, 2)
 	entry.Longtitude = getNthElementAndCast[float64](darray, 9, 3)
 	entry.Cid = getNthElementAndCast[string](jd, 25, 3, 0, 13, 0, 0, 1)
-	entry.Status = getNthElementAndCast[string](darray, 34, 4, 4)
+	entry.Status = extractPlaceStatus(darray)
 	entry.Description = getNthElementAndCast[string](darray, 32, 1, 1)
 	entry.ReviewsLink = getNthElementAndCast[string](darray, 4, 3, 0)
 	entry.Thumbnail = getNthElementAndCast[string](darray, 72, 0, 1, 6, 0)
@@ -852,6 +852,31 @@ func getPopularTimes(darray []any) map[string]map[int]int {
 	}
 
 	return popularTimes
+}
+
+// extractPlaceStatus returns the business-closure badge at [88][0] when present
+// (e.g. "CLOSED", "ĐANG ĐÓNG CỬA"). Otherwise it falls back to the open-hours
+// summary at [34][4][4] (e.g. "Closed ⋅ Opens 12:30 pm Tue").
+func extractPlaceStatus(darray []any) string {
+	if badge := getNthElementAndCast[string](darray, 88, 0); isBusinessClosedBadge(badge) {
+		return "closed"
+	}
+
+	return getNthElementAndCast[string](darray, 34, 4, 4)
+}
+
+func isBusinessClosedBadge(badge string) bool {
+	if badge == "" {
+		return false
+	}
+
+	if strings.EqualFold(strings.TrimSpace(badge), "closed") {
+		return true
+	}
+
+	lower := strings.ToLower(badge)
+
+	return strings.Contains(lower, "đóng cửa")
 }
 
 func getNthElementAndCast[T any](arr []any, indexes ...int) T {

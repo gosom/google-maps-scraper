@@ -7,6 +7,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestExtractPlaceStatus(t *testing.T) {
+	t.Run("business closed badge", func(t *testing.T) {
+		darray := make([]any, 89)
+		darray[88] = []any{"CLOSED", "SearchResult.TYPE_COFFEE", nil, "Song Coffee", nil}
+		darray[34] = []any{nil, nil, nil, nil, []any{nil, nil, nil, nil, "Closed ⋅ Opens 8 am Mon"}}
+
+		require.Equal(t, "closed", extractPlaceStatus(darray))
+	})
+
+	t.Run("open hours summary when no closure badge", func(t *testing.T) {
+		darray := make([]any, 89)
+		darray[88] = []any{nil, "SearchResult.TYPE_RESTAURANT", nil, "Kipriakon", nil}
+		darray[34] = []any{nil, nil, nil, nil, []any{nil, nil, nil, nil, "Closed ⋅ Opens 12:30 pm Tue"}}
+
+		require.Equal(t, "Closed ⋅ Opens 12:30 pm Tue", extractPlaceStatus(darray))
+	})
+
+	t.Run("localized closure badge", func(t *testing.T) {
+		darray := make([]any, 89)
+		darray[88] = []any{"ĐANG ĐÓNG CỬA", "SearchResult.TYPE_COFFEE", nil, "Song Coffee", nil}
+
+		require.Equal(t, "closed", extractPlaceStatus(darray))
+	})
+}
+
 func TestParseReviewsRelativeDatePaths(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -68,7 +68,7 @@ func ParseSearchResults(raw []byte) ([]*Entry, error) {
 		entry.Longtitude = getNthElementAndCast[float64](business, 9, 3)
 		entry.Phone = strings.ReplaceAll(getNthElementAndCast[string](business, 178, 0, 0), " ", "")
 		entry.OpenHours = getHours(business)
-		entry.Status = getNthElementAndCast[string](business, 34, 4, 4)
+		entry.Status = extractPlaceStatus(business)
 		entry.Timezone = getNthElementAndCast[string](business, 30)
 		entry.DataID = getNthElementAndCast[string](business, 10)
 
