@@ -3,6 +3,7 @@ FROM ubuntu:20.04 AS playwright-deps
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/browsers
 #ENV PLAYWRIGHT_DRIVER_PATH=/opt/
 ARG TARGETARCH
+ARG PLAYWRIGHT_GO_VERSION=v0.6000.0
 
 RUN export PATH=$PATH:/usr/local/go/bin:/root/go/bin \
     && apt-get update \
@@ -21,7 +22,7 @@ RUN export PATH=$PATH:/usr/local/go/bin:/root/go/bin \
     && apt-get install -y --no-install-recommends nodejs \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
-    && go install github.com/playwright-community/playwright-go/cmd/playwright@latest \
+    && go install github.com/playwright-community/playwright-go/cmd/playwright@${PLAYWRIGHT_GO_VERSION} \
     && mkdir -p /opt/browsers \
     && playwright install chromium --with-deps
 

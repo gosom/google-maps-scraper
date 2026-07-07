@@ -22,7 +22,7 @@ require (
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/mattn/go-runewidth v0.0.16
 	github.com/mcnijman/go-emailaddress v1.1.1
-	github.com/playwright-community/playwright-go v0.5700.1
+	github.com/playwright-community/playwright-go v0.6000.0
 	github.com/posthog/posthog-go v1.5.2
 	github.com/pquerna/otp v1.5.0
 	github.com/riverqueue/river v0.30.1
