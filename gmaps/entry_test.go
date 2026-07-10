@@ -312,3 +312,17 @@ func Test_EntryFromJsonC(t *testing.T) {
 		fmt.Printf("%+v\n", entry)
 	}
 }
+
+func Test_EntryFromJSONStatusFallback(t *testing.T) {
+	// Places where [34][4][4] is absent carry the closed-state enum at [88][0].
+	darray := make([]any, 89)
+	darray[88] = []any{"CLOSED"}
+	jd := []any{nil, nil, nil, nil, nil, nil, darray}
+
+	raw, err := json.Marshal(jd)
+	require.NoError(t, err)
+
+	entry, err := gmaps.EntryFromJSON(raw)
+	require.NoError(t, err)
+	require.Equal(t, "CLOSED", entry.Status)
+}
