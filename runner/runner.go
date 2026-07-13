@@ -81,6 +81,7 @@ type Config struct {
 	Addr                     string
 	DisablePageReuse         bool
 	ExtraReviews             bool
+	ExtraPhotos              bool
 	LeadsDBAPIKey            string
 	BrowserPoolSize          int
 	MaxPagesPerBrowser       int
@@ -137,6 +138,7 @@ func ParseConfig() *Config {
 	flag.StringVar(&cfg.Addr, "addr", ":8080", "address to listen on for web server")
 	flag.BoolVar(&cfg.DisablePageReuse, "disable-page-reuse", false, "disable page reuse in playwright")
 	flag.BoolVar(&cfg.ExtraReviews, "extra-reviews", false, "enable extra reviews collection")
+	flag.BoolVar(&cfg.ExtraPhotos, "extra-photos", false, "enable extra photo album collection (scrapes full category albums; slow)")
 	flag.StringVar(&cfg.LeadsDBAPIKey, "leadsdb-api-key", "", "LeadsDB API key for exporting results to LeadsDB")
 	flag.StringVar(&cfg.GridBBox, "grid-bbox", "", "bounding box for grid scraping: 'minLat,minLon,maxLat,maxLon' (e.g. '40.30,-3.80,40.50,-3.60')")
 	flag.Float64Var(&cfg.GridCellKm, "grid-cell", 1.0, "grid cell size in km [default: 1.0]. Use with -grid-bbox")

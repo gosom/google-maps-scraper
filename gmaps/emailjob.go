@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/google/uuid"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/gosom/google-maps-scraper/exiter"
 )
+
+const emailJobNavigationTimeout = 10 * time.Second
 
 type EmailExtractJobOptions func(*EmailExtractJob)
 
@@ -99,6 +102,32 @@ func (j *EmailExtractJob) Process(ctx context.Context, resp *scrapemate.Response
 
 func (j *EmailExtractJob) ProcessOnFetchError() bool {
 	return true
+}
+
+func (j *EmailExtractJob) BrowserActions(_ context.Context, page scrapemate.BrowserPage) scrapemate.Response {
+	var resp scrapemate.Response
+
+	if setter, ok := page.Unwrap().(interface {
+		SetDefaultNavigationTimeout(timeout float64)
+		SetDefaultTimeout(timeout float64)
+	}); ok {
+		timeoutMs := float64(emailJobNavigationTimeout.Milliseconds())
+		setter.SetDefaultNavigationTimeout(timeoutMs)
+		setter.SetDefaultTimeout(timeoutMs)
+	}
+
+	pageResponse, err := page.Goto(j.GetFullURL(), scrapemate.WaitUntilDOMContentLoaded)
+	if err != nil {
+		resp.Error = err
+		return resp
+	}
+
+	resp.URL = pageResponse.URL
+	resp.StatusCode = pageResponse.StatusCode
+	resp.Headers = pageResponse.Headers
+	resp.Body = pageResponse.Body
+
+	return resp
 }
 
 func docEmailExtractor(doc *goquery.Document) []string {

@@ -17,7 +17,6 @@ import (
 	"github.com/gosom/google-maps-scraper/tlmt"
 	"github.com/gosom/scrapemate"
 	"github.com/gosom/scrapemate/adapters/writers/csvwriter"
-	"github.com/gosom/scrapemate/adapters/writers/jsonwriter"
 	"github.com/gosom/scrapemate/scrapemateapp"
 )
 
@@ -101,6 +100,7 @@ func (r *fileRunner) Run(ctx context.Context) (err error) {
 			dedup,
 			exitMonitor,
 			r.cfg.ExtraReviews,
+			r.cfg.ExtraPhotos,
 		)
 	} else {
 		seedJobs, err = runner.CreateSeedJobs(
@@ -115,6 +115,7 @@ func (r *fileRunner) Run(ctx context.Context) (err error) {
 			dedup,
 			exitMonitor,
 			r.cfg.ExtraReviews,
+			r.cfg.ExtraPhotos,
 		)
 	}
 
@@ -208,7 +209,7 @@ func (r *fileRunner) setWriters() error {
 		csvWriter := csvwriter.NewCsvWriter(csv.NewWriter(resultsWriter))
 
 		if r.cfg.JSON {
-			r.writers = append(r.writers, jsonwriter.NewJSONWriter(resultsWriter))
+			r.writers = append(r.writers, newPrettyJSONWriter(resultsWriter))
 		} else {
 			r.writers = append(r.writers, csvWriter)
 		}
