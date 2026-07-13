@@ -143,6 +143,29 @@ Mobile and residential proxies for Google Maps scraping, local SEO, lead generat
 
 ---
 
+### [NodeMaven](https://go.nodemaven.com/GoogleMapsScrapper) - Reliable proxies with high-quality IPs
+
+[![NodeMaven - Reliable proxy provider with high-quality IPs](./img/nodemaven.png)](https://go.nodemaven.com/GoogleMapsScrapper)
+
+[**NodeMaven**](https://go.nodemaven.com/GoogleMapsScrapper) provides high-quality proxies for automation, web scraping, SEO research, and social media management.
+
+Why NodeMaven:
+
+- 99.9% uptime
+- Sticky sessions up to 7 days
+- Low-fraud IPs with score under 97
+- No KYC required
+- Up to 10% traffic cashback
+
+**Special codes for Google Maps Scraper users:**
+
+- `MAPS35` - 35% off Mobile and Residential Proxies
+- `MAPS40` - 40% off ISP Static Proxies
+
+[**Visit NodeMaven →**](https://go.nodemaven.com/GoogleMapsScrapper)
+
+---
+
 <p align="center">
   <a href="#sponsored-by">View all sponsors</a> | <a href="https://github.com/sponsors/gosom">Become a sponsor</a>
 </p>
