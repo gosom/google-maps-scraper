@@ -181,6 +181,7 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page scrapemate.BrowserPa
 	resp.URL = pageResponse.URL
 	resp.StatusCode = pageResponse.StatusCode
 	resp.Headers = pageResponse.Headers
+	placeURL := page.URL()
 
 	raw, err := j.extractJSON(page)
 	if err != nil {
@@ -195,12 +196,34 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page scrapemate.BrowserPa
 
 	resp.Meta["json"] = raw
 
+	if j.ExtractExtraPhotos {
+		albums, err := fetchPhotoAlbums(ctx, page)
+		if err != nil {
+			fmt.Printf("Warning: photo album extraction failed: %v\n", err)
+		} else if len(albums) > 0 {
+			resp.Meta["photo_albums"] = albums
+		}
+	}
+
 	if j.ExtractExtraReviews {
 		reviewCount := j.getReviewCount(raw)
 		if reviewCount > 0 { // download reviews for any place that has them
+			reviewURL := ""
+			entry, parseErr := EntryFromJSON(raw)
+			if parseErr != nil {
+				fmt.Printf("Warning: review panel metadata parsing failed: %v\n", parseErr)
+			} else {
+				var buildErr error
+				reviewURL, buildErr = buildReviewPanelURL(placeURL, entry)
+				if buildErr != nil {
+					fmt.Printf("Warning: review panel URL construction failed: %v\n", buildErr)
+				}
+			}
+
 			params := fetchReviewsParams{
 				page:        page,
-				mapURL:      page.URL(),
+				mapURL:      placeURL,
+				reviewURL:   reviewURL,
 				reviewCount: reviewCount,
 			}
 
@@ -215,15 +238,6 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page scrapemate.BrowserPa
 			case len(domReviews) > 0:
 				resp.Meta["dom_reviews"] = domReviews
 			}
-		}
-	}
-
-	if j.ExtractExtraPhotos {
-		albums, err := fetchPhotoAlbums(ctx, page)
-		if err != nil {
-			fmt.Printf("Warning: photo album extraction failed: %v\n", err)
-		} else if len(albums) > 0 {
-			resp.Meta["photo_albums"] = albums
 		}
 	}
 

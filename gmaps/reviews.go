@@ -21,6 +21,7 @@ import (
 type fetchReviewsParams struct {
 	page        scrapemate.BrowserPage
 	mapURL      string
+	reviewURL   string
 	reviewCount int
 }
 
@@ -28,7 +29,7 @@ type FetchReviewsResponse struct {
 	pages [][]byte
 }
 
-const maxExtendedReviews = 120
+const maxExtendedReviews = 150
 
 type fetcher struct {
 	httpClient scrapemate.HTTPFetcher
@@ -209,6 +210,58 @@ var (
 
 const hexMatchPattern = `0x[0-9a-fA-F]+:0x[0-9a-fA-F]+` // Hex format place ID
 
+var (
+	placePathPattern  = regexp.MustCompile(`/maps/place/([^/]+)`)
+	resourceIDPattern = regexp.MustCompile(`!16s([^!?&]+)`)
+)
+
+func buildReviewPanelURL(placeURL string, entry Entry) (string, error) {
+	placeMatch := placePathPattern.FindStringSubmatch(placeURL)
+	if len(placeMatch) < 2 {
+		return "", fmt.Errorf("could not extract place path from URL: %s", placeURL)
+	}
+
+	resourceMatch := resourceIDPattern.FindStringSubmatch(placeURL)
+	if len(resourceMatch) < 2 {
+		return "", fmt.Errorf("could not extract resource ID from URL: %s", placeURL)
+	}
+
+	dataID := entry.DataID
+	if dataID == "" {
+		var err error
+		dataID, err = extractPlaceID(placeURL)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	parsedURL, err := url.Parse(placeURL)
+	if err != nil {
+		return "", fmt.Errorf("parse place URL: %w", err)
+	}
+
+	language := parsedURL.Query().Get("hl")
+	if language == "" {
+		language = "en"
+	}
+
+	return fmt.Sprintf(
+		"https://www.google.com/maps/place/%s/@%s,%s,16z/data=!4m8!3m7!1s%s!8m2!3d%s!4d%s!9m1!1b1!16s%s?hl=%s",
+		placeMatch[1],
+		formatCoordinate(entry.Latitude),
+		formatCoordinate(entry.Longtitude),
+		dataID,
+		formatCoordinate(entry.Latitude),
+		formatCoordinate(entry.Longtitude),
+		resourceMatch[1],
+		url.QueryEscape(language),
+	), nil
+}
+
+func formatCoordinate(value float64) string {
+	return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.7f", value), "0"), ".")
+}
+
 // extractPlaceID extracts the place ID from various Google Maps URL formats
 func extractPlaceID(mapURL string) (string, error) {
 	patternsOnce.Do(func() {
@@ -339,6 +392,7 @@ func generateRandomID(length int) (string, error) {
 
 // DOMReview represents a review extracted from the DOM
 type DOMReview struct {
+	ReviewID                string
 	AuthorName              string
 	AuthorURL               string
 	ProfilePicture          string
@@ -360,6 +414,12 @@ func ConvertDOMReviewsToReviews(domReviews []DOMReview) []Review {
 			Description:    dr.Text,
 			When:           dr.RelativeTimeDescription,
 			Images:         dr.Images,
+			ReviewID:       dr.ReviewID,
+			Source:         "Google",
+			RatingScale:    5,
+			RatingFloat:    float64(dr.Rating),
+			AuthorURL:      dr.AuthorURL,
+			TextOriginal:   dr.Text,
 		}
 		if review.Name != "" {
 			reviews = append(reviews, review)
@@ -371,7 +431,314 @@ func ConvertDOMReviewsToReviews(domReviews []DOMReview) []Review {
 
 // extractReviewsFromPage extracts reviews directly from the page DOM
 // This is a fallback when the RPC API fails
-func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([]DOMReview, error) {
+func extractReviewsFromPage(
+	ctx context.Context,
+	page scrapemate.BrowserPage,
+	reviewURL string,
+	reviewCount int,
+) ([]DOMReview, error) {
+	if reviewURL != "" {
+		reviews, err := extractReviewsFromReviewPanel(ctx, page, reviewURL, reviewCount)
+		if err == nil {
+			return reviews, nil
+		}
+
+		log.Printf("Review-panel extraction failed, trying legacy DOM fallback: %v", err)
+	}
+
+	return extractReviewsFromPageLegacy(ctx, page)
+}
+
+func extractReviewsFromReviewPanel(
+	ctx context.Context,
+	page scrapemate.BrowserPage,
+	reviewURL string,
+	reviewCount int,
+) ([]DOMReview, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	if _, err := page.Goto(reviewURL, scrapemate.WaitUntilDOMContentLoaded); err != nil {
+		return nil, fmt.Errorf("open Reviews panel: %w", err)
+	}
+
+	target := reviewCount
+	if target <= 0 || target > maxExtendedReviews {
+		target = maxExtendedReviews
+	}
+
+	result, err := page.Eval(fmt.Sprintf(`async () => {
+		const target = %d;
+		const reviews = new Map();
+		const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+		const cardSelectors = [
+			'div[data-review-id]',
+			'.jftiEf',
+			'.gws-localreviews__google-review',
+			'.WMbnJf',
+			'.bwb7ce'
+		];
+
+		const readText = (root, selectors) => {
+			for (const selector of selectors) {
+				const element = root.querySelector(selector);
+				const text = (element && element.textContent || '').trim();
+				if (text) return text;
+			}
+			return '';
+		};
+
+		const reviewCards = () => {
+			const cards = [];
+			const seen = new Set();
+			for (const selector of cardSelectors) {
+				for (const element of document.querySelectorAll(selector)) {
+					if (!seen.has(element)) {
+						seen.add(element);
+						cards.push(element);
+					}
+				}
+			}
+			return cards;
+		};
+
+		const backgroundURL = (element) => {
+			const value = getComputedStyle(element).backgroundImage || '';
+			const match = value.match(/^url\(["']?(.*?)["']?\)$/);
+			return match ? match[1] : '';
+		};
+
+		const collectVisibleReviews = () => {
+			for (const card of reviewCards()) {
+				for (const button of card.querySelectorAll(
+					'button.w8nwRe, button[aria-label="See more"], button[aria-label^="More"]'
+				)) {
+					try { button.click(); } catch (_) {}
+				}
+
+				const reviewID = card.getAttribute('data-review-id') || '';
+				const authorName = readText(card, [
+					'.d4r55', '.WNxzHc', '.TSUbDb', 'button.al6Kxe', '.bHrnEe', '.review-author'
+				]);
+				const authorLink = card.querySelector(
+					'a[href*="/maps/contrib/"], [data-href*="/maps/contrib/"]'
+				);
+				const authorURL = authorLink
+					? authorLink.getAttribute('href') || authorLink.getAttribute('data-href') || ''
+					: '';
+				const profileElement = card.querySelector(
+					'img.NBa7we, .NBa7we img, img.review-author-photo, .review-author-photo img'
+				);
+				const profilePicture = profileElement ? profileElement.getAttribute('src') || '' : '';
+
+				let rating = 0;
+				for (const selector of [
+					'.kvMYJc', '.DU9Pgb [aria-label]', '[role="img"][aria-label*="star"]',
+					'[aria-label*=" stars"]', '.pjemBf [aria-label]', '.review-score'
+				]) {
+					const ratingElement = card.querySelector(selector);
+					if (!ratingElement) continue;
+					const label = ratingElement.getAttribute('aria-label') || ratingElement.textContent || '';
+					const match = label.match(/(\d+(?:\.\d+)?)/);
+					if (match) {
+						rating = Math.round(Number.parseFloat(match[1]));
+						break;
+					}
+				}
+
+				const relativeTime = readText(card, [
+					'.rsqaWe', '.DU9Pgb', '.tTVLSc', '.review-date', '.dehysf'
+				]);
+				const text = readText(card, [
+					'.wiI7pd', '.MyEned span', '.review-full-text', '.Jtu6Td span',
+					'[data-expandable-section] span'
+				]);
+
+				const images = [];
+				const seenImages = new Set();
+				for (const media of card.querySelectorAll('.Tya61d, .KtCyie, .review-photos img')) {
+					const nestedImage = media.tagName === 'IMG' ? media : media.querySelector('img');
+					const imageURL = (nestedImage && nestedImage.getAttribute('src')) || backgroundURL(media);
+					if (imageURL && imageURL !== profilePicture && !seenImages.has(imageURL)) {
+						seenImages.add(imageURL);
+						images.push(imageURL);
+					}
+				}
+
+				const key = reviewID || [authorName, relativeTime, text.slice(0, 80)].join('|');
+				if (key && authorName && (text || rating > 0)) {
+					reviews.set(key, {
+						review_id: reviewID,
+						author_name: authorName,
+						author_url: authorURL,
+						profile_picture: profilePicture,
+						rating: rating,
+						relative_time_description: relativeTime,
+						text: text,
+						images: images
+					});
+				}
+			}
+		};
+
+		const findScroller = () => {
+			const cards = reviewCards();
+			const candidates = [];
+			const seen = new Set();
+			const add = (element) => {
+				if (element && !seen.has(element)) {
+					seen.add(element);
+					candidates.push(element);
+				}
+			};
+
+			if (cards.length > 0) add(cards[0].closest('div[role="feed"]'));
+			for (const selector of [
+				'div[role="feed"]', '.m6QErb.DxyBCb.kA9KIf.dS8AEf',
+				'.m6QErb.DxyBCb.kA9KIf', '.DxyBCb.kA9KIf', '.section-scrollbox'
+			]) {
+				for (const element of document.querySelectorAll(selector)) add(element);
+			}
+
+			const containingCards = candidates.filter((candidate) =>
+				cards.some((card) => candidate.contains(card)) &&
+				candidate.scrollHeight > candidate.clientHeight + 10
+			);
+			const scrollable = containingCards.length > 0
+				? containingCards
+				: candidates.filter((candidate) => candidate.scrollHeight > candidate.clientHeight + 10);
+			scrollable.sort((left, right) =>
+				(right.scrollHeight - right.clientHeight) - (left.scrollHeight - left.clientHeight)
+			);
+			return scrollable[0] || document.scrollingElement;
+		};
+
+		const waitForMutation = (scroller) => new Promise((resolve) => {
+			let settled = false;
+			const finish = () => {
+				if (settled) return;
+				settled = true;
+				observer.disconnect();
+				resolve();
+			};
+			const observer = new MutationObserver(finish);
+			observer.observe(scroller, { childList: true, subtree: true });
+			setTimeout(finish, 1800);
+		});
+
+		for (let attempt = 0; attempt < 40 && reviews.size === 0; attempt++) {
+			collectVisibleReviews();
+			if (reviews.size === 0) await sleep(250);
+		}
+
+		let attempts = 0;
+		let noGrowth = 0;
+		while (reviews.size < target && attempts < 100 && noGrowth < 9) {
+			const scroller = findScroller();
+			if (!scroller) break;
+			const previousCount = reviews.size;
+			scroller.scrollTop = scroller.scrollHeight;
+			scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
+			await waitForMutation(scroller);
+			await sleep(250);
+			collectVisibleReviews();
+			noGrowth = reviews.size === previousCount ? noGrowth + 1 : 0;
+			attempts++;
+		}
+
+		return {
+			reviews: Array.from(reviews.values()).slice(0, target),
+			attempts: attempts,
+			no_growth: noGrowth,
+			card_count: reviewCards().length,
+			url: location.href
+		};
+	}`, target))
+	if err != nil {
+		return nil, fmt.Errorf("paginate Reviews panel: %w", err)
+	}
+
+	resultMap, ok := result.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("decode Reviews panel result: unexpected type %T", result)
+	}
+
+	reviews := decodeDOMReviews(resultMap["reviews"])
+	log.Printf(
+		"Review-panel extraction completed: %d reviews, attempts=%v, no_growth=%v, cards=%v, url=%v",
+		len(reviews),
+		resultMap["attempts"],
+		resultMap["no_growth"],
+		resultMap["card_count"],
+		resultMap["url"],
+	)
+	if len(reviews) == 0 {
+		return nil, fmt.Errorf("Reviews panel exposed no review cards at %v", resultMap["url"])
+	}
+
+	return reviews, nil
+}
+
+func decodeDOMReviews(value any) []DOMReview {
+	rawReviews, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+
+	reviews := make([]DOMReview, 0, len(rawReviews))
+	for _, rawReview := range rawReviews {
+		reviewMap, ok := rawReview.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		review := DOMReview{
+			ReviewID:                browserString(reviewMap["review_id"]),
+			AuthorName:              browserString(reviewMap["author_name"]),
+			AuthorURL:               browserString(reviewMap["author_url"]),
+			ProfilePicture:          browserString(reviewMap["profile_picture"]),
+			Rating:                  browserInt(reviewMap["rating"]),
+			RelativeTimeDescription: browserString(reviewMap["relative_time_description"]),
+			Text:                    browserString(reviewMap["text"]),
+		}
+		if rawImages, ok := reviewMap["images"].([]any); ok {
+			for _, rawImage := range rawImages {
+				if image := browserString(rawImage); image != "" {
+					review.Images = append(review.Images, image)
+				}
+			}
+		}
+		if review.AuthorName != "" {
+			reviews = append(reviews, review)
+		}
+	}
+
+	return reviews
+}
+
+func browserString(value any) string {
+	text, _ := value.(string)
+
+	return text
+}
+
+func browserInt(value any) int {
+	switch number := value.(type) {
+	case int:
+		return number
+	case int64:
+		return int(number)
+	case float64:
+		return int(number)
+	default:
+		return 0
+	}
+}
+
+func extractReviewsFromPageLegacy(ctx context.Context, page scrapemate.BrowserPage) ([]DOMReview, error) {
 	log.Printf("Attempting DOM-based review extraction")
 
 	// First, try to click the reviews section to open the reviews panel
@@ -483,6 +850,7 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 
 				for (const element of reviewElements) {
 					try {
+						const reviewId = element.getAttribute('data-review-id') || '';
 						// Author name - comprehensive selectors
 						const userSelectors = [
 							'.d4r55',           // Primary name class
@@ -503,6 +871,10 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 								}
 								if (userName) break;
 							}
+						}
+						const contributorLink = element.querySelector('a[href*="/maps/contrib/"], [data-href*="/maps/contrib/"]');
+						if (contributorLink) {
+							userUrl = contributorLink.getAttribute('href') || contributorLink.getAttribute('data-href') || userUrl;
 						}
 
 						// Profile picture - multiple patterns
@@ -576,7 +948,7 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 						let text = '';
 
 						// First try to click "More" button to expand text
-						const moreButtons = element.querySelectorAll('.w8nwRe, button[aria-label*="More"], button[aria-expanded="false"]');
+						const moreButtons = element.querySelectorAll('button.w8nwRe, button[aria-label="See more"], button[aria-label^="More"]');
 						for (const btn of moreButtons) {
 							try { btn.click(); } catch(e) {}
 						}
@@ -590,7 +962,7 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 						}
 
 						// Images
-						const imageElements = element.querySelectorAll('.KtCyie img, .Tya61d img, .review-photos img, img[src*="lh3"]');
+						const imageElements = element.querySelectorAll('.KtCyie img, .Tya61d img, .review-photos img');
 						const images = [];
 						for (const img of imageElements) {
 							const src = img.getAttribute('src') || '';
@@ -601,6 +973,7 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 
 						if (userName && (text || rating > 0)) {
 							reviews.push({
+								review_id: reviewId,
 								author_name: userName,
 								author_url: userUrl,
 								profile_picture: profilePic,
@@ -633,7 +1006,10 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 						continue
 					}
 
-					review := DOMReview{}
+					review := DOMReview{
+						ReviewID: browserString(reviewMap["review_id"]),
+						Rating:   browserInt(reviewMap["rating"]),
+					}
 					if v, ok := reviewMap["author_name"].(string); ok {
 						review.AuthorName = v
 					}
@@ -644,10 +1020,6 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 
 					if v, ok := reviewMap["profile_picture"].(string); ok {
 						review.ProfilePicture = v
-					}
-
-					if v, ok := reviewMap["rating"].(float64); ok {
-						review.Rating = int(v)
 					}
 
 					if v, ok := reviewMap["relative_time_description"].(string); ok {
@@ -670,6 +1042,10 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 					isDuplicate := false
 
 					for _, existing := range reviews {
+						if review.ReviewID != "" && existing.ReviewID == review.ReviewID {
+							isDuplicate = true
+							break
+						}
 						if existing.AuthorName == review.AuthorName {
 							if existing.Text == review.Text {
 								isDuplicate = true
@@ -771,7 +1147,12 @@ func FetchReviewsWithFallback(ctx context.Context, params fetchReviewsParams) (F
 
 	// Fallback to DOM-based extraction
 	if params.page != nil {
-		domReviews, domErr := extractReviewsFromPage(ctx, params.page)
+		domReviews, domErr := extractReviewsFromPage(
+			ctx,
+			params.page,
+			params.reviewURL,
+			params.reviewCount,
+		)
 		if domErr == nil && len(domReviews) > 0 {
 			log.Printf("DOM extraction successful: %d reviews", len(domReviews))
 			return FetchReviewsResponse{}, domReviews, nil

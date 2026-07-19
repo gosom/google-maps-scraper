@@ -10,6 +10,74 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func Test_buildReviewPanelURL(t *testing.T) {
+	entry := Entry{
+		Title:      "Prima DC",
+		Latitude:   38.917745,
+		Longtitude: -77.0242749,
+		DataID:     "0x89b7b74b8d7d77ed:0xef675d9e669a1781",
+	}
+	placeURL := "https://www.google.com/maps/place/Prima+DC/@38.917745,-77.0242749,17z/data=!4m7!3m6!1s0x89b7b74b8d7d77ed:0xef675d9e669a1781!8m2!3d38.917745!4d-77.0242749!16s%2Fg%2F11khwmdrq0?authuser=0&hl=en&entry=ttu"
+
+	got, err := buildReviewPanelURL(placeURL, entry)
+	require.NoError(t, err)
+	assert.Equal(t, "https://www.google.com/maps/place/Prima+DC/@38.917745,-77.0242749,16z/data=!4m8!3m7!1s0x89b7b74b8d7d77ed:0xef675d9e669a1781!8m2!3d38.917745!4d-77.0242749!9m1!1b1!16s%2Fg%2F11khwmdrq0?hl=en", got)
+}
+
+func Test_decodeDOMReviews_RatingRepresentations(t *testing.T) {
+	tests := []struct {
+		name   string
+		rating any
+		want   int
+	}{
+		{name: "int", rating: int(5), want: 5},
+		{name: "int64", rating: int64(4), want: 4},
+		{name: "float64", rating: float64(3), want: 3},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := []any{map[string]any{
+				"review_id":                 "review-123",
+				"author_name":               "Reviewer",
+				"author_url":                "https://www.google.com/maps/contrib/123/reviews",
+				"profile_picture":           "https://example.com/profile.jpg",
+				"rating":                    tt.rating,
+				"relative_time_description": "a month ago",
+				"text":                      "A useful review",
+				"images":                    []any{"https://example.com/review.jpg"},
+			}}
+
+			reviews := decodeDOMReviews(raw)
+			require.Len(t, reviews, 1)
+			assert.Equal(t, tt.want, reviews[0].Rating)
+		})
+	}
+}
+
+func Test_ConvertDOMReviewsToReviews_MapsExtendedFields(t *testing.T) {
+	domReviews := []DOMReview{{
+		ReviewID:                "review-123",
+		AuthorName:              "Reviewer",
+		AuthorURL:               "https://www.google.com/maps/contrib/123/reviews",
+		ProfilePicture:          "https://example.com/profile.jpg",
+		Rating:                  5,
+		RelativeTimeDescription: "a month ago",
+		Text:                    "A useful review",
+		Images:                  []string{"https://example.com/review.jpg"},
+	}}
+
+	reviews := ConvertDOMReviewsToReviews(domReviews)
+	require.Len(t, reviews, 1)
+	assert.Equal(t, "review-123", reviews[0].ReviewID)
+	assert.Equal(t, "Google", reviews[0].Source)
+	assert.Equal(t, 5, reviews[0].RatingScale)
+	assert.Equal(t, 5.0, reviews[0].RatingFloat)
+	assert.Equal(t, domReviews[0].AuthorURL, reviews[0].AuthorURL)
+	assert.Equal(t, domReviews[0].Text, reviews[0].TextOriginal)
+	assert.Equal(t, domReviews[0].Images, reviews[0].Images)
+}
+
 func Test_extractPlaceID(t *testing.T) {
 	tests := []struct {
 		name    string

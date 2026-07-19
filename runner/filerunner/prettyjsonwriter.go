@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 
-	"github.com/gosom/google-maps-scraper/gmaps"
 	"github.com/gosom/scrapemate"
 )
 
@@ -22,12 +21,6 @@ func (p *prettyJSONWriter) Run(_ context.Context, in <-chan scrapemate.Result) e
 		items := jsonWriterAsSlice(result.Data)
 
 		for i := range items {
-			if e, ok := items[i].(*gmaps.Entry); ok {
-				if len(e.Albums) == 0 || len(e.UserReviewsExtended) == 0 {
-					continue
-				}
-			}
-
 			b, err := json.MarshalIndent(items[i], "", "  ")
 			if err != nil {
 				return err
