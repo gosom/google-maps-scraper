@@ -14,6 +14,7 @@ import (
 	"github.com/gosom/google-maps-scraper/grid"
 	"github.com/gosom/google-maps-scraper/leadsdb"
 	"github.com/gosom/google-maps-scraper/runner"
+	"github.com/gosom/google-maps-scraper/runner/resume"
 	"github.com/gosom/google-maps-scraper/tlmt"
 	"github.com/gosom/scrapemate"
 	"github.com/gosom/scrapemate/adapters/writers/csvwriter"
@@ -27,11 +28,38 @@ type fileRunner struct {
 	writers []scrapemate.ResultWriter
 	app     *scrapemateapp.ScrapemateApp
 	outfile *os.File
+
+	resumeIDs      *resume.IdentitySet
+	resumeDedup    *resume.IdentitySet
+	resumeState    *resume.State
+	resumeProgress *resume.ProgressTracker
 }
 
 func New(cfg *runner.Config) (runner.Runner, error) {
 	if cfg.RunMode != runner.RunModeFile {
 		return nil, fmt.Errorf("%w: %d", runner.ErrInvalidRunMode, cfg.RunMode)
+	}
+
+	if cfg.Resume {
+		if cfg.FastMode {
+			return nil, fmt.Errorf("-resume does not support fast mode")
+		}
+
+		if cfg.ResultsFile == "stdout" {
+			return nil, fmt.Errorf("-resume requires -results to be a file path")
+		}
+
+		if err := validateResumeFiles(cfg.ResultsFile); err != nil {
+			return nil, err
+		}
+
+		if cfg.CustomWriter != "" {
+			return nil, fmt.Errorf("-resume does not support custom writers")
+		}
+
+		if cfg.LeadsDBAPIKey != "" {
+			return nil, fmt.Errorf("-resume does not support LeadsDB output")
+		}
 	}
 
 	ans := &fileRunner{
@@ -75,7 +103,13 @@ func (r *fileRunner) Run(ctx context.Context) (err error) {
 	}()
 
 	dedup := deduper.New()
+
+	if r.cfg.Resume {
+		dedup = r.resumeDedup
+	}
+
 	exitMonitor := exiter.New()
+	seedOpts := r.seedJobOptions()
 
 	if r.cfg.GridBBox != "" {
 		if r.cfg.FastMode {
@@ -101,6 +135,7 @@ func (r *fileRunner) Run(ctx context.Context) (err error) {
 			dedup,
 			exitMonitor,
 			r.cfg.ExtraReviews,
+			seedOpts...,
 		)
 	} else {
 		seedJobs, err = runner.CreateSeedJobs(
@@ -115,6 +150,7 @@ func (r *fileRunner) Run(ctx context.Context) (err error) {
 			dedup,
 			exitMonitor,
 			r.cfg.ExtraReviews,
+			seedOpts...,
 		)
 	}
 
@@ -154,6 +190,18 @@ func (r *fileRunner) Close(context.Context) error {
 	return nil
 }
 
+func (r *fileRunner) seedJobOptions() []runner.SeedJobOption {
+	if !r.cfg.Resume {
+		return nil
+	}
+
+	return []runner.SeedJobOption{
+		runner.WithDeterministicSeedIDs(),
+		runner.WithCompletedInputSkipper(r.resumeState.IsInputCompleted),
+		runner.WithCompletionTracker(r.resumeProgress),
+	}
+}
+
 func (r *fileRunner) setInput() error {
 	switch r.cfg.InputFile {
 	case "stdin":
@@ -189,13 +237,19 @@ func (r *fileRunner) setWriters() error {
 	case r.cfg.LeadsDBAPIKey != "":
 		r.writers = append(r.writers, leadsdb.New(r.cfg.LeadsDBAPIKey))
 	default:
+		if !r.cfg.Resume {
+			if err := removeResumeState(r.cfg.ResultsFile); err != nil {
+				return err
+			}
+		}
+
 		var resultsWriter io.Writer
 
 		switch r.cfg.ResultsFile {
 		case "stdout":
 			resultsWriter = os.Stdout
 		default:
-			f, err := os.Create(r.cfg.ResultsFile)
+			f, err := r.openResultsFile()
 			if err != nil {
 				return err
 			}
@@ -205,16 +259,107 @@ func (r *fileRunner) setWriters() error {
 			resultsWriter = r.outfile
 		}
 
-		csvWriter := csvwriter.NewCsvWriter(csv.NewWriter(resultsWriter))
+		switch {
+		case r.cfg.Resume:
+			if err := r.initResume(); err != nil {
+				return err
+			}
 
-		if r.cfg.JSON {
+			if r.cfg.JSON {
+				r.writers = append(r.writers, resume.NewJSONLAppendWriter(
+					resultsWriter,
+					r.resumeIDs,
+					r.resumeProgress,
+					r.outfile.Sync,
+				))
+			} else {
+				writeHeader, headerErr := r.shouldWriteCSVHeader()
+				if headerErr != nil {
+					return headerErr
+				}
+
+				r.writers = append(r.writers, resume.NewCSVAppendWriter(
+					csv.NewWriter(resultsWriter),
+					writeHeader,
+					r.resumeIDs,
+					r.resumeProgress,
+					r.outfile.Sync,
+				))
+			}
+		case r.cfg.JSON:
 			r.writers = append(r.writers, jsonwriter.NewJSONWriter(resultsWriter))
-		} else {
+		default:
+			csvWriter := csvwriter.NewCsvWriter(csv.NewWriter(resultsWriter))
 			r.writers = append(r.writers, csvWriter)
 		}
 	}
 
 	return nil
+}
+
+func validateResumeFiles(resultsPath string) error {
+	if _, err := os.Stat(resultsPath); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	if _, err := os.Stat(resume.DefaultStatePath(resultsPath)); err == nil {
+		return fmt.Errorf("resume state exists but results file is missing")
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	return nil
+}
+
+func removeResumeState(resultsPath string) error {
+	err := os.Remove(resume.DefaultStatePath(resultsPath))
+	if os.IsNotExist(err) {
+		return nil
+	}
+
+	return err
+}
+
+func (r *fileRunner) openResultsFile() (*os.File, error) {
+	if r.cfg.Resume {
+		return os.OpenFile(r.cfg.ResultsFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	}
+
+	return os.Create(r.cfg.ResultsFile)
+}
+
+func (r *fileRunner) initResume() error {
+	ids, err := resume.LoadResultIdentities(r.cfg.ResultsFile, r.cfg.JSON)
+	if err != nil {
+		return err
+	}
+
+	state, err := resume.LoadState(resume.DefaultStatePath(r.cfg.ResultsFile))
+	if err != nil {
+		return err
+	}
+
+	r.resumeIDs = ids
+	r.resumeDedup = ids.Clone()
+	r.resumeState = state
+	r.resumeProgress = resume.NewProgressTracker(state)
+
+	return nil
+}
+
+func (r *fileRunner) shouldWriteCSVHeader() (bool, error) {
+	info, err := os.Stat(r.cfg.ResultsFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return true, nil
+		}
+
+		return false, err
+	}
+
+	return info.Size() == 0, nil
 }
 
 func (r *fileRunner) setApp() error {
