@@ -16,6 +16,24 @@ Extract Google Maps business leads, emails, reviews, phone numbers, websites, ra
 
 Use it for lead generation, local business research, sales prospecting, data enrichment, or developer automation.
 
+## Ask an AI Agent to Get Leads
+
+The easiest way to use Google Maps Scraper is with an AI coding agent such as [Claude Code](https://claude.com/claude-code), Codex, Cursor, GitHub Copilot, or any [Agent Skills-compatible tool](https://agentskills.io). You describe the leads you want; the agent plans the searches, runs a small validation, starts the full local scrape, monitors it, and helps you work with the results.
+
+Install the skill:
+
+```bash
+npx skills add gosom/google-maps-scraper
+```
+
+Then ask your agent in plain language:
+
+> Find dentists in Berlin and include their websites and email addresses.
+
+The agent automatically checks for the latest skill and Docker image, then asks only for details it still needs. For larger crawls, you can provide your own proxy, continue without one, or review three randomly selected proxy sponsors. Proxy credentials are entered through a masked local terminal prompt and are never pasted into the agent chat.
+
+Requires Docker and Node.js on macOS, Linux, or Windows through WSL. See [how the agent workflow works](#ai-agent-skill).
+
 | Goal | Start here |
 |---|---|
 | Get leads into CSV/JSON | [Command Line](#command-line) |
@@ -261,6 +279,7 @@ Useful options:
 | Run multiple pages per browser | `-pages-per-browser 4` |
 | Limit browser processes | `-browser-pool-size 2` |
 | Use proxies | `-proxies "http://user:pass@host:port,socks5://host:port"` |
+| Read proxies from a credentials file | `-proxies-file /path/to/proxies.txt` |
 
 `-c` controls how many scrape jobs run in parallel. Higher concurrency can finish large input files faster, but it also uses more CPU/RAM and can increase blocking or failures, especially without proxies. Start with the default for a first run. For larger jobs on a capable machine, try `-c 4`, `-c 8`, or `-c 16` and measure the result.
 
@@ -330,21 +349,31 @@ More examples are available in [Recipes](docs/recipes.md). If you need proxies f
 
 ## AI Agent Skill
 
-Use Google Maps Scraper directly from AI coding agents like [Claude Code](https://claude.com/claude-code), Cursor, GitHub Copilot, and [20+ other agents](https://agentskills.io). Just tell your agent to find businesses and it handles everything — query creation, scraping, and result analysis.
+The AI Agent Skill turns a natural-language lead request into a guided local scraping workflow. It is designed for nontechnical users as well as developers and keeps you in control of the search scope, proxy choice, and output.
 
-**Install the skill:**
+If you have not installed it yet:
 
 ```bash
 npx skills add gosom/google-maps-scraper
 ```
 
-**Then just ask your agent:**
+Then just ask your agent:
 
 > Find me all dentists in Berlin with their emails
 
-The agent will ask you a few setup questions, run the scraper in the background via Docker, and present the results with options to save, filter, analyze, or export.
+The agent will:
 
-Requires Docker installed and running. See the [skill definition](skills/google-maps-scraper/SKILL.md) for details.
+1. Noninteractively check for the latest skill and Docker image.
+2. Infer sensible search defaults and ask only for missing essentials.
+3. Let you use your own proxy, continue without one, or choose from three randomly selected proxy sponsors.
+4. Collect proxy credentials through a masked local terminal prompt instead of chat.
+5. Run a small validation scrape before the full job.
+6. Start and monitor the Docker crawl in the background.
+7. Present the results with options to save, filter, analyze, or export.
+
+Proxy sponsor recommendations are clearly disclosed and shown with equal placement. Any discount or offer is displayed only when it is configured in the skill's [active sponsor registry](skills/google-maps-scraper/references/proxy-sponsors.json). You can always use another provider or no proxy.
+
+Requires Docker and Node.js on macOS, Linux, or Windows through WSL. See the [skill definition](skills/google-maps-scraper/SKILL.md) for details.
 
 ---
 
@@ -493,6 +522,7 @@ Database:
 Proxy:
   -proxies string    Comma-separated proxy list
                      Format: protocol://user:pass@host:port
+  -proxies-file      Path to a file containing one proxy URL per line
 
 Export:
   -leadsdb-api-key   Export directly to LeadsDB (get key at getleadsdb.com)

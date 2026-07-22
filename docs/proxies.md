@@ -18,6 +18,20 @@ Use `-proxies` with a comma-separated list:
 
 Supported protocols: `socks5`, `socks5h`, `http`, `https`.
 
+For AI-agent and automation workflows, prefer `-proxies-file` so credentials do not appear in generated commands or process arguments. Store one proxy URL per line; blank lines and `#` comments are ignored:
+
+```bash
+chmod 600 ~/.config/google-maps-scraper/proxies.txt
+
+./google-maps-scraper \
+  -input queries.txt \
+  -results results.csv \
+  -proxies-file ~/.config/google-maps-scraper/proxies.txt \
+  -depth 1
+```
+
+`-proxies` and `-proxies-file` cannot be used together. Keep the credentials file outside project repositories and remove it when it is no longer needed.
+
 ## Docker Example
 
 ```bash
@@ -36,6 +50,8 @@ docker run \
 ```
 
 ## Current Proxy Sponsors
+
+The bundled AI Agent Skill randomly selects three distinct active sponsors from its registry whenever a user asks for proxy recommendations. All three receive equal presentation with a sponsorship disclosure. Configured discounts or special offers are shown, and users may always choose another provider or continue without a proxy.
 
 | Provider | Notes | Link |
 |---|---|---|

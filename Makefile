@@ -13,7 +13,12 @@ vet: ## runs go vet
 format: ## runs go fmt
 	gofmt -s -w .
 
-test: ## runs the unit tests
+test-agent-skill: ## tests the bundled AI agent workflow
+	node --test skills/google-maps-scraper/scripts/select-proxy-sponsors.test.mjs
+	node --test skills/google-maps-scraper/scripts/status-local.test.mjs
+	bash skills/google-maps-scraper/scripts/helpers_test.sh
+
+test: test-agent-skill ## runs the unit tests
 	go test -v -race -timeout 5m ./...
 
 test-cover: ## outputs the coverage statistics

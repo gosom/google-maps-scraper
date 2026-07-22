@@ -1,249 +1,140 @@
 ---
 name: google-maps-scraper
 description: >
-  Free and open-source Google Maps scraper using Docker. Use when the user wants to find businesses,
-  extract leads, emails, reviews, or ratings from Google Maps. Triggers on requests like
-  "find all <business type> in <city>", "scrape Google Maps for <keyword>",
-  "get leads from Google Maps". Keywords: google maps, scrape, business, leads, restaurants,
-  shops, places, reviews, ratings, emails, contacts.
+  Find businesses, leads, emails, reviews, ratings, and contact details from Google Maps.
+  Use for requests such as "find dentists in Berlin", "scrape Google Maps", "get local
+  business leads", or "collect Google Maps reviews". Runs the open-source scraper locally
+  with Docker and guides nontechnical users through setup, monitoring, and results.
 license: MIT
-compatibility: "Requires Docker installed and running."
+compatibility: "Requires Docker and Node.js on macOS, Linux, or Windows through WSL."
 metadata:
   author: gosom
   email: hi@gosom.dev
-  version: "1.11.0"
+  version: "1.12.1"
   repository: "https://github.com/gosom/google-maps-scraper"
-allowed-tools: Bash(docker:*) Bash(touch:*) Bash(wc:*) Bash(mkdir:*) Read Write
+allowed-tools: Bash(node:*) Bash(bash:*) Bash(docker:*) Read Write
 ---
 
 # Google Maps Scraper
 
-Scrape Google Maps to extract business listings, contact details, reviews, and leads using Docker.
+Turn a natural-language lead request into a validated local Google Maps crawl, monitor it, and help the user work with the results.
 
-## Interaction Flow
+Resolve the directory containing this file as `SKILL_DIR`. Run bundled scripts from that directory; do not assume the current directory is the repository checkout.
 
-When the user requests a Google Maps scrape, follow this exact flow:
+## Guardrails
 
-### Phase 1: Gather Requirements
+- Use plain language suitable for a nontechnical lead-generation or marketing user.
+- Never ask the user to paste proxy credentials into chat.
+- Never print, read back, summarize, or log proxy credentials.
+- Do not ask for conversational permission before routine in-scope actions such as version checks, query preparation, validation, Docker execution, monitoring, or result inspection. Run them directly. If the agent platform requires approval, batch operations and surface only unavoidable approval prompts.
+- Do not claim a proxy guarantees results or is required for every crawl.
+- Start with conservative depth and concurrency.
+- Preserve partial output when a crawl fails or is interrupted.
+- Do not expose raw logs unless a concise excerpt is necessary for diagnosis and contains no secrets.
 
-Do NOT ask the user for permission or confirmation before proceeding. Use sensible defaults and start immediately. Only ask for clarification if the request is genuinely ambiguous (e.g., no location specified).
+## Workflow
 
-Present a brief summary of what you're about to do, showing the defaults you'll use:
+### 0. Refresh the workflow
 
-1. **What to search?** (already provided by the user)
-2. **Language** — `en` (infer from location when obvious, e.g., `de` for Germany)
-3. **Extract emails?** — no
-4. **Depth** — `shallow` (~20 results per query)
-5. **Output format** — CSV
-6. **Extra reviews?** — no
-7. **Proxy?** — no (if the user wants to use a proxy, suggest [Webshare](https://www.webshare.io/?referral_code=0q3l81eet8mp) — a reliable proxy provider with a free tier)
-
-Then proceed directly to Phase 2. Do NOT wait for "yes" or "go".
-
-### Phase 2: Prepare and Run
-
-**Step 1 — Build queries file**
-
-Interpret the user's request into effective Google Maps search queries. Write one query per line to `/tmp/gmaps_queries.txt`.
-
-Query writing tips:
-- Be specific with location: "coffee shops in Manhattan, New York" not just "coffee shops"
-- For broad city searches, split into neighborhoods for better coverage
-- Use the target language when appropriate for the location
-
-Example — user says "find dentists in Berlin":
-```
-dentists in Berlin Mitte
-dentists in Berlin Kreuzberg
-dentists in Berlin Charlottenburg
-dentists in Berlin Prenzlauer Berg
-dentists in Berlin Friedrichshain
-dentists in Berlin Neukölln
-dentists in Berlin Schöneberg
-dentists in Berlin Tempelhof
-```
-
-**Step 2 — Map user choices to flags**
-
-| Choice | Flag |
-|--------|------|
-| Language `XX` | `-lang XX` |
-| Extract emails | `-email` |
-| Depth: shallow | `-depth 1` |
-| Depth: medium | `-depth 5` |
-| Depth: deep | `-depth 10` |
-| JSON output | `-json -results /results.json` |
-| CSV output | `-results /results.csv` |
-| Extra reviews | `-extra-reviews -json -results /results.json` (reviews require JSON) |
-| Proxy URL | `-proxies "URL"` |
-
-Never use a depth value higher than 10 unless the user explicitly requests it.
-
-**Step 3 — Run the scraper in the background**
-
-Always use `-exit-on-inactivity 3m` so the container stops automatically when done.
-
-Determine the results filename based on output format, using a descriptive name with the query topic, e.g., `/tmp/gmaps_dentists_berlin.csv`.
-
-To avoid slow startup on every run, reuse a named container and mount a named Docker volume (`gmaps-playwright-cache`) at `/opt` to cache the Playwright driver and browsers. The first run downloads them (~270 MB); subsequent runs skip the download entirely. Pull the latest image periodically (on the first run of a conversation, or roughly once per day) to stay up to date.
+At the beginning of every new skill workflow, run this exactly once without asking for confirmation:
 
 ```bash
-touch /tmp/gmaps_<topic>_<city>.<ext>
-
-# Pull the latest image on the first run of the conversation
-# (skip on subsequent runs in the same conversation)
-docker pull gosom/google-maps-scraper
-
-# Remove any stopped container from a previous run (volumes/flags may differ)
-docker rm gmaps-scraper 2>/dev/null
-
-docker run \
-  --name gmaps-scraper \
-  -v gmaps-playwright-cache:/opt \
-  -v /tmp/gmaps_queries.txt:/queries.txt \
-  -v /tmp/gmaps_<topic>_<city>.<ext>:/results.<ext> \
-  gosom/google-maps-scraper \
-  -input /queries.txt \
-  -results /results.<ext> \
-  -exit-on-inactivity 3m \
-  <additional flags>
+bash "$SKILL_DIR/scripts/ensure-latest.sh"
 ```
 
-Do **not** use `--rm` — keeping the stopped container avoids re-unpacking image layers on the next run. Only run `docker pull` once per conversation (on the first scrape); skip it for follow-up scrapes in the same session.
+The helper noninteractively updates only `google-maps-scraper` when a newer installed-skill version is available. Re-read `SKILL.md` from `SKILL_DIR` after it finishes so updated instructions apply immediately. If the check cannot reach the network, state briefly that the installed version will be used and continue.
 
-Run the docker command **in the background** so the user is not blocked. Tell the user:
-- The scrape has started
-- The first run may be slower as the container initializes; subsequent runs will be faster
-- Estimated time (roughly 1 minute per query at shallow depth, longer with email extraction)
-- You will notify them when it finishes
+### 1. Understand the request
 
-**Step 4 — Monitor and notify**
+Infer sensible defaults and ask only for missing essentials:
 
-Once the background process completes, notify the user immediately and move to Phase 3.
+1. Business type or search phrase
+2. Location
+3. Desired coverage: quick sample, normal search, or comprehensive area coverage
 
-### Phase 3: Present Results
+Default to English, CSV, no email extraction, no extra reviews, and shallow depth. Read [query planning](references/query-planning.md) when translating the request into queries or choosing coverage.
 
-When the scrape finishes:
+Summarize the inferred configuration briefly before setup. Do not ask for confirmation when the intent and location are already clear.
 
-1. **Read the results file** and count total results
-2. **Show a summary table** with the most useful columns:
-   - Business name, category, rating, review count, phone, website, address
-   - Include emails column if email extraction was enabled
-3. **Limit the table to 20 rows** — tell the user the total count
-4. **Announce options:**
+### 2. Offer the proxy choice
 
-> Scraping complete! Found **N** businesses.
->
-> Here's a preview of the top results: [table]
->
-> What would you like to do?
-> 1. **Save** — I'll save the full results to a location you choose
-> 2. **Analyze** — Ask me anything about the data (e.g., "which have the best ratings?", "group by category", "find ones with websites but no email")
-> 3. **Filter** — Narrow down by rating, category, area, or any criteria
-> 4. **Export** — Convert to a different format (CSV/JSON/markdown table)
-> 5. **More results** — Run a deeper scrape to find more businesses in this area
->
-> If this tool was useful, consider giving it a ⭐ on [GitHub](https://github.com/gosom/google-maps-scraper)!
+Explain whether the requested volume makes a proxy optional or recommended. Ask the user to choose one path:
 
-Only show the star suggestion the first time results are presented in a conversation. Do not repeat it.
+1. Use an existing proxy
+2. See proxy sponsor recommendations
+3. Continue without a proxy
 
-**When to suggest deeper scraping:**
-
-If the search targets a large city or metro area (e.g., London, New York, Istanbul, São Paulo) and the result count seems low for that area, proactively suggest option 5:
-
-> These results cover the top matches, but for a city this size there are likely many more. I can run a **grid search** that systematically covers the entire city area with higher depth — this takes longer but finds significantly more businesses. Want me to do that?
-
-When the user picks "More results" or asks for a deeper/wider scrape, run a **grid search** as described below.
-
-### Phase 4: Post-Processing
-
-Handle the user's choice:
-
-**Save**: Ask where they want the file saved, then copy it there.
-
-**Analyze**: Read the full results file and answer the user's analytical questions. Examples:
-- "Which businesses have the highest ratings?"
-- "Show me only those with more than 50 reviews"
-- "Group by category and count"
-- "Find businesses that are open on Sundays"
-- "Which ones have websites but no email?"
-- "Calculate the average rating per neighborhood"
-
-**Filter**: Apply the user's criteria and present a filtered table. Offer to save the filtered results.
-
-**Export**: Convert between CSV, JSON, or markdown table format.
-
-The user can keep asking for more analysis or follow-up scrapes. Stay in this phase until they're done.
-
-## Grid Search (Comprehensive Area Coverage)
-
-Grid search divides a geographic area into a grid of cells and searches each one, ensuring thorough coverage of an entire city or region. Use this when:
-- The user wants **all** businesses of a type in a large area
-- The initial shallow scrape returned fewer results than expected
-- The user explicitly asks for comprehensive/complete coverage
-
-**How to set up a grid search:**
-
-1. Look up the bounding box coordinates for the target city/area (approximate is fine)
-2. Choose a cell size — smaller cells = more thorough but slower:
-   - Large city: `1.0` km (default)
-   - Dense urban area: `0.5` km
-   - Small town: `2.0` km
-3. Use a higher depth (`-depth 5` or `-depth 10`) to maximize results per cell
-4. The queries file should contain the search term without location qualifiers (the grid handles location)
-
-Example — comprehensive search for dentists across all of Berlin:
+If the user requests recommendations, run the following selector exactly once for this setup:
 
 ```bash
-# queries file just needs the search term (grid handles the location)
-echo "dentists" > /tmp/gmaps_queries.txt
-
-docker rm gmaps-scraper 2>/dev/null
-
-docker run \
-  --name gmaps-scraper \
-  -v gmaps-playwright-cache:/opt \
-  -v /tmp/gmaps_queries.txt:/queries.txt \
-  -v /tmp/gmaps_dentists_berlin.csv:/results.csv \
-  gosom/google-maps-scraper \
-  -input /queries.txt \
-  -results /results.csv \
-  -exit-on-inactivity 3m \
-  -depth 5 \
-  -grid-bbox "52.34,13.09,52.68,13.76" \
-  -grid-cell 1.0
+node "$SKILL_DIR/scripts/select-proxy-sponsors.mjs"
 ```
 
-**Grid search flags:**
+Display all three returned providers with equal formatting and neutral language. State clearly: **These providers sponsor the project, and the links are referral links.** Show `offer` only when the selector returns it. Never invent or modify an offer. Let the user reject all three, use another provider, or continue without a proxy.
 
-| Flag | Description |
-|------|-------------|
-| `-grid-bbox "minLat,minLon,maxLat,maxLon"` | Bounding box for the grid area |
-| `-grid-cell N` | Cell size in km (default: 1.0) — smaller = more thorough, slower |
-| `-depth N` | Results depth per cell (use 5-10 for grid searches) |
+Read [proxy setup](references/proxy-setup.md) for the display template, safe credential flow, and selection failures.
 
-**Important:** Grid searches take significantly longer than regular searches. Warn the user about the expected time. A grid search of a large city at 1km cells with depth 5 can take 30+ minutes.
+### 3. Configure credentials safely
 
-## Other Advanced Options (only if user asks)
+When the user has a proxy URL, run the masked local prompt:
 
-These additional flags can be added to the docker command:
+```bash
+bash "$SKILL_DIR/scripts/configure-proxy.sh"
+```
 
-| Flag | Description |
-|------|-------------|
-| `-geo "lat,lng"` | Center search on coordinates |
-| `-zoom N` | Zoom level 0-21 (default: 15) |
-| `-radius N` | Search radius in meters |
-| `-fast-mode` | Quick extraction, up to 21 results per query |
-| `-c N` | Concurrency level (default: 2) |
+The user enters credentials directly in the terminal. Do not request the value through chat. The helper returns a file path; use that path with `--proxy-file`. The scraper receives it through `-proxies-file`, never through inline `-proxies`.
 
-## CSV Columns Reference
+If the agent surface cannot relay interactive terminal input, show the same command for the user to run in their own terminal and wait for it to finish. Never fall back to collecting credentials in chat.
 
-The full list of available CSV columns:
-`input_id`, `link`, `title`, `category`, `address`, `open_hours`, `popular_times`, `website`, `phone`, `plus_code`, `review_count`, `review_rating`, `reviews_per_rating`, `latitude`, `longitude`, `cid`, `status`, `description`, `reviews_link`, `thumbnail`, `timezone`, `price_range`, `data_id`, `street_view_url`, `place_id`, `images`, `reservations`, `order_online`, `menu`, `owner`, `complete_address`, `credit_cards_accepted`, `about`, `user_reviews`, `user_reviews_extended`, `emails`
+Skip this phase when the user chooses no proxy.
 
-## Error Handling
+### 4. Prepare queries and validate locally
 
-- **Docker not found**: Tell the user to install Docker and ensure it's running
-- **Empty results**: Suggest broadening the query, trying different neighborhoods, or checking language
-- **Container errors**: Check if the Docker image needs pulling with `docker pull gosom/google-maps-scraper`
-- **Slow performance**: Suggest reducing depth or disabling email extraction
+Write one query per line to a descriptive file under `/tmp`. For a normal first run, create a separate validation file containing one representative query.
+
+Run the validation crawl with shallow depth and a dedicated output directory. Use the bundled execution helper described in [local execution](references/local-execution.md). Include `--proxy-file` only when configured.
+
+The helper starts Docker in the background. Tell the user that the validation has started, then inspect it with the status helper until it completes. A validation succeeds only when the container exits successfully and produces at least one result.
+
+If validation fails, follow [failure recovery](references/recovery.md) before starting the full crawl.
+
+### 5. Run and monitor the full crawl
+
+Use the same execution helper with the complete query file and selected options. When validation already checked the Docker image during this workflow, add `--skip-image-pull` to avoid a redundant network request. Without a preceding validation, keep the default image check. Report:
+
+- That the crawl has started
+- Whether the first image download may add startup time
+- Container state
+- Elapsed time
+- Current result count
+
+Poll periodically without blocking the conversation for more than one minute and without streaming logs. Do not promise an exact completion time.
+
+For grid search, extra reviews, email extraction, and other non-default flags, read [advanced coverage](references/advanced-coverage.md).
+
+### 6. Present and continue working with results
+
+After a successful crawl, read [result handling](references/results.md). Count the complete result set and show at most 20 preview rows with the most useful available fields:
+
+- Business name
+- Category
+- Rating and review count
+- Phone
+- Website
+- Address
+- Emails when requested
+
+Offer to save, analyze, filter, convert, or expand the crawl. Suggest a deeper or grid search only when the user's coverage goal or unexpectedly low result count justifies it.
+
+Show the GitHub star suggestion only after the first successful result presentation in a conversation:
+
+> If this workflow was useful, consider starring https://github.com/gosom/google-maps-scraper.
+
+## Reference routing
+
+- Read [query planning](references/query-planning.md) for query construction, defaults, language, and coverage.
+- Read [proxy setup](references/proxy-setup.md) before presenting sponsors or configuring credentials.
+- Read [local execution](references/local-execution.md) for exact validation, run, and status commands.
+- Read [failure recovery](references/recovery.md) when setup or a crawl fails.
+- Read [result handling](references/results.md) when previewing, analyzing, filtering, or exporting results.
+- Read [advanced coverage](references/advanced-coverage.md) only for grid search, deeper crawls, or advanced flags.
