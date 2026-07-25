@@ -325,6 +325,7 @@ func generateRandomID(length int) (string, error) {
 
 // DOMReview represents a review extracted from the DOM
 type DOMReview struct {
+	ReviewID                string
 	AuthorName              string
 	AuthorURL               string
 	ProfilePicture          string
@@ -338,7 +339,8 @@ type DOMReview struct {
 func ConvertDOMReviewsToReviews(domReviews []DOMReview) []Review {
 	reviews := make([]Review, 0, len(domReviews))
 
-	for _, dr := range domReviews {
+	for i := range domReviews {
+		dr := &domReviews[i]
 		review := Review{
 			Name:           dr.AuthorName,
 			ProfilePicture: dr.ProfilePicture,
@@ -346,13 +348,113 @@ func ConvertDOMReviewsToReviews(domReviews []DOMReview) []Review {
 			Description:    dr.Text,
 			When:           dr.RelativeTimeDescription,
 			Images:         dr.Images,
+			ReviewID:       dr.ReviewID,
 		}
+
 		if review.Name != "" {
 			reviews = append(reviews, review)
 		}
 	}
 
 	return reviews
+}
+
+// dedupeDOMReviewsAgainstPrimary drops DOM reviews that are already present in the
+// primary reviews. Matching is by review id only, an empty id is never a duplicate.
+func dedupeDOMReviewsAgainstPrimary(primary, domReviews []Review) []Review {
+	seen := make(map[string]struct{}, len(primary))
+
+	for i := range primary {
+		if primary[i].ReviewID != "" {
+			seen[primary[i].ReviewID] = struct{}{}
+		}
+	}
+
+	if len(seen) == 0 {
+		return domReviews
+	}
+
+	kept := make([]Review, 0, len(domReviews))
+	withID := 0
+
+	for i := range domReviews {
+		if domReviews[i].ReviewID != "" {
+			withID++
+
+			if _, dup := seen[domReviews[i].ReviewID]; dup {
+				continue
+			}
+		}
+
+		kept = append(kept, domReviews[i])
+	}
+
+	if withID > 0 && len(kept) == len(domReviews) {
+		log.Printf("DOM review ids matched none of %d primary ids", len(seen))
+	}
+
+	return kept
+}
+
+func decodeDOMReviews(raw []any) []DOMReview {
+	decoded := make([]DOMReview, 0, len(raw))
+
+	for _, rawReview := range raw {
+		reviewMap, ok := rawReview.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		review := DOMReview{}
+		if v, ok := reviewMap["review_id"].(string); ok {
+			review.ReviewID = v
+		}
+
+		if v, ok := reviewMap["author_name"].(string); ok {
+			review.AuthorName = v
+		}
+
+		if v, ok := reviewMap["author_url"].(string); ok {
+			review.AuthorURL = v
+		}
+
+		if v, ok := reviewMap["profile_picture"].(string); ok {
+			review.ProfilePicture = v
+		}
+
+		// Playwright decodes whole JS numbers as int, fractional ones as float64.
+		switch v := reviewMap["rating"].(type) {
+		case int:
+			review.Rating = v
+		case float64:
+			review.Rating = int(v)
+		}
+
+		// The rating selectors also match non-star aria-labels, e.g. "12 reviews".
+		if review.Rating < 1 || review.Rating > 5 {
+			review.Rating = 0
+		}
+
+		if v, ok := reviewMap["relative_time_description"].(string); ok {
+			review.RelativeTimeDescription = v
+		}
+
+		if v, ok := reviewMap["text"].(string); ok {
+			review.Text = v
+		}
+
+		if v, ok := reviewMap["images"].([]interface{}); ok {
+			for _, img := range v {
+				if imgStr, ok := img.(string); ok {
+					review.Images = append(review.Images, imgStr)
+				}
+			}
+		}
+
+		decoded = append(decoded, review)
+	}
+
+	return decoded
 }
 
 // extractReviewsFromPage extracts reviews directly from the page DOM
@@ -469,6 +571,10 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 
 				for (const element of reviewElements) {
 					try {
+						// The card carries the id, unless the selector matched a wrapper
+						const reviewId = element.getAttribute('data-review-id') ||
+							element.querySelector('[data-review-id]')?.getAttribute('data-review-id') || '';
+
 						// Author name - comprehensive selectors
 						const userSelectors = [
 							'.d4r55',           // Primary name class
@@ -587,6 +693,7 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 
 						if (userName && (text || rating > 0)) {
 							reviews.push({
+								review_id: reviewId,
 								author_name: userName,
 								author_url: userUrl,
 								profile_picture: profilePic,
@@ -613,65 +720,29 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 		} else if reviewsJSON != nil {
 			rawReviews, ok := reviewsJSON.([]any)
 			if ok {
-				for _, rawReview := range rawReviews {
-					reviewMap, ok := rawReview.(map[string]interface{})
-					if !ok {
-						continue
-					}
+				decoded := decodeDOMReviews(rawReviews)
 
-					review := DOMReview{}
-					if v, ok := reviewMap["author_name"].(string); ok {
-						review.AuthorName = v
-					}
-
-					if v, ok := reviewMap["author_url"].(string); ok {
-						review.AuthorURL = v
-					}
-
-					if v, ok := reviewMap["profile_picture"].(string); ok {
-						review.ProfilePicture = v
-					}
-
-					if v, ok := reviewMap["rating"].(float64); ok {
-						review.Rating = int(v)
-					}
-
-					if v, ok := reviewMap["relative_time_description"].(string); ok {
-						review.RelativeTimeDescription = v
-					}
-
-					if v, ok := reviewMap["text"].(string); ok {
-						review.Text = v
-					}
-
-					if v, ok := reviewMap["images"].([]interface{}); ok {
-						for _, img := range v {
-							if imgStr, ok := img.(string); ok {
-								review.Images = append(review.Images, imgStr)
-							}
-						}
-					}
-
+				for i := range decoded {
 					// Add if unique (check by author name and text prefix)
 					isDuplicate := false
 
-					for _, existing := range reviews {
-						if existing.AuthorName == review.AuthorName {
-							if existing.Text == review.Text {
+					for j := range reviews {
+						if reviews[j].AuthorName == decoded[i].AuthorName {
+							if reviews[j].Text == decoded[i].Text {
 								isDuplicate = true
 								break
 							}
 
-							if len(existing.Text) > 20 && len(review.Text) > 20 &&
-								existing.Text[:20] == review.Text[:20] {
+							if len(reviews[j].Text) > 20 && len(decoded[i].Text) > 20 &&
+								reviews[j].Text[:20] == decoded[i].Text[:20] {
 								isDuplicate = true
 								break
 							}
 						}
 					}
 
-					if !isDuplicate && review.AuthorName != "" {
-						reviews = append(reviews, review)
+					if !isDuplicate && decoded[i].AuthorName != "" {
+						reviews = append(reviews, decoded[i])
 					}
 				}
 			}

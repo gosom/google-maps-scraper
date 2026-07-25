@@ -3,6 +3,7 @@ package gmaps
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -118,7 +119,14 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 	domReviews, ok := resp.Meta["dom_reviews"].([]DOMReview)
 	if ok && len(domReviews) > 0 {
 		convertedReviews := ConvertDOMReviewsToReviews(domReviews)
-		entry.UserReviewsExtended = append(entry.UserReviewsExtended, convertedReviews...)
+
+		deduped := dedupeDOMReviewsAgainstPrimary(entry.UserReviews, convertedReviews)
+		if len(deduped) != len(convertedReviews) {
+			log.Printf("DOM reviews: dropped %d of %d already present in user_reviews",
+				len(convertedReviews)-len(deduped), len(convertedReviews))
+		}
+
+		entry.UserReviewsExtended = append(entry.UserReviewsExtended, deduped...)
 	}
 
 	if j.ExtractEmail && entry.IsWebsiteValidForEmail() {
