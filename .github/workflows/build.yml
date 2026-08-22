@@ -42,3 +42,5 @@ jobs:
         run: make vuln
       - name: Go Build
         run: go build -o /dev/null ./...
+      - name: Playwright Driver Consistency
+        run: go test -run '^TestPlaywright' .
