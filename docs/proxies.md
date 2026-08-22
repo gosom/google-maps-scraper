@@ -59,7 +59,7 @@ The bundled AI Agent Skill randomly selects three distinct active sponsors from 
 | Webshare | Proxy provider with HTTP and SOCKS5 support | [Visit Webshare](https://www.webshare.io/?referral_code=0q3l81eet8mp) |
 | BirdProxies | Residential and ISP proxy provider supporting this project | [Visit BirdProxies](https://birdproxies.com/?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom-google-maps-scraper) / [Discord](https://discord.com/invite/birdproxies) |
 | Proxidize | Mobile and residential proxies for Google Maps scraping, local SEO, lead generation, and data collection. Use code `gmaps20` for 20% off | [Visit Proxidize](https://proxidize.com/?utm_source=github&utm_medium=sponsorship&utm_campaign=google_maps_scraper&utm_content=gosom) |
-| NodeMaven | Reliable proxies for automation, scraping, SEO research, and social media. Codes: `MAPS35` for Mobile/Residential, `MAPS40` for ISP Static proxies | [Visit NodeMaven](https://go.nodemaven.com/GoogleMapsScrapper) |
+| NodeMaven | The most efficient proxy provider for Web Scraping and Automation with the Highest Quality IP on the market. Codes: `MAPS35` for 35% off to Mobile and Residential Proxies, `MAPS40` for 40% off to ISP (Static) Proxies | [Visit NodeMaven](https://go.nodemaven.com/GoogleMapsScrapperaugust) |
 | Decodo | Proxy provider supporting this project | [Visit Decodo](https://visit.decodo.com/APVbbx) |
 | Evomi | Proxy provider supporting this project | [Visit Evomi](https://evomi.com?utm_source=github&utm_medium=banner&utm_campaign=gosom-maps) |
 
