@@ -13,9 +13,9 @@ RUN export PATH=$PATH:/usr/local/go/bin:/root/go/bin \
        else \
          GO_ARCH="amd64"; \
        fi \
-    && wget -q "https://go.dev/dl/go1.26.5.linux-${GO_ARCH}.tar.gz" \
-    && tar -C /usr/local -xzf "go1.26.5.linux-${GO_ARCH}.tar.gz" \
-    && rm "go1.26.5.linux-${GO_ARCH}.tar.gz" \
+    && wget -q "https://go.dev/dl/go1.26.6.linux-${GO_ARCH}.tar.gz" \
+    && tar -C /usr/local -xzf "go1.26.6.linux-${GO_ARCH}.tar.gz" \
+    && rm "go1.26.6.linux-${GO_ARCH}.tar.gz" \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && go install github.com/mxschmitt/playwright-go/cmd/playwright@${PLAYWRIGHT_GO_VERSION} \
@@ -23,7 +23,7 @@ RUN export PATH=$PATH:/usr/local/go/bin:/root/go/bin \
     && playwright install chromium --with-deps
 
 # Build stage
-FROM golang:1.26.5-trixie AS builder
+FROM golang:1.26.6-trixie AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
