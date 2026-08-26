@@ -265,6 +265,7 @@ Useful options:
 | Extract emails from business websites | `-email` |
 | Write JSON instead of CSV | `-json -results /out/results.json` |
 | Collect extra reviews | `-extra-reviews -json -results /out/results.json` |
+| Resume an interrupted file scrape | `-resume -results /out/results.csv` |
 | Increase concurrency | `-c 4`, `-c 8`, or `-c 16` |
 | Run multiple pages per browser | `-pages-per-browser 4` |
 | Limit browser processes | `-browser-pool-size 2` |
@@ -485,6 +486,7 @@ Core Options:
   -input string       Path to input file with queries (one per line)
   -results string     Output file path (default: stdout)
   -json              Output JSON instead of CSV
+  -resume            Resume a CLI file scrape by appending missing places
   -depth int         Max scroll depth in results (default: 10)
   -c int             Concurrency level (default: half of CPU cores)
 
@@ -531,6 +533,22 @@ Notes:
 ```
 
 Run `./google-maps-scraper -h` for the complete list.
+
+### Resuming Interrupted CLI Runs
+
+Use `-resume` to continue a CLI file scrape after a crash or manual stop:
+
+```bash
+./google-maps-scraper \
+  -resume \
+  -input queries.txt \
+  -results results.csv \
+  -depth 10
+```
+
+Resume mode reads the existing CSV or JSONL results file, appends new results, and skips places that were already written. It also writes completed input queries to `<results>.resume.json`; future resume runs use that sidecar file to skip fully completed queries.
+
+`-resume` is only supported with regular file output. It requires `-results` to be a file path and does not support `stdout`, `-writer`, `-leadsdb-api-key`, or `-fast-mode`. Resume runs should use the same input and scrape options as the original run.
 
 ### Using Proxies
 

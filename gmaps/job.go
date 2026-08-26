@@ -29,6 +29,7 @@ type GmapJob struct {
 	ExitMonitor             exiter.Exiter
 	ExtractExtraReviews     bool
 	WriterManagedCompletion bool
+	CompletionTracker       CompletionTracker
 }
 
 func NewGmapJob(
@@ -107,6 +108,12 @@ func WithWriterManagedCompletion() GmapJobOptions {
 	}
 }
 
+func WithGmapCompletionTracker(tracker CompletionTracker) GmapJobOptions {
+	return func(j *GmapJob) {
+		j.CompletionTracker = tracker
+	}
+}
+
 func (j *GmapJob) UseInResults() bool {
 	return false
 }
@@ -179,6 +186,10 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 	if j.ExitMonitor != nil {
 		j.ExitMonitor.IncrPlacesFound(len(next))
 		j.ExitMonitor.IncrSeedCompleted(1)
+	}
+
+	if j.CompletionTracker != nil {
+		_ = j.CompletionTracker.SeedDiscovered(j.ID, len(next))
 	}
 
 	log.Info(fmt.Sprintf("%d places found", len(next)))
