@@ -28,6 +28,33 @@ func (s *Service) All(ctx context.Context) ([]Job, error) {
 	return s.repo.Select(ctx, SelectParams{})
 }
 
+func (s *Service) ListJobs(ctx context.Context, page, limit int) ([]Job, int, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 20
+	}
+	
+	offset := (page - 1) * limit
+	params := SelectParams{
+		Limit:  limit,
+		Offset: offset,
+	}
+	
+	jobs, err := s.repo.Select(ctx, params)
+	if err != nil {
+		return nil, 0, err
+	}
+	
+	total, err := s.repo.Count(ctx, SelectParams{})
+	if err != nil {
+		return nil, 0, err
+	}
+	
+	return jobs, total, nil
+}
+
 func (s *Service) Get(ctx context.Context, id string) (Job, error) {
 	return s.repo.Get(ctx, id)
 }

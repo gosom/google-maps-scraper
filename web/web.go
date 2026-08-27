@@ -380,6 +380,17 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 	_ = tmpl.Execute(w, newJob)
 }
 
+type JobRowsData struct {
+	Jobs        []Job
+	CurrentPage int
+	TotalPages  int
+	HasPrev     bool
+	HasNext     bool
+	PrevPage    int
+	NextPage    int
+	HasPages    bool
+}
+
 func (s *Server) getJobs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, methodNotAllowedMessage, http.StatusMethodNotAllowed)
@@ -393,14 +404,41 @@ func (s *Server) getJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobs, err := s.svc.All(context.Background())
+	pageStr := r.URL.Query().Get("page")
+	page, err := strconv.Atoi(pageStr)
+	if err != nil || page < 1 {
+		page = 1
+	}
+
+	limit := 20
+	jobs, total, err := s.svc.ListJobs(r.Context(), page, limit)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 
 		return
 	}
 
-	_ = tmpl.Execute(w, jobs)
+	totalPages := (total + limit - 1) / limit
+	if totalPages == 0 {
+		totalPages = 1
+	}
+
+	if page > totalPages {
+		page = totalPages
+	}
+
+	data := JobRowsData{
+		Jobs:        jobs,
+		CurrentPage: page,
+		TotalPages:  totalPages,
+		HasPrev:     page > 1,
+		HasNext:     page < totalPages,
+		PrevPage:    page - 1,
+		NextPage:    page + 1,
+		HasPages:    totalPages > 1,
+	}
+
+	_ = tmpl.Execute(w, data)
 }
 
 func (s *Server) download(w http.ResponseWriter, r *http.Request) {

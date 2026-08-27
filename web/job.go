@@ -18,6 +18,7 @@ const (
 type SelectParams struct {
 	Status string
 	Limit  int
+	Offset int
 }
 
 type JobRepository interface {
@@ -25,6 +26,7 @@ type JobRepository interface {
 	Create(context.Context, *Job) error
 	Delete(context.Context, string) error
 	Select(context.Context, SelectParams) ([]Job, error)
+	Count(context.Context, SelectParams) (int, error)
 	Update(context.Context, *Job) error
 }
 

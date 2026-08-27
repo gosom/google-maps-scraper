@@ -115,6 +115,17 @@ func (r *memoryJobRepo) Select(_ context.Context, params web.SelectParams) ([]we
 	return jobs, nil
 }
 
+func (r *memoryJobRepo) Count(_ context.Context, params web.SelectParams) (int, error) {
+	count := 0
+	for id := range r.jobs {
+		job := r.jobs[id]
+		if params.Status == "" || job.Status == params.Status {
+			count++
+		}
+	}
+	return count, nil
+}
+
 func (r *memoryJobRepo) Update(_ context.Context, job *web.Job) error {
 	r.jobs[job.ID] = *job
 	return nil

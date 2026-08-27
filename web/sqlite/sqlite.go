@@ -74,6 +74,12 @@ func (repo *repo) Select(ctx context.Context, params web.SelectParams) ([]web.Jo
 
 		args = append(args, params.Limit)
 	}
+	
+	if params.Offset > 0 {
+		q += " OFFSET ?"
+		
+		args = append(args, params.Offset)
+	}
 
 	rows, err := repo.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -98,6 +104,26 @@ func (repo *repo) Select(ctx context.Context, params web.SelectParams) ([]web.Jo
 	}
 
 	return ans, nil
+}
+
+func (repo *repo) Count(ctx context.Context, params web.SelectParams) (int, error) {
+	q := `SELECT COUNT(*) from jobs`
+
+	var args []any
+
+	if params.Status != "" {
+		q += ` WHERE status = ?`
+
+		args = append(args, params.Status)
+	}
+
+	var count int
+	err := repo.db.QueryRowContext(ctx, q, args...).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+
+	return count, nil
 }
 
 func (repo *repo) Update(ctx context.Context, job *web.Job) error {

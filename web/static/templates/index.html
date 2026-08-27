@@ -139,10 +139,11 @@
                             <th>Actions</th>
                         </tr>
                     </thead>
-                    <tbody hx-get="/jobs" hx-trigger="load, every 10s">
+                    <tbody id="job-tbody" hx-get="/jobs" hx-trigger="load, every 10s" hx-swap="outerHTML">
                         <!-- Job rows will be inserted here by HTMX -->
                     </tbody>
                 </table>
+                <div id="pagination-container"></div>
             </div>
         </main>
     </div>
