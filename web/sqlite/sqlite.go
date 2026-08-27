@@ -74,10 +74,10 @@ func (repo *repo) Select(ctx context.Context, params web.SelectParams) ([]web.Jo
 
 		args = append(args, params.Limit)
 	}
-	
+
 	if params.Offset > 0 {
 		q += " OFFSET ?"
-		
+
 		args = append(args, params.Offset)
 	}
 

@@ -21,6 +21,18 @@ type SelectParams struct {
 	Offset int
 }
 
+type JobPage struct {
+	Jobs        []Job
+	CurrentPage int
+	TotalPages  int
+	Total       int
+	HasPrev     bool
+	HasNext     bool
+	PrevPage    int
+	NextPage    int
+	HasPages    bool
+}
+
 type JobRepository interface {
 	Get(context.Context, string) (Job, error)
 	Create(context.Context, *Job) error
