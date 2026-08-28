@@ -88,11 +88,19 @@
                         <div id="tags-container" class="flex flex-wrap gap-2 p-2 border border-gray-300 rounded-md bg-white min-h-[42px] cursor-text" onclick="document.getElementById('tag-input').focus()">
                             <input type="text" id="tag-input"
                                    class="flex-1 min-w-[120px] h-7 px-1 text-sm border-0 outline-none bg-transparent"
-                                   placeholder="Type and press Enter..."
-                                   onkeydown="handleTagKey(event)">
+                                   placeholder="Type and press Add..."
+                                   enterkeyhint="done"
+                                   autocapitalize="off"
+                                   autocomplete="off"
+                                   onkeydown="handleTagKey(event)"
+                                   oninput="handleTagInput(event)">
                         </div>
                         <input type="hidden" id="keywords" name="keywords" value="">
-                        <p class="text-xs text-gray-500">Press Enter or comma to add a keyword. Click × to remove.</p>
+                        <button type="button" onclick="addFromInput()" class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium border rounded-md hover:bg-gray-50 transition-colors">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                            Add Keyword
+                        </button>
+                        <p class="text-xs text-gray-500">Type a keyword and tap "Add Keyword" or press Enter</p>
                     </div>
 
                     <!-- Language -->
@@ -110,9 +118,15 @@
                             <svg id="location-section-icon" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                         </button>
                         <div id="location-section" class="hidden px-4 pb-4 space-y-4">
-                            <button type="button" onclick="openMapPicker()" class="w-full inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium border rounded-md hover:bg-gray-50 transition-colors">
-                                📍 Select Location on Map
-                            </button>
+                            <div class="flex gap-2">
+                                <button type="button" onclick="openMapPicker()" class="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium border rounded-md hover:bg-gray-50 transition-colors">
+                                    📍 Select on Map
+                                </button>
+                                <button type="button" onclick="useCurrentLocation('')" id="btn-current-loc" class="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium border rounded-md hover:bg-gray-50 transition-colors">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" stroke-width="2"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2v2m0 16v2M2 12h2m16 0h2"/></svg>
+                                    Current Location
+                                </button>
+                            </div>
                             <div class="grid grid-cols-3 gap-2">
                                 <div class="space-y-1">
                                     <label class="text-xs text-gray-500">Latitude</label>
@@ -173,10 +187,19 @@
                                 </label>
                             </div>
                             <div class="space-y-2">
-                                <label for="maxtime" class="text-sm font-medium">Max Duration</label>
-                                <input type="text" id="maxtime" name="maxtime" value="{{.MaxTime}}"
-                                       class="flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-                                       placeholder="10m">
+                                <label for="maxtime-value" class="text-sm font-medium">Max Duration</label>
+                                <div class="flex gap-2">
+                                    <input type="number" id="maxtime-value" min="1" value="10"
+                                           class="flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+                                           placeholder="10">
+                                    <select id="maxtime-unit"
+                                            class="flex h-10 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900">
+                                        <option value="s">Seconds</option>
+                                        <option value="m" selected>Minutes</option>
+                                        <option value="h">Hours</option>
+                                    </select>
+                                </div>
+                                <input type="hidden" id="maxtime" name="maxtime" value="10m">
                             </div>
                         </div>
                     </div>
@@ -262,6 +285,10 @@
                 </div>
             </div>
             <p class="text-sm text-gray-500">Click on the map to select a location.</p>
+            <button type="button" onclick="useCurrentLocation('picker-')" class="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium border rounded-md hover:bg-gray-50 transition-colors">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" stroke-width="2"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2v2m0 16v2M2 12h2m16 0h2"/></svg>
+                Use Current Location
+            </button>
         </div>
         <div class="flex-1 px-4 pb-4">
             <div id="picker-map" class="w-full h-full rounded-lg border"></div>
@@ -278,14 +305,37 @@
 function handleTagKey(e) {
     if (e.key === 'Enter' || e.key === ',') {
         e.preventDefault();
-        var val = e.target.value.trim().replace(/,$/,'');
-        if (val) addTag(val);
-        e.target.value = '';
+        addFromInput();
     } else if (e.key === 'Backspace' && !e.target.value) {
         var tags = document.querySelectorAll('#tags-container .tag-item');
         if (tags.length) tags[tags.length - 1].remove();
         syncKeywords();
     }
+}
+
+function handleTagInput(e) {
+    var val = e.target.value;
+    if (val.indexOf(',') !== -1) {
+        var parts = val.split(',');
+        for (var i = 0; i < parts.length - 1; i++) {
+            var t = parts[i].trim();
+            if (t) addTag(t);
+        }
+        e.target.value = parts[parts.length - 1];
+    }
+}
+
+function addFromInput() {
+    var input = document.getElementById('tag-input');
+    var val = input.value.trim().replace(/,$/,'');
+    if (val) {
+        val.split(',').forEach(function(t) {
+            t = t.trim();
+            if (t) addTag(t);
+        });
+    }
+    input.value = '';
+    input.focus();
 }
 
 function addTag(text) {
@@ -307,6 +357,14 @@ function syncKeywords() {
     document.getElementById('keywords').value = tags.join('\n');
 }
 
+// Sync keywords before HTMX submit (catch any leftover input text)
+document.addEventListener('htmx:beforeRequest', function(e) {
+    if (e.detail.elt && e.detail.elt.closest && e.detail.elt.closest('form')) {
+        addFromInput();
+        syncKeywords();
+    }
+});
+
 // Accordion toggle
 function toggleSection(id) {
     var el = document.getElementById(id);
@@ -314,6 +372,94 @@ function toggleSection(id) {
     el.classList.toggle('hidden');
     if (icon) icon.classList.toggle('rotate-180');
 }
+
+// Default location: Jakarta, Indonesia
+var DEFAULT_LAT = -6.2088;
+var DEFAULT_LON = 106.8456;
+var DEFAULT_ZOOM = 13;
+
+function initDefaultLocation() {
+    var latEl = document.getElementById('latitude');
+    var lonEl = document.getElementById('longitude');
+    var zoomEl = document.getElementById('zoom');
+
+    if (latEl.value && lonEl.value) return;
+
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            function(pos) {
+                if (!latEl.value) latEl.value = pos.coords.latitude.toFixed(6);
+                if (!lonEl.value) lonEl.value = pos.coords.longitude.toFixed(6);
+                if (!zoomEl.value || zoomEl.value === '0') zoomEl.value = 15;
+            },
+            function() {
+                if (!latEl.value) latEl.value = DEFAULT_LAT;
+                if (!lonEl.value) lonEl.value = DEFAULT_LON;
+                if (!zoomEl.value || zoomEl.value === '0') zoomEl.value = DEFAULT_ZOOM;
+            },
+            { timeout: 5000, enableHighAccuracy: false }
+        );
+    } else {
+        latEl.value = DEFAULT_LAT;
+        lonEl.value = DEFAULT_LON;
+        zoomEl.value = DEFAULT_ZOOM;
+    }
+}
+
+function useCurrentLocation(prefix) {
+    if (!navigator.geolocation) {
+        alert('Geolocation is not supported by your browser');
+        return;
+    }
+
+    var latEl = document.getElementById(prefix ? prefix + 'lat' : 'latitude');
+    var lonEl = document.getElementById(prefix ? prefix + 'lon' : 'longitude');
+    var zoomEl = document.getElementById(prefix ? prefix + 'zoom' : 'zoom');
+
+    navigator.geolocation.getCurrentPosition(
+        function(pos) {
+            var lat = pos.coords.latitude;
+            var lon = pos.coords.longitude;
+            latEl.value = lat.toFixed(6);
+            lonEl.value = lon.toFixed(6);
+            if (zoomEl) zoomEl.value = 15;
+
+            if (prefix === 'picker-' && pickerMap && pickerMarker) {
+                pickerMap.setView([lat, lon], 15);
+                pickerMarker.setLatLng([lat, lon]);
+            }
+        },
+        function(err) {
+            alert('Could not get your location. Please select manually on the map.');
+        },
+        { timeout: 10000, enableHighAccuracy: true }
+    );
+}
+
+document.addEventListener('DOMContentLoaded', initDefaultLocation);
+
+// Max duration: sync number + unit select into hidden maxtime field
+function syncMaxTime() {
+    var val = document.getElementById('maxtime-value').value || '10';
+    var unit = document.getElementById('maxtime-unit').value || 'm';
+    document.getElementById('maxtime').value = val + unit;
+}
+
+function initMaxTime() {
+    var raw = '{{.MaxTime}}';
+    if (raw) {
+        var match = raw.match(/^(\d+)\s*(s|m|h)/i);
+        if (match) {
+            document.getElementById('maxtime-value').value = match[1];
+            document.getElementById('maxtime-unit').value = match[2].toLowerCase();
+        }
+    }
+    syncMaxTime();
+    document.getElementById('maxtime-value').addEventListener('input', syncMaxTime);
+    document.getElementById('maxtime-unit').addEventListener('change', syncMaxTime);
+}
+
+document.addEventListener('DOMContentLoaded', initMaxTime);
 
 // Map picker
 var pickerMap = null;
@@ -323,9 +469,9 @@ function openMapPicker() {
     var modal = document.getElementById('map-picker-modal');
     modal.classList.remove('hidden');
 
-    var lat = parseFloat(document.getElementById('latitude').value) || 51.505;
-    var lon = parseFloat(document.getElementById('longitude').value) || -0.09;
-    var zoom = parseInt(document.getElementById('zoom').value) || 15;
+    var lat = parseFloat(document.getElementById('latitude').value) || DEFAULT_LAT;
+    var lon = parseFloat(document.getElementById('longitude').value) || DEFAULT_LON;
+    var zoom = parseInt(document.getElementById('zoom').value) || DEFAULT_ZOOM;
 
     document.getElementById('picker-lat').value = lat.toFixed(6);
     document.getElementById('picker-lon').value = lon.toFixed(6);
