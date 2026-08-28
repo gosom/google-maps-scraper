@@ -1,18 +1,35 @@
-<tr>
-    <td>{{.ID}}</td>
-    <td>{{.Name}}</td>
-    <td>{{.Date}}</td>
-    <td>
-        <span class="status-indicator status-{{.Status}}">{{.Status}}</span>
-    </td>
-    <td>
+<tr class="border-b transition-colors hover:bg-gray-50">
+    <td class="p-4 font-mono text-xs text-gray-600">{{.ID}}</td>
+    <td class="p-4 font-medium">{{.Name}}</td>
+    <td class="p-4 text-sm text-gray-500">{{.Date}}</td>
+    <td class="p-4">
         {{ if eq .Status "ok" }}
-            <a href="/download?id={{.ID}}" download class="button download-button">Download</a>
+        <span class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold bg-green-500 text-white">Completed</span>
+        {{ else if eq .Status "pending" }}
+        <span class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold bg-yellow-400 text-gray-900">Pending</span>
+        {{ else if eq .Status "working" }}
+        <span class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold bg-blue-500 text-white">Working</span>
+        {{ else if eq .Status "failed" }}
+        <span class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold bg-red-500 text-white">Failed</span>
+        {{ else }}
+        <span class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold bg-gray-200 text-gray-700">{{.Status}}</span>
         {{ end }}
-        <button hx-delete="/delete?id={{.ID}}" 
-                hx-target="closest tr"
-                hx-swap="outerHTML"
-                hx-confirm="Are you sure you want to delete this job?"
-                class="delete-button">Delete</button>
+    </td>
+    <td class="p-4 text-right">
+        <div class="flex justify-end gap-2">
+            {{ if eq .Status "ok" }}
+            <a href="/download?id={{.ID}}" download class="inline-flex items-center justify-center h-9 w-9 rounded-md border hover:bg-gray-50 transition-colors" title="Download">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+            </a>
+            {{ end }}
+            <button hx-delete="/delete?id={{.ID}}"
+                    hx-target="closest tr"
+                    hx-swap="outerHTML"
+                    hx-confirm="Are you sure you want to delete this job?"
+                    class="inline-flex items-center justify-center h-9 w-9 rounded-md border border-red-200 text-red-600 hover:bg-red-50 transition-colors"
+                    title="Delete">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            </button>
+        </div>
     </td>
 </tr>

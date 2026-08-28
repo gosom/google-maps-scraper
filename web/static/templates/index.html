@@ -4,156 +4,366 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Google Maps Scraper</title>
-    <link rel="stylesheet" href="/static/css/main.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/htmx/1.9.6/htmx.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script>
+    tailwind.config = {
+        theme: {
+            extend: {
+                colors: {
+                    border: 'hsl(214.3, 31.8%, 91.4%)',
+                    input: 'hsl(214.3, 31.8%, 91.4%)',
+                    ring: 'hsl(222.2, 84%, 4.9%)',
+                    background: 'hsl(0, 0%, 100%)',
+                    foreground: 'hsl(222.2, 84%, 4.9%)',
+                    primary: { DEFAULT: 'hsl(222.2, 47.4%, 11.2%)', foreground: 'hsl(210, 40%, 98%)' },
+                    secondary: { DEFAULT: 'hsl(210, 40%, 96.1%)', foreground: 'hsl(222.2, 47.4%, 11.2%)' },
+                    destructive: { DEFAULT: 'hsl(0, 84.2%, 60.2%)', foreground: 'hsl(210, 40%, 98%)' },
+                    muted: { DEFAULT: 'hsl(210, 40%, 96.1%)', foreground: 'hsl(215.4, 16.3%, 46.9%)' },
+                    accent: { DEFAULT: 'hsl(210, 40%, 96.1%)', foreground: 'hsl(222.2, 47.4%, 11.2%)' },
+                    card: { DEFAULT: 'hsl(0, 0%, 100%)', foreground: 'hsl(222.2, 84%, 4.9%)' },
+                }
+            }
+        }
+    }
+    </script>
+    <style>
+        .leaflet-container { border-radius: 0.5rem; }
+    </style>
 </head>
-<body>
-    <div class="app-container">
-        <header>
-            <h1>Google Maps Scraper</h1>
-            <nav>
-                <a href="/api/docs" target="_blank" rel="noopener noreferrer">API Documentation</a>
-            </nav>
-            <div class="github-section">
-                <p>If you find this tool useful, please consider starring our repository: </p>
-                <a href="https://github.com/gosom/google-maps-scraper" class="github-button">
-                <svg height="16" width="16" viewBox="0 0 16 16">
-                    <path fill="currentColor" d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25z"/>
-                  </svg>
-                  Star on GitHub
-                </a>
-            </div>
-            <div id="sponsor-section" class="sponsor-section">
-    <button class="sponsor-close" onclick="hideSponsor()">
-        ×
-    </button>
-    <p class="sponsor-text">Support the ongoing maintenance and development of this project by becoming a sponsor. Your contribution helps ensure the tool's continued improvement and reliability.</p>
-    <a href="https://github.com/sponsors/gosom" class="sponsor-button" target="_blank" rel="noopener noreferrer">
-        <svg height="16" width="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
-            <path fill-rule="evenodd" clip-rule="evenodd" d="M4.25 2.5C4.25 1.83696 4.67143 1.25 5.25 1.25C5.82857 1.25 6.25 1.83696 6.25 2.5C6.25 3.16304 5.82857 3.75 5.25 3.75C4.67143 3.75 4.25 3.16304 4.25 2.5ZM2.5 3.75C1.92143 3.75 1.5 3.16304 1.5 2.5C1.5 1.83696 1.92143 1.25 2.5 1.25C3.07857 1.25 3.5 1.83696 3.5 2.5C3.5 3.16304 3.07857 3.75 2.5 3.75ZM8 1.25C7.42143 1.25 7 1.83696 7 2.5C7 3.16304 7.42143 3.75 8 3.75C8.57857 3.75 9 3.16304 9 2.5C9 1.83696 8.57857 1.25 8 1.25ZM10.75 2.5C10.75 1.83696 11.1714 1.25 11.75 1.25C12.3286 1.25 12.75 1.83696 12.75 2.5C12.75 3.16304 12.3286 3.75 11.75 3.75C11.1714 3.75 10.75 3.16304 10.75 2.5ZM14.5 1.25C13.9214 1.25 13.5 1.83696 13.5 2.5C13.5 3.16304 13.9214 3.75 14.5 3.75C15.0786 3.75 15.5 3.16304 15.5 2.5C15.5 1.83696 15.0786 1.25 14.5 1.25ZM1.25 5.25C1.25 4.67143 1.83696 4.25 2.5 4.25C3.16304 4.25 3.75 4.67143 3.75 5.25C3.75 5.82857 3.16304 6.25 2.5 6.25C1.83696 6.25 1.25 5.82857 1.25 5.25ZM5.25 4.25C4.67143 4.25 4.25 4.67143 4.25 5.25C4.25 5.82857 4.67143 6.25 5.25 6.25C5.82857 6.25 6.25 5.82857 6.25 5.25C6.25 4.67143 5.82857 4.25 5.25 4.25ZM7 5.25C7 4.67143 7.42143 4.25 8 4.25C8.57857 4.25 9 4.67143 9 5.25C9 5.82857 8.57857 6.25 8 6.25C7.42143 6.25 7 5.82857 7 5.25ZM11.75 4.25C11.1714 4.25 10.75 4.67143 10.75 5.25C10.75 5.82857 11.1714 6.25 11.75 6.25C12.3286 6.25 12.75 5.82857 12.75 5.25C12.75 4.67143 12.3286 4.25 11.75 4.25ZM13.5 5.25C13.5 4.67143 13.9214 4.25 14.5 4.25C15.0786 4.25 15.5 4.67143 15.5 5.25C15.5 5.82857 15.0786 6.25 14.5 6.25C13.9214 6.25 13.5 5.82857 13.5 5.25ZM2.5 7.25C1.83696 7.25 1.25 7.67143 1.25 8.25C1.25 8.82857 1.83696 9.25 2.5 9.25C3.16304 9.25 3.75 8.82857 3.75 8.25C3.75 7.67143 3.16304 7.25 2.5 7.25ZM4.25 8.25C4.25 7.67143 4.67143 7.25 5.25 7.25C5.82857 7.25 6.25 7.67143 6.25 8.25C6.25 8.82857 5.82857 9.25 5.25 9.25C4.67143 9.25 4.25 8.82857 4.25 8.25ZM8 7.25C7.42143 7.25 7 7.67143 7 8.25C7 8.82857 7.42143 9.25 8 9.25C8.57857 9.25 9 8.82857 9 8.25C9 7.67143 8.57857 7.25 8 7.25ZM10.75 8.25C10.75 7.67143 11.1714 7.25 11.75 7.25C12.3286 7.25 12.75 7.67143 12.75 8.25C12.75 8.82857 12.3286 9.25 11.75 9.25C11.1714 9.25 10.75 8.82857 10.75 8.25ZM14.5 7.25C13.9214 7.25 13.5 7.67143 13.5 8.25C13.5 8.82857 13.9214 9.25 14.5 9.25C15.0786 9.25 15.5 8.82857 15.5 8.25C15.5 7.67143 15.0786 7.25 14.5 7.25Z" fill="currentColor"/>
-        </svg>
-        Sponsor on GitHub
-    </a>
-</div>
+<body class="min-h-screen bg-gray-50 text-foreground">
 
-        </header>
-        <main>
-            <div class="sidebar">
-                <div id="error-container" class="error-message"></div>
-                <form 
-                    hx-post="/scrape" 
-                    hx-target="#job-table tbody" 
+<!-- Header -->
+<header class="border-b bg-white">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
+        <h1 class="text-2xl font-bold tracking-tight text-gray-900">Google Maps Scraper</h1>
+        <div class="flex items-center gap-3">
+            <a href="/api/docs" target="_blank" rel="noopener noreferrer"
+               class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border rounded-md hover:bg-gray-50 transition-colors">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                API Docs
+            </a>
+            <a href="https://github.com/gosom/google-maps-scraper" target="_blank" rel="noopener noreferrer"
+               class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-gray-900 rounded-md hover:bg-gray-800 transition-colors">
+                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                Star on GitHub
+            </a>
+        </div>
+    </div>
+</header>
+
+<!-- Main -->
+<main class="max-w-7xl mx-auto px-4 sm:px-6 py-8 grid grid-cols-1 lg:grid-cols-3 gap-8">
+
+    <!-- Sidebar Form -->
+    <div class="lg:col-span-1">
+        <div class="bg-white rounded-lg border shadow-sm">
+            <div class="p-6 border-b">
+                <h2 class="text-lg font-semibold">New Scraping Job</h2>
+            </div>
+            <div class="p-6">
+                <div id="error-container" class="hidden mb-4 p-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-md"></div>
+                <form
+                    hx-post="/scrape"
+                    hx-target="#job-table tbody"
                     hx-swap="beforeend"
                     hx-indicator="#spinner"
-                    hx-on::before-request="document.getElementById('error-container').innerHTML = ''"
-                    hx-on::after-request="if(!event.detail.successful) document.getElementById('error-container').innerHTML = event.detail.xhr.responseText"
+                    hx-on::before-request="document.getElementById('error-container').classList.add('hidden'); document.getElementById('error-container').innerHTML = ''"
+                    hx-on::after-request="if(!event.detail.successful){ var el = document.getElementById('error-container'); el.innerHTML = event.detail.xhr.responseText; el.classList.remove('hidden'); }"
+                    class="space-y-5"
                 >
-                    
-                    <fieldset>
-                        <legend>Job Details</legend>
-                        <div class="form-group">
-                            <label for="name">Job Name:</label>
-                            <input type="text" id="name" name="name" value="{{.Name}}">
-                        </div>
-                        <div class="form-group">
-                            <label for="keywords">Keywords:</label>
-                            <textarea id="keywords" name="keywords" rows="10">{{ .KeywordsString }}</textarea>
-                        </div>
-                        <div class="form-group">
-                            <label for="lang">Language:</label>
-                            <input type="text" id="lang" name="lang" value="{{.Language}}">
-                        </div>
-                    </fieldset>
-                    
-                    <details class="expandable-section">
-                        <summary>Location Settings</summary>
-                        <fieldset>
-                            <div class="form-group">
-                                <label for="zoom">Zoom:</label>
-                                <input type="number" id="zoom" name="zoom" value="{{.Zoom}}">
-                            </div>
-                            <div class="form-group">
-                                <label for="latitude">Latitude:</label>
-                                <input type="number" step="0.000000000000001" id="latitude" name="latitude" value="{{.Lat}}">
-                            </div>
-                            <div class="form-group">
-                                <label for="longitude">Longitude:</label>
-                                <input type="number" step="0.000000000000001" id="longitude" name="longitude" value="{{.Lon}}">
-                            </div>
-                        </fieldset>
-                    </details>
-                    
-                    <details class="expandable-section">
-                        <summary>Advanced Options</summary>
-                        <fieldset>
-                            <div class="form-group">
-                                <label for="fastmode">Fast Mode (BETA):</label>
-                                <input type="checkbox" id="fastmode" name="fastmode" {{if .FastMode}}checked{{end}}>
-                            </div>
-                            <div class="form-group">
-                                    <label for="radius">Radius (BETA):</label>
-                                    <input type="number" id="radius" name="radius" value="{{.Radius}}">
-                            </div>
-                            <div class="form-group">
-                                <label for="depth">Depth:</label>
-                                <input type="number" step="1" id="depth" name="depth" value="{{.Depth}}">
-                            </div>
-                            <div class="form-group checkbox">
-                                <input type="checkbox" id="email" name="email" {{if .Email}}checked{{end}}>
-                                <label for="email">Fetch Emails</label>
-                            </div>
-                            <div class="form-group">
-                                <label for="maxtime">Max job time:</label>
-                                <input type="text" id="maxtime" name="maxtime" value="{{.MaxTime}}">
-                            </div>
-                        </fieldset>
-                    </details>
-                    <details class="expandable-section">
-                        <summary>Proxies</summary>
-                        <fieldset>
-                            <div class="form-group">
-                                <label for="proxies">Proxies:(one per line)</label>
-                                <p class="text-muted"><small>Examples:<br>
-                                        <p>HTTPS proxy with username/password: https://username:password@myproxy.local:443<p>
-                                        <p>HTTP proxy with username/password: http://username:password@myproxy.local:443<p>
-                                        <p>SOCKS5 proxy without auth: socks5://127.0.0.1:8000</p>
-                                </p>
+                    <!-- Job Name -->
+                    <div class="space-y-2">
+                        <label for="name" class="text-sm font-medium">Job Name</label>
+                        <input type="text" id="name" name="name" value="{{.Name}}" required
+                               class="flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
+                               placeholder="My Scraping Job">
+                    </div>
 
-                                <textarea id="proxies" name="proxies" rows="5">{{.ProxiesString}}</textarea>
+                    <!-- Keywords as Tags -->
+                    <div class="space-y-2">
+                        <label class="text-sm font-medium">Keywords</label>
+                        <div id="tags-container" class="flex flex-wrap gap-2 p-2 border border-gray-300 rounded-md bg-white min-h-[42px] cursor-text" onclick="document.getElementById('tag-input').focus()">
+                            <input type="text" id="tag-input"
+                                   class="flex-1 min-w-[120px] h-7 px-1 text-sm border-0 outline-none bg-transparent"
+                                   placeholder="Type and press Enter..."
+                                   onkeydown="handleTagKey(event)">
+                        </div>
+                        <input type="hidden" id="keywords" name="keywords" value="">
+                        <p class="text-xs text-gray-500">Press Enter or comma to add a keyword. Click × to remove.</p>
+                    </div>
+
+                    <!-- Language -->
+                    <div class="space-y-2">
+                        <label for="lang" class="text-sm font-medium">Language Code</label>
+                        <input type="text" id="lang" name="lang" value="{{.Language}}" maxlength="2" required
+                               class="flex h-10 w-20 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
+                               placeholder="en">
+                    </div>
+
+                    <!-- Location Settings -->
+                    <div class="border rounded-md">
+                        <button type="button" onclick="toggleSection('location-section')" class="flex w-full items-center justify-between px-4 py-3 text-sm font-medium hover:bg-gray-50 transition-colors">
+                            Location Settings
+                            <svg id="location-section-icon" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                        </button>
+                        <div id="location-section" class="hidden px-4 pb-4 space-y-4">
+                            <button type="button" onclick="openMapPicker()" class="w-full inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium border rounded-md hover:bg-gray-50 transition-colors">
+                                📍 Select Location on Map
+                            </button>
+                            <div class="grid grid-cols-3 gap-2">
+                                <div class="space-y-1">
+                                    <label class="text-xs text-gray-500">Latitude</label>
+                                    <input type="number" step="0.000001" id="latitude" name="latitude" value="{{.Lat}}"
+                                           class="flex h-8 w-full rounded-md border border-gray-300 bg-white px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900">
+                                </div>
+                                <div class="space-y-1">
+                                    <label class="text-xs text-gray-500">Longitude</label>
+                                    <input type="number" step="0.000001" id="longitude" name="longitude" value="{{.Lon}}"
+                                           class="flex h-8 w-full rounded-md border border-gray-300 bg-white px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900">
+                                </div>
+                                <div class="space-y-1">
+                                    <label class="text-xs text-gray-500">Zoom</label>
+                                    <input type="number" min="1" max="20" id="zoom" name="zoom" value="{{.Zoom}}"
+                                           class="flex h-8 w-full rounded-md border border-gray-300 bg-white px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900">
+                                </div>
                             </div>
-                        </fieldset>
-                    </details>
-                    
-                    <button type="submit">Start Scraping</button>
+                        </div>
+                    </div>
+
+                    <!-- Advanced Options -->
+                    <div class="border rounded-md">
+                        <button type="button" onclick="toggleSection('advanced-section')" class="flex w-full items-center justify-between px-4 py-3 text-sm font-medium hover:bg-gray-50 transition-colors">
+                            Advanced Options
+                            <svg id="advanced-section-icon" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                        </button>
+                        <div id="advanced-section" class="hidden px-4 pb-4 space-y-4">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <label class="text-sm font-medium">Fast Mode (BETA)</label>
+                                    <p class="text-xs text-gray-500">Requires location coordinates</p>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" id="fastmode" name="fastmode" {{if .FastMode}}checked{{end}} class="sr-only peer">
+                                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-gray-900 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gray-900"></div>
+                                </label>
+                            </div>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div class="space-y-2">
+                                    <label for="radius" class="text-sm font-medium">Radius (meters)</label>
+                                    <input type="number" id="radius" name="radius" value="{{.Radius}}"
+                                           class="flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900">
+                                </div>
+                                <div class="space-y-2">
+                                    <label for="depth" class="text-sm font-medium">Depth</label>
+                                    <input type="number" id="depth" name="depth" value="{{.Depth}}"
+                                           class="flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900">
+                                </div>
+                            </div>
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <label class="text-sm font-medium">Fetch Emails</label>
+                                    <p class="text-xs text-gray-500">Extract emails from websites</p>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" id="email" name="email" {{if .Email}}checked{{end}} class="sr-only peer">
+                                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-gray-900 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gray-900"></div>
+                                </label>
+                            </div>
+                            <div class="space-y-2">
+                                <label for="maxtime" class="text-sm font-medium">Max Duration</label>
+                                <input type="text" id="maxtime" name="maxtime" value="{{.MaxTime}}"
+                                       class="flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+                                       placeholder="10m">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Proxies -->
+                    <div class="border rounded-md">
+                        <button type="button" onclick="toggleSection('proxies-section')" class="flex w-full items-center justify-between px-4 py-3 text-sm font-medium hover:bg-gray-50 transition-colors">
+                            Proxies
+                            <svg id="proxies-section-icon" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                        </button>
+                        <div id="proxies-section" class="hidden px-4 pb-4 space-y-2">
+                            <label for="proxies" class="text-sm font-medium">Proxy List (one per line)</label>
+                            <textarea id="proxies" name="proxies" rows="4"
+                                      class="flex w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 resize-none"
+                                      placeholder="https://user:pass@proxy.com:443&#10;socks5://127.0.0.1:8000"></textarea>
+                            <p class="text-xs text-gray-500">Supports HTTP, HTTPS, and SOCKS5 proxies</p>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="w-full inline-flex items-center justify-center h-10 px-4 py-2 text-sm font-medium text-white bg-gray-900 rounded-md hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:pointer-events-none">
+                        <span id="spinner" class="htmx-indicator mr-2">
+                            <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                        </span>
+                        Start Scraping
+                    </button>
                 </form>
             </div>
-            <div class="content">
-                <div id="spinner" class="spinner"></div>
-                <table id="job-table">
-                    <thead>
-                        <tr>
-                            <th>Job ID</th>
-                            <th>Job Name</th>
-                            <th>Job Date</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody hx-get="/jobs" hx-trigger="load, every 10s">
-                        <!-- Job rows will be inserted here by HTMX -->
-                    </tbody>
-                </table>
-            </div>
-        </main>
+        </div>
     </div>
 
-    <div id="map-modal-container"></div>
+    <!-- Jobs Table -->
+    <div class="lg:col-span-2">
+        <div class="bg-white rounded-lg border shadow-sm">
+            <div class="p-6 border-b">
+                <h2 class="text-lg font-semibold">Jobs</h2>
+            </div>
+            <div class="p-6">
+                <div class="overflow-x-auto">
+                    <table id="job-table" class="w-full text-sm">
+                        <thead>
+                            <tr class="border-b">
+                                <th class="h-12 px-4 text-left font-medium text-gray-500">Job ID</th>
+                                <th class="h-12 px-4 text-left font-medium text-gray-500">Name</th>
+                                <th class="h-12 px-4 text-left font-medium text-gray-500">Date</th>
+                                <th class="h-12 px-4 text-left font-medium text-gray-500">Status</th>
+                                <th class="h-12 px-4 text-right font-medium text-gray-500">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody hx-get="/jobs" hx-trigger="load, every 10s">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<!-- Map Modal Container -->
+<div id="map-modal-container"></div>
+
+<!-- Map Picker Modal -->
+<div id="map-picker-modal" class="hidden fixed inset-0 z-50 bg-black/80 flex items-center justify-center">
+    <div class="bg-white w-[90vw] max-w-4xl h-[80vh] rounded-lg flex flex-col overflow-hidden" onclick="event.stopPropagation()">
+        <div class="flex items-center justify-between p-4 border-b">
+            <h2 class="text-lg font-semibold">Select Location</h2>
+            <button onclick="closeMapPicker()" class="rounded-sm opacity-70 hover:opacity-100 transition-opacity">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+        </div>
+        <div class="p-4 space-y-3">
+            <div class="flex gap-3 items-end">
+                <div class="flex-1 space-y-1">
+                    <label class="text-sm font-medium">Latitude</label>
+                    <input type="number" step="0.000001" id="picker-lat" class="flex h-9 w-full rounded-md border border-gray-300 bg-white px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900">
+                </div>
+                <div class="flex-1 space-y-1">
+                    <label class="text-sm font-medium">Longitude</label>
+                    <input type="number" step="0.000001" id="picker-lon" class="flex h-9 w-full rounded-md border border-gray-300 bg-white px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900">
+                </div>
+                <div class="w-24 space-y-1">
+                    <label class="text-sm font-medium">Zoom</label>
+                    <input type="number" min="1" max="20" id="picker-zoom" class="flex h-9 w-full rounded-md border border-gray-300 bg-white px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900">
+                </div>
+            </div>
+            <p class="text-sm text-gray-500">Click on the map to select a location.</p>
+        </div>
+        <div class="flex-1 px-4 pb-4">
+            <div id="picker-map" class="w-full h-full rounded-lg border"></div>
+        </div>
+        <div class="flex justify-end gap-2 p-4 border-t">
+            <button onclick="closeMapPicker()" class="px-4 py-2 text-sm font-medium border rounded-md hover:bg-gray-50 transition-colors">Cancel</button>
+            <button onclick="confirmMapPicker()" class="px-4 py-2 text-sm font-medium text-white bg-gray-900 rounded-md hover:bg-gray-800 transition-colors">Confirm Location</button>
+        </div>
+    </div>
+</div>
+
 <script>
-function hideSponsor() {
-    const sponsorSection = document.getElementById('sponsor-section');
-    if (sponsorSection) {
-        sponsorSection.style.display = 'none';
+// Tags input
+function handleTagKey(e) {
+    if (e.key === 'Enter' || e.key === ',') {
+        e.preventDefault();
+        var val = e.target.value.trim().replace(/,$/,'');
+        if (val) addTag(val);
+        e.target.value = '';
+    } else if (e.key === 'Backspace' && !e.target.value) {
+        var tags = document.querySelectorAll('#tags-container .tag-item');
+        if (tags.length) tags[tags.length - 1].remove();
+        syncKeywords();
     }
+}
+
+function addTag(text) {
+    var container = document.getElementById('tags-container');
+    var input = document.getElementById('tag-input');
+    var existing = Array.from(container.querySelectorAll('.tag-item')).map(function(el) { return el.dataset.value; });
+    if (existing.includes(text)) return;
+
+    var tag = document.createElement('span');
+    tag.className = 'tag-item inline-flex items-center gap-1 px-2 py-1 text-sm bg-gray-900 text-white rounded-md';
+    tag.dataset.value = text;
+    tag.innerHTML = text + '<button type="button" onclick="this.parentElement.remove(); syncKeywords();" class="hover:opacity-70 ml-1"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>';
+    container.insertBefore(tag, input);
+    syncKeywords();
+}
+
+function syncKeywords() {
+    var tags = Array.from(document.querySelectorAll('#tags-container .tag-item')).map(function(el) { return el.dataset.value; });
+    document.getElementById('keywords').value = tags.join('\n');
+}
+
+// Accordion toggle
+function toggleSection(id) {
+    var el = document.getElementById(id);
+    var icon = document.getElementById(id + '-icon');
+    el.classList.toggle('hidden');
+    if (icon) icon.classList.toggle('rotate-180');
+}
+
+// Map picker
+var pickerMap = null;
+var pickerMarker = null;
+
+function openMapPicker() {
+    var modal = document.getElementById('map-picker-modal');
+    modal.classList.remove('hidden');
+
+    var lat = parseFloat(document.getElementById('latitude').value) || 51.505;
+    var lon = parseFloat(document.getElementById('longitude').value) || -0.09;
+    var zoom = parseInt(document.getElementById('zoom').value) || 15;
+
+    document.getElementById('picker-lat').value = lat.toFixed(6);
+    document.getElementById('picker-lon').value = lon.toFixed(6);
+    document.getElementById('picker-zoom').value = zoom;
+
+    setTimeout(function() {
+        if (pickerMap) { pickerMap.remove(); pickerMap = null; }
+
+        pickerMap = L.map('picker-map').setView([lat, lon], zoom);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap'
+        }).addTo(pickerMap);
+
+        pickerMarker = L.marker([lat, lon]).addTo(pickerMap);
+
+        pickerMap.on('click', function(e) {
+            pickerMarker.setLatLng(e.latlng);
+            document.getElementById('picker-lat').value = e.latlng.lat.toFixed(6);
+            document.getElementById('picker-lon').value = e.latlng.lng.toFixed(6);
+        });
+
+        pickerMap.on('zoomend', function() {
+            document.getElementById('picker-zoom').value = pickerMap.getZoom();
+        });
+    }, 100);
+}
+
+function closeMapPicker() {
+    document.getElementById('map-picker-modal').classList.add('hidden');
+    if (pickerMap) { pickerMap.remove(); pickerMap = null; }
+}
+
+function confirmMapPicker() {
+    document.getElementById('latitude').value = document.getElementById('picker-lat').value;
+    document.getElementById('longitude').value = document.getElementById('picker-lon').value;
+    document.getElementById('zoom').value = document.getElementById('picker-zoom').value;
+    closeMapPicker();
 }
 </script>
 </body>

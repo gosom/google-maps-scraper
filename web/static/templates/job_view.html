@@ -1,47 +1,19 @@
-<div id="map-modal" class="map-modal" role="dialog" aria-modal="true" aria-labelledby="map-modal-title" onclick="if(event.target===this)closeJobMap()">
-    <div class="map-modal-content">
-        <div class="map-modal-header">
-            <h2 id="map-modal-title">Places</h2>
-            <button type="button" class="map-modal-close" aria-label="Close" onclick="closeJobMap()">&times;</button>
+<div id="map-modal" class="fixed inset-0 z-50 bg-black/80 flex items-center justify-center" role="dialog" aria-modal="true" aria-labelledby="map-modal-title" onclick="if(event.target===this)closeJobMap()">
+    <div class="bg-white w-[90vw] max-w-6xl h-[85vh] rounded-lg flex flex-col overflow-hidden">
+        <div class="flex items-center justify-between p-4 border-b">
+            <h2 id="map-modal-title" class="text-lg font-semibold">Places</h2>
+            <button type="button" aria-label="Close" onclick="closeJobMap()" class="rounded-sm opacity-70 hover:opacity-100 transition-opacity">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
         </div>
-        <div class="map-modal-body">
-            <div id="job-map"></div>
-            <div id="job-places-list"></div>
+        <div class="flex flex-1 min-h-0">
+            <div id="job-map" class="flex-[3] h-full"></div>
+            <div id="job-places-list" class="flex-1 min-w-[240px] max-w-[360px] overflow-y-auto border-l p-2 space-y-1"></div>
         </div>
     </div>
     <script>
     (function () {
         var places = {{ . }};
-
-        var LEAFLET_CSS = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css';
-        var LEAFLET_JS = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';
-
-        // ensureLeaflet lazily loads Leaflet (CSS + JS) the first time the map
-        // is opened, then invokes callback once it is available.
-        function ensureLeaflet(callback) {
-            if (window.L) {
-                callback();
-                return;
-            }
-
-            if (!document.getElementById('leaflet-css')) {
-                var link = document.createElement('link');
-                link.id = 'leaflet-css';
-                link.rel = 'stylesheet';
-                link.href = LEAFLET_CSS;
-                document.head.appendChild(link);
-            }
-
-            var script = document.getElementById('leaflet-js');
-            if (!script) {
-                script = document.createElement('script');
-                script.id = 'leaflet-js';
-                script.src = LEAFLET_JS;
-                document.head.appendChild(script);
-            }
-
-            script.addEventListener('load', callback);
-        }
 
         function escapeHtml(str) {
             var div = document.createElement('div');
@@ -77,10 +49,10 @@
 
         function placeListItem(place, onSelect) {
             var item = document.createElement('div');
-            item.className = 'place-item';
-            item.innerHTML = '<div class="place-title">' + escapeHtml(place.title) + '</div>' +
-                (place.address ? '<div class="place-address">' + escapeHtml(place.address) + '</div>' : '') +
-                (place.review_rating ? '<div class="place-rating">★ ' + escapeHtml(String(place.review_rating)) + '</div>' : '');
+            item.className = 'p-3 rounded-md border hover:bg-gray-50 cursor-pointer transition-colors';
+            item.innerHTML = '<div class="font-medium text-sm">' + escapeHtml(place.title) + '</div>' +
+                (place.address ? '<div class="text-xs text-gray-500 mt-1">' + escapeHtml(place.address) + '</div>' : '') +
+                (place.review_rating ? '<div class="text-xs text-amber-600 mt-1">★ ' + escapeHtml(String(place.review_rating)) + '</div>' : '');
             item.addEventListener('click', onSelect);
             return item;
         }
@@ -103,7 +75,7 @@
         }
 
         function showEmptyState(map, listEl) {
-            listEl.innerHTML = '<p class="map-empty">No places with coordinates were found for this job.</p>';
+            listEl.innerHTML = '<p class="p-4 text-gray-500">No places with coordinates were found for this job.</p>';
             map.setView([0, 0], 2);
         }
 
@@ -133,7 +105,7 @@
             }
         };
 
-        ensureLeaflet(initJobMap);
+        initJobMap();
     })();
     </script>
 </div>

@@ -42,8 +42,17 @@ cross-compile: ## cross compiles the application
 	GOOS=darwin GOARCH=amd64 go build -o bin/$(APP_NAME)-${VERSION}-darwin-amd64
 	GOOS=windows GOARCH=amd64 go build -o bin/$(APP_NAME)-${VERSION}-windows-amd64.exe
 
-build: ## builds the application (default: playwright)
+build: frontend-build ## builds the application (default: playwright)
 	go build -o bin/$(APP_NAME) .
+
+frontend-install: ## install frontend dependencies
+	cd web/frontend && npm install
+
+frontend-dev: ## start frontend development server
+	cd web/frontend && npm run dev
+
+frontend-build: ## build frontend for production
+	cd web/frontend && npm install && npm run build
 
 docker: ## builds docker image with playwright (default)
 	docker build -t $(APP_NAME):$(VERSION) .

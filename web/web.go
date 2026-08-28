@@ -21,7 +21,7 @@ import (
 	"github.com/google/uuid"
 )
 
-//go:embed static
+//go:embed static/templates static/css
 var static embed.FS
 
 type Server struct {
@@ -56,23 +56,19 @@ func New(svc *Service, addr string) (*Server, error) {
 	mux.HandleFunc("/scrape", ans.scrape)
 	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
 		r = requestWithID(r)
-
 		ans.download(w, r)
 	})
 	mux.HandleFunc("/delete", func(w http.ResponseWriter, r *http.Request) {
 		r = requestWithID(r)
-
 		ans.delete(w, r)
 	})
 	mux.HandleFunc("/jobs", ans.getJobs)
 	mux.HandleFunc("/view", func(w http.ResponseWriter, r *http.Request) {
 		r = requestWithID(r)
-
 		ans.viewJob(w, r)
 	})
 	mux.HandleFunc("/", ans.index)
 
-	// api routes
 	mux.HandleFunc("/api/docs", ans.redocHandler)
 	mux.HandleFunc("/api/v1/jobs", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -85,7 +81,6 @@ func New(svc *Service, addr string) (*Server, error) {
 				Code:    http.StatusMethodNotAllowed,
 				Message: "Method not allowed",
 			}
-
 			renderJSON(w, http.StatusMethodNotAllowed, ans)
 		}
 	})
@@ -103,7 +98,6 @@ func New(svc *Service, addr string) (*Server, error) {
 				Code:    http.StatusMethodNotAllowed,
 				Message: "Method not allowed",
 			}
-
 			renderJSON(w, http.StatusMethodNotAllowed, ans)
 		}
 	})
@@ -116,9 +110,7 @@ func New(svc *Service, addr string) (*Server, error) {
 				Code:    http.StatusMethodNotAllowed,
 				Message: "Method not allowed",
 			}
-
 			renderJSON(w, http.StatusMethodNotAllowed, ans)
-
 			return
 		}
 
@@ -155,7 +147,6 @@ func (s *Server) Start(ctx context.Context) error {
 		err := s.srv.Shutdown(context.Background())
 		if err != nil {
 			log.Println(err)
-
 			return
 		}
 
@@ -173,18 +164,19 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 type formData struct {
-	Name     string
-	MaxTime  string
-	Keywords []string
-	Language string
-	Zoom     int
-	FastMode bool
-	Radius   int
-	Lat      string
-	Lon      string
-	Depth    int
-	Email    bool
-	Proxies  []string
+	Name        string
+	MaxTime     string
+	Keywords    []string
+	Language    string
+	Zoom        int
+	FastMode    bool
+	Radius      int
+	Lat         string
+	Lon         string
+	Depth       int
+	Email       bool
+	Proxies     []string
+	ExtraReviews bool
 }
 
 type ctxKey string
@@ -207,31 +199,18 @@ func requestWithID(r *http.Request) *http.Request {
 
 func getIDFromRequest(r *http.Request) (uuid.UUID, bool) {
 	id, ok := r.Context().Value(idCtxKey).(uuid.UUID)
-
 	return id, ok
-}
-
-//nolint:gocritic // this is used in template
-func (f formData) ProxiesString() string {
-	return strings.Join(f.Proxies, "\n")
-}
-
-//nolint:gocritic // this is used in template
-func (f formData) KeywordsString() string {
-	return strings.Join(f.Keywords, "\n")
 }
 
 func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-
 		return
 	}
 
 	tmpl, ok := s.tmpl["static/templates/index.html"]
 	if !ok {
 		http.Error(w, "missing tpl", http.StatusInternalServerError)
-
 		return
 	}
 
@@ -243,8 +222,8 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		Zoom:     15,
 		FastMode: false,
 		Radius:   10000,
-		Lat:      "0",
-		Lon:      "0",
+		Lat:      "",
+		Lon:      "",
 		Depth:    10,
 		Email:    false,
 	}
@@ -255,14 +234,12 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-
 		return
 	}
 
 	err := r.ParseForm()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-
 		return
 	}
 
@@ -279,13 +256,11 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 	maxTime, err := time.ParseDuration(maxTimeStr)
 	if err != nil {
 		http.Error(w, "invalid max time", http.StatusUnprocessableEntity)
-
 		return
 	}
 
 	if maxTime < time.Minute*3 {
 		http.Error(w, "max time must be more than 3m", http.StatusUnprocessableEntity)
-
 		return
 	}
 
@@ -294,26 +269,21 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 	keywordsStr, ok := r.Form["keywords"]
 	if !ok {
 		http.Error(w, "missing keywords", http.StatusUnprocessableEntity)
-
 		return
 	}
 
-	keywords := strings.Split(keywordsStr[0], "\n")
-	for _, k := range keywords {
-		k = strings.TrimSpace(k)
-		if k == "" {
-			continue
-		}
-
-		newJob.Data.Keywords = append(newJob.Data.Keywords, k)
+	keywords := splitAndTrim(keywordsStr[0])
+	if len(keywords) == 0 {
+		http.Error(w, "missing keywords", http.StatusUnprocessableEntity)
+		return
 	}
+	newJob.Data.Keywords = keywords
 
 	newJob.Data.Lang = r.Form.Get("lang")
 
-	newJob.Data.Zoom, err = strconv.Atoi(r.Form.Get("zoom"))
+	newJob.Data.Zoom, err = parseInt(r.Form.Get("zoom"))
 	if err != nil {
 		http.Error(w, "invalid zoom", http.StatusUnprocessableEntity)
-
 		return
 	}
 
@@ -321,65 +291,68 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 		newJob.Data.FastMode = true
 	}
 
-	newJob.Data.Radius, err = strconv.Atoi(r.Form.Get("radius"))
+	newJob.Data.Radius, err = parseInt(r.Form.Get("radius"))
 	if err != nil {
 		http.Error(w, "invalid radius", http.StatusUnprocessableEntity)
-
 		return
 	}
 
 	newJob.Data.Lat = r.Form.Get("latitude")
 	newJob.Data.Lon = r.Form.Get("longitude")
 
-	newJob.Data.Depth, err = strconv.Atoi(r.Form.Get("depth"))
+	newJob.Data.Depth, err = parseInt(r.Form.Get("depth"))
 	if err != nil {
 		http.Error(w, "invalid depth", http.StatusUnprocessableEntity)
-
 		return
 	}
 
 	newJob.Data.Email = r.Form.Get("email") == "on"
+	newJob.Data.ExtraReviews = r.Form.Get("extra_reviews") == "on"
 
-	proxies := strings.Split(r.Form.Get("proxies"), "\n")
-	if len(proxies) > 0 {
-		for _, p := range proxies {
-			p = strings.TrimSpace(p)
-			if p == "" {
-				continue
-			}
-
-			newJob.Data.Proxies = append(newJob.Data.Proxies, p)
-		}
-	}
+	proxiesStr := r.Form.Get("proxies")
+	newJob.Data.Proxies = splitAndTrim(proxiesStr)
 
 	err = newJob.Validate()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
-
 		return
 	}
 
 	err = s.svc.Create(r.Context(), &newJob)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-
 		return
 	}
 
 	tmpl, ok := s.tmpl["static/templates/job_row.html"]
 	if !ok {
 		http.Error(w, "missing tpl", http.StatusInternalServerError)
-
 		return
 	}
 
 	_ = tmpl.Execute(w, newJob)
 }
 
+func splitAndTrim(s string) []string {
+	parts := strings.Split(s, "\n")
+	var result []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
+func parseInt(s string) (int, error) {
+	return strconv.Atoi(s)
+}
+
+
 func (s *Server) getJobs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-
 		return
 	}
 
@@ -392,17 +365,55 @@ func (s *Server) getJobs(w http.ResponseWriter, r *http.Request) {
 	jobs, err := s.svc.All(context.Background())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-
 		return
 	}
 
 	_ = tmpl.Execute(w, jobs)
 }
 
+func (s *Server) viewJob(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	id, ok := getIDFromRequest(r)
+	if !ok {
+		http.Error(w, "Invalid ID", http.StatusUnprocessableEntity)
+		return
+	}
+
+	places, err := s.svc.GetPlaces(r.Context(), id.String())
+
+	if err != nil {
+		if !errors.Is(err, ErrPlacesNotFound) {
+			log.Printf("view job %s: %v", id, err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		places = []Place{}
+	}
+
+	tmpl, ok := s.tmpl["static/templates/job_view.html"]
+	if !ok {
+		http.Error(w, "missing tpl", http.StatusInternalServerError)
+		return
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, places); err != nil {
+		log.Printf("view job %s: render: %v", id, err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	_, _ = buf.WriteTo(w)
+}
+
 func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-
 		return
 	}
 
@@ -411,7 +422,6 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 	id, ok := getIDFromRequest(r)
 	if !ok {
 		http.Error(w, "Invalid ID", http.StatusUnprocessableEntity)
-
 		return
 	}
 
@@ -442,21 +452,18 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 func (s *Server) delete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-
 		return
 	}
 
 	deleteID, ok := getIDFromRequest(r)
 	if !ok {
 		http.Error(w, "Invalid ID", http.StatusUnprocessableEntity)
-
 		return
 	}
 
 	err := s.svc.Delete(r.Context(), deleteID.String())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-
 		return
 	}
 
@@ -477,11 +484,10 @@ type apiScrapeResponse struct {
 	ID string `json:"id"`
 }
 
-func (s *Server) redocHandler(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) redocHandler(w http.ResponseWriter, r *http.Request) {
 	tmpl, ok := s.tmpl["static/templates/redoc.html"]
 	if !ok {
 		http.Error(w, "missing tpl", http.StatusInternalServerError)
-
 		return
 	}
 
@@ -499,7 +505,6 @@ func (s *Server) apiScrape(w http.ResponseWriter, r *http.Request) {
 		}
 
 		renderJSON(w, http.StatusUnprocessableEntity, ans)
-
 		return
 	}
 
@@ -511,7 +516,6 @@ func (s *Server) apiScrape(w http.ResponseWriter, r *http.Request) {
 		Data:   req.JobData,
 	}
 
-	// convert to seconds
 	newJob.Data.MaxTime *= time.Second
 
 	err = newJob.Validate()
@@ -522,7 +526,6 @@ func (s *Server) apiScrape(w http.ResponseWriter, r *http.Request) {
 		}
 
 		renderJSON(w, http.StatusUnprocessableEntity, ans)
-
 		return
 	}
 
@@ -534,7 +537,6 @@ func (s *Server) apiScrape(w http.ResponseWriter, r *http.Request) {
 		}
 
 		renderJSON(w, http.StatusInternalServerError, ans)
-
 		return
 	}
 
@@ -554,7 +556,6 @@ func (s *Server) apiGetJobs(w http.ResponseWriter, r *http.Request) {
 		}
 
 		renderJSON(w, http.StatusInternalServerError, apiError)
-
 		return
 	}
 
@@ -570,7 +571,6 @@ func (s *Server) apiGetJob(w http.ResponseWriter, r *http.Request) {
 		}
 
 		renderJSON(w, http.StatusUnprocessableEntity, apiError)
-
 		return
 	}
 
@@ -582,59 +582,10 @@ func (s *Server) apiGetJob(w http.ResponseWriter, r *http.Request) {
 		}
 
 		renderJSON(w, http.StatusNotFound, apiError)
-
 		return
 	}
 
 	renderJSON(w, http.StatusOK, job)
-}
-
-// viewJob renders the map modal fragment for a job, embedding the job's places
-// directly so the client needs no separate data request.
-func (s *Server) viewJob(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-
-		return
-	}
-
-	id, ok := getIDFromRequest(r)
-	if !ok {
-		http.Error(w, "Invalid ID", http.StatusUnprocessableEntity)
-
-		return
-	}
-
-	places, err := s.svc.GetPlaces(r.Context(), id.String())
-
-	if err != nil {
-		if !errors.Is(err, ErrPlacesNotFound) {
-			log.Printf("view job %s: %v", id, err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-
-			return
-		}
-
-		// No CSV yet: render the modal with an empty state rather than an error.
-		places = []Place{}
-	}
-
-	tmpl, ok := s.tmpl["static/templates/job_view.html"]
-	if !ok {
-		http.Error(w, "missing tpl", http.StatusInternalServerError)
-
-		return
-	}
-
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, places); err != nil {
-		log.Printf("view job %s: render: %v", id, err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-
-		return
-	}
-
-	_, _ = buf.WriteTo(w)
 }
 
 func (s *Server) apiDeleteJob(w http.ResponseWriter, r *http.Request) {
@@ -646,7 +597,6 @@ func (s *Server) apiDeleteJob(w http.ResponseWriter, r *http.Request) {
 		}
 
 		renderJSON(w, http.StatusUnprocessableEntity, apiError)
-
 		return
 	}
 
@@ -658,7 +608,6 @@ func (s *Server) apiDeleteJob(w http.ResponseWriter, r *http.Request) {
 		}
 
 		renderJSON(w, http.StatusInternalServerError, apiError)
-
 		return
 	}
 
@@ -668,12 +617,7 @@ func (s *Server) apiDeleteJob(w http.ResponseWriter, r *http.Request) {
 func renderJSON(w http.ResponseWriter, code int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-
 	_ = json.NewEncoder(w).Encode(data)
-}
-
-func formatDate(t time.Time) string {
-	return t.Format("Jan 02, 2006 15:04:05")
 }
 
 func securityHeaders(next http.Handler) http.Handler {
@@ -683,7 +627,7 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-XSS-Protection", "1; mode=block")
 		w.Header().Set("Content-Security-Policy",
 			"default-src 'self'; "+
-				"script-src 'self' cdn.redoc.ly cdnjs.cloudflare.com 'unsafe-inline' 'unsafe-eval'; "+
+				"script-src 'self' cdn.redoc.ly cdn.tailwindcss.com cdnjs.cloudflare.com 'unsafe-inline' 'unsafe-eval'; "+
 				"worker-src 'self' blob:; "+
 				"style-src 'self' 'unsafe-inline' fonts.googleapis.com cdnjs.cloudflare.com; "+
 				"img-src 'self' data: cdn.redoc.ly cdnjs.cloudflare.com *.tile.openstreetmap.org; "+
