@@ -102,16 +102,47 @@ func (r *memoryJobRepo) Delete(_ context.Context, id string) error {
 }
 
 func (r *memoryJobRepo) Select(_ context.Context, params web.SelectParams) ([]web.Job, error) {
-	jobs := make([]web.Job, 0, len(r.jobs))
+	var jobs []web.Job
 
-	for id := range r.jobs {
-		job := r.jobs[id]
+	for _, job := range r.jobs {
 		if params.Status == "" || job.Status == params.Status {
 			jobs = append(jobs, job)
 		}
 	}
 
+	// Sort by created_at DESC (Date)
+	for i := 0; i < len(jobs); i++ {
+		for j := i + 1; j < len(jobs); j++ {
+			if jobs[i].Date.Before(jobs[j].Date) || (jobs[i].Date.Equal(jobs[j].Date) && jobs[i].ID < jobs[j].ID) {
+				jobs[i], jobs[j] = jobs[j], jobs[i]
+			}
+		}
+	}
+
+	if params.Offset > 0 {
+		if params.Offset > len(jobs) {
+			jobs = nil
+		} else {
+			jobs = jobs[params.Offset:]
+		}
+	}
+
+	if params.Limit > 0 && len(jobs) > params.Limit {
+		jobs = jobs[:params.Limit]
+	}
+
 	return jobs, nil
+}
+
+func (r *memoryJobRepo) Count(_ context.Context, params web.SelectParams) (int, error) {
+	count := 0
+	for id := range r.jobs {
+		job := r.jobs[id]
+		if params.Status == "" || job.Status == params.Status {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (r *memoryJobRepo) Update(_ context.Context, job *web.Job) error {

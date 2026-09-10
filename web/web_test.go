@@ -94,3 +94,38 @@ func TestSecurityHeadersAllowMapResources(t *testing.T) {
 		}
 	}
 }
+
+func newTestServerWithRepo(t *testing.T, repo JobRepository) *Server {
+	t.Helper()
+
+	srv, err := New(NewService(repo, t.TempDir()), ":0")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	return srv
+}
+
+func TestGetJobsHTMXTriggerIsPollingOnly(t *testing.T) {
+	srv := newTestServerWithRepo(t, &mockJobRepo{})
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs", http.NoBody)
+	rec := httptest.NewRecorder()
+	srv.getJobs(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+
+	// The returned tbody must only poll; it must NOT contain "load" in hx-trigger
+	// because load on an outerHTML-swapped element would cause an immediate reload loop.
+	if strings.Contains(body, `hx-trigger="load`) {
+		t.Fatal("job_rows.html must not use hx-trigger=\"load\" — it causes an HTMX outerHTML reload loop")
+	}
+
+	if !strings.Contains(body, `hx-trigger="every 10s"`) {
+		t.Fatal("job_rows.html must use hx-trigger=\"every 10s\" for periodic polling")
+	}
+}

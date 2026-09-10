@@ -389,14 +389,21 @@ func (s *Server) getJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobs, err := s.svc.All(context.Background())
+	pageStr := r.URL.Query().Get("page")
+	page, err := strconv.Atoi(pageStr)
+	if err != nil || page < 1 {
+		page = 1
+	}
+
+	limit := 20
+	jobPage, err := s.svc.ListJobs(r.Context(), page, limit)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 
 		return
 	}
 
-	_ = tmpl.Execute(w, jobs)
+	_ = tmpl.Execute(w, jobPage)
 }
 
 func (s *Server) download(w http.ResponseWriter, r *http.Request) {
