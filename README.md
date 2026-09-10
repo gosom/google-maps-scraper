@@ -117,6 +117,14 @@ Unlock global access with consistent, high-speed connections from $0.65/GB, 90M+
 
 ---
 
+### [Swiftproxy](https://www.swiftproxy.net/?ref=gosom) - Reliable Residential Proxies for Web Scraping
+
+[![Swiftproxy - Reliable Residential Proxies for Web Scraping](./img/swiftproxy.png)](https://www.swiftproxy.net/?ref=gosom)
+
+Swiftproxy provides 90M+ clean residential IPs across 220+ locations, with HTTP(S)/SOCKS5 support, flexible targeting, and non-expiring traffic. Ideal for web scraping, data collection, and location-based research. Free testing is available, with 10% off using code `PROXY90`. [**Try Swiftproxy now →**](https://www.swiftproxy.net/?ref=gosom)
+
+---
+
 ### [TalorData](https://talordata.com/?campaignid=f01u8cHondg2qA47&utm_source=github&utm_term=googlemaps) - Fast SERP API for Google Maps and Search Data
 
 [![TalorData](./img/talordata.png)](https://talordata.com/?campaignid=f01u8cHondg2qA47&utm_source=github&utm_term=googlemaps)

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { selectSponsors, validateSponsors } from "./select-proxy-sponsors.mjs";
@@ -34,6 +35,22 @@ const activeSponsors = [
     active: false,
   },
 ];
+
+test("default registry includes Swiftproxy and its offer", () => {
+  const registryURL = new URL("../references/proxy-sponsors.json", import.meta.url);
+  const sponsors = JSON.parse(readFileSync(registryURL, "utf8"));
+  const swiftproxy = sponsors.find(({ id }) => id === "swiftproxy");
+
+  assert.deepEqual(swiftproxy, {
+    id: "swiftproxy",
+    name: "Swiftproxy",
+    description:
+      "Residential proxy provider with 90M+ IPs across 220+ locations.",
+    referral_url: "https://www.swiftproxy.net/?ref=gosom",
+    offer: "Use code PROXY90 for 10% off.",
+    active: true,
+  });
+});
 
 test("selectSponsors returns three unique active sponsors", () => {
   const selected = selectSponsors(activeSponsors, 3, () => 0);
