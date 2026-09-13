@@ -18,6 +18,20 @@ const (
 type SelectParams struct {
 	Status string
 	Limit  int
+	Offset int
+}
+
+// JobPage contains one page of jobs and the metadata needed to navigate it.
+type JobPage struct {
+	Jobs        []Job
+	CurrentPage int
+	TotalPages  int
+	Total       int
+	HasPrev     bool
+	HasNext     bool
+	PrevPage    int
+	NextPage    int
+	HasPages    bool
 }
 
 type JobRepository interface {

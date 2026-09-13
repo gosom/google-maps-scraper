@@ -67,12 +67,22 @@ func (repo *repo) Select(ctx context.Context, params web.SelectParams) ([]web.Jo
 		args = append(args, params.Status)
 	}
 
-	q += " ORDER BY created_at DESC"
+	q += " ORDER BY created_at DESC, id DESC"
 
 	if params.Limit > 0 {
 		q += " LIMIT ?"
 
 		args = append(args, params.Limit)
+	}
+
+	if params.Offset > 0 {
+		if params.Limit <= 0 {
+			q += " LIMIT -1"
+		}
+
+		q += " OFFSET ?"
+
+		args = append(args, params.Offset)
 	}
 
 	rows, err := repo.db.QueryContext(ctx, q, args...)
@@ -98,6 +108,27 @@ func (repo *repo) Select(ctx context.Context, params web.SelectParams) ([]web.Jo
 	}
 
 	return ans, nil
+}
+
+func (repo *repo) Count(ctx context.Context, params web.SelectParams) (int, error) {
+	q := `SELECT COUNT(*) from jobs`
+
+	var args []any
+
+	if params.Status != "" {
+		q += ` WHERE status = ?`
+
+		args = append(args, params.Status)
+	}
+
+	var count int
+
+	err := repo.db.QueryRowContext(ctx, q, args...).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+
+	return count, nil
 }
 
 func (repo *repo) Update(ctx context.Context, job *web.Job) error {
@@ -212,7 +243,10 @@ func createSchema(db *sql.DB) error {
 			data TEXT NOT NULL,
 			created_at INT NOT NULL,
 			updated_at INT NOT NULL
-		)
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_jobs_created_at_id
+			ON jobs (created_at DESC, id DESC);
 	`)
 
 	return err
