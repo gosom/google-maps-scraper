@@ -23,7 +23,10 @@ import (
 //go:embed static
 var static embed.FS
 
-const methodNotAllowedMessage = "Method not allowed"
+const (
+	jobsPageLimit           = 20
+	methodNotAllowedMessage = "Method not allowed"
+)
 
 type Server struct {
 	tmpl map[string]*template.Template
@@ -370,14 +373,41 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tmpl, ok := s.tmpl["static/templates/job_row.html"]
-	if !ok {
-		http.Error(w, "missing tpl", http.StatusInternalServerError)
+	if err := s.renderJobsPage(r.Context(), w, 1); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
 
-		return
+func (s *Server) renderJobsPage(ctx context.Context, w io.Writer, page int) error {
+	tmpl, ok := s.tmpl["static/templates/job_rows.html"]
+	if !ok {
+		return errors.New("missing tpl")
 	}
 
-	_ = tmpl.Execute(w, newJob)
+	jobPage, err := s.svc.ListJobs(ctx, page, jobsPageLimit)
+	if err != nil {
+		return fmt.Errorf("list jobs: %w", err)
+	}
+
+	var output bytes.Buffer
+	if err := tmpl.Execute(&output, jobPage); err != nil {
+		return fmt.Errorf("render jobs: %w", err)
+	}
+
+	if _, err := output.WriteTo(w); err != nil {
+		return fmt.Errorf("write jobs: %w", err)
+	}
+
+	return nil
+}
+
+func pageFromRequest(r *http.Request) int {
+	page, err := strconv.Atoi(r.URL.Query().Get("page"))
+	if err != nil || page < 1 {
+		return 1
+	}
+
+	return page
 }
 
 func (s *Server) getJobs(w http.ResponseWriter, r *http.Request) {
@@ -387,27 +417,9 @@ func (s *Server) getJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tmpl, ok := s.tmpl["static/templates/job_rows.html"]
-	if !ok {
-		http.Error(w, "missing tpl", http.StatusInternalServerError)
-		return
-	}
-
-	pageStr := r.URL.Query().Get("page")
-	page, err := strconv.Atoi(pageStr)
-	if err != nil || page < 1 {
-		page = 1
-	}
-
-	limit := 20
-	jobPage, err := s.svc.ListJobs(r.Context(), page, limit)
-	if err != nil {
+	if err := s.renderJobsPage(r.Context(), w, pageFromRequest(r)); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-
-		return
 	}
-
-	_ = tmpl.Execute(w, jobPage)
 }
 
 func (s *Server) download(w http.ResponseWriter, r *http.Request) {
@@ -471,7 +483,9 @@ func (s *Server) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	if err := s.renderJobsPage(r.Context(), w, pageFromRequest(r)); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 type apiError struct {

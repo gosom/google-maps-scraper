@@ -21,6 +21,7 @@ type SelectParams struct {
 	Offset int
 }
 
+// JobPage contains one page of jobs and the metadata needed to navigate it.
 type JobPage struct {
 	Jobs        []Job
 	CurrentPage int
@@ -38,7 +39,6 @@ type JobRepository interface {
 	Create(context.Context, *Job) error
 	Delete(context.Context, string) error
 	Select(context.Context, SelectParams) ([]Job, error)
-	Count(context.Context, SelectParams) (int, error)
 	Update(context.Context, *Job) error
 }
 

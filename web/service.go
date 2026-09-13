@@ -13,6 +13,10 @@ type Service struct {
 	dataFolder string
 }
 
+type jobCounter interface {
+	Count(context.Context, SelectParams) (int, error)
+}
+
 func NewService(repo JobRepository, dataFolder string) *Service {
 	return &Service{
 		repo:       repo,
@@ -28,17 +32,19 @@ func (s *Service) All(ctx context.Context) ([]Job, error) {
 	return s.repo.Select(ctx, SelectParams{})
 }
 
+// ListJobs returns a page of jobs, clamping invalid page and limit values.
 func (s *Service) ListJobs(ctx context.Context, page, limit int) (JobPage, error) {
 	var ans JobPage
 
 	if page < 1 {
 		page = 1
 	}
+
 	if limit < 1 {
 		limit = 20
 	}
 
-	total, err := s.repo.Count(ctx, SelectParams{})
+	total, err := s.countJobs(ctx, SelectParams{})
 	if err != nil {
 		return ans, err
 	}
@@ -76,6 +82,19 @@ func (s *Service) ListJobs(ctx context.Context, page, limit int) (JobPage, error
 	}
 
 	return ans, nil
+}
+
+func (s *Service) countJobs(ctx context.Context, params SelectParams) (int, error) {
+	if counter, ok := s.repo.(jobCounter); ok {
+		return counter.Count(ctx, params)
+	}
+
+	jobs, err := s.repo.Select(ctx, params)
+	if err != nil {
+		return 0, fmt.Errorf("select jobs for count: %w", err)
+	}
+
+	return len(jobs), nil
 }
 
 func (s *Service) Get(ctx context.Context, id string) (Job, error) {

@@ -105,7 +105,9 @@ func (r *memoryJobRepo) Delete(_ context.Context, id string) error {
 func (r *memoryJobRepo) Select(_ context.Context, params web.SelectParams) ([]web.Job, error) {
 	var jobs []web.Job
 
-	for _, job := range r.jobs {
+	for id := range r.jobs {
+		job := r.jobs[id]
+
 		if params.Status == "" || job.Status == params.Status {
 			jobs = append(jobs, job)
 		}
@@ -137,12 +139,14 @@ func (r *memoryJobRepo) Select(_ context.Context, params web.SelectParams) ([]we
 
 func (r *memoryJobRepo) Count(_ context.Context, params web.SelectParams) (int, error) {
 	count := 0
+
 	for id := range r.jobs {
 		job := r.jobs[id]
 		if params.Status == "" || job.Status == params.Status {
 			count++
 		}
 	}
+
 	return count, nil
 }
 

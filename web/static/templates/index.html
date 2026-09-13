@@ -42,8 +42,8 @@
                 <div id="error-container" class="error-message"></div>
                 <form 
                     hx-post="/scrape" 
-                    hx-target="#job-table tbody" 
-                    hx-swap="beforeend"
+                    hx-target="#job-tbody"
+                    hx-swap="outerHTML"
                     hx-indicator="#spinner"
                     hx-on::before-request="document.getElementById('error-container').innerHTML = ''"
                     hx-on::after-request="if(!event.detail.successful) document.getElementById('error-container').innerHTML = event.detail.xhr.responseText"

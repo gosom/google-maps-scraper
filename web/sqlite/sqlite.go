@@ -67,7 +67,7 @@ func (repo *repo) Select(ctx context.Context, params web.SelectParams) ([]web.Jo
 		args = append(args, params.Status)
 	}
 
-	q += " ORDER BY created_at DESC"
+	q += " ORDER BY created_at DESC, id DESC"
 
 	if params.Limit > 0 {
 		q += " LIMIT ?"
@@ -76,6 +76,10 @@ func (repo *repo) Select(ctx context.Context, params web.SelectParams) ([]web.Jo
 	}
 
 	if params.Offset > 0 {
+		if params.Limit <= 0 {
+			q += " LIMIT -1"
+		}
+
 		q += " OFFSET ?"
 
 		args = append(args, params.Offset)
@@ -118,6 +122,7 @@ func (repo *repo) Count(ctx context.Context, params web.SelectParams) (int, erro
 	}
 
 	var count int
+
 	err := repo.db.QueryRowContext(ctx, q, args...).Scan(&count)
 	if err != nil {
 		return 0, err
@@ -238,7 +243,10 @@ func createSchema(db *sql.DB) error {
 			data TEXT NOT NULL,
 			created_at INT NOT NULL,
 			updated_at INT NOT NULL
-		)
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_jobs_created_at_id
+			ON jobs (created_at DESC, id DESC);
 	`)
 
 	return err

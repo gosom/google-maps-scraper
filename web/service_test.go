@@ -116,29 +116,67 @@ type mockJobRepo struct {
 	jobs []Job
 }
 
-func (r *mockJobRepo) Get(ctx context.Context, id string) (Job, error) {
+type legacyJobRepo struct {
+	jobs []Job
+}
+
+func (r *legacyJobRepo) Get(_ context.Context, _ string) (Job, error) {
 	return Job{}, nil
 }
 
-func (r *mockJobRepo) Create(ctx context.Context, job *Job) error {
+func (r *legacyJobRepo) Create(_ context.Context, _ *Job) error {
 	return nil
 }
 
-func (r *mockJobRepo) Delete(ctx context.Context, id string) error {
+func (r *legacyJobRepo) Delete(_ context.Context, _ string) error {
 	return nil
 }
 
-func (r *mockJobRepo) Update(ctx context.Context, job *Job) error {
+func (r *legacyJobRepo) Update(_ context.Context, _ *Job) error {
 	return nil
 }
 
-func (r *mockJobRepo) Select(ctx context.Context, params SelectParams) ([]Job, error) {
+func (r *legacyJobRepo) Select(_ context.Context, params SelectParams) ([]Job, error) {
+	jobs := r.jobs
+
+	if params.Offset > 0 {
+		jobs = jobs[params.Offset:]
+	}
+
+	if params.Limit > 0 && len(jobs) > params.Limit {
+		jobs = jobs[:params.Limit]
+	}
+
+	return jobs, nil
+}
+
+func (r *mockJobRepo) Get(_ context.Context, _ string) (Job, error) {
+	return Job{}, nil
+}
+
+func (r *mockJobRepo) Create(_ context.Context, _ *Job) error {
+	return nil
+}
+
+func (r *mockJobRepo) Delete(_ context.Context, _ string) error {
+	return nil
+}
+
+func (r *mockJobRepo) Update(_ context.Context, _ *Job) error {
+	return nil
+}
+
+func (r *mockJobRepo) Select(_ context.Context, params SelectParams) ([]Job, error) {
 	var res []Job
-	for _, j := range r.jobs {
+
+	for i := range r.jobs {
+		j := r.jobs[i]
+
 		if params.Status == "" || j.Status == params.Status {
 			res = append(res, j)
 		}
 	}
+
 	if params.Offset > 0 {
 		if params.Offset > len(res) {
 			res = nil
@@ -146,19 +184,25 @@ func (r *mockJobRepo) Select(ctx context.Context, params SelectParams) ([]Job, e
 			res = res[params.Offset:]
 		}
 	}
+
 	if params.Limit > 0 && len(res) > params.Limit {
 		res = res[:params.Limit]
 	}
+
 	return res, nil
 }
 
-func (r *mockJobRepo) Count(ctx context.Context, params SelectParams) (int, error) {
+func (r *mockJobRepo) Count(_ context.Context, params SelectParams) (int, error) {
 	count := 0
-	for _, j := range r.jobs {
+
+	for i := range r.jobs {
+		j := r.jobs[i]
+
 		if params.Status == "" || j.Status == params.Status {
 			count++
 		}
 	}
+
 	return count, nil
 }
 
@@ -175,9 +219,11 @@ func TestListJobsPagination(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListJobs: %v", err)
 	}
+
 	if len(page.Jobs) != 20 {
 		t.Errorf("expected 20 jobs, got %d", len(page.Jobs))
 	}
+
 	if page.CurrentPage != 1 || page.TotalPages != 3 || page.Total != 45 {
 		t.Errorf("unexpected pagination metadata: %+v", page)
 	}
@@ -187,9 +233,11 @@ func TestListJobsPagination(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListJobs: %v", err)
 	}
+
 	if len(page.Jobs) != 20 {
 		t.Errorf("expected 20 jobs on page 2, got %d", len(page.Jobs))
 	}
+
 	if page.CurrentPage != 2 {
 		t.Errorf("expected current page 2, got %d", page.CurrentPage)
 	}
@@ -199,9 +247,11 @@ func TestListJobsPagination(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListJobs: %v", err)
 	}
+
 	if len(page.Jobs) != 5 {
 		t.Errorf("expected 5 jobs on page 3, got %d", len(page.Jobs))
 	}
+
 	if page.CurrentPage != 3 || page.HasNext != false {
 		t.Errorf("unexpected metadata on page 3: %+v", page)
 	}
@@ -211,6 +261,7 @@ func TestListJobsPagination(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListJobs: %v", err)
 	}
+
 	if page.CurrentPage != 1 || len(page.Jobs) != 20 {
 		t.Errorf("expected page -1 to clamp to 1")
 	}
@@ -220,6 +271,7 @@ func TestListJobsPagination(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListJobs: %v", err)
 	}
+
 	if page.CurrentPage != 3 || len(page.Jobs) != 5 {
 		t.Errorf("expected page 999 to clamp to 3, got %d with %d jobs", page.CurrentPage, len(page.Jobs))
 	}
@@ -233,10 +285,26 @@ func TestListJobsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListJobs: %v", err)
 	}
+
 	if len(page.Jobs) != 0 {
 		t.Errorf("expected 0 jobs, got %d", len(page.Jobs))
 	}
+
 	if page.CurrentPage != 1 || page.TotalPages != 1 || page.HasPrev || page.HasNext {
 		t.Errorf("unexpected pagination metadata for empty dataset: %+v", page)
+	}
+}
+
+func TestListJobsSupportsLegacyRepositoryWithoutCount(t *testing.T) {
+	repo := &legacyJobRepo{jobs: make([]Job, 21)}
+	svc := NewService(repo, t.TempDir())
+
+	page, err := svc.ListJobs(context.Background(), 2, 20)
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+
+	if page.Total != 21 || len(page.Jobs) != 1 {
+		t.Fatalf("unexpected page: %+v", page)
 	}
 }
