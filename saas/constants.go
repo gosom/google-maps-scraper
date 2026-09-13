@@ -2,6 +2,9 @@ package saas
 
 // Environment variable names
 const (
+	// DefaultDatabaseURL is the local-development PostgreSQL endpoint.
+	DefaultDatabaseURL = "postgres://postgres:postgres@localhost:5432/gmaps_pro?sslmode=disable" //nolint:gosec // Non-production local default; deployments override it via DATABASE_URL.
+
 	// Server
 	EnvAddr              = "ADDR"
 	EnvDatabaseURL       = "DATABASE_URL"

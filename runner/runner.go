@@ -313,7 +313,7 @@ func banner(messages []string, width int) string {
 
 	contentWidth := width - 4
 
-	var wrappedLines []string
+	wrappedLines := make([]string, 0, len(messages))
 	for _, message := range messages {
 		wrappedLines = append(wrappedLines, wrapText(message, contentWidth)...)
 	}
@@ -330,7 +330,7 @@ func banner(messages []string, width int) string {
 			paddingRight = 0
 		}
 
-		builder.WriteString(fmt.Sprintf("║ %s%s ║\n", line, strings.Repeat(" ", paddingRight)))
+		fmt.Fprintf(&builder, "║ %s%s ║\n", line, strings.Repeat(" ", paddingRight))
 	}
 
 	builder.WriteString("╚" + strings.Repeat("═", width-2) + "╝\n")

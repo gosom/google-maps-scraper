@@ -1,6 +1,7 @@
 name: build
 
-permissions: {}
+permissions:
+  contents: read
 
 on:
   push:
@@ -16,13 +17,13 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        go: ['1.26.6']
+        go: ['1.27.1']
 
     steps:
       - name: Check out code
         uses: actions/checkout@v4
       - name: Install Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ matrix.go }}
           check-latest: true

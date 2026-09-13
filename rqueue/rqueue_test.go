@@ -14,6 +14,7 @@ func TestWaitForFlushResultReturnsResultWithinGrace(t *testing.T) {
 
 	go func() {
 		time.Sleep(20 * time.Millisecond)
+
 		ch <- scraper.FlushResult{ResultCount: 3}
 	}()
 

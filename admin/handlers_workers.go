@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"time"
@@ -178,8 +179,8 @@ func WorkersPageHandler(appState *AppState) http.HandlerFunc {
 			"SSHKeyExists":      sshKeyExists,
 			"DOConfigured":      false,
 			"HetznerConfigured": false,
-			"Success":           r.URL.Query().Get("success"),
-			"Error":             r.URL.Query().Get("error"),
+			templateSuccessKey:  r.URL.Query().Get("success"),
+			templateErrorKey:    r.URL.Query().Get("error"),
 		}
 
 		// Check DO token
@@ -259,7 +260,9 @@ func SaveProviderTokenHandler(appState *AppState) http.HandlerFunc {
 			return
 		}
 
-		http.Redirect(w, r, "/admin/workers?success=API+token+saved+for+"+provider, http.StatusSeeOther)
+		successMessage := "API token saved for " + provider
+		redirectURL := "/admin/workers?success=" + url.QueryEscape(successMessage)
+		http.Redirect(w, r, redirectURL, http.StatusSeeOther)
 	}
 }
 

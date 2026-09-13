@@ -26,6 +26,8 @@ import (
 
 var hashIDCodec *hashids.HashID
 
+const pendingJobState = "pending"
+
 func init() {
 	salt := os.Getenv("HASHID_SALT")
 	if salt == "" {
@@ -573,14 +575,14 @@ type JobListResult struct {
 
 // ValidJobStates are the valid states for filtering jobs.
 var ValidJobStates = map[string]rivertype.JobState{
-	"available": rivertype.JobStateAvailable,
-	"cancelled": rivertype.JobStateCancelled,
-	"completed": rivertype.JobStateCompleted,
-	"discarded": rivertype.JobStateDiscarded,
-	"pending":   rivertype.JobStatePending,
-	"retryable": rivertype.JobStateRetryable,
-	"running":   rivertype.JobStateRunning,
-	"scheduled": rivertype.JobStateScheduled,
+	"available":     rivertype.JobStateAvailable,
+	"cancelled":     rivertype.JobStateCancelled,
+	"completed":     rivertype.JobStateCompleted,
+	"discarded":     rivertype.JobStateDiscarded,
+	pendingJobState: rivertype.JobStatePending,
+	"retryable":     rivertype.JobStateRetryable,
+	"running":       rivertype.JobStateRunning,
+	"scheduled":     rivertype.JobStateScheduled,
 }
 
 // ListJobs returns a paginated list of jobs with optional state filtering.
@@ -654,7 +656,7 @@ func (c *Client) ListJobs(ctx context.Context, state string, limit int, cursor s
 		// Map state
 		switch job.State {
 		case rivertype.JobStateAvailable, rivertype.JobStateScheduled, rivertype.JobStateRetryable, rivertype.JobStatePending:
-			item.Status = "pending"
+			item.Status = pendingJobState
 		case rivertype.JobStateRunning:
 			item.Status = jobStatusRunning
 			item.StartedAt = job.AttemptedAt
@@ -771,7 +773,7 @@ func (c *Client) GetJobStatus(ctx context.Context, jobID string) (*JobStatus, er
 
 	switch job.State { //nolint:exhaustive // raw SQL query returns string states, not all rivertype.JobState values are possible here
 	case "available", "scheduled", "retryable":
-		status.Status = "pending"
+		status.Status = pendingJobState
 	case jobStatusRunning:
 		status.Status = jobStatusRunning
 		if job.AttemptedAt != nil {
@@ -804,14 +806,12 @@ func (c *Client) GetJobStatus(ctx context.Context, jobID string) (*JobStatus, er
 }
 
 // getResults fetches results from the scrape_results table.
-func (c *Client) getResults(ctx context.Context, jobID int64) (json.RawMessage, int, error) {
-	var results json.RawMessage
-
-	var resultCount int
-
+func (c *Client) getResults(ctx context.Context, jobID int64) (
+	results json.RawMessage, resultCount int, err error,
+) {
 	q := `SELECT results, result_count FROM scrape_results WHERE job_id = $1`
 
-	err := c.dbPool.QueryRow(ctx, q, jobID).Scan(&results, &resultCount)
+	err = c.dbPool.QueryRow(ctx, q, jobID).Scan(&results, &resultCount)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -820,7 +820,9 @@ func (c *Client) getResults(ctx context.Context, jobID int64) (json.RawMessage, 
 }
 
 // GetJobResults fetches the raw JSON results and keyword for a job by its encoded ID.
-func (c *Client) GetJobResults(ctx context.Context, encodedJobID string) (json.RawMessage, string, error) {
+func (c *Client) GetJobResults(ctx context.Context, encodedJobID string) (
+	results json.RawMessage, keyword string, err error,
+) {
 	riverJobID, err := decodeJobID(encodedJobID)
 	if err != nil {
 		return nil, "", fmt.Errorf("invalid job id: %w", err)
@@ -832,14 +834,12 @@ func (c *Client) GetJobResults(ctx context.Context, encodedJobID string) (json.R
 		return nil, "", fmt.Errorf("job not found: %w", err)
 	}
 
-	var keyword string
-
 	var args ScrapeJobArgs
 	if err := json.Unmarshal(job.EncodedArgs, &args); err == nil {
 		keyword = args.Keyword
 	}
 
-	results, _, err := c.getResults(ctx, riverJobID)
+	results, _, err = c.getResults(ctx, riverJobID)
 	if err != nil {
 		return nil, "", fmt.Errorf("results not found: %w", err)
 	}

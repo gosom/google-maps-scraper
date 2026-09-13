@@ -11,8 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/shirou/gopsutil/v4/host"
 )
 
@@ -55,7 +55,7 @@ func generateMachineID() machineIdentifier {
 	once.Do(func() {
 		ip := fetchExternalIP()
 		if ip == "" {
-			ip = uuid.New().String()
+			ip = uuid.NewV4().String()
 		}
 
 		hash := sha256.New()
@@ -92,7 +92,7 @@ func fetchExternalIP() string {
 		"https://ifconfig.co",
 	}
 
-	rand.Shuffle(len(endpoints), func(i, j int) {
+	rand.Shuffle(len(endpoints), func(i, j int) { //nolint:gosec // Randomizing endpoint order has no security impact.
 		endpoints[i], endpoints[j] = endpoints[j], endpoints[i]
 	})
 

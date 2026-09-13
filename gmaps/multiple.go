@@ -58,7 +58,7 @@ func ParseSearchResults(raw []byte) ([]*Entry, error) {
 					sb.WriteString(", ")
 				}
 
-				sb.WriteString(fmt.Sprintf("%v", part))
+				fmt.Fprintf(&sb, "%v", part)
 			}
 
 			return sb.String()

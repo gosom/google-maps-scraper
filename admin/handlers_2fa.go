@@ -35,7 +35,7 @@ func TwoFactorVerifyPageHandler(appState *AppState) http.HandlerFunc {
 		}
 
 		data := map[string]any{
-			"Error": r.URL.Query().Get("error"),
+			templateErrorKey: r.URL.Query().Get("error"),
 		}
 		renderTemplate(appState, w, r, "2fa_verify.html", data)
 	}
@@ -116,13 +116,14 @@ func TwoFactorVerifySubmitHandler(appState *AppState) http.HandlerFunc {
 
 		_ = appState.Store.DeleteSession(r.Context(), pendingCookie.Value)
 
-		http.SetCookie(w, &http.Cookie{
+		http.SetCookie(w, &http.Cookie{ //nolint:gosec // Secure is enabled for HTTPS and intentionally disabled for local HTTP development.
 			Name:     appState.CookieName + "_pending",
 			Value:    "",
 			Path:     "/",
 			MaxAge:   -1,
 			HttpOnly: true,
 			Secure:   isSecureRequest(r),
+			SameSite: http.SameSiteLaxMode,
 		})
 
 		ipAddress := r.RemoteAddr
@@ -136,7 +137,7 @@ func TwoFactorVerifySubmitHandler(appState *AppState) http.HandlerFunc {
 
 		log.Info("audit", "action", "login_2fa", "user_id", user.ID, "ip", ipAddress)
 
-		http.SetCookie(w, &http.Cookie{
+		http.SetCookie(w, &http.Cookie{ //nolint:gosec // Secure is enabled for HTTPS and intentionally disabled for local HTTP development.
 			Name:     appState.CookieName,
 			Value:    session.ID,
 			Path:     "/",
@@ -193,9 +194,9 @@ func TwoFactorSetupPageHandler(appState *AppState) http.HandlerFunc {
 		// If 2FA is already enabled, show the disable option
 		if user.TOTPEnabled {
 			data := map[string]any{
-				"TOTPEnabled": true,
-				"Success":     r.URL.Query().Get("success"),
-				"Error":       r.URL.Query().Get("error"),
+				templateTOTPEnabledKey: true,
+				templateSuccessKey:     r.URL.Query().Get("success"),
+				templateErrorKey:       r.URL.Query().Get("error"),
 			}
 			renderTemplate(appState, w, r, "2fa_setup.html", data)
 
@@ -213,10 +214,10 @@ func TwoFactorSetupPageHandler(appState *AppState) http.HandlerFunc {
 			}
 
 			data := map[string]any{
-				"TOTPEnabled": false,
-				"Step":        "backup",
-				"BackupCodes": splitBackupCodes(cfg.Value),
-				"Error":       r.URL.Query().Get("error"),
+				templateTOTPEnabledKey: false,
+				templateStepKey:        "backup",
+				"BackupCodes":          splitBackupCodes(cfg.Value),
+				templateErrorKey:       r.URL.Query().Get("error"),
 			}
 			renderTemplate(appState, w, r, "2fa_setup.html", data)
 
@@ -226,9 +227,9 @@ func TwoFactorSetupPageHandler(appState *AppState) http.HandlerFunc {
 		// Step: Show password verification form before starting setup
 		if step != "qr" {
 			data := map[string]any{
-				"TOTPEnabled": false,
-				"Step":        "password",
-				"Error":       r.URL.Query().Get("error"),
+				templateTOTPEnabledKey: false,
+				templateStepKey:        "password",
+				templateErrorKey:       r.URL.Query().Get("error"),
 			}
 			renderTemplate(appState, w, r, "2fa_setup.html", data)
 
@@ -244,14 +245,14 @@ func TwoFactorSetupPageHandler(appState *AppState) http.HandlerFunc {
 		}
 
 		key, err := totp.Generate(totp.GenerateOpts{
-			Issuer:      "Google Maps Scraper Pro",
+			Issuer:      totpIssuer,
 			AccountName: user.Username,
 			Secret:      []byte(secret),
 		})
 		if err != nil {
 			// Regenerate if we can't use the existing secret
 			key, err = totp.Generate(totp.GenerateOpts{
-				Issuer:      "Google Maps Scraper Pro",
+				Issuer:      totpIssuer,
 				AccountName: user.Username,
 			})
 			if err != nil {
@@ -269,11 +270,11 @@ func TwoFactorSetupPageHandler(appState *AppState) http.HandlerFunc {
 		qrCodeBase64 := base64.StdEncoding.EncodeToString(qrCode)
 
 		data := map[string]any{
-			"TOTPEnabled": false,
-			"Step":        "qr",
-			"QRCode":      qrCodeBase64,
-			"Secret":      secret,
-			"Error":       r.URL.Query().Get("error"),
+			templateTOTPEnabledKey: false,
+			templateStepKey:        "qr",
+			"QRCode":               qrCodeBase64,
+			"Secret":               secret,
+			templateErrorKey:       r.URL.Query().Get("error"),
 		}
 		renderTemplate(appState, w, r, "2fa_setup.html", data)
 	}
@@ -311,7 +312,7 @@ func TwoFactorSetupSubmitHandler(appState *AppState) http.HandlerFunc {
 
 			// Password verified, generate and store TOTP secret
 			key, err := totp.Generate(totp.GenerateOpts{
-				Issuer:      "Google Maps Scraper Pro",
+				Issuer:      totpIssuer,
 				AccountName: user.Username,
 			})
 			if err != nil {

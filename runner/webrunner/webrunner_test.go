@@ -49,6 +49,7 @@ func TestScrapeJobMarksOKBeforeClosingMate(t *testing.T) {
 					if err != nil {
 						t.Fatalf("get job during close: %v", err)
 					}
+
 					if got.Status != web.StatusOK {
 						t.Fatalf("status during close = %q, want %q", got.Status, web.StatusOK)
 					}

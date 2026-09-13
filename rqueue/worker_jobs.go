@@ -204,6 +204,7 @@ func (w *WorkerProvisionWorker) Work(ctx context.Context, job *river.Job[WorkerP
 			}
 		}
 	}
+
 ready:
 
 	// Persist IP address and provider resource ID immediately so the health check
@@ -240,6 +241,7 @@ ready:
 			goto sshReady
 		}
 	}
+
 sshReady:
 
 	log.Info("worker provisioned",
@@ -767,9 +769,11 @@ func checkWorkerHealth(ctx context.Context, ip string, signer ssh.Signer) *healt
 	}
 
 	status := "degraded"
-	if reachable == 0 {
+
+	switch reachable {
+	case 0:
 		status = "down"
-	} else if reachable == expected {
+	case expected:
 		status = "ok"
 	}
 
@@ -798,6 +802,7 @@ func runSSHCommand(ctx context.Context, client *ssh.Client, cmd string) (string,
 
 	go func() {
 		var runErr error
+
 		out, runErr = session.Output(cmd)
 		done <- runErr
 	}()

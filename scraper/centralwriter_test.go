@@ -24,6 +24,7 @@ func noopSave(dst *[]*gmaps.Entry) SaveFunc {
 
 func TestCentralWriter_AddResultThenFlush(t *testing.T) {
 	var saved []*gmaps.Entry
+
 	cw := NewCentralWriter(nil, noopSave(&saved))
 
 	ch := cw.RegisterJob("job1", 100, "restaurants")
@@ -62,6 +63,7 @@ func TestCentralWriter_MarkDoneFlushes(t *testing.T) {
 
 func TestCentralWriter_MarkDoneFlushesWithSave(t *testing.T) {
 	var saved []*gmaps.Entry
+
 	cw := NewCentralWriter(nil, noopSave(&saved))
 
 	ch := cw.RegisterJob("job1", 100, "restaurants")
@@ -82,6 +84,7 @@ func TestCentralWriter_MarkDoneFlushesWithSave(t *testing.T) {
 
 func TestCentralWriter_ForceFlush(t *testing.T) {
 	var saved []*gmaps.Entry
+
 	cw := NewCentralWriter(nil, noopSave(&saved))
 
 	ch := cw.RegisterJob("job1", 100, "restaurants")
@@ -168,6 +171,7 @@ func TestCentralWriter_FlushUnregisteredJobIgnored(_ *testing.T) {
 
 func TestCentralWriter_ZeroResultFlush(t *testing.T) {
 	var saved []*gmaps.Entry
+
 	cw := NewCentralWriter(nil, noopSave(&saved))
 
 	ch := cw.RegisterJob("job1", 100, "restaurants")

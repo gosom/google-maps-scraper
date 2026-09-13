@@ -6,8 +6,8 @@ import (
 	"log"
 	"strings"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/gosom/scrapemate"
 
 	"github.com/gosom/google-maps-scraper/exiter"
@@ -33,11 +33,11 @@ func NewPlaceJob(parentID, langCode, u string, extractEmail, extraExtraReviews b
 
 	job := PlaceJob{
 		Job: scrapemate.Job{
-			ID:         uuid.New().String(),
+			ID:         uuid.NewV4().String(),
 			ParentID:   parentID,
-			Method:     "GET",
+			Method:     requestMethodGet,
 			URL:        u,
-			URLParams:  map[string]string{"hl": langCode},
+			URLParams:  map[string]string{languageQueryParam: langCode},
 			MaxRetries: defaultMaxRetries,
 			Priority:   defaultPrio,
 		},

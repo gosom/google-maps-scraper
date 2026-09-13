@@ -38,7 +38,7 @@ var Command = &cli.Command{
 		&cli.StringFlag{
 			Name:    "database-url",
 			Usage:   "PostgreSQL connection string",
-			Value:   "postgres://postgres:postgres@localhost:5432/gmaps_pro?sslmode=disable",
+			Value:   saas.DefaultDatabaseURL,
 			Sources: cli.EnvVars(saas.EnvDatabaseURL),
 		},
 		&cli.IntFlag{

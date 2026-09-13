@@ -7,13 +7,18 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/google/uuid"
 	"github.com/gosom/scrapemate"
 
 	"github.com/gosom/google-maps-scraper/deduper"
 	"github.com/gosom/google-maps-scraper/exiter"
+)
+
+const (
+	requestMethodGet   = "GET"
+	languageQueryParam = "hl"
 )
 
 type GmapJobOptions func(*GmapJob)
@@ -59,7 +64,7 @@ func NewGmapJob(
 	)
 
 	if id == "" {
-		id = uuid.New().String()
+		id = uuid.NewV4().String()
 	}
 
 	job := GmapJob{
@@ -67,7 +72,7 @@ func NewGmapJob(
 			ID:         id,
 			Method:     http.MethodGet,
 			URL:        mapURL,
-			URLParams:  map[string]string{"hl": langCode},
+			URLParams:  map[string]string{languageQueryParam: langCode},
 			MaxRetries: maxRetries,
 			Priority:   prio,
 		},
@@ -343,6 +348,7 @@ func scroll(ctx context.Context,
 
 		// Handle both int and float64 because browser-evaluated numbers may arrive as either type.
 		var height int
+
 		switch v := scrollHeight.(type) {
 		case int:
 			height = v

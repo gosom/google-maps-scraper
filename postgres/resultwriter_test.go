@@ -39,6 +39,7 @@ func TestResultWriterResetsSaveIntervalAfterTimedFlush(t *testing.T) {
 	in <- resultWithEntry("first")
 
 	clock.Set(base.Add(time.Minute + time.Second))
+
 	in <- resultWithEntry("second")
 
 	require.Eventually(t, func() bool {
@@ -46,6 +47,7 @@ func TestResultWriterResetsSaveIntervalAfterTimedFlush(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 
 	clock.Set(base.Add(time.Minute + 2*time.Second))
+
 	in <- resultWithEntry("third")
 
 	require.Never(t, func() bool {

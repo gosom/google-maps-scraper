@@ -70,13 +70,14 @@ func SessionAuth(store IStore, cookieName string) func(http.Handler) http.Handle
 			session, err := store.GetSession(r.Context(), cookie.Value)
 			if err != nil {
 				// Clear invalid cookie
-				http.SetCookie(w, &http.Cookie{
+				http.SetCookie(w, &http.Cookie{ //nolint:gosec // Secure is enabled for HTTPS and intentionally disabled for local HTTP development.
 					Name:     cookieName,
 					Value:    "",
 					Path:     "/",
 					MaxAge:   -1,
 					HttpOnly: true,
 					Secure:   isSecureRequest(r),
+					SameSite: http.SameSiteLaxMode,
 				})
 				http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 
@@ -113,7 +114,7 @@ func CSRFProtection(secretKey []byte, sessionCookieName string) func(http.Handle
 				} else {
 					// Generate new token for GET requests
 					csrfToken = generateRandomCSRFToken()
-					http.SetCookie(w, &http.Cookie{
+					http.SetCookie(w, &http.Cookie{ //nolint:gosec // Secure is enabled for HTTPS and intentionally disabled for local HTTP development.
 						Name:     csrfCookieName,
 						Value:    csrfToken,
 						Path:     "/admin",

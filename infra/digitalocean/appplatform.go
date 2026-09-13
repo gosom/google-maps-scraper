@@ -13,6 +13,8 @@ import (
 
 var _ infra.Provisioner = (*AppPlatformProvisioner)(nil)
 
+const appName = "gmapssaas"
+
 // AppPlatformProvisioner implements infra.Provisioner for DigitalOcean App Platform.
 type AppPlatformProvisioner struct {
 	client *godo.Client
@@ -62,7 +64,7 @@ func (p *AppPlatformProvisioner) CreateDatabase(ctx context.Context) (*infra.Dat
 		SizeSlug:   p.cfg.DBSize,
 		Region:     p.cfg.DBRegion,
 		NumNodes:   1,
-		Tags:       []string{"gmapssaas"},
+		Tags:       []string{appName},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create database: %w", err)
@@ -112,7 +114,7 @@ func (p *AppPlatformProvisioner) Deploy(ctx context.Context, cfg *infra.DeployCo
 	repo, tag := parseImageRef(cfg.Registry.Image)
 
 	spec := &godo.AppSpec{
-		Name:   "gmapssaas",
+		Name:   appName,
 		Region: p.cfg.Region,
 		Services: []*godo.AppServiceSpec{{
 			Name:             "server",
@@ -244,7 +246,7 @@ func (p *AppPlatformProvisioner) findExistingApp(ctx context.Context) string {
 	}
 
 	for _, app := range apps {
-		if app.Spec != nil && app.Spec.Name == "gmapssaas" {
+		if app.Spec != nil && app.Spec.Name == appName {
 			return app.ID
 		}
 	}

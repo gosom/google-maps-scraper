@@ -41,10 +41,10 @@ func APIKeysPageHandler(appState *AppState) http.HandlerFunc {
 		apiKeyFlash.Unlock()
 
 		data := map[string]any{
-			"APIKeys": keys,
-			"Success": r.URL.Query().Get("success"),
-			"Error":   r.URL.Query().Get("error"),
-			"NewKey":  newKey,
+			"APIKeys":          keys,
+			templateSuccessKey: r.URL.Query().Get("success"),
+			templateErrorKey:   r.URL.Query().Get("error"),
+			"NewKey":           newKey,
 		}
 		renderTemplate(appState, w, r, "api_keys.html", data)
 	}

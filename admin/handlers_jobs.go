@@ -47,13 +47,13 @@ func JobsPageHandler(appState *AppState) http.HandlerFunc {
 		}
 
 		data := map[string]any{
-			"Jobs":          result.Jobs,
-			"HasMore":       result.HasMore,
-			"NextPageURL":   nextPageURL,
-			"CurrentState":  state,
-			"CurrentCursor": cursor,
-			"Success":       r.URL.Query().Get("success"),
-			"Error":         r.URL.Query().Get("error"),
+			"Jobs":             result.Jobs,
+			"HasMore":          result.HasMore,
+			"NextPageURL":      nextPageURL,
+			"CurrentState":     state,
+			"CurrentCursor":    cursor,
+			templateSuccessKey: r.URL.Query().Get("success"),
+			templateErrorKey:   r.URL.Query().Get("error"),
 		}
 		renderTemplate(appState, w, r, "jobs.html", data)
 	}
@@ -94,7 +94,7 @@ func DownloadJobResultsHandler(appState *AppState) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
-		_, _ = w.Write(results)
+		_, _ = w.Write(results) //nolint:gosec // JSON is served as a download with a fixed non-HTML content type.
 	}
 }
 
@@ -179,8 +179,8 @@ func DeleteAllFilteredJobsHandler(appState *AppState) http.HandlerFunc {
 		}
 
 		state := strings.TrimSpace(r.FormValue("state"))
-		totalQueued, err := queueDeleteAllFiltered(r.Context(), appState, state)
 
+		totalQueued, err := queueDeleteAllFiltered(r.Context(), appState, state)
 		if err != nil {
 			log.Error("failed to delete all filtered jobs", "error", err, "state", state, "queued", totalQueued)
 			msg := fmt.Sprintf("Delete all filtered partially failed (%d queued)", totalQueued)

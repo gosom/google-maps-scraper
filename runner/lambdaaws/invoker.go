@@ -8,12 +8,12 @@ import (
 	"log"
 	"os"
 	"strings"
+	"uuid"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/lambda/types"
-	"github.com/google/uuid"
 	"github.com/gosom/google-maps-scraper/runner"
 )
 
@@ -107,7 +107,7 @@ func (i *invoker) setPayloads(cfg *runner.Config) error {
 	var currentChunk []string
 
 	chunkNumber := 0
-	jobID := uuid.New().String()
+	jobID := uuid.NewV4().String()
 
 	for scanner.Scan() {
 		keyword := strings.TrimSpace(scanner.Text())

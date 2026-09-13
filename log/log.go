@@ -18,6 +18,7 @@ func init() {
 					return slog.Time(slog.TimeKey, t.UTC())
 				}
 			}
+
 			return a
 		},
 	}))
@@ -32,6 +33,7 @@ func Init(level slog.Level) {
 					return slog.Time(slog.TimeKey, t.UTC())
 				}
 			}
+
 			return a
 		},
 	}))

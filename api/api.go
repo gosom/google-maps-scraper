@@ -28,9 +28,9 @@ type AppState struct {
 }
 
 // NewAppState creates a new API AppState.
-func NewAppState(rqueue *rqueue.Client, store IStore) *AppState {
+func NewAppState(queue *rqueue.Client, store IStore) *AppState {
 	return &AppState{
-		RQueue: rqueue,
+		RQueue: queue,
 		Store:  store,
 	}
 }

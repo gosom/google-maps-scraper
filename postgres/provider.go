@@ -111,6 +111,7 @@ func (p *provider) Push(ctx context.Context, job scrapemate.IJob) error {
 		($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING`
 
 	var buf bytes.Buffer
+
 	enc := gob.NewEncoder(&buf)
 
 	var payloadType string

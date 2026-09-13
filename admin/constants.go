@@ -8,4 +8,9 @@ const (
 	AppKeyPairKey               = "app_key_pair"
 	DOTokenKey                  = "do_api_token"
 	HetznerTokenKey             = "hetzner_api_token"
+	templateErrorKey            = "Error"
+	templateSuccessKey          = "Success"
+	templateTOTPEnabledKey      = "TOTPEnabled"
+	templateStepKey             = "Step"
+	totpIssuer                  = "Google Maps Scraper Pro"
 )
