@@ -262,7 +262,7 @@ func (f *fetcher) generateURL(mapURL, pageToken string, pageSize int, requestID 
 
 func (f *fetcher) fetchReviewPage(ctx context.Context, u string) ([]byte, error) {
 	job := scrapemate.Job{
-		Method: "GET",
+		Method: requestMethodGet,
 		URL:    u,
 	}
 
@@ -714,7 +714,6 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 				return [];
 			}
 		}`)
-
 		if err != nil {
 			log.Printf("Error extracting reviews from DOM: %v", err)
 		} else if reviewsJSON != nil {

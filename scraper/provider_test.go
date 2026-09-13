@@ -34,6 +34,7 @@ func TestProviderCloseIsIdempotent(t *testing.T) {
 
 	go func() {
 		defer close(done)
+
 		p.Close()
 		p.Close()
 	}()

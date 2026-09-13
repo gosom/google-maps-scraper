@@ -15,6 +15,7 @@ type hashmap struct {
 
 func (d *hashmap) AddIfNotExists(_ context.Context, key string) bool {
 	d.mux.RLock()
+
 	if _, ok := d.seen[d.hash(key)]; ok {
 		d.mux.RUnlock()
 		return false

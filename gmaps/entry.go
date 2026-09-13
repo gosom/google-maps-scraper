@@ -356,7 +356,7 @@ func extractReviews(data []byte) []Review {
 	return parseReviews(reviewsI)
 }
 
-//nolint:gomnd // it's ok, I need the indexes
+//nolint:mnd // it's ok, I need the indexes
 func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -366,11 +366,7 @@ func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error)
 		}
 	}()
 
-	onlyReviewCount := false
-
-	if len(reviewCountOnly) == 1 && reviewCountOnly[0] {
-		onlyReviewCount = true
-	}
+	onlyReviewCount := len(reviewCountOnly) == 1 && reviewCountOnly[0]
 
 	var jd []any
 	if err := json.Unmarshal(raw, &jd); err != nil {
@@ -623,9 +619,9 @@ func parseReviews(reviewsI []any) []Review {
 		// "report this photo" URL, not the actual hosted image. See issue #240.
 		imgs := getNthElementAndCast[[]any](el, 2, 2)
 		for j := range imgs {
-			url := getNthElementAndCast[string](imgs, j, 1, 6, 0)
-			if url != "" {
-				review.Images = append(review.Images, url)
+			imageURL := getNthElementAndCast[string](imgs, j, 1, 6, 0)
+			if imageURL != "" {
+				review.Images = append(review.Images, imageURL)
 			}
 		}
 
@@ -744,7 +740,7 @@ func getLinkSource(params getLinkSourceParams) []LinkSource {
 	return result
 }
 
-//nolint:gomnd // it's ok, I need the indexes
+//nolint:mnd // it's ok, I need the indexes
 func getHours(darray []any) map[string][]string {
 	// Try new structure first (as of Nov 2025) - darray[203][0]
 	items := getNthElementAndCast[[]any](darray, 203, 0)
@@ -810,7 +806,7 @@ func getHours(darray []any) map[string][]string {
 }
 
 func getPopularTimes(darray []any) map[string]map[int]int {
-	items := getNthElementAndCast[[]any](darray, 84, 0) //nolint:gomnd // it's ok, I need the indexes
+	items := getNthElementAndCast[[]any](darray, 84, 0) //nolint:mnd // it's ok, I need the indexes
 	popularTimes := make(map[string]map[int]int, len(items))
 
 	dayOfWeek := map[int]string{
@@ -982,8 +978,8 @@ func extractStreetViewURL(images []Image) string {
 	return ""
 }
 
-func decodeURL(url string) (string, error) {
-	quoted := `"` + strings.ReplaceAll(url, `"`, `\"`) + `"`
+func decodeURL(encodedURL string) (string, error) {
+	quoted := `"` + strings.ReplaceAll(encodedURL, `"`, `\"`) + `"`
 
 	unquoted, err := strconv.Unquote(quoted)
 	if err != nil {

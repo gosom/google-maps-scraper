@@ -1,60 +1,77 @@
+version: "2"
 run:
   issues-exit-code: 1
-  timeout: 3m
-linters-settings:
-  errcheck:
-    check-type-assertions: true
-  goconst:
-    min-len: 2
-    min-occurrences: 3
-    gci:
-    sections:
-      - prefix(github.com/gosom/ledger)
-    custom-order: true
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - experimental
-      - opinionated
-      - performance
-      - style
-  govet:
-    shadow: true
-  nolintlint:
-    require-explanation: true
-    require-specific: true
 linters:
-  disable-all: true
+  default: none
   enable:
     - bodyclose
+    - copyloopvar
     - dogsled
     - dupl
     - errcheck
-    - copyloopvar
     - exhaustive
     - goconst
     - gocritic
-    - gofmt
-    - goimports
     - gocyclo
     - gosec
-    - gosimple
     - govet
     - ineffassign
     - misspell
-    - nolintlint
     - nakedret
+    - nolintlint
     - prealloc
     - predeclared
     - revive
     - staticcheck
-    - stylecheck
     - testpackage
     - thelper
     - tparallel
-    - typecheck
     - unconvert
     - unparam
     - whitespace
-    - wsl
-
+    - wsl_v5
+  settings:
+    errcheck:
+      check-type-assertions: true
+    goconst:
+      min-len: 2
+      min-occurrences: 3
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - experimental
+        - opinionated
+        - performance
+        - style
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    wsl_v5:
+      allow-first-in-block: true
+      allow-whole-block: false
+      branch-max-lines: 2
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+    rules:
+      - path: _test\.go$
+        linters:
+          - goconst
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

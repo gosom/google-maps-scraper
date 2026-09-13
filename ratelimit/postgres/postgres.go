@@ -58,7 +58,6 @@ func (s *Store) Check(ctx context.Context, key string, limit int, window time.Du
 			END
 		RETURNING counter, window_start
 	`, key, now, window).Scan(&counter, &dbWindowStart)
-
 	if err != nil {
 		return ratelimit.Result{}, err
 	}
@@ -110,7 +109,6 @@ func (s *Store) Get(ctx context.Context, key string) (*ratelimit.Result, error) 
 	err := s.db.QueryRow(ctx, `
 		SELECT counter, window_start FROM rate_limits WHERE key = $1
 	`, key).Scan(&counter, &windowStart)
-
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil

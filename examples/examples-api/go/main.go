@@ -51,26 +51,32 @@ type jobStatusResponse struct {
 
 var (
 	reUnsafe = regexp.MustCompile(`[^\w\s-]`)
-	reSpaces = regexp.MustCompile(`[\s]+`)
+	reSpaces = regexp.MustCompile(`\s+`)
 )
 
 func safeFilename(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	s = reUnsafe.ReplaceAllString(s, "")
+
 	s = reSpaces.ReplaceAllString(s, "_")
 	if len(s) > 100 {
 		s = s[:100]
 	}
+
 	return s
 }
 
-func apiRequest(client *http.Client, baseURL, apiKey, method, path string, body any) ([]byte, int, error) {
+func apiRequest(client *http.Client, baseURL, apiKey, method, path string, body any) (
+	responseBody []byte, statusCode int, err error,
+) {
 	var reqBody io.Reader
+
 	if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
 			return nil, 0, err
 		}
+
 		reqBody = bytes.NewReader(data)
 	}
 
@@ -78,6 +84,7 @@ func apiRequest(client *http.Client, baseURL, apiKey, method, path string, body 
 	if err != nil {
 		return nil, 0, err
 	}
+
 	req.Header.Set("X-API-Key", apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -97,10 +104,12 @@ func apiRequest(client *http.Client, baseURL, apiKey, method, path string, body 
 
 func submitJob(client *http.Client, baseURL, apiKey, keyword, lang string, maxDepth int) (string, error) {
 	body := map[string]any{"keyword": keyword, "lang": lang, "max_depth": maxDepth}
+
 	respBody, code, err := apiRequest(client, baseURL, apiKey, "POST", "/api/v1/scrape", body)
 	if err != nil {
 		return "", err
 	}
+
 	if code != http.StatusAccepted {
 		return "", fmt.Errorf("HTTP %d: %s", code, respBody)
 	}
@@ -109,6 +118,7 @@ func submitJob(client *http.Client, baseURL, apiKey, keyword, lang string, maxDe
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return "", err
 	}
+
 	return resp.JobID, nil
 }
 
@@ -118,6 +128,7 @@ func pollJob(client *http.Client, baseURL, apiKey, jobID, keyword, outputDir str
 		if err != nil {
 			return err
 		}
+
 		if code != http.StatusOK {
 			return fmt.Errorf("HTTP %d: %s", code, respBody)
 		}
@@ -133,10 +144,12 @@ func pollJob(client *http.Client, baseURL, apiKey, jobID, keyword, outputDir str
 			fpath := filepath.Join(outputDir, fname)
 
 			results, _ := json.MarshalIndent(resp.Results, "", "  ")
-			if err := os.WriteFile(fpath, results, 0o644); err != nil {
+			if err := os.WriteFile(fpath, results, 0o600); err != nil {
 				return err
 			}
+
 			fmt.Printf("  [done] %q -> %d results -> %s\n", keyword, resp.ResultCount, fname)
+
 			return nil
 
 		case "failed":
@@ -144,7 +157,9 @@ func pollJob(client *http.Client, baseURL, apiKey, jobID, keyword, outputDir str
 			if errMsg == "" {
 				errMsg = "unknown error"
 			}
+
 			fmt.Fprintf(os.Stderr, "  [fail] %q: %s\n", keyword, errMsg)
+
 			return nil
 		}
 
@@ -168,6 +183,7 @@ func processKeyword(client *http.Client, baseURL, apiKey, keyword, lang string, 
 
 func readStdin() []string {
 	var keywords []string
+
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		kw := strings.TrimSpace(scanner.Text())
@@ -175,6 +191,7 @@ func readStdin() []string {
 			keywords = append(keywords, kw)
 		}
 	}
+
 	return keywords
 }
 
@@ -186,6 +203,7 @@ func main() {
 	lang := flag.String("lang", "en", "Language for results (e.g. en, de, el)")
 	maxDepth := flag.Int("max-depth", 1, "Max scrape depth")
 	insecure := flag.Bool("insecure", false, "Skip TLS certificate verification (e.g. for self-signed certs)")
+
 	flag.Parse()
 
 	if *baseURL == "" || *apiKey == "" {
@@ -196,9 +214,10 @@ func main() {
 	transport := http.DefaultTransport
 	if *insecure {
 		transport = &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // Explicit opt-in for self-signed development servers.
 		}
 	}
+
 	httpClient := &http.Client{Timeout: 30 * time.Second, Transport: transport}
 
 	keywords := flag.Args()
@@ -208,6 +227,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Provide keywords as arguments or pipe them via stdin")
 			os.Exit(1)
 		}
+
 		keywords = readStdin()
 	}
 
@@ -225,15 +245,18 @@ func main() {
 		len(keywords), *workers, *outputDir)
 
 	sem := make(chan struct{}, *workers)
+
 	var wg sync.WaitGroup
 
 	for _, kw := range keywords {
 		wg.Add(1)
+
 		sem <- struct{}{}
 
 		go func(keyword string) {
 			defer wg.Done()
 			defer func() { <-sem }()
+
 			processKeyword(httpClient, *baseURL, *apiKey, keyword, *lang, *maxDepth, *outputDir)
 		}(kw)
 	}

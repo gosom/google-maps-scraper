@@ -9,8 +9,8 @@ import (
 	"plugin"
 	"strconv"
 	"strings"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/gosom/google-maps-scraper/deduper"
 	"github.com/gosom/google-maps-scraper/exiter"
 	"github.com/gosom/google-maps-scraper/gmaps"
@@ -176,7 +176,7 @@ func CreateGridSeedJobs(
 
 		for _, cell := range cells {
 			// Each cell gets a unique ID derived from the query ID (or a new UUID).
-			cellID := uuid.New().String()
+			cellID := uuid.NewV4().String()
 			if queryID != "" {
 				cellID = fmt.Sprintf("%s-%s", queryID, cellID)
 			}

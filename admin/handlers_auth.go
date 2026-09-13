@@ -29,7 +29,7 @@ func LoginPageHandler(appState *AppState) http.HandlerFunc {
 		}
 
 		data := map[string]any{
-			"Error": r.URL.Query().Get("error"),
+			templateErrorKey: r.URL.Query().Get("error"),
 		}
 		renderTemplate(appState, w, r, "login.html", data)
 	}
@@ -100,7 +100,7 @@ func LoginSubmitHandler(appState *AppState) http.HandlerFunc {
 				return
 			}
 
-			http.SetCookie(w, &http.Cookie{
+			http.SetCookie(w, &http.Cookie{ //nolint:gosec // Secure is enabled for HTTPS and intentionally disabled for local HTTP development.
 				Name:     appState.CookieName + "_pending",
 				Value:    pendingSession.ID,
 				Path:     "/",
@@ -129,7 +129,7 @@ func LoginSubmitHandler(appState *AppState) http.HandlerFunc {
 
 		log.Info("audit", "action", "login", "user_id", user.ID, "ip", ipAddress)
 
-		http.SetCookie(w, &http.Cookie{
+		http.SetCookie(w, &http.Cookie{ //nolint:gosec // Secure is enabled for HTTPS and intentionally disabled for local HTTP development.
 			Name:     appState.CookieName,
 			Value:    session.ID,
 			Path:     "/",
@@ -159,13 +159,14 @@ func LogoutHandler(appState *AppState) http.HandlerFunc {
 
 		log.Info("audit", "action", "logout", "ip", r.RemoteAddr)
 
-		http.SetCookie(w, &http.Cookie{
+		http.SetCookie(w, &http.Cookie{ //nolint:gosec // Secure is enabled for HTTPS and intentionally disabled for local HTTP development.
 			Name:     appState.CookieName,
 			Value:    "",
 			Path:     "/",
 			MaxAge:   -1,
 			HttpOnly: true,
 			Secure:   isSecureRequest(r),
+			SameSite: http.SameSiteLaxMode,
 		})
 
 		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)

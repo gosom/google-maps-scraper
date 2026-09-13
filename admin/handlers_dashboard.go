@@ -28,10 +28,10 @@ func DashboardHandler(appState *AppState) http.HandlerFunc {
 		}
 
 		data := map[string]any{
-			"TOTPEnabled": user.TOTPEnabled,
-			"Username":    user.Username,
-			"Success":     r.URL.Query().Get("success"),
-			"Error":       r.URL.Query().Get("error"),
+			templateTOTPEnabledKey: user.TOTPEnabled,
+			"Username":             user.Username,
+			templateSuccessKey:     r.URL.Query().Get("success"),
+			templateErrorKey:       r.URL.Query().Get("error"),
 		}
 
 		if stats != nil {

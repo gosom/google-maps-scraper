@@ -23,10 +23,10 @@ func SettingsPageHandler(appState *AppState) http.HandlerFunc {
 		}
 
 		data := map[string]any{
-			"Username":    user.Username,
-			"TOTPEnabled": user.TOTPEnabled,
-			"Success":     r.URL.Query().Get("success"),
-			"Error":       r.URL.Query().Get("error"),
+			"Username":             user.Username,
+			templateTOTPEnabledKey: user.TOTPEnabled,
+			templateSuccessKey:     r.URL.Query().Get("success"),
+			templateErrorKey:       r.URL.Query().Get("error"),
 		}
 		renderTemplate(appState, w, r, "settings.html", data)
 	}

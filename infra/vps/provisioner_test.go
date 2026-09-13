@@ -163,6 +163,7 @@ func startTestSSHServer(t *testing.T, authorizedKey ssh.PublicKey) (addr string,
 			if bytes.Equal(key.Marshal(), authorizedKey.Marshal()) {
 				return &ssh.Permissions{}, nil
 			}
+
 			return nil, errors.New("unauthorized")
 		},
 	}

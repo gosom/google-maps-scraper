@@ -186,12 +186,14 @@ func (m *ScraperManager) runCycle(ctx context.Context) error {
 
 	// Start scraper in goroutine with panic recovery
 	scraperDone := make(chan error, 1)
+
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
 				scraperDone <- fmt.Errorf("scraper panic: %v", r)
 			}
 		}()
+
 		scraperDone <- app.Start(cycleCtx)
 	}()
 
@@ -229,6 +231,7 @@ func (m *ScraperManager) createApp(provider *Provider) (*scrapemateapp.Scrapemat
 	writers := []scrapemate.ResultWriter{m.centralWriter}
 
 	var opts []func(*scrapemateapp.Config) error
+
 	opts = append(opts,
 		scrapemateapp.WithConcurrency(m.concurrency),
 		scrapemateapp.WithProvider(provider),

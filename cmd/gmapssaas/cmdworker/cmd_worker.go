@@ -40,7 +40,7 @@ var Command = &cli.Command{
 		&cli.StringFlag{
 			Name:    "database-url",
 			Usage:   "PostgreSQL connection string",
-			Value:   "postgres://postgres:postgres@localhost:5432/gmaps_pro?sslmode=disable",
+			Value:   saas.DefaultDatabaseURL,
 			Sources: cli.EnvVars(saas.EnvDatabaseURL),
 		},
 		&cli.IntFlag{
@@ -106,6 +106,7 @@ var Command = &cli.Command{
 		dsn := cmd.String("database-url")
 		dbMaxConns := int32(3)
 		dbMinConns := int32(1)
+
 		dbPool, err := postgres.Connect(ctx, dsn,
 			postgres.WithMaxConns(dbMaxConns),
 			postgres.WithMinConns(dbMinConns),
@@ -142,6 +143,7 @@ var Command = &cli.Command{
 
 		// Start River client to process jobs
 		log.Info("starting River worker")
+
 		if err := client.Start(ctx); err != nil {
 			return err
 		}
@@ -151,6 +153,7 @@ var Command = &cli.Command{
 
 		// Run the scraper manager (handles scraper lifecycle with restarts)
 		log.Info("starting scraper manager")
+
 		if err := manager.Run(ctx); err != nil {
 			if ctx.Err() != nil {
 				log.Info("scraper manager stopped due to shutdown")
@@ -235,14 +238,14 @@ func runHealthServer(ctx context.Context, manager *scraper.ScraperManager) {
 	}
 
 	// Shutdown server when context is cancelled
-	go func() {
-		<-ctx.Done()
+	go func(shutdownSource context.Context) {
+		<-shutdownSource.Done()
 
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(shutdownSource), 5*time.Second)
 		defer cancel()
 
 		_ = server.Shutdown(shutdownCtx)
-	}()
+	}(ctx)
 
 	log.Info("starting health server on :8080")
 

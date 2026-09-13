@@ -35,7 +35,9 @@ func main() {
 			if cmd.Bool("debug") {
 				level = slog.LevelDebug
 			}
+
 			log.Init(level)
+
 			return ctx, nil
 		},
 		Commands: []*cli.Command{

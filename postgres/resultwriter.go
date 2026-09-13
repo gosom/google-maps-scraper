@@ -105,7 +105,7 @@ func (r *resultWriter) batchSave(ctx context.Context, entries []*gmaps.Entry) er
 		args = append(args, data)
 	}
 
-	q += strings.Join(elements, ", ")
+	q += strings.Join(elements, ", ") //nolint:gosec // elements contain only generated positional placeholders.
 	q += " ON CONFLICT DO NOTHING"
 
 	tx, err := r.db.BeginTx(ctx, nil)

@@ -1,21 +1,15 @@
+# syntax=docker/dockerfile:1
+
+ARG GO_VERSION=1.27.1
+
 # Build stage for Playwright dependencies
-FROM ubuntu:20.04 AS playwright-deps
+FROM golang:${GO_VERSION}-trixie AS playwright-deps
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/browsers
 ENV PLAYWRIGHT_DRIVER_PATH=/opt/ms-playwright-go
-ARG TARGETARCH
 ARG PLAYWRIGHT_GO_VERSION=v0.6100.0
 
-RUN export PATH=$PATH:/usr/local/go/bin:/root/go/bin \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl wget \
-    && if [ "$TARGETARCH" = "arm64" ]; then \
-         GO_ARCH="arm64"; \
-       else \
-         GO_ARCH="amd64"; \
-       fi \
-    && wget -q "https://go.dev/dl/go1.26.6.linux-${GO_ARCH}.tar.gz" \
-    && tar -C /usr/local -xzf "go1.26.6.linux-${GO_ARCH}.tar.gz" \
-    && rm "go1.26.6.linux-${GO_ARCH}.tar.gz" \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && go install github.com/mxschmitt/playwright-go/cmd/playwright@${PLAYWRIGHT_GO_VERSION} \
@@ -23,7 +17,7 @@ RUN export PATH=$PATH:/usr/local/go/bin:/root/go/bin \
     && playwright install chromium --with-deps
 
 # Build stage
-FROM golang:1.26.6-trixie AS builder
+FROM golang:${GO_VERSION}-trixie AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
