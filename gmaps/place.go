@@ -31,6 +31,8 @@ func NewPlaceJob(parentID, langCode, u string, extractEmail, extraExtraReviews b
 		defaultMaxRetries = 3
 	)
 
+	u = sanitizePlaceURL(u)
+
 	job := PlaceJob{
 		Job: scrapemate.Job{
 			ID:         uuid.NewV4().String(),
@@ -52,6 +54,16 @@ func NewPlaceJob(parentID, langCode, u string, extractEmail, extraExtraReviews b
 	}
 
 	return &job
+}
+
+// sanitizePlaceURL rewrites a "/place/../" path segment to "/place/_/" so RFC
+// 3986 remove_dot_segments cannot collapse the "/maps/place/" marker out of the
+// URL. It operates on the raw string, so the "data=" payload and any
+// percent-encoding are preserved byte-for-byte. The leading and trailing slash
+// anchor "place" as a full path segment, so a URL like "/myplace/../" is
+// untouched.
+func sanitizePlaceURL(u string) string {
+	return strings.ReplaceAll(u, "/place/../", "/place/_/")
 }
 
 func WithPlaceJobExitMonitor(exitMonitor exiter.Exiter) PlaceJobOptions {
