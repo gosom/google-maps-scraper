@@ -6,6 +6,12 @@
     <title>Google Maps Scraper</title>
     <link rel="stylesheet" href="/static/css/main.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/htmx/1.9.6/htmx.min.js"></script>
+    <script>
+        // Parse htmx response fragments via <template> so <tbody>-rooted
+        // fragments from /jobs survive the swap (body-context parsing drops
+        // table elements and corrupts the job table).
+        htmx.config.useTemplateFragments = true;
+    </script>
 </head>
 <body>
     <div class="app-container">
@@ -52,12 +58,33 @@
                     <fieldset>
                         <legend>Job Details</legend>
                         <div class="form-group">
+                            <label for="preset">Preset:</label>
+                            <select id="preset">
+                                <option value="abandoned" selected>🎯 Abandoned-listing hunt</option>
+                                <option value="quick_scan">⚡ Quick scan</option>
+                                <option value="full_area">🗺️ Full-area sweep</option>
+                                <option value="deep_dive">🔬 Deep dive on one spot</option>
+                                <option value="custom">Custom</option>
+                            </select>
+                            <p class="text-muted"><small>Picks proven defaults for a whole job type (JSON output keeps the status and owner fields). Every field stays freely editable afterwards.</small></p>
+                        </div>
+                        <div class="form-group">
                             <label for="name">Job Name:</label>
                             <input type="text" id="name" name="name" value="{{.Name}}">
                         </div>
                         <div class="form-group">
                             <label for="keywords">Keywords:</label>
                             <textarea id="keywords" name="keywords" rows="10">{{ .KeywordsString }}</textarea>
+                        </div>
+                        <div class="form-group">
+                            <label for="keyword_template">Keyword template:</label>
+                            <select id="keyword_template">
+                                <option value="">Append a keyword template&hellip;</option>
+                                <option value="nightclubs">Nightclubs — UAE</option>
+                                <option value="lounges">Lounges & bars — UAE</option>
+                                <option value="shisha">Shisha — UAE</option>
+                            </select>
+                            <p class="text-muted"><small>Appends a ready-made keyword list on new lines below what you already typed; exact duplicates are skipped.</small></p>
                         </div>
                         <div class="form-group">
                             <label for="lang">Language:</label>
@@ -195,6 +222,189 @@ function hideSponsor() {
         sponsorSection.style.display = 'none';
     }
 }
+</script>
+<script id="preset-script">
+(function () {
+    'use strict';
+
+    var STORAGE_KEY = 'gms_form_last_v1';
+    var FORM_FIELDS = [
+        'name', 'keywords', 'lang', 'output',
+        'zoom', 'latitude', 'longitude', 'grid_bbox', 'grid_cell',
+        'fastmode', 'radius', 'depth', 'email', 'maxtime',
+        'concurrency', 'pages_per_browser', 'browser_pool_size',
+        'disable_page_reuse', 'extrareviews', 'proxies'
+    ];
+
+    // Location leftovers are cleared on purpose: a stale grid bbox or radius
+    // silently changing the next job is a trap. Fields a preset does not own
+    // (name, keywords, lang, proxies, pages/pool/reuse) are left untouched.
+    // NOTE: zoom/radius are never set to '' because POST /scrape rejects
+    // unparseable zoom/radius (422). Presets that do not use them set the
+    // form defaults (15 / 10000); they are inert while lat/lon stay empty.
+    var PRESETS = {
+        abandoned: {
+            output: 'json', depth: '10', email: true, concurrency: '4',
+            fastmode: false, extrareviews: false, maxtime: '45m',
+            latitude: '', longitude: '', grid_bbox: '', grid_cell: '1',
+            zoom: '15', radius: '10000'
+        },
+        quick_scan: {
+            output: 'csv', depth: '3', email: false, concurrency: '4',
+            fastmode: false, extrareviews: false, maxtime: '10m',
+            latitude: '', longitude: '', grid_bbox: '', grid_cell: '1',
+            zoom: '15', radius: '10000'
+        },
+        full_area: {
+            output: 'json', depth: '10', email: true, concurrency: '4',
+            fastmode: false, extrareviews: false, maxtime: '3h',
+            grid_bbox: '25.05,55.10,25.35,55.45', grid_cell: '1.0',
+            latitude: '', longitude: '', zoom: '15', radius: '10000'
+        },
+        deep_dive: {
+            output: 'json', depth: '10', email: true, concurrency: '2',
+            fastmode: false, extrareviews: false, maxtime: '45m',
+            radius: '3000', zoom: '17',
+            latitude: '', longitude: '', grid_bbox: '', grid_cell: '1'
+        }
+    };
+
+    var KEYWORD_TEMPLATES = {
+        nightclubs: [
+            'night club in Dubai', 'nightclub in Dubai Marina',
+            'night club in Abu Dhabi', 'night club in Sharjah',
+            'disco club in Dubai'
+        ],
+        lounges: [
+            'lounge bar in Dubai', 'cocktail bar in Dubai',
+            'lounge in Abu Dhabi', 'lounge in Sharjah',
+            'rooftop bar in Dubai'
+        ],
+        shisha: [
+            'shisha lounge in Dubai', 'hookah lounge in Dubai',
+            'shisha cafe in Abu Dhabi', 'shisha lounge in Sharjah'
+        ]
+    };
+
+    function setField(id, value) {
+        var el = document.getElementById(id);
+        if (!el) {
+            return;
+        }
+        if (el.type === 'checkbox') {
+            el.checked = !!value;
+        } else {
+            el.value = value;
+        }
+    }
+
+    function applyPreset(key) {
+        var preset = PRESETS[key];
+        if (!preset) {
+            return;
+        }
+        for (var id in preset) {
+            if (Object.prototype.hasOwnProperty.call(preset, id)) {
+                setField(id, preset[id]);
+            }
+        }
+    }
+
+    function appendTemplate(key) {
+        var list = KEYWORD_TEMPLATES[key];
+        var textarea = document.getElementById('keywords');
+        if (!list || !textarea) {
+            return;
+        }
+        var lines = textarea.value.split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean);
+        var seen = {};
+        lines.forEach(function (line) { seen[line] = true; });
+        list.forEach(function (kw) {
+            if (!seen[kw]) {
+                seen[kw] = true;
+                lines.push(kw);
+            }
+        });
+        textarea.value = lines.join('\n');
+    }
+
+    function fieldDiffersFromPreset(presetKey, el) {
+        var preset = PRESETS[presetKey];
+        if (!preset || !Object.prototype.hasOwnProperty.call(preset, el.id)) {
+            return false;
+        }
+        if (el.type === 'checkbox') {
+            return el.checked !== preset[el.id];
+        }
+        return String(el.value) !== preset[el.id];
+    }
+
+    function saveState() {
+        var state = { preset: document.getElementById('preset').value };
+        FORM_FIELDS.forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) {
+                state[id] = el.type === 'checkbox' ? el.checked : el.value;
+            }
+        });
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        } catch (err) {
+            // storage may be unavailable; persistence is best effort
+        }
+    }
+
+    function restoreState() {
+        var state = null;
+        try {
+            state = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+        } catch (err) {
+            state = null;
+        }
+        if (!state) {
+            applyPreset('abandoned');
+            return;
+        }
+        FORM_FIELDS.forEach(function (id) {
+            if (Object.prototype.hasOwnProperty.call(state, id)) {
+                setField(id, state[id]);
+            }
+        });
+        document.getElementById('preset').value =
+            Object.prototype.hasOwnProperty.call(PRESETS, state.preset) ? state.preset : 'custom';
+    }
+
+    var presetSelect = document.getElementById('preset');
+    var templateSelect = document.getElementById('keyword_template');
+    var form = document.querySelector('form');
+
+    presetSelect.addEventListener('change', function () {
+        applyPreset(presetSelect.value);
+        saveState();
+    });
+
+    templateSelect.addEventListener('change', function () {
+        if (templateSelect.value) {
+            appendTemplate(templateSelect.value);
+            saveState();
+        }
+        templateSelect.value = '';
+    });
+
+    form.addEventListener('input', function (e) {
+        var target = e.target;
+        if (!target || target.id === 'preset' || target.id === 'keyword_template') {
+            return;
+        }
+        var current = presetSelect.value;
+        if (current !== 'custom' && fieldDiffersFromPreset(current, target)) {
+            presetSelect.value = 'custom';
+        }
+        saveState();
+    });
+
+    restoreState();
+})();
 </script>
 </body>
 </html>

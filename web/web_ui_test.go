@@ -338,3 +338,67 @@ func TestDeleteRemovesJSONResult(t *testing.T) {
 		}
 	}
 }
+
+func TestIndexRendersPresetAndTemplateControls(t *testing.T) {
+	t.Parallel()
+
+	srv := newTestServer(t, t.TempDir())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	srv.index(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+
+	presetIdx := strings.Index(body, `id="preset"`)
+	nameIdx := strings.Index(body, `id="name"`)
+	if presetIdx == -1 || nameIdx == -1 || presetIdx > nameIdx {
+		t.Fatalf("preset select must exist above Job Name (preset=%d name=%d)", presetIdx, nameIdx)
+	}
+
+	if strings.Contains(body, `name="preset"`) {
+		t.Fatal("preset select must not have a name attribute (client-only, must not be submitted)")
+	}
+
+	for _, want := range []string{
+		"Abandoned-listing hunt",
+		"Quick scan",
+		"Full-area sweep",
+		"Deep dive on one spot",
+		"Custom",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("preset option label %q missing", want)
+		}
+	}
+
+	tmplIdx := strings.Index(body, `id="keyword_template"`)
+	kwIdx := strings.Index(body, `id="keywords"`)
+	if tmplIdx == -1 || kwIdx == -1 || tmplIdx < kwIdx {
+		t.Fatalf("keyword template select must exist after the keywords textarea (kw=%d tmpl=%d)", kwIdx, tmplIdx)
+	}
+
+	if strings.Contains(body, `name="keyword_template"`) {
+		t.Fatal("keyword template select must not have a name attribute (client-only, must not be submitted)")
+	}
+
+	for _, want := range []string{
+		"Nightclubs — UAE",
+		"Lounges & bars — UAE",
+		"Shisha — UAE",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("keyword template label %q missing", want)
+		}
+	}
+
+	for _, want := range []string{"localStorage", "applyPreset"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("inline preset script missing %q", want)
+		}
+	}
+}
