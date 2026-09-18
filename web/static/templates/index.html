@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Google Maps Scraper</title>
+    <title>NNH Maps Scraper</title>
     <link rel="stylesheet" href="/static/css/main.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/htmx/1.9.6/htmx.min.js"></script>
     <script>
@@ -16,32 +16,10 @@
 <body>
     <div class="app-container">
         <header>
-            <h1>Google Maps Scraper</h1>
+            <h1>NNH Maps Scraper</h1>
             <nav>
                 <a href="/api/docs" target="_blank" rel="noopener noreferrer">API Documentation</a>
             </nav>
-            <div class="github-section">
-                <p>If you find this tool useful, please consider starring our repository: </p>
-                <a href="https://github.com/gosom/google-maps-scraper" class="github-button">
-                <svg height="16" width="16" viewBox="0 0 16 16">
-                    <path fill="currentColor" d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25z"/>
-                  </svg>
-                  Star on GitHub
-                </a>
-            </div>
-            <div id="sponsor-section" class="sponsor-section">
-    <button class="sponsor-close" onclick="hideSponsor()">
-        ×
-    </button>
-    <p class="sponsor-text">Support the ongoing maintenance and development of this project by becoming a sponsor. Your contribution helps ensure the tool's continued improvement and reliability.</p>
-    <a href="https://github.com/sponsors/gosom" class="sponsor-button" target="_blank" rel="noopener noreferrer">
-        <svg height="16" width="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
-            <path fill-rule="evenodd" clip-rule="evenodd" d="M4.25 2.5C4.25 1.83696 4.67143 1.25 5.25 1.25C5.82857 1.25 6.25 1.83696 6.25 2.5C6.25 3.16304 5.82857 3.75 5.25 3.75C4.67143 3.75 4.25 3.16304 4.25 2.5ZM2.5 3.75C1.92143 3.75 1.5 3.16304 1.5 2.5C1.5 1.83696 1.92143 1.25 2.5 1.25C3.07857 1.25 3.5 1.83696 3.5 2.5C3.5 3.16304 3.07857 3.75 2.5 3.75ZM8 1.25C7.42143 1.25 7 1.83696 7 2.5C7 3.16304 7.42143 3.75 8 3.75C8.57857 3.75 9 3.16304 9 2.5C9 1.83696 8.57857 1.25 8 1.25ZM10.75 2.5C10.75 1.83696 11.1714 1.25 11.75 1.25C12.3286 1.25 12.75 1.83696 12.75 2.5C12.75 3.16304 12.3286 3.75 11.75 3.75C11.1714 3.75 10.75 3.16304 10.75 2.5ZM14.5 1.25C13.9214 1.25 13.5 1.83696 13.5 2.5C13.5 3.16304 13.9214 3.75 14.5 3.75C15.0786 3.75 15.5 3.16304 15.5 2.5C15.5 1.83696 15.0786 1.25 14.5 1.25ZM1.25 5.25C1.25 4.67143 1.83696 4.25 2.5 4.25C3.16304 4.25 3.75 4.67143 3.75 5.25C3.75 5.82857 3.16304 6.25 2.5 6.25C1.83696 6.25 1.25 5.82857 1.25 5.25ZM5.25 4.25C4.67143 4.25 4.25 4.67143 4.25 5.25C4.25 5.82857 4.67143 6.25 5.25 6.25C5.82857 6.25 6.25 5.82857 6.25 5.25C6.25 4.67143 5.82857 4.25 5.25 4.25ZM7 5.25C7 4.67143 7.42143 4.25 8 4.25C8.57857 4.25 9 4.67143 9 5.25C9 5.82857 8.57857 6.25 8 6.25C7.42143 6.25 7 5.82857 7 5.25ZM11.75 4.25C11.1714 4.25 10.75 4.67143 10.75 5.25C10.75 5.82857 11.1714 6.25 11.75 6.25C12.3286 6.25 12.75 5.82857 12.75 5.25C12.75 4.67143 12.3286 4.25 11.75 4.25ZM13.5 5.25C13.5 4.67143 13.9214 4.25 14.5 4.25C15.0786 4.25 15.5 4.67143 15.5 5.25C15.5 5.82857 15.0786 6.25 14.5 6.25C13.9214 6.25 13.5 5.82857 13.5 5.25ZM2.5 7.25C1.83696 7.25 1.25 7.67143 1.25 8.25C1.25 8.82857 1.83696 9.25 2.5 9.25C3.16304 9.25 3.75 8.82857 3.75 8.25C3.75 7.67143 3.16304 7.25 2.5 7.25ZM4.25 8.25C4.25 7.67143 4.67143 7.25 5.25 7.25C5.82857 7.25 6.25 7.67143 6.25 8.25C6.25 8.82857 5.82857 9.25 5.25 9.25C4.67143 9.25 4.25 8.82857 4.25 8.25ZM8 7.25C7.42143 7.25 7 7.67143 7 8.25C7 8.82857 7.42143 9.25 8 9.25C8.57857 9.25 9 8.82857 9 8.25C9 7.67143 8.57857 7.25 8 7.25ZM10.75 8.25C10.75 7.67143 11.1714 7.25 11.75 7.25C12.3286 7.25 12.75 7.67143 12.75 8.25C12.75 8.82857 12.3286 9.25 11.75 9.25C11.1714 9.25 10.75 8.82857 10.75 8.25ZM14.5 7.25C13.9214 7.25 13.5 7.67143 13.5 8.25C13.5 8.82857 13.9214 9.25 14.5 9.25C15.0786 9.25 15.5 8.82857 15.5 8.25C15.5 7.67143 15.0786 7.25 14.5 7.25Z" fill="currentColor"/>
-        </svg>
-        Sponsor on GitHub
-    </a>
-</div>
-
         </header>
         <main>
             <div class="sidebar">
@@ -78,13 +56,13 @@
                         </div>
                         <div class="form-group">
                             <label for="keyword_template">Keyword template:</label>
-                            <select id="keyword_template">
-                                <option value="">Append a keyword template&hellip;</option>
-                                <option value="nightclubs">Nightclubs — UAE</option>
-                                <option value="lounges">Lounges & bars — UAE</option>
-                                <option value="shisha">Shisha — UAE</option>
-                            </select>
-                            <p class="text-muted"><small>Appends a ready-made keyword list on new lines below what you already typed; exact duplicates are skipped.</small></p>
+                            <div class="template-controls">
+                                <select id="keyword_template">
+                                    <option value="">Append a keyword template&hellip;</option>
+                                </select>
+                                <button type="button" id="apply_template_defaults">Apply template defaults</button>
+                            </div>
+                            <p class="text-muted"><small>Selecting a template appends its keywords only &mdash; no other setting changes. &ldquo;Apply template defaults&rdquo; additionally sets that template&rsquo;s recommended settings (JSON, depth 10, emails on, 90m, concurrency 2, reviews count-only).</small></p>
                         </div>
                         <div class="form-group">
                             <label for="lang">Language:</label>
@@ -106,6 +84,7 @@
                             <div class="form-group">
                                 <label for="zoom">Zoom:</label>
                                 <input type="number" id="zoom" name="zoom" value="{{.Zoom}}">
+                                <p class="text-muted"><small>Applies only when coordinates are set.</small></p>
                             </div>
                             <div class="form-group">
                                 <label for="latitude">Latitude:</label>
@@ -138,6 +117,7 @@
                             <div class="form-group">
                                     <label for="radius">Radius (BETA):</label>
                                     <input type="number" id="radius" name="radius" value="{{.Radius}}">
+                                    <p class="text-muted"><small>Applies only in Fast Mode.</small></p>
                             </div>
                             <div class="form-group">
                                 <label for="depth">Depth:</label>
@@ -171,6 +151,10 @@
                             <div class="form-group checkbox">
                                 <input type="checkbox" id="extrareviews" name="extrareviews">
                                 <label for="extrareviews">Extra Reviews</label>
+                            </div>
+                            <div class="form-group checkbox">
+                                <input type="checkbox" id="reviews_metadata_only" name="reviews_metadata_only" checked>
+                                <label for="reviews_metadata_only">Reviews: count only (skip review text)</label>
                             </div>
                         </fieldset>
                     </details>
@@ -215,14 +199,6 @@
     </div>
 
     <div id="map-modal-container"></div>
-<script>
-function hideSponsor() {
-    const sponsorSection = document.getElementById('sponsor-section');
-    if (sponsorSection) {
-        sponsorSection.style.display = 'none';
-    }
-}
-</script>
 <script id="preset-script">
 (function () {
     'use strict';
@@ -233,7 +209,7 @@ function hideSponsor() {
         'zoom', 'latitude', 'longitude', 'grid_bbox', 'grid_cell',
         'fastmode', 'radius', 'depth', 'email', 'maxtime',
         'concurrency', 'pages_per_browser', 'browser_pool_size',
-        'disable_page_reuse', 'extrareviews', 'proxies'
+        'disable_page_reuse', 'extrareviews', 'reviews_metadata_only', 'proxies'
     ];
 
     // Location leftovers are cleared on purpose: a stale grid bbox or radius
@@ -269,22 +245,145 @@ function hideSponsor() {
         }
     };
 
-    var KEYWORD_TEMPLATES = {
-        nightclubs: [
-            'night club in Dubai', 'nightclub in Dubai Marina',
-            'night club in Abu Dhabi', 'night club in Sharjah',
-            'disco club in Dubai'
-        ],
-        lounges: [
-            'lounge bar in Dubai', 'cocktail bar in Dubai',
-            'lounge in Abu Dhabi', 'lounge in Sharjah',
-            'rooftop bar in Dubai'
-        ],
-        shisha: [
-            'shisha lounge in Dubai', 'hookah lounge in Dubai',
-            'shisha cafe in Abu Dhabi', 'shisha lounge in Sharjah'
-        ]
-    };
+    // Centralised keyword-template config. The dropdown is generated from
+    // this list; recommendedDefaults keys are form field ids. Selecting a
+    // template appends keywords ONLY — applying defaults is a separate,
+    // explicit action (see "Apply template defaults").
+    var TEMPLATE_CONFIG = [
+        {
+            id: 'nightclubs_dubai',
+            label: 'Nightclubs — Dubai',
+            language: 'en',
+            keywords: [
+                'nightclub dubai', 'night club dubai', 'nightclubs dubai',
+                'night clubs dubai', 'dance club dubai', 'dance nightclub dubai',
+                'disco club dubai', 'disco nightclub dubai', 'nightlife club dubai',
+                'late night club dubai', 'late night nightclub dubai'
+            ],
+            recommendedDefaults: {
+                output: 'json', depth: '10', email: true, maxtime: '90m',
+                concurrency: '2', fastmode: false, extrareviews: false,
+                reviews_metadata_only: true, lang: 'en'
+            }
+        },
+        {
+            id: 'night_lounges_dubai',
+            label: 'Night Lounges — Dubai',
+            language: 'en',
+            keywords: [
+                'night lounge dubai', 'night lounges dubai', 'nightclub lounge dubai',
+                'late night lounge dubai', 'nightlife lounge dubai', 'dance lounge dubai',
+                'music lounge nightlife dubai', 'arabic night lounge dubai',
+                'khaleeji lounge dubai', 'late night music lounge dubai'
+            ],
+            recommendedDefaults: {
+                output: 'json', depth: '10', email: true, maxtime: '90m',
+                concurrency: '2', fastmode: false, extrareviews: false,
+                reviews_metadata_only: true, lang: 'en'
+            }
+        },
+        {
+            id: 'night_bars_dubai',
+            label: 'Night Bars — Dubai',
+            language: 'en',
+            keywords: [
+                'night bar dubai', 'late night bar dubai', 'dance bar dubai',
+                'music bar dubai nightlife', 'party bar dubai', 'nightlife bar dubai',
+                'bar nightclub dubai', 'night bar lounge dubai',
+                'late night music bar dubai'
+            ],
+            recommendedDefaults: {
+                output: 'json', depth: '10', email: true, maxtime: '90m',
+                concurrency: '2', fastmode: false, extrareviews: false,
+                reviews_metadata_only: true, lang: 'en'
+            }
+        },
+        {
+            id: 'arabic_nightlife_dubai',
+            label: 'Arabic Nightlife — Dubai',
+            language: 'en',
+            keywords: [
+                'arabic nightclub dubai', 'arabic night club dubai', 'arabic club dubai',
+                'arabic nightlife dubai', 'arabic music club dubai', 'arabic lounge dubai',
+                'arabic night lounge dubai', 'khaleeji nightclub dubai',
+                'khaleeji night club dubai', 'khaleeji club dubai', 'khaleeji lounge dubai',
+                'gulf nightclub dubai', 'middle eastern nightclub dubai'
+            ],
+            recommendedDefaults: {
+                output: 'json', depth: '10', email: true, maxtime: '90m',
+                concurrency: '2', fastmode: false, extrareviews: false,
+                reviews_metadata_only: true, lang: 'en'
+            }
+        },
+        {
+            id: 'luxury_nightlife_dubai',
+            label: 'Luxury Nightlife — Dubai',
+            language: 'en',
+            keywords: [
+                'luxury nightclub dubai', 'luxury night club dubai', 'luxury club dubai',
+                'luxury nightlife dubai', 'premium nightclub dubai',
+                'exclusive nightclub dubai', 'vip nightclub dubai', 'vip club dubai',
+                'high end nightclub dubai', 'upscale nightclub dubai',
+                'luxury night lounge dubai'
+            ],
+            recommendedDefaults: {
+                output: 'json', depth: '10', email: true, maxtime: '90m',
+                concurrency: '2', fastmode: false, extrareviews: false,
+                reviews_metadata_only: true, lang: 'en'
+            }
+        },
+        {
+            id: 'live_music_nightlife_dubai',
+            label: 'Live Music Nightlife — Dubai',
+            language: 'en',
+            keywords: [
+                'live music nightclub dubai', 'live music club dubai',
+                'live music lounge dubai', 'nightclub live music dubai',
+                'live entertainment club dubai', 'live entertainment nightclub dubai',
+                'music nightclub dubai', 'late night live music dubai'
+            ],
+            recommendedDefaults: {
+                output: 'json', depth: '10', email: true, maxtime: '90m',
+                concurrency: '2', fastmode: false, extrareviews: false,
+                reviews_metadata_only: true, lang: 'en'
+            }
+        },
+        {
+            id: 'late_night_venues_dubai',
+            label: 'Late Night Venues — Dubai',
+            language: 'en',
+            keywords: [
+                'late night nightclub dubai', 'late night club dubai',
+                'late night lounge dubai', 'late night bar dubai',
+                'late night nightlife dubai', 'nightlife venue dubai',
+                'night entertainment club dubai', 'night venue dubai'
+            ],
+            recommendedDefaults: {
+                output: 'json', depth: '10', email: true, maxtime: '90m',
+                concurrency: '2', fastmode: false, extrareviews: false,
+                reviews_metadata_only: true, lang: 'en'
+            }
+        },
+        {
+            id: 'arabic_terms_dubai',
+            label: 'Arabic Search Terms — Dubai',
+            language: 'ar',
+            keywords: [
+                'نايت كلوب دبي', 'نايت كلب دبي', 'نادي ليلي دبي',
+                'نوادي ليلية دبي', 'ملهى ليلي دبي', 'ملاهي ليلية دبي',
+                'ديسكو كلوب دبي', 'كلوب ليلي دبي', 'نايت كلوب عربي دبي',
+                'نايت كلوب خليجي دبي', 'كلوب عربي دبي', 'كلوب خليجي دبي',
+                'لاونج ليلي دبي', 'لاونج عربي دبي', 'لاونج خليجي دبي',
+                'سهرات عربية دبي', 'سهرات خليجية دبي', 'أماكن سهر ليلية دبي',
+                'اماكن سهر ليلية دبي'
+            ],
+            recommendedDefaults: {
+                output: 'json', depth: '10', email: true, maxtime: '90m',
+                concurrency: '2', fastmode: false, extrareviews: false,
+                reviews_metadata_only: true, lang: 'ar'
+            }
+        }
+    ];
 
     function setField(id, value) {
         var el = document.getElementById(id);
@@ -310,22 +409,57 @@ function hideSponsor() {
         }
     }
 
+    function templateById(id) {
+        for (var i = 0; i < TEMPLATE_CONFIG.length; i++) {
+            if (TEMPLATE_CONFIG[i].id === id) {
+                return TEMPLATE_CONFIG[i];
+            }
+        }
+        return null;
+    }
+
+    function populateTemplateSelect() {
+        var sel = document.getElementById('keyword_template');
+        if (!sel) {
+            return;
+        }
+        TEMPLATE_CONFIG.forEach(function (tpl) {
+            var opt = document.createElement('option');
+            opt.value = tpl.id;
+            opt.textContent = tpl.label;
+            sel.appendChild(opt);
+        });
+    }
+
     function appendTemplate(key) {
-        var list = KEYWORD_TEMPLATES[key];
+        var tpl = templateById(key);
         var textarea = document.getElementById('keywords');
-        if (!list || !textarea) {
+        if (!tpl || !textarea) {
             return;
         }
         var lines = textarea.value.split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean);
         var seen = {};
         lines.forEach(function (line) { seen[line] = true; });
-        list.forEach(function (kw) {
+        tpl.keywords.forEach(function (kw) {
             if (!seen[kw]) {
                 seen[kw] = true;
                 lines.push(kw);
             }
         });
         textarea.value = lines.join('\n');
+    }
+
+    function applyTemplateDefaults(key) {
+        var tpl = templateById(key);
+        if (!tpl) {
+            return;
+        }
+        for (var id in tpl.recommendedDefaults) {
+            if (Object.prototype.hasOwnProperty.call(tpl.recommendedDefaults, id)) {
+                setField(id, tpl.recommendedDefaults[id]);
+            }
+        }
+        saveState();
     }
 
     function fieldDiffersFromPreset(presetKey, el) {
@@ -376,7 +510,12 @@ function hideSponsor() {
 
     var presetSelect = document.getElementById('preset');
     var templateSelect = document.getElementById('keyword_template');
+    var applyDefaultsBtn = document.getElementById('apply_template_defaults');
     var form = document.querySelector('form');
+
+    var lastSelectedTemplate = '';
+
+    populateTemplateSelect();
 
     presetSelect.addEventListener('change', function () {
         applyPreset(presetSelect.value);
@@ -385,10 +524,17 @@ function hideSponsor() {
 
     templateSelect.addEventListener('change', function () {
         if (templateSelect.value) {
+            lastSelectedTemplate = templateSelect.value;
             appendTemplate(templateSelect.value);
             saveState();
         }
         templateSelect.value = '';
+    });
+
+    applyDefaultsBtn.addEventListener('click', function () {
+        if (lastSelectedTemplate) {
+            applyTemplateDefaults(lastSelectedTemplate);
+        }
     });
 
     form.addEventListener('input', function (e) {

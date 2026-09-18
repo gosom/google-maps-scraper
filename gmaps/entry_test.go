@@ -179,6 +179,31 @@ func Test_EntryFromJSON(t *testing.T) {
 	require.Equal(t, expected, entry)
 }
 
+func Test_EntryFromJSONReviewsMetadataOnly(t *testing.T) {
+	raw, err := os.ReadFile("../testdata/raw.json")
+	require.NoError(t, err)
+	require.NotEmpty(t, raw)
+
+	full, err := gmaps.EntryFromJSON(raw)
+	require.NoError(t, err)
+	require.Greater(t, full.ReviewCount, 0)
+
+	entry, err := gmaps.EntryFromJSON(raw, true)
+	require.NoError(t, err)
+
+	require.Empty(t, entry.UserReviews)
+
+	require.Greater(t, entry.ReviewCount, 0)
+	require.Greater(t, entry.ReviewRating, 0.0)
+	require.NotEmpty(t, entry.ReviewsPerRating)
+
+	require.Equal(t, full.Title, entry.Title)
+	require.Equal(t, full.Address, entry.Address)
+	require.Equal(t, full.Link, entry.Link)
+	require.Equal(t, full.ReviewsPerRating, entry.ReviewsPerRating)
+	require.Equal(t, full.ReviewRating, entry.ReviewRating)
+}
+
 func Test_EntryFromJSON2(t *testing.T) {
 	fnames := []string{
 		"../testdata/panic.json",

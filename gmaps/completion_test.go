@@ -51,7 +51,7 @@ func TestGmapJobProcessNotifiesSeedDiscovery(t *testing.T) {
 func TestPlaceJobProcessDoesNotCompleteInputOnTerminalError(t *testing.T) {
 	t.Parallel()
 
-	job := gmaps.NewPlaceJob("input-1", "en", "https://www.google.com/maps/place/a", false, false)
+	job := gmaps.NewPlaceJob("input-1", "en", "https://www.google.com/maps/place/a", false, false, false)
 
 	_, next, err := job.Process(context.Background(), &scrapemate.Response{Error: errors.New("fetch failed")})
 
@@ -62,7 +62,7 @@ func TestPlaceJobProcessDoesNotCompleteInputOnTerminalError(t *testing.T) {
 func TestPlaceJobProcessDoesNotCompleteInputBeforeResultIsWritten(t *testing.T) {
 	t.Parallel()
 
-	job := gmaps.NewPlaceJob("input-1", "en", "https://www.google.com/maps/place/a", false, false)
+	job := gmaps.NewPlaceJob("input-1", "en", "https://www.google.com/maps/place/a", false, false, false)
 	raw, err := os.ReadFile("../testdata/raw.json")
 	require.NoError(t, err)
 

@@ -9,10 +9,6 @@
     --color-success: #43a047;
     --color-warning: #fdd835;
     --color-error: #e53935;
-    --color-github-star: #f1e05a;
-    --color-sponsor: #ea4aaa;
-    --color-sponsor: #4a4a4a;
-    --color-sponsor-hover: #5a5a5a;
 }
 
 body {
@@ -44,39 +40,6 @@ h1 {
     font-weight: 500;
     color: var(--color-primary);
     margin: 0 0 16px 0;
-}
-
-.github-section {
-    display: flex;
-    align-items: center;
-    margin-top: 16px;
-}
-
-.github-button {
-    display: inline-flex;
-    align-items: center;
-    background-color: var(--color-sponsor);
-    color: white;
-    border: 1px solid var(--color-border);
-    padding: 10px 16px;
-    margin-left: 16px;
-    border-radius: 4px;
-    font-size: 14px;
-    text-decoration: none;
-    transition: background-color 0.2s, border-color 0.2s;
-}
-
-.github-button:hover {
-    background-color: var(--color-sponsor);
-    border-color: var(--color-primary);
-}
-
-.github-button svg {
-    margin-right: 8px;
-}
-
-.github-button svg path {
-    fill: var(--color-github-star);
 }
 
 main {
@@ -143,6 +106,21 @@ textarea {
 
 select {
     color-scheme: dark;
+}
+
+.template-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.template-controls select {
+    flex: 1;
+}
+
+.template-controls button {
+    white-space: nowrap;
+    padding: 10px 14px;
 }
 
 button {
@@ -276,65 +254,6 @@ th {
     .content {
         padding: 20px;
     }
-}
-
-.sponsor-section {
-    position: relative;
-    margin-top: 24px;
-    padding: 16px;
-    background-color: var(--color-surface);
-    border: 1px solid var(--color-border);
-    border-radius: 4px;
-}
-
-.sponsor-close {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    width: 20px;
-    height: 20px;
-    border: none;
-    background-color: transparent;
-    color: var(--color-text-light);
-    font-size: 16px;
-    line-height: 1;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: color 0.2s;
-}
-
-.sponsor-close:hover {
-    color: var(--color-text);
-}
-
-.sponsor-text {
-    margin: 0 0 12px 0;
-    font-size: 14px;
-    color: var(--color-text);
-    padding-right: 20px; /* Make space for the close button */
-}
-
-.sponsor-button {
-    display: inline-flex;
-    align-items: center;
-    background-color: var(--color-sponsor);
-    color: white;
-    border: none;
-    padding: 10px 16px;
-    border-radius: 4px;
-    font-size: 14px;
-    text-decoration: none;
-    transition: background-color 0.2s;
-}
-
-.sponsor-button:hover {
-    background-color: var(--color-sponsor-hover);
-}
-
-.sponsor-button svg {
-    margin-right: 8px;
 }
 
 nav {

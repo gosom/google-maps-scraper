@@ -347,6 +347,7 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 
 	newJob.Data.Email = r.Form.Get("email") == "on"
 	newJob.Data.ExtraReviews = r.Form.Get("extrareviews") == "on"
+	newJob.Data.ReviewsMetadataOnly = r.Form.Get("reviews_metadata_only") == "on"
 	newJob.Data.DisablePageReuse = r.Form.Get("disable_page_reuse") == "on"
 
 	newJob.Data.OutputFormat = strings.TrimSpace(r.Form.Get("output"))

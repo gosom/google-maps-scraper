@@ -30,6 +30,7 @@ type GmapJob struct {
 	LangCode     string
 	ExtractEmail bool
 
+	ReviewsMetadataOnly     bool
 	Deduper                 deduper.Deduper
 	ExitMonitor             exiter.Exiter
 	ExtractExtraReviews     bool
@@ -107,6 +108,12 @@ func WithExtraReviews() GmapJobOptions {
 	}
 }
 
+func WithReviewsMetadataOnly() GmapJobOptions {
+	return func(j *GmapJob) {
+		j.ReviewsMetadataOnly = true
+	}
+}
+
 func WithWriterManagedCompletion() GmapJobOptions {
 	return func(j *GmapJob) {
 		j.WriterManagedCompletion = true
@@ -164,7 +171,7 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 			jopts = append(jopts, WithPlaceJobWriterManagedCompletion())
 		}
 
-		placeJob := NewPlaceJob(j.ID, j.LangCode, resp.URL, j.ExtractEmail, j.ExtractExtraReviews, jopts...)
+		placeJob := NewPlaceJob(j.ID, j.LangCode, resp.URL, j.ExtractEmail, j.ExtractExtraReviews, j.ReviewsMetadataOnly, jopts...)
 
 		next = append(next, placeJob)
 	} else {
@@ -179,7 +186,7 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 					jopts = append(jopts, WithPlaceJobWriterManagedCompletion())
 				}
 
-				nextJob := NewPlaceJob(j.ID, j.LangCode, href, j.ExtractEmail, j.ExtractExtraReviews, jopts...)
+				nextJob := NewPlaceJob(j.ID, j.LangCode, href, j.ExtractEmail, j.ExtractExtraReviews, j.ReviewsMetadataOnly, jopts...)
 
 				if j.Deduper == nil || j.Deduper.AddIfNotExists(ctx, href) {
 					next = append(next, nextJob)

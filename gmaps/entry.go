@@ -357,7 +357,7 @@ func extractReviews(data []byte) []Review {
 }
 
 //nolint:mnd // it's ok, I need the indexes
-func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error) {
+func EntryFromJSON(raw []byte, reviewsMetadataOnly ...bool) (entry Entry, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("recovered from panic: %v stack: %s", r, debug.Stack())
@@ -366,7 +366,7 @@ func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error)
 		}
 	}()
 
-	onlyReviewCount := len(reviewCountOnly) == 1 && reviewCountOnly[0]
+	metadataOnly := len(reviewsMetadataOnly) == 1 && reviewsMetadataOnly[0]
 
 	var jd []any
 	if err := json.Unmarshal(raw, &jd); err != nil {
@@ -383,10 +383,6 @@ func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error)
 	}
 
 	entry.ReviewCount = int(getNthElementAndCast[float64](darray, 4, 8))
-
-	if onlyReviewCount {
-		return entry, nil
-	}
 
 	entry.Link = getNthElementAndCast[string](darray, 27)
 	entry.Title = getNthElementAndCast[string](darray, 11)
@@ -527,16 +523,21 @@ func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error)
 	}
 
 	// Parse inline reviews from the page data
-	reviewsI := getNthElementAndCast[[]any](darray, 175, 9, 0, 0)
-	if len(reviewsI) > 0 {
-		entry.UserReviews = parseReviews(reviewsI)
+	if metadataOnly {
+		// Reviews: count only — keep counts/ratings, skip per-review parsing.
+		entry.UserReviews = make([]Review, 0)
 	} else {
-		// Try alternative location for reviews
-		reviewsI = getNthElementAndCast[[]any](darray, 175, 9, 0)
+		reviewsI := getNthElementAndCast[[]any](darray, 175, 9, 0, 0)
 		if len(reviewsI) > 0 {
 			entry.UserReviews = parseReviews(reviewsI)
 		} else {
-			entry.UserReviews = make([]Review, 0)
+			// Try alternative location for reviews
+			reviewsI = getNthElementAndCast[[]any](darray, 175, 9, 0)
+			if len(reviewsI) > 0 {
+				entry.UserReviews = parseReviews(reviewsI)
+			} else {
+				entry.UserReviews = make([]Review, 0)
+			}
 		}
 	}
 

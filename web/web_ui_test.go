@@ -387,13 +387,46 @@ func TestIndexRendersPresetAndTemplateControls(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"Nightclubs — UAE",
-		"Lounges & bars — UAE",
-		"Shisha — UAE",
+		"Nightclubs — Dubai",
+		"Night Lounges — Dubai",
+		"Night Bars — Dubai",
+		"Arabic Nightlife — Dubai",
+		"Luxury Nightlife — Dubai",
+		"Live Music Nightlife — Dubai",
+		"Late Night Venues — Dubai",
+		"Arabic Search Terms — Dubai",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("keyword template label %q missing", want)
 		}
+	}
+
+	if !strings.Contains(body, "TEMPLATE_CONFIG") {
+		t.Fatal("template dropdown must be generated from a centralised TEMPLATE_CONFIG")
+	}
+
+	applyIdx := strings.Index(body, `id="apply_template_defaults"`)
+	if applyIdx == -1 {
+		t.Fatal("apply template defaults button missing")
+	}
+	if applyIdx < tmplIdx {
+		t.Fatalf("apply template defaults button must sit next to the template select (tmpl=%d apply=%d)", tmplIdx, applyIdx)
+	}
+
+	revIdx := strings.Index(body, `id="reviews_metadata_only"`)
+	if revIdx == -1 {
+		t.Fatal("reviews metadata only checkbox missing")
+	}
+	revInput := body[revIdx:]
+	if !strings.HasPrefix(revInput, `id="reviews_metadata_only" name="reviews_metadata_only" checked>`) {
+		t.Fatal("reviews metadata only checkbox must default to checked")
+	}
+
+	if !strings.Contains(body, "Applies only when coordinates are set") {
+		t.Fatal("zoom helper line missing")
+	}
+	if !strings.Contains(body, "Applies only in Fast Mode") {
+		t.Fatal("radius helper line missing")
 	}
 
 	for _, want := range []string{"localStorage", "applyPreset"} {

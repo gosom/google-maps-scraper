@@ -22,10 +22,11 @@ type PlaceJob struct {
 	ExtractEmail            bool
 	ExitMonitor             exiter.Exiter
 	ExtractExtraReviews     bool
+	ReviewsMetadataOnly     bool
 	WriterManagedCompletion bool
 }
 
-func NewPlaceJob(parentID, langCode, u string, extractEmail, extraExtraReviews bool, opts ...PlaceJobOptions) *PlaceJob {
+func NewPlaceJob(parentID, langCode, u string, extractEmail, extraExtraReviews, reviewsMetadataOnly bool, opts ...PlaceJobOptions) *PlaceJob {
 	const (
 		defaultPrio       = scrapemate.PriorityMedium
 		defaultMaxRetries = 3
@@ -46,6 +47,7 @@ func NewPlaceJob(parentID, langCode, u string, extractEmail, extraExtraReviews b
 	job.UsageInResults = true
 	job.ExtractEmail = extractEmail
 	job.ExtractExtraReviews = extraExtraReviews
+	job.ReviewsMetadataOnly = reviewsMetadataOnly
 
 	for _, opt := range opts {
 		opt(&job)
@@ -94,7 +96,7 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 		return nil, nil, fmt.Errorf("could not convert to []byte")
 	}
 
-	entry, err := EntryFromJSON(raw)
+	entry, err := EntryFromJSON(raw, j.ReviewsMetadataOnly)
 	if err != nil {
 		if j.ExitMonitor != nil {
 			j.ExitMonitor.IncrPlacesCompleted(1)
@@ -185,7 +187,7 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page scrapemate.BrowserPa
 
 	resp.Meta["json"] = raw
 
-	if j.ExtractExtraReviews {
+	if j.ExtractExtraReviews && !j.ReviewsMetadataOnly {
 		reviewCount := j.getReviewCount(raw)
 		if reviewCount > 0 { // download reviews for any place that has them
 			params := fetchReviewsParams{

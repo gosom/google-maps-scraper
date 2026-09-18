@@ -135,6 +135,7 @@ func (r *fileRunner) Run(ctx context.Context) (err error) {
 			dedup,
 			exitMonitor,
 			r.cfg.ExtraReviews,
+			r.cfg.ReviewsMetadataOnly,
 			seedOpts...,
 		)
 	} else {
@@ -150,6 +151,7 @@ func (r *fileRunner) Run(ctx context.Context) (err error) {
 			dedup,
 			exitMonitor,
 			r.cfg.ExtraReviews,
+			r.cfg.ReviewsMetadataOnly,
 			seedOpts...,
 		)
 	}

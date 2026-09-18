@@ -61,6 +61,7 @@ func CreateSeedJobs(
 	dedup deduper.Deduper,
 	exitMonitor exiter.Exiter,
 	extraReviews bool,
+	reviewsMetadataOnly bool,
 	opts ...SeedJobOption,
 ) (jobs []scrapemate.IJob, err error) {
 	createCfg := newSeedJobConfig(opts...)
@@ -144,6 +145,10 @@ func CreateSeedJobs(
 				opts = append(opts, gmaps.WithExtraReviews())
 			}
 
+			if reviewsMetadataOnly {
+				opts = append(opts, gmaps.WithReviewsMetadataOnly())
+			}
+
 			if createCfg.completionTracker != nil {
 				opts = append(opts, gmaps.WithGmapCompletionTracker(createCfg.completionTracker))
 			}
@@ -201,6 +206,7 @@ func CreateGridSeedJobs(
 	dedup deduper.Deduper,
 	exitMonitor exiter.Exiter,
 	extraReviews bool,
+	reviewsMetadataOnly bool,
 	opts ...SeedJobOption,
 ) ([]scrapemate.IJob, error) {
 	createCfg := newSeedJobConfig(opts...)
@@ -258,6 +264,10 @@ func CreateGridSeedJobs(
 
 			if extraReviews {
 				opts = append(opts, gmaps.WithExtraReviews())
+			}
+
+			if reviewsMetadataOnly {
+				opts = append(opts, gmaps.WithReviewsMetadataOnly())
 			}
 
 			if createCfg.completionTracker != nil {

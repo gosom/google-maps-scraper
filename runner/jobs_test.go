@@ -30,6 +30,7 @@ func TestCreateGridSeedJobsRejectsInvalidZoom(t *testing.T) {
 		nil,
 		nil,
 		false,
+		false,
 	)
 	if err == nil || !strings.Contains(err.Error(), "invalid zoom level") {
 		t.Fatalf("expected invalid zoom level error, got %v", err)
@@ -50,6 +51,7 @@ func TestCreateSeedJobsRejectsEmptyQueryBeforeCustomID(t *testing.T) {
 		10000,
 		nil,
 		nil,
+		false,
 		false,
 	)
 	if err == nil || !strings.Contains(err.Error(), "empty query text") {
@@ -78,6 +80,7 @@ func TestCreateGridSeedJobsRejectsEmptyQueryBeforeCustomID(t *testing.T) {
 		nil,
 		nil,
 		false,
+		false,
 	)
 	if err == nil || !strings.Contains(err.Error(), "empty query text") {
 		t.Fatalf("expected empty query text error, got %v", err)
@@ -98,6 +101,7 @@ func TestCreateSeedJobsSkipsCompletedInputs(t *testing.T) {
 		10000,
 		nil,
 		nil,
+		false,
 		false,
 		runner.WithDeterministicSeedIDs(),
 		runner.WithCompletedInputSkipper(func(inputID string) bool {
@@ -129,6 +133,7 @@ func TestCreateSeedJobsAddsCompletionTracker(t *testing.T) {
 		10000,
 		nil,
 		nil,
+		false,
 		false,
 		runner.WithCompletionTracker(tracker),
 	)
