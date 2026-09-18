@@ -102,17 +102,15 @@ func (s *Service) Get(ctx context.Context, id string) (Job, error) {
 }
 
 func (s *Service) Delete(ctx context.Context, id string) error {
-	datapath, err := s.csvPath(id)
-	if err != nil {
-		return err
+	if strings.Contains(id, "/") || strings.Contains(id, "\\") || strings.Contains(id, "..") {
+		return fmt.Errorf("invalid file name")
 	}
 
-	if _, err := os.Stat(datapath); err == nil {
-		if err := os.Remove(datapath); err != nil {
-			return err
+	for i := range resultFormats {
+		datapath := filepath.Join(s.dataFolder, id+resultFormats[i].filesuffix)
+		if err := os.Remove(datapath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to delete result file %s: %w", datapath, err)
 		}
-	} else if !os.IsNotExist(err) {
-		return err
 	}
 
 	return s.repo.Delete(ctx, id)
@@ -126,25 +124,32 @@ func (s *Service) SelectPending(ctx context.Context) ([]Job, error) {
 	return s.repo.Select(ctx, SelectParams{Status: StatusPending, Limit: 1})
 }
 
-// csvPath returns the on-disk path of a job's CSV output, rejecting ids that
-// could escape the data folder.
-func (s *Service) csvPath(id string) (string, error) {
-	if strings.Contains(id, "/") || strings.Contains(id, "\\") || strings.Contains(id, "..") {
-		return "", fmt.Errorf("invalid file name")
-	}
-
-	return filepath.Join(s.dataFolder, id+".csv"), nil
+// resultFormat pairs a file suffix with the HTTP content type used to download it.
+type resultFormat struct {
+	filesuffix string
+	contentTyp string
 }
 
-func (s *Service) GetCSV(_ context.Context, id string) (string, error) {
-	datapath, err := s.csvPath(id)
-	if err != nil {
-		return "", err
+var resultFormats = []resultFormat{
+	{filesuffix: ".csv", contentTyp: "text/csv"},
+	{filesuffix: ".json", contentTyp: "application/json"},
+}
+
+// GetResult returns the on-disk path and content type of a job's result file,
+// looking for every supported format so that older CSV jobs keep downloading.
+func (s *Service) GetResult(_ context.Context, id string) (string, string, error) {
+	if strings.Contains(id, "/") || strings.Contains(id, "\\") || strings.Contains(id, "..") {
+		return "", "", fmt.Errorf("invalid file name")
 	}
 
-	if _, err := os.Stat(datapath); os.IsNotExist(err) {
-		return "", fmt.Errorf("csv file not found for job %s", id)
+	for i := range resultFormats {
+		datapath := filepath.Join(s.dataFolder, id+resultFormats[i].filesuffix)
+		if _, err := os.Stat(datapath); err == nil {
+			return datapath, resultFormats[i].contentTyp, nil
+		} else if !os.IsNotExist(err) {
+			return "", "", err
+		}
 	}
 
-	return datapath, nil
+	return "", "", fmt.Errorf("result file not found for job %s", id)
 }

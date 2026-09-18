@@ -250,8 +250,8 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		Zoom:     15,
 		FastMode: false,
 		Radius:   10000,
-		Lat:      "0",
-		Lon:      "0",
+		Lat:      "",
+		Lon:      "",
 		Depth:    10,
 		Email:    false,
 	}
@@ -346,6 +346,41 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 	}
 
 	newJob.Data.Email = r.Form.Get("email") == "on"
+	newJob.Data.ExtraReviews = r.Form.Get("extrareviews") == "on"
+	newJob.Data.DisablePageReuse = r.Form.Get("disable_page_reuse") == "on"
+
+	newJob.Data.OutputFormat = strings.TrimSpace(r.Form.Get("output"))
+	newJob.Data.GridBBox = strings.TrimSpace(r.Form.Get("grid_bbox"))
+
+	newJob.Data.Concurrency, err = optionalAtoi(r.Form.Get("concurrency"))
+	if err != nil {
+		http.Error(w, "invalid concurrency", http.StatusUnprocessableEntity)
+
+		return
+	}
+
+	newJob.Data.PagesPerBrowser, err = optionalAtoi(r.Form.Get("pages_per_browser"))
+	if err != nil {
+		http.Error(w, "invalid pages per browser", http.StatusUnprocessableEntity)
+
+		return
+	}
+
+	newJob.Data.BrowserPoolSize, err = optionalAtoi(r.Form.Get("browser_pool_size"))
+	if err != nil {
+		http.Error(w, "invalid browser pool size", http.StatusUnprocessableEntity)
+
+		return
+	}
+
+	if cell := strings.TrimSpace(r.Form.Get("grid_cell")); cell != "" {
+		newJob.Data.GridCellKm, err = strconv.ParseFloat(cell, 64)
+		if err != nil {
+			http.Error(w, "invalid grid cell size", http.StatusUnprocessableEntity)
+
+			return
+		}
+	}
 
 	proxies := strings.Split(r.Form.Get("proxies"), "\n")
 	if len(proxies) > 0 {
@@ -422,6 +457,16 @@ func (s *Server) getJobs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// optionalAtoi parses s as an int, returning 0 for an empty string.
+func optionalAtoi(s string) (int, error) {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return 0, nil
+	}
+
+	return strconv.Atoi(trimmed)
+}
+
 func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, methodNotAllowedMessage, http.StatusMethodNotAllowed)
@@ -438,13 +483,13 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filePath, err := s.svc.GetCSV(ctx, id.String())
+	filePath, contentType, err := s.svc.GetResult(ctx, id.String())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
 
-	file, err := os.Open(filePath) //nolint:gosec // GetCSV returns a validated path rooted in the configured data directory.
+	file, err := os.Open(filePath) //nolint:gosec // GetResult returns a validated path rooted in the configured data directory.
 	if err != nil {
 		http.Error(w, "Failed to open file", http.StatusInternalServerError)
 		return
@@ -453,7 +498,7 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 
 	fileName := filepath.Base(filePath)
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", fileName))
-	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Type", contentType)
 
 	_, err = io.Copy(w, file)
 	if err != nil {

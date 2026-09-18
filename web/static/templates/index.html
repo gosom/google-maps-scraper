@@ -63,8 +63,16 @@
                             <label for="lang">Language:</label>
                             <input type="text" id="lang" name="lang" value="{{.Language}}">
                         </div>
+                        <div class="form-group">
+                            <label for="output">Output Format:</label>
+                            <select id="output" name="output">
+                                <option value="csv" selected>CSV</option>
+                                <option value="json">JSON (keeps structured fields such as owner)</option>
+                            </select>
+                            <p class="text-muted"><small>JSON preserves fields the CSV export flattens or drops.</small></p>
+                        </div>
                     </fieldset>
-                    
+
                     <details class="expandable-section">
                         <summary>Location Settings</summary>
                         <fieldset>
@@ -80,6 +88,16 @@
                                 <label for="longitude">Longitude:</label>
                                 <input type="number" step="0.000000000000001" id="longitude" name="longitude" value="{{.Lon}}">
                             </div>
+                            <p class="text-muted"><small>Leave latitude and longitude empty to search without a map anchor.</small></p>
+                            <div class="form-group">
+                                <label for="grid_bbox">Grid Scraping (BETA):</label>
+                                <input type="text" id="grid_bbox" name="grid_bbox" placeholder="minLat,minLon,maxLat,maxLon">
+                            </div>
+                            <div class="form-group">
+                                <label for="grid_cell">Grid Cell Size (km):</label>
+                                <input type="number" step="0.1" min="0.1" id="grid_cell" name="grid_cell" value="1">
+                            </div>
+                            <p class="text-muted"><small>Grid mode sweeps a bounding box cell by cell. Faster via the CLI for very large areas; not available with Fast Mode.</small></p>
                         </fieldset>
                     </details>
                     
@@ -105,6 +123,27 @@
                             <div class="form-group">
                                 <label for="maxtime">Max job time:</label>
                                 <input type="text" id="maxtime" name="maxtime" value="{{.MaxTime}}">
+                            </div>
+                            <p class="text-muted"><small>Fast Mode is quicker but collects less data &mdash; fields such as status and owner are at risk of being empty.</small></p>
+                            <div class="form-group">
+                                <label for="concurrency">Concurrency:</label>
+                                <input type="number" step="1" min="1" id="concurrency" name="concurrency" placeholder="server default">
+                            </div>
+                            <div class="form-group">
+                                <label for="pages_per_browser">Pages per Browser:</label>
+                                <input type="number" step="1" min="1" id="pages_per_browser" name="pages_per_browser" placeholder="server default">
+                            </div>
+                            <div class="form-group">
+                                <label for="browser_pool_size">Browser Pool Size:</label>
+                                <input type="number" step="1" min="1" id="browser_pool_size" name="browser_pool_size" placeholder="server default">
+                            </div>
+                            <div class="form-group checkbox">
+                                <input type="checkbox" id="disable_page_reuse" name="disable_page_reuse">
+                                <label for="disable_page_reuse">Disable Page Reuse (fresh pages, slower)</label>
+                            </div>
+                            <div class="form-group checkbox">
+                                <input type="checkbox" id="extrareviews" name="extrareviews">
+                                <label for="extrareviews">Extra Reviews</label>
                             </div>
                         </fieldset>
                     </details>

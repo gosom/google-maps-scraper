@@ -14,12 +14,14 @@ import (
 
 	"github.com/gosom/google-maps-scraper/deduper"
 	"github.com/gosom/google-maps-scraper/exiter"
+	"github.com/gosom/google-maps-scraper/grid"
 	"github.com/gosom/google-maps-scraper/runner"
 	"github.com/gosom/google-maps-scraper/tlmt"
 	"github.com/gosom/google-maps-scraper/web"
 	"github.com/gosom/google-maps-scraper/web/sqlite"
 	"github.com/gosom/scrapemate"
 	"github.com/gosom/scrapemate/adapters/writers/csvwriter"
+	"github.com/gosom/scrapemate/adapters/writers/jsonwriter"
 	"github.com/gosom/scrapemate/scrapemateapp"
 	"golang.org/x/sync/errgroup"
 )
@@ -151,7 +153,12 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		return w.svc.Update(ctx, job)
 	}
 
-	outpath := filepath.Join(w.cfg.DataFolder, job.ID+".csv")
+	fileExt := ".csv"
+	if job.Data.EffectiveOutputFormat() == web.OutputFormatJSON {
+		fileExt = ".json"
+	}
+
+	outpath := filepath.Join(w.cfg.DataFolder, job.ID+fileExt)
 
 	outfile, err := os.Create(outpath)
 	if err != nil {
@@ -181,33 +188,61 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 
 	defer mate.Close()
 
-	var coords string
-	if job.Data.Lat != "" && job.Data.Lon != "" {
-		coords = job.Data.Lat + "," + job.Data.Lon
-	}
+	coords := job.Data.GeoCoordinates()
 
 	dedup := deduper.New()
 	exitMonitor := exiter.New()
 
-	seedJobs, err := runner.CreateSeedJobs(
-		job.Data.FastMode,
-		job.Data.Lang,
-		strings.NewReader(strings.Join(job.Data.Keywords, "\n")),
-		job.Data.Depth,
-		job.Data.Email,
-		coords,
-		job.Data.Zoom,
-		func() float64 {
-			if job.Data.Radius <= 0 {
-				return 10000 // 10 km
-			}
+	var seedJobs []scrapemate.IJob
 
-			return float64(job.Data.Radius)
-		}(),
-		dedup,
-		exitMonitor,
-		w.cfg.ExtraReviews || job.Data.ExtraReviews,
-	)
+	if job.Data.GridBBox != "" {
+		if job.Data.FastMode {
+			return fmt.Errorf("grid scraping cannot be used together with fast mode")
+		}
+
+		bbox, bboxErr := grid.ParseBoundingBox(job.Data.GridBBox)
+		if bboxErr != nil {
+			return fmt.Errorf("invalid grid bounding box: %w", bboxErr)
+		}
+
+		cellKm := job.Data.GridCellKm
+		if cellKm <= 0 {
+			cellKm = 1.0
+		}
+
+		seedJobs, err = runner.CreateGridSeedJobs(
+			job.Data.Lang,
+			strings.NewReader(strings.Join(job.Data.Keywords, "\n")),
+			job.Data.Depth,
+			job.Data.Email,
+			bbox,
+			cellKm,
+			job.Data.Zoom,
+			dedup,
+			exitMonitor,
+			w.cfg.ExtraReviews || job.Data.ExtraReviews,
+		)
+	} else {
+		seedJobs, err = runner.CreateSeedJobs(
+			job.Data.FastMode,
+			job.Data.Lang,
+			strings.NewReader(strings.Join(job.Data.Keywords, "\n")),
+			job.Data.Depth,
+			job.Data.Email,
+			coords,
+			job.Data.Zoom,
+			func() float64 {
+				if job.Data.Radius <= 0 {
+					return 10000 // 10 km
+				}
+
+				return float64(job.Data.Radius)
+			}(),
+			dedup,
+			exitMonitor,
+			w.cfg.ExtraReviews || job.Data.ExtraReviews,
+		)
+	}
 	if err != nil {
 		err2 := w.svc.Update(ctx, job)
 		if err2 != nil {
@@ -261,8 +296,13 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 
 func defaultSetupMate(cfg *runner.Config) func(context.Context, io.Writer, *web.Job) (mateRunner, error) {
 	return func(_ context.Context, writer io.Writer, job *web.Job) (mateRunner, error) {
+		concurrency := cfg.Concurrency
+		if job.Data.Concurrency > 0 {
+			concurrency = job.Data.Concurrency
+		}
+
 		opts := []func(*scrapemateapp.Config) error{
-			scrapemateapp.WithConcurrency(cfg.Concurrency),
+			scrapemateapp.WithConcurrency(concurrency),
 			scrapemateapp.WithExitOnInactivity(time.Minute * 3),
 		}
 
@@ -276,7 +316,17 @@ func defaultSetupMate(cfg *runner.Config) func(context.Context, io.Writer, *web.
 			)
 		}
 
-		opts = runner.AppendBrowserCapacityOptions(opts, cfg)
+		if job.Data.PagesPerBrowser > 1 {
+			opts = append(opts, scrapemateapp.WithMaxPagesPerBrowser(job.Data.PagesPerBrowser))
+		}
+
+		if job.Data.BrowserPoolSize > 0 {
+			opts = append(opts, scrapemateapp.WithBrowserPoolSize(job.Data.BrowserPoolSize))
+		}
+
+		if job.Data.PagesPerBrowser <= 1 && job.Data.BrowserPoolSize <= 0 {
+			opts = runner.AppendBrowserCapacityOptions(opts, cfg)
+		}
 
 		hasProxy := false
 
@@ -290,7 +340,9 @@ func defaultSetupMate(cfg *runner.Config) func(context.Context, io.Writer, *web.
 			hasProxy = true
 		}
 
-		if !cfg.DisablePageReuse {
+		pageReuseDisabled := cfg.DisablePageReuse || job.Data.DisablePageReuse
+
+		if !pageReuseDisabled {
 			opts = append(opts,
 				scrapemateapp.WithPageReuseLimit(2),
 				scrapemateapp.WithBrowserReuseLimit(200),
@@ -299,9 +351,15 @@ func defaultSetupMate(cfg *runner.Config) func(context.Context, io.Writer, *web.
 
 		log.Printf("job %s has proxy: %v", job.ID, hasProxy)
 
-		csvWriter := csvwriter.NewCsvWriter(csv.NewWriter(writer))
+		var resultsWriter scrapemate.ResultWriter
 
-		writers := []scrapemate.ResultWriter{csvWriter}
+		if job.Data.EffectiveOutputFormat() == web.OutputFormatJSON {
+			resultsWriter = jsonwriter.NewJSONWriter(writer)
+		} else {
+			resultsWriter = csvwriter.NewCsvWriter(csv.NewWriter(writer))
+		}
+
+		writers := []scrapemate.ResultWriter{resultsWriter}
 
 		matecfg, err := scrapemateapp.NewConfig(
 			writers,

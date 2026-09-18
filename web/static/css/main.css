@@ -131,6 +131,7 @@ label {
 
 input[type="text"],
 input[type="number"],
+select,
 textarea {
     width: 100%;
     padding: 10px 12px;
@@ -138,6 +139,10 @@ textarea {
     border-radius: 4px;
     font-size: 14px;
     box-sizing: border-box;
+}
+
+select {
+    color-scheme: dark;
 }
 
 button {
