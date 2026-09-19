@@ -110,9 +110,13 @@ type Entry struct {
 	// key are misspelled ("longtitude"); MarshalJSON also emits the correctly
 	// spelled "longitude" key, and UnmarshalJSON accepts either. The field
 	// name is kept for backwards compatibility with existing imports.
-	Longtitude          float64      `json:"longtitude"`
-	Status              string       `json:"status"`
-	Description         string       `json:"description"`
+	Longtitude  float64 `json:"longtitude"`
+	Status      string  `json:"status"`
+	Description string  `json:"description"`
+	// Descriptor holds the short editorial one-liner, attribute tags, prices
+	// and hours lines that the status slots deliver when they do not carry a
+	// business status. It is distinct from Description ([32][1][1]).
+	Descriptor          string       `json:"descriptor"`
 	ReviewsLink         string       `json:"reviews_link"`
 	Thumbnail           string       `json:"thumbnail"`
 	Timezone            string       `json:"timezone"`
@@ -270,6 +274,7 @@ func (e *Entry) CsvHeaders() []string {
 		"user_reviews",
 		"user_reviews_extended",
 		"emails",
+		"descriptor",
 	}
 }
 
@@ -311,6 +316,7 @@ func (e *Entry) CsvRow() []string {
 		stringify(e.UserReviews),
 		stringify(e.UserReviewsExtended),
 		stringSliceToString(e.Emails),
+		e.Descriptor,
 	}
 }
 
@@ -354,6 +360,14 @@ func extractReviews(data []byte) []Review {
 	}
 
 	return parseReviews(reviewsI)
+}
+
+// knownBusinessStatus reports whether s is an exact business-status value
+// observed on the closed-state slots. It is deliberately minimal: anything
+// that is not a certain status must not reach entry.Status, and a real value
+// localised under -lang ar is unverified.
+func knownBusinessStatus(s string) bool {
+	return s == "CLOSED"
 }
 
 //nolint:mnd // it's ok, I need the indexes
@@ -410,11 +424,28 @@ func EntryFromJSON(raw []byte, reviewsMetadataOnly ...bool) (entry Entry, err er
 	entry.Latitude = getNthElementAndCast[float64](darray, 9, 2)
 	entry.Longtitude = getNthElementAndCast[float64](darray, 9, 3)
 	entry.Cid = getNthElementAndCast[string](jd, 25, 3, 0, 13, 0, 0, 1)
-	entry.Status = getNthElementAndCast[string](darray, 34, 4, 4)
+	// [34][4][4] and [88][0] are noise-prone: the 466-venue Dubai run showed
+	// 'Brunch', 'Dogs allowed', prices and editorial one-liners coming through
+	// these slots. Only an exact business status may reach entry.Status; a
+	// false "closed" is worse than a missing one, so the accepted set is
+	// deliberately minimal ("CLOSED"). Everything else lands in Descriptor.
+	hoursLine := getNthElementAndCast[string](darray, 34, 4, 4)
+	closedEnum := getNthElementAndCast[string](darray, 88, 0)
 
-	if entry.Status == "" {
-		// [34][4][4] went dead ~2026-07; closed-state enum now at [88][0] ("CLOSED" / null)
-		entry.Status = getNthElementAndCast[string](darray, 88, 0)
+	switch {
+	case knownBusinessStatus(hoursLine):
+		entry.Status = hoursLine
+	case knownBusinessStatus(closedEnum):
+		entry.Status = closedEnum
+	}
+
+	if entry.Descriptor == "" {
+		switch {
+		case hoursLine != "" && !knownBusinessStatus(hoursLine):
+			entry.Descriptor = hoursLine
+		case closedEnum != "" && !knownBusinessStatus(closedEnum):
+			entry.Descriptor = closedEnum
+		}
 	}
 
 	entry.Description = getNthElementAndCast[string](darray, 32, 1, 1)

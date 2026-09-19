@@ -51,13 +51,17 @@ func Test_EntryFromJSON(t *testing.T) {
 		Latitude:     34.670595399999996,
 		Longtitude:   33.042456699999995,
 		Cid:          "16519582940102929223",
-		Status:       "Closed ⋅ Opens 12:30\u202fpm Tue",
-		ReviewsLink:  "https://search.google.com/local/reviews?placeid=ChIJDdnwdv0y5xQRRytw1ihZQeU&q=Kipriakon&authuser=0&hl=en&gl=CY",
-		Thumbnail:    "https://lh5.googleusercontent.com/p/AF1QipP4Y7A8nYL3KKXznSl69pXSq9p2IXCYUjVvOh0F=w408-h408-k-no",
-		Timezone:     "Asia/Nicosia",
-		PriceRange:   "€€",
-		DataID:       "0x14e732fd76f0d90d:0xe5415928d6702b47",
-		PlaceID:      "ChIJDdnwdv0y5xQRRytw1ihZQeU",
+		// gms-4: "Closed ⋅ Opens 12:30 pm Tue" is an operating-hours line
+		// ([34][4][4]), not a business status. It moved to Descriptor so that
+		// status carries CLOSED only. Full-struct equality unchanged.
+		Status:      "",
+		Descriptor:  "Closed ⋅ Opens 12:30\u202fpm Tue",
+		ReviewsLink: "https://search.google.com/local/reviews?placeid=ChIJDdnwdv0y5xQRRytw1ihZQeU&q=Kipriakon&authuser=0&hl=en&gl=CY",
+		Thumbnail:   "https://lh5.googleusercontent.com/p/AF1QipP4Y7A8nYL3KKXznSl69pXSq9p2IXCYUjVvOh0F=w408-h408-k-no",
+		Timezone:    "Asia/Nicosia",
+		PriceRange:  "€€",
+		DataID:      "0x14e732fd76f0d90d:0xe5415928d6702b47",
+		PlaceID:     "ChIJDdnwdv0y5xQRRytw1ihZQeU",
 		Images: []gmaps.Image{
 			{
 				Title: "All",

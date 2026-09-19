@@ -30,7 +30,8 @@ func TestCSVAppendWriterWritesHeaderForNewFile(t *testing.T) {
 	require.NoError(t, writer.Run(context.Background(), in))
 
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	require.Equal(t, "input_id,link,title,category,address,open_hours,popular_times,website,phone,plus_code,review_count,review_rating,reviews_per_rating,latitude,longitude,cid,status,descriptions,reviews_link,thumbnail,timezone,price_range,data_id,street_view_url,place_id,images,reservations,order_online,menu,owner,complete_address,credit_cards_accepted,about,user_reviews,user_reviews_extended,emails", lines[0])
+	// gms-4: appended "descriptor" column (gmaps.Entry.CsvHeaders) — full lockstep with CsvRow.
+	require.Equal(t, "input_id,link,title,category,address,open_hours,popular_times,website,phone,plus_code,review_count,review_rating,reviews_per_rating,latitude,longitude,cid,status,descriptions,reviews_link,thumbnail,timezone,price_range,data_id,street_view_url,place_id,images,reservations,order_online,menu,owner,complete_address,credit_cards_accepted,about,user_reviews,user_reviews_extended,emails,descriptor", lines[0])
 	require.Len(t, lines, 2)
 	require.True(t, ids.Has("place-a"))
 }
@@ -95,7 +96,8 @@ func TestJSONLAppendWriterWritesOneObjectPerLine(t *testing.T) {
 
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
 	require.Len(t, lines, 2)
-	require.JSONEq(t, `{"input_id":"q1","link":"https://maps/place/a","title":"A","place_id":"place-a","longitude":0,"categories":null,"open_hours":null,"popular_times":null,"review_count":0,"review_rating":0,"reviews_per_rating":null,"latitude":0,"longtitude":0,"images":null,"reservations":null,"order_online":null,"credit_cards_accepted":null,"about":null,"user_reviews":null,"user_reviews_extended":null,"emails":null,"cid":"","category":"","address":"","web_site":"","phone":"","plus_code":"","status":"","description":"","reviews_link":"","thumbnail":"","timezone":"","price_range":"","data_id":"","street_view_url":"","owner":{"id":"","name":"","link":""},"complete_address":{"borough":"","street":"","city":"","postal_code":"","state":"","country":""},"menu":{"link":"","source":""}}`, lines[0])
+	// gms-4: Entry gained "descriptor" — key set updated in lockstep with the struct.
+	require.JSONEq(t, `{"input_id":"q1","link":"https://maps/place/a","title":"A","place_id":"place-a","longitude":0,"categories":null,"open_hours":null,"popular_times":null,"review_count":0,"review_rating":0,"reviews_per_rating":null,"latitude":0,"longtitude":0,"images":null,"reservations":null,"order_online":null,"credit_cards_accepted":null,"about":null,"user_reviews":null,"user_reviews_extended":null,"emails":null,"cid":"","category":"","address":"","web_site":"","phone":"","plus_code":"","status":"","description":"","descriptor":"","reviews_link":"","thumbnail":"","timezone":"","price_range":"","data_id":"","street_view_url":"","owner":{"id":"","name":"","link":""},"complete_address":{"borough":"","street":"","city":"","postal_code":"","state":"","country":""},"menu":{"link":"","source":""}}`, lines[0])
 	require.True(t, ids.Has("place-a"))
 	require.True(t, ids.Has("cid-b"))
 }
