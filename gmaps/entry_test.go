@@ -180,13 +180,19 @@ func Test_EntryFromJSON(t *testing.T) {
 }
 
 func Test_EntryFromJSONReviewsMetadataOnly(t *testing.T) {
-	raw, err := os.ReadFile("../testdata/raw.json")
+	// raw2.json is the fixture that actually carries inline reviews on the
+	// current parse path (raw.json's review layout parses to zero reviews,
+	// which would make the "reviews skipped" assertion vacuous).
+	raw, err := os.ReadFile("../testdata/raw2.json")
 	require.NoError(t, err)
 	require.NotEmpty(t, raw)
 
+	// WITHOUT the flag: inline reviews must be parsed. This assertion fails
+	// if the flag ever becomes a silent no-op on a fixture with no reviews.
 	full, err := gmaps.EntryFromJSON(raw)
 	require.NoError(t, err)
 	require.Greater(t, full.ReviewCount, 0)
+	require.NotEmpty(t, full.UserReviews, "fixture must carry inline reviews when the flag is off")
 
 	entry, err := gmaps.EntryFromJSON(raw, true)
 	require.NoError(t, err)
@@ -202,6 +208,7 @@ func Test_EntryFromJSONReviewsMetadataOnly(t *testing.T) {
 	require.Equal(t, full.Link, entry.Link)
 	require.Equal(t, full.ReviewsPerRating, entry.ReviewsPerRating)
 	require.Equal(t, full.ReviewRating, entry.ReviewRating)
+	require.GreaterOrEqual(t, entry.ReviewCount, len(entry.UserReviews))
 }
 
 func Test_EntryFromJSON2(t *testing.T) {
