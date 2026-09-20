@@ -49,7 +49,7 @@ func NewGmapJob(
 
 	switch {
 	case isGoogleMapsURL(query):
-		mapURL = strings.TrimSpace(query)
+		mapURL = sanitizePlaceURL(strings.TrimSpace(query))
 	case geoCoordinates != "" && zoom > 0:
 		query = url.QueryEscape(query)
 		mapURL = fmt.Sprintf("https://www.google.com/maps/search/%s/@%s,%dz", query, strings.ReplaceAll(geoCoordinates, " ", ""), zoom)

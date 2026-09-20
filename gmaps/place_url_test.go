@@ -44,6 +44,21 @@ func TestNewPlaceJobSanitizesDotDotPlaceURL(t *testing.T) {
 			url:         "https://www.google.com/maps/myplace/../data=!4m2!3m1!1s0xabc",
 			expectedURL: "https://www.google.com/maps/myplace/../data=!4m2!3m1!1s0xabc",
 		},
+		{
+			name:        "dot-dot marker on another host is unchanged",
+			url:         "https://example.com/maps/place/../data=!4m2!3m1!1s0x14e732fd76f0d90d:0xe5415928d6702b47!10m1!1e1",
+			expectedURL: "https://example.com/maps/place/../data=!4m2!3m1!1s0x14e732fd76f0d90d:0xe5415928d6702b47!10m1!1e1",
+		},
+		{
+			name:        "dot-dot marker in query is unchanged",
+			url:         "https://www.google.com/maps/place/Kipriakon?next=/maps/place/../data=!4m2!3m1!1s0x14e732fd76f0d90d:0xe5415928d6702b47!10m1!1e1",
+			expectedURL: "https://www.google.com/maps/place/Kipriakon?next=/maps/place/../data=!4m2!3m1!1s0x14e732fd76f0d90d:0xe5415928d6702b47!10m1!1e1",
+		},
+		{
+			name:        "dot-dot marker in fragment is unchanged",
+			url:         "https://www.google.com/maps/place/Kipriakon#/maps/place/../data=!4m2!3m1!1s0x14e732fd76f0d90d:0xe5415928d6702b47!10m1!1e1",
+			expectedURL: "https://www.google.com/maps/place/Kipriakon#/maps/place/../data=!4m2!3m1!1s0x14e732fd76f0d90d:0xe5415928d6702b47!10m1!1e1",
+		},
 	}
 
 	for _, tt := range tests {

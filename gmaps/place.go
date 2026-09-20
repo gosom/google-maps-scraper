@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
 	"strings"
 	"time"
 	"uuid"
@@ -56,14 +57,32 @@ func NewPlaceJob(parentID, langCode, u string, extractEmail, extraExtraReviews b
 	return &job
 }
 
-// sanitizePlaceURL rewrites a "/place/../" path segment to "/place/_/" so RFC
-// 3986 remove_dot_segments cannot collapse the "/maps/place/" marker out of the
-// URL. It operates on the raw string, so the "data=" payload and any
-// percent-encoding are preserved byte-for-byte. The leading and trailing slash
-// anchor "place" as a full path segment, so a URL like "/myplace/../" is
-// untouched.
-func sanitizePlaceURL(u string) string {
-	return strings.ReplaceAll(u, "/place/../", "/place/_/")
+// sanitizePlaceURL rewrites the dot-dot segment in a canonical Google Maps
+// place URL so RFC 3986 path normalization cannot remove the "/maps/place/"
+// marker. The URL is parsed only for validation; replacement operates on the
+// raw string to preserve the Maps data payload byte-for-byte.
+func sanitizePlaceURL(rawURL string) string {
+	const (
+		placeMarker     = "/maps/place/../data="
+		sanitizedMarker = "/maps/place/_/data="
+	)
+
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil || parsedURL.Scheme != "https" || parsedURL.User != nil || parsedURL.Port() != "" ||
+		!strings.EqualFold(parsedURL.Hostname(), "www.google.com") {
+		return rawURL
+	}
+
+	if strings.Count(parsedURL.EscapedPath(), placeMarker) != 1 {
+		return rawURL
+	}
+
+	markerIndex := strings.Index(rawURL, placeMarker)
+	if markerIndex < 0 {
+		return rawURL
+	}
+
+	return rawURL[:markerIndex] + sanitizedMarker + rawURL[markerIndex+len(placeMarker):]
 }
 
 func WithPlaceJobExitMonitor(exitMonitor exiter.Exiter) PlaceJobOptions {

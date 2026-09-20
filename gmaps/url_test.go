@@ -28,6 +28,11 @@ func TestNewGmapJobBuildsURLFromQuery(t *testing.T) {
 			expectedURL: "https://www.google.com/maps/place/Empire+State+Building/@40.7484405,-73.9856632",
 		},
 		{
+			name:        "place URL with dot-dot segment",
+			query:       "https://www.google.com/maps/place/../data=!4m2!3m1!1s0x14e732fd76f0d90d:0xe5415928d6702b47!10m1!1e1",
+			expectedURL: "https://www.google.com/maps/place/_/data=!4m2!3m1!1s0x14e732fd76f0d90d:0xe5415928d6702b47!10m1!1e1",
+		},
+		{
 			name:        "short URL",
 			query:       "maps.app.goo.gl/abc123",
 			expectedURL: "maps.app.goo.gl/abc123",
