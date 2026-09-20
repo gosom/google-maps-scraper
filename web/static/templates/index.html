@@ -36,15 +36,19 @@
                     <fieldset>
                         <legend>Job Details</legend>
                         <div class="form-group">
-                            <label for="preset">Preset:</label>
+                            <label for="preset">Template:</label>
                             <select id="preset">
-                                <option value="abandoned" selected>🎯 Abandoned-listing hunt</option>
-                                <option value="quick_scan">⚡ Quick scan</option>
-                                <option value="full_area">🗺️ Full-area sweep</option>
-                                <option value="deep_dive">🔬 Deep dive on one spot</option>
+                                <optgroup label="Scrape shape (keeps your keywords)">
+                                    <option value="abandoned" selected>🎯 Abandoned-listing hunt</option>
+                                    <option value="quick_scan">⚡ Quick scan</option>
+                                    <option value="deep_dive">🔬 Deep dive on one spot</option>
+                                </optgroup>
+                                <optgroup label="Dubai venue lists (replaces keywords)" id="template_group">
+                                </optgroup>
                                 <option value="custom">Custom</option>
                             </select>
-                            <p class="text-muted"><small>Picks proven defaults for a whole job type (JSON output keeps the status and owner fields). Every field stays freely editable afterwards.</small></p>
+                            <p class="text-muted"><small>One selector for the whole job: shape presets keep your keywords and set the rest; a Dubai venue list fills the keywords AND every recommended setting in one go. Fields stay freely editable afterwards.</small></p>
+                            <p class="text-muted" id="template_hint" hidden></p>
                         </div>
                         <div class="form-group">
                             <label for="name">Job Name:</label>
@@ -53,16 +57,6 @@
                         <div class="form-group">
                             <label for="keywords">Keywords:</label>
                             <textarea id="keywords" name="keywords" rows="10">{{ .KeywordsString }}</textarea>
-                        </div>
-                        <div class="form-group">
-                            <label for="keyword_template">Keyword template:</label>
-                            <div class="template-controls">
-                                <select id="keyword_template">
-                                    <option value="">Append a keyword template&hellip;</option>
-                                </select>
-                                <button type="button" id="apply_template_defaults">Apply template defaults</button>
-                            </div>
-                            <p class="text-muted"><small>Selecting a template appends its keywords only &mdash; no other setting changes. &ldquo;Apply template defaults&rdquo; additionally sets that template&rsquo;s recommended settings (JSON, depth 10, emails on, 90m, concurrency 2, reviews count-only).</small></p>
                         </div>
                         <div class="form-group">
                             <label for="lang">Language:</label>
@@ -213,12 +207,13 @@
     ];
 
     // Location leftovers are cleared on purpose: a stale grid bbox or radius
-    // silently changing the next job is a trap. Fields a preset does not own
-    // (name, keywords, lang, proxies, pages/pool/reuse) are left untouched.
+    // silently changing the next job is a trap. Fields a shape preset does
+    // not own (name, keywords, lang, proxies, pages/pool/reuse) are left
+    // untouched.
     // NOTE: zoom/radius are never set to '' because POST /scrape rejects
     // unparseable zoom/radius (422). Presets that do not use them set the
     // form defaults (15 / 10000); they are inert while lat/lon stay empty.
-    var PRESETS = {
+    var SHAPE_PRESETS = {
         abandoned: {
             output: 'json', depth: '10', email: true, concurrency: '4',
             fastmode: false, extrareviews: false, maxtime: '45m',
@@ -231,12 +226,6 @@
             latitude: '', longitude: '', grid_bbox: '', grid_cell: '1',
             zoom: '15', radius: '10000'
         },
-        full_area: {
-            output: 'json', depth: '10', email: true, concurrency: '4',
-            fastmode: false, extrareviews: false, maxtime: '3h',
-            grid_bbox: '25.05,55.10,25.35,55.45', grid_cell: '1.0',
-            latitude: '', longitude: '', zoom: '15', radius: '10000'
-        },
         deep_dive: {
             output: 'json', depth: '10', email: true, concurrency: '2',
             fastmode: false, extrareviews: false, maxtime: '45m',
@@ -245,11 +234,53 @@
         }
     };
 
+    // Merged control: SHAPE_PRESETS change settings only; TEMPLATE_CONFIG
+    // entries replace keywords AND set their recommendedDefaults in one go.
+    // Venue templates also reset location leftovers before their defaults
+    // are applied (see LOCATION_RESET), so a grid bbox from one template can
+    // never silently survive into the next.
+    var LOCATION_RESET = {
+        latitude: '', longitude: '', grid_bbox: '', grid_cell: '1',
+        zoom: '15', radius: '10000'
+    };
+
     // Centralised keyword-template config. The dropdown is generated from
     // this list; recommendedDefaults keys are form field ids. Selecting a
     // template appends keywords ONLY — applying defaults is a separate,
     // explicit action (see "Apply template defaults").
     var TEMPLATE_CONFIG = [
+        {
+            id: 'full_sweep_dubai',
+            label: 'Full Sweep — Dubai',
+            language: 'en',
+            note: 'Exhaustive sweep of the dense Dubai nightlife core (84% of known venues in 6 grid cells): one search per cell per keyword. Trades precision for coverage — expect hotels, restaurants and beach clubs alongside the venues you want. Runs in well under an evening; widen Grid Bbox to 25.06,55.17,25.28,55.35 for 96% coverage (about 3 hours).',
+            keywords: [
+                'nightclubs dubai', 'night club dubai', 'dance club dubai',
+                'disco nightclub dubai', 'nightlife club dubai', 'late night club dubai',
+                'night lounge dubai', 'night lounges dubai', 'late night lounge dubai',
+                'arabic night lounge dubai', 'khaleeji lounge dubai', 'night bar dubai',
+                'late night bar dubai', 'party bar dubai', 'arabic nightclub dubai',
+                'arabic nightlife dubai', 'khaleeji nightclub dubai', 'luxury nightclub dubai',
+                'vip nightclub dubai', 'live music nightclub dubai', 'live music lounge dubai',
+                'nightlife venue dubai', 'night entertainment club dubai',
+                'nightclub dubai', 'lounge dubai', 'bar dubai', 'club dubai',
+                'disco dubai', 'shisha lounge dubai', 'rooftop bar dubai',
+                'live music dubai', 'after party dubai', 'karaoke dubai', 'cabaret dubai',
+                'نايت كلوب دبي', 'نايت كلب دبي', 'نادي ليلي دبي',
+                'نوادي ليلية دبي', 'ملهى ليلي دبي', 'ملاهي ليلية دبي',
+                'ديسكو كلوب دبي', 'كلوب ليلي دبي', 'نايت كلوب عربي دبي',
+                'نايت كلوب خليجي دبي', 'كلوب عربي دبي', 'كلوب خليجي دبي',
+                'لاونج ليلي دبي', 'لاونج عربي دبي', 'لاونج خليجي دبي',
+                'سهرات عربية دبي', 'سهرات خليجية دبي', 'أماكن سهر ليلية دبي',
+                'اماكن سهر ليلية دبي'
+            ],
+            recommendedDefaults: {
+                output: 'json', depth: '10', email: true, maxtime: '3h',
+                concurrency: '4', fastmode: false, extrareviews: false,
+                reviews_metadata_only: true, lang: 'en',
+                grid_bbox: '25.14,55.22,25.26,55.32', grid_cell: '5'
+            }
+        },
         {
             id: 'nightclubs_dubai',
             label: 'Nightclubs — Dubai',
@@ -398,13 +429,13 @@
     }
 
     function applyPreset(key) {
-        var preset = PRESETS[key];
-        if (!preset) {
+        var entry = entryById(key);
+        if (!entry) {
             return;
         }
-        for (var id in preset) {
-            if (Object.prototype.hasOwnProperty.call(preset, id)) {
-                setField(id, preset[id]);
+        for (var id in entry.recommendedDefaults) {
+            if (Object.prototype.hasOwnProperty.call(entry.recommendedDefaults, id)) {
+                setField(id, entry.recommendedDefaults[id]);
             }
         }
     }
@@ -418,63 +449,131 @@
         return null;
     }
 
+    function entryById(key) {
+        if (Object.prototype.hasOwnProperty.call(SHAPE_PRESETS, key)) {
+            return {
+                id: key,
+                label: key,
+                kind: 'shape',
+                recommendedDefaults: SHAPE_PRESETS[key]
+            };
+        }
+        return templateById(key);
+    }
+
     function populateTemplateSelect() {
-        var sel = document.getElementById('keyword_template');
-        if (!sel) {
+        var group = document.getElementById('template_group');
+        if (!group) {
             return;
         }
         TEMPLATE_CONFIG.forEach(function (tpl) {
             var opt = document.createElement('option');
             opt.value = tpl.id;
             opt.textContent = tpl.label;
-            sel.appendChild(opt);
+            group.appendChild(opt);
         });
     }
 
-    function appendTemplate(key) {
-        var tpl = templateById(key);
-        var textarea = document.getElementById('keywords');
-        if (!tpl || !textarea) {
+    // Venue templates reset location leftovers first, then apply their own
+    // defaults, so no field survives stale from a previous template.
+    function effectiveTemplateDefaults(tpl) {
+        var merged = {};
+        var id;
+        for (id in LOCATION_RESET) {
+            if (Object.prototype.hasOwnProperty.call(LOCATION_RESET, id)) {
+                merged[id] = LOCATION_RESET[id];
+            }
+        }
+        for (id in tpl.recommendedDefaults) {
+            if (Object.prototype.hasOwnProperty.call(tpl.recommendedDefaults, id)) {
+                merged[id] = tpl.recommendedDefaults[id];
+            }
+        }
+        return merged;
+    }
+
+    function showHint(text) {
+        var hint = document.getElementById('template_hint');
+        if (!hint) {
             return;
         }
-        var lines = textarea.value.split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean);
-        var seen = {};
-        lines.forEach(function (line) { seen[line] = true; });
-        tpl.keywords.forEach(function (kw) {
-            if (!seen[kw]) {
-                seen[kw] = true;
-                lines.push(kw);
-            }
-        });
-        textarea.value = lines.join('\n');
+        hint.hidden = false;
+        hint.textContent = text;
     }
 
-    function applyTemplateDefaults(key) {
+    // Keyword rule: replacing is honest for "set this job up", but typed
+    // text must never be silently discarded. So:
+    //   - empty box -> fill;
+    //   - box holds only the previously applied template's keywords ->
+    //     replace (it is a template swap);
+    //   - anything else (user-typed or mixed) -> append non-duplicates and
+    //     say so in the hint.
+    function applyTemplateKeywords(tpl) {
+        var textarea = document.getElementById('keywords');
+        if (!textarea || !tpl.keywords) {
+            return;
+        }
+        var current = textarea.value.split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean);
+        var last = templateById(lastTemplateId);
+        var lastSet = {};
+        if (last && last.keywords) {
+            last.keywords.forEach(function (kw) { lastSet[kw] = true; });
+        }
+        var onlyLast = current.length > 0 && !!last && current.every(function (line) { return lastSet[line]; });
+        if (current.length === 0 || onlyLast) {
+            textarea.value = tpl.keywords.join('\n');
+            showHint('Filled ' + tpl.keywords.length + ' keywords from "' + tpl.label + '". ' + (tpl.note || ''));
+        } else {
+            var currentSet = {};
+            current.forEach(function (line) { currentSet[line] = true; });
+            var added = 0;
+            tpl.keywords.forEach(function (kw) {
+                if (!currentSet[kw]) {
+                    current.push(kw);
+                    currentSet[kw] = true;
+                    added++;
+                }
+            });
+            textarea.value = current.join('\n');
+            showHint('Kept your existing lines and added ' + added + ' new keywords from "' + tpl.label + '". ' + (tpl.note || ''));
+        }
+        lastTemplateId = tpl.id;
+    }
+
+    function applyVenueTemplate(key) {
         var tpl = templateById(key);
         if (!tpl) {
             return;
         }
-        for (var id in tpl.recommendedDefaults) {
-            if (Object.prototype.hasOwnProperty.call(tpl.recommendedDefaults, id)) {
-                setField(id, tpl.recommendedDefaults[id]);
+        var defaults = effectiveTemplateDefaults(tpl);
+        for (var id in defaults) {
+            if (Object.prototype.hasOwnProperty.call(defaults, id)) {
+                setField(id, defaults[id]);
             }
         }
+        applyTemplateKeywords(tpl);
         saveState();
     }
 
-    function fieldDiffersFromPreset(presetKey, el) {
-        var preset = PRESETS[presetKey];
-        if (!preset || !Object.prototype.hasOwnProperty.call(preset, el.id)) {
+    function fieldDiffersFromEntry(entryKey, el) {
+        var entry = entryById(entryKey);
+        if (!entry) {
+            return false;
+        }
+        var fields = entry.kind === 'shape'
+            ? entry.recommendedDefaults
+            : effectiveTemplateDefaults(templateById(entry.id));
+        if (!fields || !Object.prototype.hasOwnProperty.call(fields, el.id)) {
             return false;
         }
         if (el.type === 'checkbox') {
-            return el.checked !== preset[el.id];
+            return el.checked !== fields[el.id];
         }
-        return String(el.value) !== preset[el.id];
+        return String(el.value) !== String(fields[el.id]);
     }
 
     function saveState() {
-        var state = { preset: document.getElementById('preset').value };
+        var state = { preset: document.getElementById('preset').value, lastTemplate: lastTemplateId };
         FORM_FIELDS.forEach(function (id) {
             var el = document.getElementById(id);
             if (el) {
@@ -504,46 +603,38 @@
                 setField(id, state[id]);
             }
         });
-        document.getElementById('preset').value =
-            Object.prototype.hasOwnProperty.call(PRESETS, state.preset) ? state.preset : 'custom';
+        lastTemplateId = state.lastTemplate || '';
+        var saved = document.getElementById('preset');
+        saved.value = (Object.prototype.hasOwnProperty.call(SHAPE_PRESETS, state.preset) || templateById(state.preset))
+            ? state.preset : 'custom';
     }
 
     var presetSelect = document.getElementById('preset');
-    var templateSelect = document.getElementById('keyword_template');
-    var applyDefaultsBtn = document.getElementById('apply_template_defaults');
     var form = document.querySelector('form');
 
-    var lastSelectedTemplate = '';
+    var lastTemplateId = '';
 
     populateTemplateSelect();
 
     presetSelect.addEventListener('change', function () {
-        applyPreset(presetSelect.value);
+        var key = presetSelect.value;
+        if (key && key !== 'custom') {
+            if (Object.prototype.hasOwnProperty.call(SHAPE_PRESETS, key)) {
+                applyPreset(key);
+            } else {
+                applyVenueTemplate(key);
+            }
+        }
         saveState();
-    });
-
-    templateSelect.addEventListener('change', function () {
-        if (templateSelect.value) {
-            lastSelectedTemplate = templateSelect.value;
-            appendTemplate(templateSelect.value);
-            saveState();
-        }
-        templateSelect.value = '';
-    });
-
-    applyDefaultsBtn.addEventListener('click', function () {
-        if (lastSelectedTemplate) {
-            applyTemplateDefaults(lastSelectedTemplate);
-        }
     });
 
     form.addEventListener('input', function (e) {
         var target = e.target;
-        if (!target || target.id === 'preset' || target.id === 'keyword_template') {
+        if (!target || target.id === 'preset') {
             return;
         }
         var current = presetSelect.value;
-        if (current !== 'custom' && fieldDiffersFromPreset(current, target)) {
+        if (current !== 'custom' && fieldDiffersFromEntry(current, target)) {
             presetSelect.value = 'custom';
         }
         saveState();

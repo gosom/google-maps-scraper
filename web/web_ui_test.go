@@ -364,26 +364,29 @@ func TestIndexRendersPresetAndTemplateControls(t *testing.T) {
 		t.Fatal("preset select must not have a name attribute (client-only, must not be submitted)")
 	}
 
+	// gms-5 merge: one Template select holds shape presets AND Dubai venue
+	// lists. The second dropdown and the Apply button are gone.
+	if strings.Contains(body, `id="keyword_template"`) {
+		t.Fatal("keyword_template select must be gone; the merged preset select owns templates")
+	}
+	if strings.Contains(body, `id="apply_template_defaults"`) {
+		t.Fatal("apply_template_defaults button must be gone; selecting a template fills everything")
+	}
+	if !strings.Contains(body, `>Template:</label>`) {
+		t.Fatal("merged select must be labelled Template:")
+	}
+
 	for _, want := range []string{
+		`<optgroup label="Scrape shape (keeps your keywords)">`,
+		`<optgroup label="Dubai venue lists (replaces keywords)" id="template_group">`,
 		"Abandoned-listing hunt",
 		"Quick scan",
-		"Full-area sweep",
 		"Deep dive on one spot",
 		"Custom",
 	} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("preset option label %q missing", want)
+			t.Fatalf("merged option label %q missing", want)
 		}
-	}
-
-	tmplIdx := strings.Index(body, `id="keyword_template"`)
-	kwIdx := strings.Index(body, `id="keywords"`)
-	if tmplIdx == -1 || kwIdx == -1 || tmplIdx < kwIdx {
-		t.Fatalf("keyword template select must exist after the keywords textarea (kw=%d tmpl=%d)", kwIdx, tmplIdx)
-	}
-
-	if strings.Contains(body, `name="keyword_template"`) {
-		t.Fatal("keyword template select must not have a name attribute (client-only, must not be submitted)")
 	}
 
 	for _, want := range []string{
@@ -395,9 +398,10 @@ func TestIndexRendersPresetAndTemplateControls(t *testing.T) {
 		"Live Music Nightlife — Dubai",
 		"Late Night Venues — Dubai",
 		"Arabic Search Terms — Dubai",
+		"Full Sweep — Dubai",
 	} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("keyword template label %q missing", want)
+			t.Fatalf("merged template label %q missing", want)
 		}
 	}
 
@@ -405,12 +409,13 @@ func TestIndexRendersPresetAndTemplateControls(t *testing.T) {
 		t.Fatal("template dropdown must be generated from a centralised TEMPLATE_CONFIG")
 	}
 
-	applyIdx := strings.Index(body, `id="apply_template_defaults"`)
-	if applyIdx == -1 {
-		t.Fatal("apply template defaults button missing")
+	if !strings.Contains(body, `id="template_hint"`) {
+		t.Fatal("template hint element missing (shows the template note and keyword action)")
 	}
-	if applyIdx < tmplIdx {
-		t.Fatalf("apply template defaults button must sit next to the template select (tmpl=%d apply=%d)", tmplIdx, applyIdx)
+
+	// Custom flip: editing any field must still drop the selector to Custom.
+	if !strings.Contains(body, "addEventListener('input'") || !strings.Contains(body, "'custom'") {
+		t.Fatal("Custom flip listener missing from the inline script")
 	}
 
 	revIdx := strings.Index(body, `id="reviews_metadata_only"`)
@@ -433,5 +438,55 @@ func TestIndexRendersPresetAndTemplateControls(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("inline preset script missing %q", want)
 		}
+	}
+}
+
+func TestIndexFullSweepTemplateEntry(t *testing.T) {
+	t.Parallel()
+
+	srv := newTestServer(t, t.TempDir())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	srv.index(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+
+	if !strings.Contains(body, "id: 'full_sweep_dubai'") {
+		t.Fatal("full_sweep_dubai template entry missing from TEMPLATE_CONFIG")
+	}
+
+	// Grid-centric defaults: dense-core bbox tuned from the measured Run A
+	// (84% of venues in 6 cells) and a cell size chosen by the wall-clock
+	// arithmetic; the note names the 96% corridor for long runs.
+	for _, want := range []string{
+		"grid_bbox: '25.14,55.22,25.26,55.32'",
+		"grid_cell: '5'",
+		"maxtime: '3h'",
+		"concurrency: '4'",
+		"25.06,55.17,25.28,55.35",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("full sweep default %q missing", want)
+		}
+	}
+
+	// Keyword anchors: distinct intents + broader words + Arabic terms.
+	for _, want := range []string{
+		"'nightclubs dubai'", "'shisha lounge dubai'", "'cabaret dubai'", "'after party dubai'",
+		"'نادي ليلي دبي'", "'سهرات خليجية دبي'",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("full sweep keyword %q missing", want)
+		}
+	}
+
+	// The coverage warning the brief requires in helper text.
+	if !strings.Contains(body, "Trades precision for coverage") {
+		t.Fatal("full sweep helper note missing the precision-for-coverage warning")
 	}
 }

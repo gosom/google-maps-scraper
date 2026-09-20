@@ -108,20 +108,7 @@ select {
     color-scheme: dark;
 }
 
-.template-controls {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-}
-
-.template-controls select {
-    flex: 1;
-}
-
-.template-controls button {
-    white-space: nowrap;
-    padding: 10px 14px;
-}
+#template_hint { margin-top: 4px; }
 
 button {
     background-color: var(--color-primary);
