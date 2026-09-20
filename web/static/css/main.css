@@ -375,3 +375,8 @@ nav a:hover {
 .map-error {
     color: #c0392b;
 }
+
+/* Brand lockup: the app icon beside the title (leads-icon). */
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand-logo { width: 44px; height: 44px; border-radius: 10px; flex: 0 0 auto; display: block; }
+.brand h1 { margin: 0; }
