@@ -1,0 +1,75 @@
+/* Deep Black theme — injected by the macOS launcher only (upstream web/ files untouched). */
+html:root {
+    color-scheme: dark;
+    --color-background: #000000 !important;
+    --color-surface: #0a0a0a !important;
+    --color-text: #ededed !important;
+    --color-text-light: #8c8c8c !important;
+    --color-border: #1c1c1c !important;
+    --color-primary: #f5f5f5 !important;
+    --color-primary-light: #d4d4d4 !important;
+    --color-success: #16a34a !important;
+    --color-warning: #eab308 !important;
+    --color-error: #dc2626 !important;
+    background: #000 !important;
+}
+html body { background: #000 !important; color: var(--color-text) !important; }
+html header { background: #050505 !important; box-shadow: none !important; border-bottom: 1px solid #1c1c1c !important; }
+html h1, html legend, html th { color: #ffffff !important; }
+html .sidebar { background: #050505 !important; box-shadow: none !important; border-right: 1px solid #1c1c1c !important; }
+html .content { background: #000 !important; }
+html p, html .page-info, html .text-muted { color: #8c8c8c !important; }
+
+/* Inputs */
+html input[type="text"], html input[type="number"], html textarea, html select {
+    background: #0d0d0d !important; color: #ededed !important;
+    border: 1px solid #262626 !important; outline: none !important;
+}
+html input:focus, html textarea:focus, html select:focus { border-color: #5c5c5c !important; }
+html input[type="checkbox"] { accent-color: #f5f5f5; }
+html select { color-scheme: dark; }
+html select option { background: #0d0d0d !important; color: #ededed !important; }
+html ::placeholder { color: #555 !important; }
+
+/* Template hint line under the merged Template select */
+html #template_hint { margin-top: 4px; }
+
+/* Buttons: white on black for primary actions */
+html button, html nav a, html .button {
+    background: #f5f5f5 !important; color: #000 !important; border: 1px solid #f5f5f5 !important;
+}
+html button:hover, html nav a:hover { background: #d4d4d4 !important; box-shadow: none !important; }
+html button[disabled] { background: #1a1a1a !important; color: #555 !important; border-color: #1a1a1a !important; }
+html .download-button { background: #16a34a !important; color: #fff !important; border-color: #16a34a !important; }
+html .delete-button { background: #1a0a0a !important; color: #f87171 !important; border: 1px solid #7f1d1d !important; }
+html .view-button { background: #0a1a33 !important; color: #93c5fd !important; border: 1px solid #1e3a8a !important; }
+
+/* Table */
+html table { background: #0a0a0a !important; box-shadow: none !important; border: 1px solid #1c1c1c !important; }
+html th { background: #0f0f0f !important; }
+html th, html td { border-bottom: 1px solid #1c1c1c !important; }
+html tbody tr:hover td { background: #111 !important; }
+
+/* Status pills */
+html .status-pending, html .status-working { color: #000 !important; }
+html .status-failed { color: #fff !important; }
+
+/* Expandable sections & errors */
+html .expandable-section summary { background: #0d0d0d !important; border-color: #262626 !important; color: #ededed !important; }
+html .error-message { background: #1a0707 !important; border-color: #7f1d1d !important; color: #fca5a5 !important; }
+
+/* Map modal */
+html .map-modal { background: rgba(0,0,0,.8) !important; }
+html .map-modal-content { background: #0a0a0a !important; border: 1px solid #1c1c1c !important; }
+html .map-modal-header, html #job-places-list { border-color: #1c1c1c !important; }
+html .map-modal-close { background: transparent !important; color: #8c8c8c !important; border: none !important; }
+html .place-item { border-bottom-color: #161616 !important; }
+html .place-item:hover { background: #141414 !important; }
+html .place-address, html .map-loading, html .map-empty { color: #8c8c8c !important; }
+html .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.95); }
+html .leaflet-container { background: #000 !important; }
+
+/* Scrollbars */
+html ::-webkit-scrollbar { width: 10px; height: 10px; background: #000; }
+html ::-webkit-scrollbar-thumb { background: #262626; border-radius: 5px; }
+html ::-webkit-scrollbar-thumb:hover { background: #3a3a3a; }

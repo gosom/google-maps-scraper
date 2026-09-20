@@ -6,3 +6,12 @@ examples/examples-api/map-outputs
 examples/examples-api/**/__pycache__/
 examples/examples-api/**/*.py[cod]
 gmaps-output
+
+# macOS app build artifacts
+GoogleMapsScraper.app/
+GoogleMapsScraper-arm64.dmg
+NNH Maps Scraper.app/
+NNH-Maps-Scraper-arm64.dmg
+macos/.build/
+.DS_Store
+.playwright-mcp/
