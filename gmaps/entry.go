@@ -479,14 +479,7 @@ func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error)
 		entry.Owner.Link = fmt.Sprintf("https://www.google.com/maps/contrib/%s", entry.Owner.ID)
 	}
 
-	entry.CompleteAddress = Address{
-		Borough:    getNthElementAndCast[string](darray, 183, 1, 0),
-		Street:     getNthElementAndCast[string](darray, 183, 1, 1),
-		City:       getNthElementAndCast[string](darray, 183, 1, 3),
-		PostalCode: getNthElementAndCast[string](darray, 183, 1, 4),
-		State:      getNthElementAndCast[string](darray, 183, 1, 5),
-		Country:    getNthElementAndCast[string](darray, 183, 1, 6),
-	}
+	entry.CompleteAddress = completeAddressFromPlaceArray(darray, entry.Address)
 
 	aboutI := getNthElementAndCast[[]any](darray, 100, 1)
 
