@@ -112,26 +112,35 @@ src.close()
 if ok != "ok":
     sys.exit("the copy of " + sys.argv[1] + " failed its integrity check: " + ok)
 PY
+  # Explicit: callers use this in an `if`, where bash ignores set -e inside the function.
+  [ $? -eq 0 ] || return 1
   gzip -f "$dst"
 }
 
 # archive_job_csvs moves every ingested job's raw CSV out of $DATA -- gzipped, into
 # $LOCAL/csv -- so a 60-day run of tens of thousands of jobs does not fill the collector's disk.
-# "Ingested" (in leads.db's ingested_jobs table) means the lead list already holds everything the
-# CSV has to offer; the dashboard's own re-ingest-on-restart logic never looks at a job's CSV again
-# after that. Uploaded on every run (rclone skips what has not changed) and kept locally for
-# LEADS_CSV_KEEP_DAYS as a cache; the remote copy is never pruned here.
+# Only a job that is both in leads.db's ingested_jobs and finished (ok or failed in jobs.db) and
+# untouched for an hour: a job yielded to AxioIntel, a stalled one, and one sent back with Rerun all
+# return to the queue under the same id and CSV path, and moving a CSV while its job is writing it
+# would lose that run. Uploaded on every run (rclone skips what has not changed) and kept locally
+# for LEADS_CSV_KEEP_DAYS as a cache; the remote copy is never pruned here.
 archive_job_csvs() {
   local keep_days="${LEADS_CSV_KEEP_DAYS:-14}"
   local archive_dir="$LOCAL/csv"
   mkdir -p "$archive_dir"
 
   local ingested moved=0 job_id csv
-  ingested=$(python3 - "$DATA/leads.db" <<'PY'
-import sqlite3, sys
-d = sqlite3.connect(sys.argv[1])
-for (job_id,) in d.execute("SELECT job_id FROM ingested_jobs"):
-    print(job_id)
+  [ -f "$DATA/jobs.db" ] || return 0
+  ingested=$(python3 - "$DATA/leads.db" "$DATA/jobs.db" <<'PY'
+import sqlite3, sys, time
+leads = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)
+jobs = sqlite3.connect("file:" + sys.argv[2] + "?mode=ro", uri=True)
+done = {r[0] for r in leads.execute("SELECT job_id FROM ingested_jobs")}
+cutoff = int(time.time()) - 3600
+for (job_id,) in jobs.execute(
+        "SELECT id FROM jobs WHERE status IN ('ok', 'failed') AND updated_at < ?", (cutoff,)):
+    if job_id in done:
+        print(job_id)
 PY
 )
 
