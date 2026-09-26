@@ -10,12 +10,19 @@ Axio-CRED's app uses for an exact Place ID, including `-extra-reviews`. It hands
 Asking is a read. AxioIntel never runs, schedules or calls this collector: it answers with a
 list, and this machine decides on its own clock what to do with it.
 
-**Since 26 Sep 2026 this collector is AxioIntel's first source of reviews and Apify its backup**
-(owner's decision). A person's "Pull now", a profile that is due, and a paid audit each mark the
-place *requested*; `collect.sh daemon` polls every two minutes, collects requested places first,
-up to three at once, and sends each one as soon as it is done. AxioIntel waits up to 15 minutes
-for it, then pulls through Apify instead; it also goes straight to Apify while this collector's
-recent speed is under half its usual speed, or while it has sent nothing for 36 hours.
+**Since 27 Sep 2026 Apify collects each place's whole review list, and this collector keeps it
+current in between** (owner's decision). Google now shows signed-out visitors a *limited view* of
+a place's reviews: five to eight of them, however far the list is scrolled, from every IP address
+tried (all 20 proxies in the pool, 27 Sep 2026). So Apify does a place's first pull and a weekly
+full re-pull, which is what removal detection needs, and every two hours this collector reads the
+reviews the listing shows **sorted by Newest** (`COLLECTOR_REVIEW_MODE=newest`, the default,
+which passes `-review-newest`). A read whose Newest sort cannot be confirmed from the reviews' own
+dates is not sent (`unsorted`, below): the listing's "most relevant" reviews must never pass for
+its newest.
+
+A person's "Pull now" and a profile that is due mark the place *requested* or *due*;
+`collect.sh daemon` polls every two minutes, collects requested places first, up to three at
+once, and sends each one as soon as it is done. A newest-only read takes about a minute.
 
 Nothing here reports, flags or appeals a review. The collector reads public pages. AxioIntel
 stores what arrives and never treats it as proof that anyone owns a place.
@@ -110,7 +117,7 @@ A small Linux VM is enough, collecting one place at a time: Ubuntu 24.04, 2 vCPU
 7. **Run it as a service.** The daemon polls AxioIntel every `COLLECTOR_POLL_SECONDS` (120),
    collects requested places first, then places that are due, up to `COLLECTOR_PARALLEL` (3) at
    once, and never the same place twice at once. A due place that is not requested is collected
-   at most every `COLLECTOR_MIN_INTERVAL_HOURS` (6); a place whose last try failed waits
+   at most every `COLLECTOR_MIN_INTERVAL_HOURS` (1); a place whose last try failed waits
    `COLLECTOR_RETRY_MINUTES` (10).
    ```bash
    sudo deploy/axiointel/collect.sh install-daemon   # systemd unit axio-collector, restarts on failure
@@ -183,11 +190,16 @@ Anything it does not call complete is sent as incomplete, even when the containe
 | `parse_error` | Google changed the shape of its review pages. Rotating proxies does not fix this; the parser needs updating. |
 | `count_unknown` | The listing's review count could not be read, although it shows reviews. Never complete. |
 | `no_reviews` | The listing has no reviews. |
+| `newest` | Newest mode: the reviews the listing shows sorted by Newest were read. Never complete. |
+| `unsorted` | Newest mode: the Newest sort could not be confirmed, so nothing was kept or sent. |
 
 ## Sizing the time budgets
 
-Two clocks apply. `COLLECTOR_TIMEOUT_SECONDS` (default 900, inside AxioIntel's 15-minute wait)
-is when `collect.sh` kills the container. The collector's own review clock, `-review-budget`, is set four minutes under it, so
+In newest mode (the default) a place takes about a minute and `COLLECTOR_TIMEOUT_SECONDS`
+defaults to 240. The rest of this section is about `COLLECTOR_REVIEW_MODE=full`, which pages
+through the whole list and is kept for lab runs.
+
+Two clocks apply. `COLLECTOR_TIMEOUT_SECONDS` (default 900 in full mode) is when `collect.sh` kills the container. The collector's own review clock, `-review-budget`, is set four minutes under it, so
 that a slow place is still written out as a partial collection rather than killed and lost. At
 the default pace a place takes roughly a second per 20 reviews: about 3 minutes for 1,169 reviews
 and 11 minutes for 5,000. A larger listing arrives partial, which AxioIntel never reads as

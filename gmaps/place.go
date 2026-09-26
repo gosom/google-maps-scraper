@@ -122,6 +122,13 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 	// review both carry is enriched in place, never stored twice), and its report settled against
 	// that union.
 	if result, ok := resp.Meta["review_result"].(*reviewResult); ok {
+		if j.ReviewConfig.NewestOnly {
+			// The page's inline reviews are its "most relevant" few, not the newest: a newest-only
+			// collection is exactly the Newest-sorted list, so its receiver can tell from it
+			// whether anything newer than what it already holds was missed.
+			entry.UserReviews = make([]Review, 0)
+		}
+
 		set := newReviewSet(entry.UserReviews, j.ReviewConfig.withDefaults().MaxReviews)
 		for i := range result.Rows {
 			set.add(&result.Rows[i])

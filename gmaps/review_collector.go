@@ -26,6 +26,11 @@ type ReviewConfig struct {
 	MaxReviews int
 	// PageDelay is the pause between two RPC pages.
 	PageDelay time.Duration
+	// NewestOnly reads only the reviews the public listing shows sorted by Newest, and skips the
+	// RPC stages (`-review-newest`). Since 26 Sep 2026 Google shows signed-out visitors a limited
+	// view of a place's reviews -- five to eight -- so this is all a collection can read; the whole
+	// list comes from AxioIntel's vendor, and this keeps it current between those pulls.
+	NewestOnly bool
 }
 
 const (
@@ -75,6 +80,10 @@ type closingFetcher interface {
 // domExtractor scrolls the public review panel (`extractReviewsFromPage` in production).
 type domExtractor func(ctx context.Context, known *reviewSet, target, limit int) []DOMReview
 
+// newestExtractor opens the public review panel sorted by Newest and reads what it shows
+// (`extractNewestFromPage` in production). `sorted` is false when the sort could not be confirmed.
+type newestExtractor func(ctx context.Context, limit int) (reviews []DOMReview, sorted bool)
+
 // reviewResult is what the review path hands to `PlaceJob.Process`: the rows beyond the inline
 // reviews, and the report to settle once those are counted in.
 type reviewResult struct {
@@ -88,6 +97,7 @@ type reviewCollector struct {
 	browser rpcFetcher
 	http    rpcFetcher
 	dom     domExtractor
+	newest  newestExtractor
 	urlFor  func(token, requestID string) (string, error)
 
 	now    func() time.Time
@@ -118,6 +128,9 @@ func newReviewCollector(cfg ReviewConfig, page scrapemate.BrowserPage, mapURL st
 		c.browser = pageRPC{page: page}
 		c.dom = func(ctx context.Context, known *reviewSet, target, limit int) []DOMReview {
 			return extractReviewsFromPage(ctx, page, known, target, limit)
+		}
+		c.newest = func(ctx context.Context, limit int) ([]DOMReview, bool) {
+			return extractNewestFromPage(ctx, page, limit)
 		}
 	}
 	// The HTTP route is one identity per proxy and rotates when refused. There is no HTTP route
@@ -213,6 +226,10 @@ func (c *reviewCollector) run(ctx context.Context, reported int) *reviewResult {
 		return &reviewResult{Rows: set.extended(), Report: report}
 	}
 
+	if c.cfg.NewestOnly {
+		return c.runNewest(ctx, set, &report, finish)
+	}
+
 	requestID, err := c.newID()
 	if err != nil {
 		return finish(stageOutcome{reason: stopError, detail: "no request id: " + err.Error()}, stageRPCBrowser)
@@ -283,6 +300,31 @@ func (c *reviewCollector) run(ctx context.Context, reported int) *reviewResult {
 	}
 
 	return finish(last, lastStage)
+}
+
+// runNewest is the newest-only path: the listing's reviews sorted by Newest, or nothing at all
+// when the sort cannot be confirmed.
+func (c *reviewCollector) runNewest(ctx context.Context, set *reviewSet, report *ReviewCollection,
+	finish func(stageOutcome, string) *reviewResult) *reviewResult {
+	report.Stages = append(report.Stages, stageDOM)
+
+	if c.newest == nil {
+		return finish(stageOutcome{reason: stopError, detail: "no review route available"}, stageDOM)
+	}
+
+	reviews, sorted := c.newest(ctx, c.cfg.MaxReviews)
+	if !sorted {
+		return finish(stageOutcome{reason: stopUnsorted, detail: "the Newest sort could not be confirmed"}, stageDOM)
+	}
+
+	converted := ConvertDOMReviewsToReviews(reviews)
+	for i := range converted {
+		if set.add(&converted[i]) {
+			report.DOMReviews++
+		}
+	}
+
+	return finish(stageOutcome{reason: stopNewest}, stageDOM)
 }
 
 // release frees what the routes held for the run.

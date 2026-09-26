@@ -357,50 +357,7 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage, kn
 	}
 
 	// First, try to click the reviews section to open the reviews panel
-	clickedReviews, _ := page.Eval(`() => {
-		try {
-			// Method 1: Click on the reviews count/link in the place info
-			const reviewsButtons = document.querySelectorAll('button[jsaction*="reviewChart"], button[jsaction*="reviews"]');
-			for (const btn of reviewsButtons) {
-				if (btn.textContent.includes('review') || btn.getAttribute('aria-label')?.includes('review')) {
-					btn.click();
-					return 'reviews_button';
-				}
-			}
-
-			// Method 2: Click on the reviews tab
-			const tabs = document.querySelectorAll('button[role="tab"]');
-			for (const tab of tabs) {
-				const label = tab.getAttribute('aria-label') || tab.textContent || '';
-				if (label.toLowerCase().includes('review')) {
-					tab.click();
-					return 'reviews_tab';
-				}
-			}
-
-			// Method 3: Click the star rating area which often opens reviews
-			const ratingArea = document.querySelector('.F7nice, .fontDisplayLarge');
-			if (ratingArea) {
-				ratingArea.click();
-				return 'rating_area';
-			}
-
-			// Method 4: Look for "See all reviews" or similar links
-			const allLinks = document.querySelectorAll('a, button');
-			for (const link of allLinks) {
-				const text = link.textContent?.toLowerCase() || '';
-				if (text.includes('all review') || text.includes('see review') || text.includes('more review')) {
-					link.click();
-					return 'all_reviews_link';
-				}
-			}
-
-			return false;
-		} catch (e) {
-			console.error('Error clicking reviews:', e);
-			return false;
-		}
-	}`)
+	clickedReviews, _ := page.Eval(openReviewsPanelScript)
 
 	if clickedReviews != nil && clickedReviews != false {
 		log.Printf("Clicked reviews via: %v", clickedReviews)
@@ -523,3 +480,49 @@ func netNewAgainst(known *reviewSet, reviews []DOMReview) int {
 
 	return n
 }
+
+// openReviewsPanelScript opens the place's review panel, whichever control the page offers.
+const openReviewsPanelScript = `() => {
+	try {
+		// Method 1: Click on the reviews count/link in the place info
+		const reviewsButtons = document.querySelectorAll('button[jsaction*="reviewChart"], button[jsaction*="reviews"]');
+		for (const btn of reviewsButtons) {
+			if (btn.textContent.includes('review') || btn.getAttribute('aria-label')?.includes('review')) {
+				btn.click();
+				return 'reviews_button';
+			}
+		}
+
+		// Method 2: Click on the reviews tab
+		const tabs = document.querySelectorAll('button[role="tab"]');
+		for (const tab of tabs) {
+			const label = tab.getAttribute('aria-label') || tab.textContent || '';
+			if (label.toLowerCase().includes('review')) {
+				tab.click();
+				return 'reviews_tab';
+			}
+		}
+
+		// Method 3: Click the star rating area which often opens reviews
+		const ratingArea = document.querySelector('.F7nice, .fontDisplayLarge');
+		if (ratingArea) {
+			ratingArea.click();
+			return 'rating_area';
+		}
+
+		// Method 4: Look for "See all reviews" or similar links
+		const allLinks = document.querySelectorAll('a, button');
+		for (const link of allLinks) {
+			const text = link.textContent?.toLowerCase() || '';
+			if (text.includes('all review') || text.includes('see review') || text.includes('more review')) {
+				link.click();
+				return 'all_reviews_link';
+			}
+		}
+
+		return false;
+	} catch (e) {
+		console.error('Error clicking reviews:', e);
+		return false;
+	}
+}`
