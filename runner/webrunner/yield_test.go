@@ -2,17 +2,12 @@
 package webrunner
 
 import (
-	"context"
-	"io"
 	"os"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
-	"github.com/AxioIntel/Axio-CRED/web"
 )
 
 // stubFileInfo is the smallest os.FileInfo that gives yieldGate.active a ModTime to compare.
@@ -79,64 +74,11 @@ func TestNoLeadJobStartsWhileTheYieldFileIsFresh(t *testing.T) {
 	w, repo, inside := yieldingRunner(t)
 	inside.Store(true)
 
-	started := &atomic.Bool{}
-	w.setupMate = func(context.Context, io.Writer, *web.Job) (mateRunner, error) {
-		started.Store(true)
-
-		return &hungMate{written: make(chan struct{})}, nil
-	}
-
-	job := &web.Job{ID: "33333333-3333-3333-3333-333333333333", Name: "Med Spas", Status: web.StatusPending,
-		Date: time.Now().UTC(), Data: web.JobData{Keywords: []string{"medical spa"}, Lang: "en", Depth: 1, MaxTime: time.Hour}}
-	require.NoError(t, repo.Create(t.Context(), job))
-
-	ctx, cancel := context.WithTimeout(t.Context(), 2500*time.Millisecond)
-	defer cancel()
-
-	require.NoError(t, w.work(ctx))
-
-	got, err := repo.Get(t.Context(), job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, web.StatusPending, got.Status)
-	assert.False(t, started.Load(), "AxioIntel is waiting; no lead job should have started")
+	assertNoLeadJobStarts(t, w, repo, "33333333-3333-3333-3333-333333333333", "medical spa")
 }
 
 func TestAJobRunningIsStoppedAndRequeuedWhenTheYieldFileAppears(t *testing.T) {
 	w, repo, inside := yieldingRunner(t)
 
-	mate := &untilCancelled{running: make(chan struct{})}
-	w.setupMate = func(context.Context, io.Writer, *web.Job) (mateRunner, error) { return mate, nil }
-
-	job := &web.Job{ID: "44444444-4444-4444-4444-444444444444", Name: "Roofers", Status: web.StatusPending,
-		Date: time.Now().UTC(), Data: web.JobData{Keywords: []string{"roofing contractor"}, Lang: "en", Depth: 1, MaxTime: time.Hour}}
-	require.NoError(t, repo.Create(t.Context(), job))
-
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-
-	go w.pauseWatch(ctx)
-
-	done := make(chan error, 1)
-	go func() { done <- w.work(ctx) }()
-
-	select {
-	case <-mate.running:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the job never started before AxioIntel asked for a place")
-	}
-
-	inside.Store(true) // the collector daemon just wrote LEADS_YIELD_FILE
-
-	require.Eventually(t, func() bool {
-		got, err := repo.Get(t.Context(), job.ID)
-
-		return err == nil && got.Status == web.StatusPending
-	}, 30*time.Second, 20*time.Millisecond) // generous: a loaded machine is slow to finish a job
-
-	cancel()
-	<-done
-
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	assert.Zero(t, w.attempts[job.ID], "yielding to AxioIntel is not a failed try")
+	assertRunningJobStopsAndRequeues(t, w, repo, inside, "44444444-4444-4444-4444-444444444444", "roofing contractor")
 }
