@@ -58,7 +58,7 @@ func (repo *repo) Delete(ctx context.Context, id string) error {
 
 // whereStatus builds the optional WHERE clause SelectParams describes; args come back
 // in the order its placeholders appear.
-func whereStatus(params web.SelectParams) (string, []any) {
+func whereStatus(params web.SelectParams) (clause string, args []any) {
 	switch {
 	case params.Status != "":
 		return " WHERE status = ?", []any{params.Status}

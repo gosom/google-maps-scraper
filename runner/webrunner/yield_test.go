@@ -40,6 +40,7 @@ func TestYieldGateIsActiveOnlyWhileTheFileIsFreshAndPresent(t *testing.T) {
 	assert.False(t, g.active(now), "written 25 minutes ago: the daemon likely crashed; do not lock leads out forever")
 
 	var nilGate *yieldGate
+
 	assert.False(t, nilGate.active(now), "no gate configured: never yielding")
 }
 

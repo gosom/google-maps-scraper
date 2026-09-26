@@ -55,7 +55,7 @@ func (r *fakeRepo) Select(_ context.Context, p SelectParams) ([]Job, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	var out []Job
+	out := make([]Job, 0, len(r.jobs))
 
 	for id := range r.jobs {
 		j := r.jobs[id]
