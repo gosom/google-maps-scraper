@@ -150,19 +150,13 @@ func (s *Server) sampleMetrics(ctx context.Context) {
 		}
 	}
 
-	jobs, err := s.svc.All(ctx)
-	if err == nil {
-		var running *Job
+	// Two cheap, indexed lookups instead of decoding every job: a campaign can queue tens of
+	// thousands of pending jobs, and this runs every few seconds.
+	if pending, err := s.svc.PendingCount(ctx); err == nil {
+		m.Pending = pending
+	}
 
-		for i := range jobs {
-			switch jobs[i].Status {
-			case StatusPending:
-				m.Pending++
-			case StatusWorking:
-				running = &jobs[i]
-			}
-		}
-
+	if running, err := s.svc.Working(ctx); err == nil {
 		if running != nil {
 			m.Job = s.jobProgress(running, now)
 		} else {
@@ -300,7 +294,7 @@ var metricsTmpl = template.Must(template.New("metrics").Funcs(template.FuncMap{
 {{else}}<span class="m faint">No job running</span>{{end}}
 {{if .Pending}}<span class="m" title="Jobs waiting">Queue <b>{{.Pending}}</b></span>{{end}}
 <span class="m{{if .Blocks.Recent}} m-hot{{end}}" title="Pages Google refused in the last 10 minutes; each refusal is retried on another browser and slows new page loads">Google blocks <b>{{.Blocks.Recent}}</b> <i>/10 min · {{.Blocks.Total}} total</i>{{if gt .Blocks.Backoff 0}} · slowed <b>{{dur .Blocks.Backoff}}</b>{{end}}</span>
-{{with .Paused}}<span class="m m-note" title="LEADS_PAUSE_WINDOW">⏸ {{.}}</span>{{end}}
+{{with .Paused}}<span class="m m-note" title="LEADS_PAUSE_WINDOW or LEADS_YIELD_FILE">⏸ {{.}}</span>{{end}}
 {{range .Notes}}<span class="m m-note">{{.}}</span>{{end}}
 </div>`))
 

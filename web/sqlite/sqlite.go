@@ -56,16 +56,24 @@ func (repo *repo) Delete(ctx context.Context, id string) error {
 	return err
 }
 
+// whereStatus builds the optional WHERE clause SelectParams describes; args come back
+// in the order its placeholders appear.
+func whereStatus(params web.SelectParams) (string, []any) {
+	switch {
+	case params.Status != "":
+		return " WHERE status = ?", []any{params.Status}
+	case params.ExcludeStatus != "":
+		return " WHERE status != ?", []any{params.ExcludeStatus}
+	default:
+		return "", nil
+	}
+}
+
 func (repo *repo) Select(ctx context.Context, params web.SelectParams) ([]web.Job, error) {
 	q := `SELECT * from jobs`
 
-	var args []any
-
-	if params.Status != "" {
-		q += ` WHERE status = ?`
-
-		args = append(args, params.Status)
-	}
+	where, args := whereStatus(params)
+	q += where
 
 	if params.Oldest {
 		q += " ORDER BY created_at ASC, rowid ASC"
@@ -102,6 +110,19 @@ func (repo *repo) Select(ctx context.Context, params web.SelectParams) ([]web.Jo
 	}
 
 	return ans, nil
+}
+
+func (repo *repo) Count(ctx context.Context, params web.SelectParams) (int, error) {
+	q := `SELECT count(*) from jobs`
+
+	where, args := whereStatus(params)
+	q += where
+
+	var n int
+
+	err := repo.db.QueryRowContext(ctx, q, args...).Scan(&n)
+
+	return n, err
 }
 
 func (repo *repo) Update(ctx context.Context, job *web.Job) error {
@@ -218,6 +239,13 @@ func createSchema(db *sql.DB) error {
 			updated_at INT NOT NULL
 		)
 	`)
+	if err != nil {
+		return err
+	}
+
+	// A campaign queues tens of thousands of pending jobs; the dashboard's status-filtered
+	// Select and Count run every few seconds and need this to stay fast.
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status_created ON jobs (status, created_at)`)
 
 	return err
 }

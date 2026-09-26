@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -57,12 +58,37 @@ func (r *fakeRepo) Select(_ context.Context, p SelectParams) ([]Job, error) {
 	var out []Job
 
 	for id := range r.jobs {
-		if p.Status == "" || r.jobs[id].Status == p.Status {
-			out = append(out, r.jobs[id])
+		j := r.jobs[id]
+
+		switch {
+		case p.Status != "" && j.Status != p.Status:
+			continue
+		case p.ExcludeStatus != "" && j.Status == p.ExcludeStatus:
+			continue
 		}
+
+		out = append(out, j)
+	}
+
+	sort.Slice(out, func(i, k int) bool {
+		if p.Oldest {
+			return out[i].Date.Before(out[k].Date)
+		}
+
+		return out[i].Date.After(out[k].Date)
+	})
+
+	if p.Limit > 0 && len(out) > p.Limit {
+		out = out[:p.Limit]
 	}
 
 	return out, nil
+}
+
+func (r *fakeRepo) Count(ctx context.Context, p SelectParams) (int, error) {
+	out, err := r.Select(ctx, SelectParams{Status: p.Status, ExcludeStatus: p.ExcludeStatus})
+
+	return len(out), err
 }
 
 func (r *fakeRepo) Update(ctx context.Context, j *Job) error { return r.Create(ctx, j) }

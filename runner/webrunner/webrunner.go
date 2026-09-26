@@ -50,6 +50,8 @@ type webrunner struct {
 
 	// pause is LEADS_PAUSE_WINDOW (nil: never paused); now is the clock it is read against.
 	pause *pauseWindow
+	// yield is LEADS_YIELD_FILE (nil: never yielding); see yield.go.
+	yield *yieldGate
 	now   func() time.Time
 
 	// watchEvery and stallAfter override the watchdog's timing (tests); zero is the default.
@@ -127,6 +129,11 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		return nil, err
 	}
 
+	yieldPath := os.Getenv("LEADS_YIELD_FILE")
+	if yieldPath == "" {
+		yieldPath = filepath.Join(cfg.DataFolder, "YIELD")
+	}
+
 	ans := webrunner{
 		srv:       srv,
 		svc:       svc,
@@ -134,6 +141,7 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		leads:     leadStore,
 		setupMate: defaultSetupMate(cfg),
 		pause:     pause,
+		yield:     newYieldGate(yieldPath),
 	}
 
 	return &ans, nil
@@ -855,25 +863,32 @@ func (w *webrunner) clock() time.Time {
 	return time.Now()
 }
 
-// pausedNow is whether lead jobs are paused now; it keeps the dashboard's banner in step.
+// pausedNow is whether lead jobs are stopped now, by the pause window or the AxioIntel yield gate;
+// it keeps the dashboard's banner in step. The pause window's own label wins when both are active,
+// since it says when work resumes; the yield gate does not know that.
 func (w *webrunner) pausedNow() bool {
 	now := w.clock()
-	on := w.pause.active(now)
+	onPause := w.pause.active(now)
+	onYield := w.yield.active(now)
 
 	if w.srv != nil {
-		if on {
+		switch {
+		case onPause:
 			w.srv.SetPaused(w.pause.label(now))
-		} else {
+		case onYield:
+			w.srv.SetPaused(yieldLabel)
+		default:
 			w.srv.SetPaused("")
 		}
 	}
 
-	return on
+	return onPause || onYield
 }
 
-// pauseWatch stops the lead job running when the pause window opens; afterJob queues it again.
+// pauseWatch stops the lead job running when the pause window opens or the yield gate goes up;
+// afterJob queues it again.
 func (w *webrunner) pauseWatch(ctx context.Context) {
-	if w.pause == nil {
+	if w.pause == nil && w.yield == nil {
 		return
 	}
 
@@ -909,7 +924,7 @@ func (w *webrunner) pauseWatch(ctx context.Context) {
 			w.mu.Unlock()
 
 			if cancel != nil {
-				log.Printf("job %s: the pause window opened; stopping it until lead jobs resume", id)
+				log.Printf("job %s: the pause window opened or AxioIntel is waiting; stopping it until lead jobs resume", id)
 				cancel()
 			}
 		}

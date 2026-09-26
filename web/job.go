@@ -17,7 +17,10 @@ const (
 
 type SelectParams struct {
 	Status string
-	Limit  int
+	// ExcludeStatus, when set, is a status to leave out instead of one to require. Status and
+	// ExcludeStatus are never both set.
+	ExcludeStatus string
+	Limit         int
 	// Oldest orders by creation time ascending: a queue runs in the order jobs were added.
 	Oldest bool
 }
@@ -27,6 +30,9 @@ type JobRepository interface {
 	Create(context.Context, *Job) error
 	Delete(context.Context, string) error
 	Select(context.Context, SelectParams) ([]Job, error)
+	// Count is how many jobs match params, without decoding any of them: a campaign can queue
+	// tens of thousands of pending jobs, and the dashboard polls every 5s.
+	Count(context.Context, SelectParams) (int, error)
 	Update(context.Context, *Job) error
 }
 

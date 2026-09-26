@@ -461,14 +461,14 @@ func (s *Server) getJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobs, err := s.svc.All(context.Background())
+	view, err := s.jobListView(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 
 		return
 	}
 
-	_ = tmpl.Execute(w, s.jobRows(r.Context(), jobs))
+	_ = tmpl.Execute(w, view)
 }
 
 // jobRow is a job as the job list shows it: with how many leads it found (so far, while running).
@@ -476,6 +476,47 @@ type jobRow struct {
 	Job
 	Leads    int
 	Searches int
+}
+
+// jobListView is what the /jobs partial renders: pending jobs in the order they will run, then
+// history, most recent first. A campaign can queue tens of thousands of searches; MoreQueued
+// counts pending jobs beyond the preview so the page never has to decode all of them.
+type jobListView struct {
+	Rows       []jobRow
+	MoreQueued int
+}
+
+// pendingPreviewSize and recentHistorySize bound the /jobs page: enough to see the queue and
+// recent runs, never a full-table scan.
+const (
+	pendingPreviewSize = 50
+	recentHistorySize  = 200
+)
+
+func (s *Server) jobListView(ctx context.Context) (jobListView, error) {
+	pendingCount, err := s.svc.PendingCount(ctx)
+	if err != nil {
+		return jobListView{}, err
+	}
+
+	pending, err := s.svc.PendingPreview(ctx, pendingPreviewSize)
+	if err != nil {
+		return jobListView{}, err
+	}
+
+	recent, err := s.svc.RecentHistory(ctx, recentHistorySize)
+	if err != nil {
+		return jobListView{}, err
+	}
+
+	jobs := make([]Job, 0, len(pending)+len(recent))
+	jobs = append(jobs, pending...)
+	jobs = append(jobs, recent...)
+
+	return jobListView{
+		Rows:       s.jobRows(ctx, jobs),
+		MoreQueued: max(pendingCount-len(pending), 0),
+	}, nil
 }
 
 func (s *Server) jobRows(ctx context.Context, jobs []Job) []jobRow {

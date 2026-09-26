@@ -1,4 +1,5 @@
-{{range .}}
+{{if .MoreQueued}}<tr class="faint"><td colspan="5">+ {{.MoreQueued}} more queued</td></tr>{{end}}
+{{range .Rows}}
 <tr>
     <td>
         <div><strong>{{.Name}}</strong></div>

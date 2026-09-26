@@ -53,6 +53,11 @@
 #   COLLECTOR_RETRY_MINUTES          daemon: a place whose last try failed waits this long; default 10
 #   COLLECTOR_WORK_DIR               default /var/lib/axiointel-collector
 #   COLLECTOR_KEEP_DAYS              local results kept this long; default 14
+#   COLLECTOR_YIELD_FILE             daemon: written the instant a requested place is outstanding
+#                                    and removed once none is, so the Axio-CRED lead scraper on
+#                                    this machine (LEADS_YIELD_FILE, same default path) starts no
+#                                    new job while a customer's pull is waiting; default
+#                                    /var/lib/axio-leads/YIELD
 #
 # Exit status (one pass): 0 when every place was collected and sent; 1 when the list could not be
 # fetched, or when any place was not.
@@ -133,6 +138,7 @@ RETRY_S=$(( ${COLLECTOR_RETRY_MINUTES:-10} * 60 ))
 PUSHER="${AXIOINTEL_PUSHER:-$HERE/push_native.py}"
 FETCHER="${AXIOINTEL_FETCHER:-$HERE/fetch_targets.py}"
 KEEP_DAYS="${COLLECTOR_KEEP_DAYS:-14}"
+YIELD_FILE="${COLLECTOR_YIELD_FILE:-/var/lib/axio-leads/YIELD}"
 BASE_URL="${AXIOINTEL_BASE_URL:-https://axiointel.com/api}"
 BASE_URL="${BASE_URL%/}"
 TARGETS_URL="${AXIOINTEL_TARGETS_URL:-$BASE_URL/collector/targets}"
@@ -352,6 +358,15 @@ age_of() { # file -> seconds since the timestamp it holds, or a very large numbe
   if [ -f "$1" ]; then echo $(( $(date +%s) - $(cat "$1" 2>/dev/null || echo 0) )); else echo 999999999; fi
 }
 
+update_yield_file() { # targets-file -> touches or removes YIELD_FILE for the lead scraper
+  [ -n "$YIELD_FILE" ] || return 0
+  if awk '!/^#/ && NF && $3 == 1 { found = 1 } END { exit !found }' "$1"; then
+    mkdir -p "$(dirname "$YIELD_FILE")" && date -u +%s >"$YIELD_FILE" 2>/dev/null
+  else
+    rm -f "$YIELD_FILE" 2>/dev/null
+  fi
+}
+
 run_daemon() {
   local list="$WORK/targets.txt"
   # Stopping the service stops the containers too: a killed shell does not take docker's with it.
@@ -360,6 +375,9 @@ run_daemon() {
   while :; do
     if [ $(( $(date +%s) - last_prune )) -gt 3600 ]; then prune_old_results; last_prune=$(date +%s); fi
     if fetch_targets "$list"; then
+      # A fetch that failed leaves YIELD_FILE as it was: we do not know whether a request is still
+      # outstanding, so we neither lock leads out nor let them run on stale information.
+      update_yield_file "$list"
       # Requested places first (a person may be waiting), then due ones, in AxioIntel's order.
       # Older fetchers write only "place purpose"; such a line is treated as due.
       local ordered
