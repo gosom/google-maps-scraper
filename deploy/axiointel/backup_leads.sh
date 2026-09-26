@@ -30,12 +30,24 @@
 #   LEADS_BACKUP_KEEP_DAYS  default 30 (remotes other than the bucket)
 #   LEADS_BACKUP_LOCAL      default /var/backups/axio-leads
 #   LEADS_BACKUP_SOURCE     what this machine is called in the backups; default the host name
+#   LEADS_CSV_KEEP_DAYS     job CSVs are kept locally this long after being archived; default 14
 #
 # Layout, so a folder of backups says what came from where:
 #   <remote>/<source>/<YYYY-MM>/<YYYY-MM-DD>/
 #       leads_<source>_<YYYY-MM-DD>.db.gz          the lead list (SQLite, gzip)
+#       jobs_<source>_<YYYY-MM-DD>.db.gz           the job queue, so a typed-in campaign survives
+#       campaign_<source>_<YYYY-MM-DD>.db.gz       the campaign planner's state, once it exists
 #       saleshandy-config_<source>_<YYYY-MM-DD>.json  which campaigns leads may go into
 #       RECEIPT_<source>_<YYYY-MM-DD>.txt           what is inside: counts, checksums, versions
+#   <remote>/csv/<source>/<job-id>.csv.gz            every ingested job's raw CSV (every column
+#                                                     the scraper collected). Moved off the machine
+#                                                     and gzipped the run after its job is folded
+#                                                     into the lead list; kept locally for
+#                                                     LEADS_CSV_KEEP_DAYS (default 14) after that as
+#                                                     a cache, then deleted here only -- the remote
+#                                                     copy is not touched. This is why "Raw CSV" and
+#                                                     "Map" stop working on the dashboard for a job
+#                                                     older than that: pull the .gz from the remote.
 set -euo pipefail
 
 if [ -r /etc/axiointel/backup.env ]; then
@@ -81,6 +93,70 @@ EOF
   sudo systemctl daemon-reload
   sudo systemctl enable --now axio-leads-backup.timer
   systemctl list-timers axio-leads-backup.timer --no-pager
+}
+
+# backup_sqlite_copy takes SQLite's own consistent online copy of src, checks it, and gzips it to
+# dst.gz. Non-zero (the copy is left, ungzipped, for inspection) if the copy fails its own
+# integrity check -- never fatal to the caller, so one damaged database does not stop the rest of
+# the backup.
+backup_sqlite_copy() {
+  local src="$1" dst="$2"
+  python3 - "$src" "$dst" <<'PY'
+import sqlite3, sys
+src = sqlite3.connect(sys.argv[1])
+dst = sqlite3.connect(sys.argv[2])
+src.backup(dst)
+ok = dst.execute("PRAGMA quick_check").fetchone()[0]
+dst.close()
+src.close()
+if ok != "ok":
+    sys.exit("the copy of " + sys.argv[1] + " failed its integrity check: " + ok)
+PY
+  # Explicit: callers use this in an `if`, where bash ignores set -e inside the function.
+  [ $? -eq 0 ] || return 1
+  gzip -f "$dst"
+}
+
+# archive_job_csvs moves every ingested job's raw CSV out of $DATA -- gzipped, into
+# $LOCAL/csv -- so a 60-day run of tens of thousands of jobs does not fill the collector's disk.
+# Only a job that is both in leads.db's ingested_jobs and finished (ok or failed in jobs.db) and
+# untouched for an hour: a job yielded to AxioIntel, a stalled one, and one sent back with Rerun all
+# return to the queue under the same id and CSV path, and moving a CSV while its job is writing it
+# would lose that run. Uploaded on every run (rclone skips what has not changed) and kept locally
+# for LEADS_CSV_KEEP_DAYS as a cache; the remote copy is never pruned here.
+archive_job_csvs() {
+  local keep_days="${LEADS_CSV_KEEP_DAYS:-14}"
+  local archive_dir="$LOCAL/csv"
+  mkdir -p "$archive_dir"
+
+  local ingested moved=0 job_id csv
+  [ -f "$DATA/jobs.db" ] || return 0
+  ingested=$(python3 - "$DATA/leads.db" "$DATA/jobs.db" <<'PY'
+import sqlite3, sys, time
+leads = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)
+jobs = sqlite3.connect("file:" + sys.argv[2] + "?mode=ro", uri=True)
+done = {r[0] for r in leads.execute("SELECT job_id FROM ingested_jobs")}
+cutoff = int(time.time()) - 3600
+for (job_id,) in jobs.execute(
+        "SELECT id FROM jobs WHERE status IN ('ok', 'failed') AND updated_at < ?", (cutoff,)):
+    if job_id in done:
+        print(job_id)
+PY
+)
+
+  while IFS= read -r job_id; do
+    [ -n "$job_id" ] || continue
+    csv="$DATA/$job_id.csv"
+    [ -f "$csv" ] || continue
+    gzip -f "$csv" && mv "$csv.gz" "$archive_dir/" && moved=$((moved + 1))
+  done <<<"$ingested"
+  [ "$moved" -gt 0 ] && echo "archived $moved job CSV(s) off the machine"
+
+  if [ -n "$(ls -A "$archive_dir" 2>/dev/null)" ]; then
+    "${RCLONE[@]}" copy "$archive_dir" "$DEST/csv/$SOURCE"
+  fi
+
+  find "$archive_dir" -type f -mtime +"$keep_days" -delete
 }
 
 case "${1:-run}" in
@@ -172,6 +248,20 @@ with open(out, "w") as f:
 PY
 
 gzip -f "$db"
+
+# The job queue (a typed-in campaign's city and trade lists have no other copy) and, once the
+# campaign planner exists, its own state. Neither failure is fatal: leads.db is the one thing that
+# cannot be re-created, so a damaged jobs.db or campaign.db is logged and skipped, not aborted on.
+for extra in jobs campaign; do
+  src="$DATA/$extra.db"
+  [ -f "$src" ] || continue
+  if backup_sqlite_copy "$src" "$dir/${extra}_${SOURCE}_$day.db"; then
+    echo "$extra.db backed up" >>"$receipt"
+  else
+    echo "warning: $extra.db backup failed its integrity check; not included" >&2
+  fi
+done
+
 if [ -f "$DATA/saleshandy.json" ]; then
   cp "$DATA/saleshandy.json" "$dir/saleshandy-config_${SOURCE}_$day.json"
 fi
@@ -190,7 +280,10 @@ if [ "$PRUNE" = 1 ]; then
   "${RCLONE[@]}" delete "$DEST/$SOURCE" --min-age "${KEEP_DAYS}d"
   "${RCLONE[@]}" rmdirs "$DEST/$SOURCE" --leave-root
 fi
-find "$LOCAL" -type f -mtime +7 -delete
-find "$LOCAL" -mindepth 1 -type d -empty -delete
+# $LOCAL/csv keeps job CSVs for LEADS_CSV_KEEP_DAYS, not this 7 days; archive_job_csvs prunes it.
+find "$LOCAL" -type f -mtime +7 -not -path "$LOCAL/csv/*" -delete
+find "$LOCAL" -mindepth 1 -type d -empty -not -path "$LOCAL/csv" -delete
+
+archive_job_csvs
 
 echo "$(date -u +%FT%TZ) backed up $rel ($(du -h "$db.gz" | cut -f1)) to ${REMOTE:-gs://$BUCKET/leads}"

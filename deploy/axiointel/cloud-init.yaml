@@ -4,6 +4,8 @@
 #   - makes a `collector` user that logs in with the same SSH key as root, and turns off
 #     password logins;
 #   - installs Docker, Python 3, git, automatic security updates and fail2ban;
+#   - caps every container's logs at 50 MB x 3 files, so months of continuous scraping cannot
+#     fill the disk with log output;
 #   - adds 2 GB of swap, so a Chromium spike cannot take the 4 GB machine down;
 #   - clones Axio-CRED to /opt/axio-cred and builds the `axio-cred-collector` image
 #     (about 10 minutes; progress in /var/log/axio-build.log, "BUILD OK" at the end).
@@ -40,6 +42,13 @@ write_files:
       PasswordAuthentication no
       KbdInteractiveAuthentication no
       PermitRootLogin prohibit-password
+  - path: /etc/docker/daemon.json
+    permissions: "0644"
+    content: |
+      {
+        "log-driver": "json-file",
+        "log-opts": { "max-size": "50m", "max-file": "3" }
+      }
 
 runcmd:
   - install -d -m 700 -o collector -g collector /home/collector/.ssh

@@ -131,6 +131,12 @@ func (r *memoryJobRepo) Select(_ context.Context, params web.SelectParams) ([]we
 	return jobs, nil
 }
 
+func (r *memoryJobRepo) Count(ctx context.Context, params web.SelectParams) (int, error) {
+	jobs, err := r.Select(ctx, params)
+
+	return len(jobs), err
+}
+
 func (r *memoryJobRepo) Update(_ context.Context, job *web.Job) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

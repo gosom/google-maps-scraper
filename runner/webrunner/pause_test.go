@@ -82,6 +82,14 @@ func TestNoLeadJobStartsInsideThePauseWindow(t *testing.T) {
 	w, repo, inside := pausedRunner(t)
 	inside.Store(true)
 
+	assertNoLeadJobStarts(t, w, repo, "11111111-1111-1111-1111-111111111111", "dentist")
+}
+
+// assertNoLeadJobStarts queues one job on a runner that is already paused or yielding, runs the
+// work loop for a while, and checks the job never started and is still pending.
+func assertNoLeadJobStarts(t *testing.T, w *webrunner, repo *memoryJobRepo, id, keyword string) {
+	t.Helper()
+
 	started := &atomic.Bool{}
 	w.setupMate = func(context.Context, io.Writer, *web.Job) (mateRunner, error) {
 		started.Store(true)
@@ -89,8 +97,8 @@ func TestNoLeadJobStartsInsideThePauseWindow(t *testing.T) {
 		return &hungMate{written: make(chan struct{})}, nil
 	}
 
-	job := &web.Job{ID: "11111111-1111-1111-1111-111111111111", Name: "Dentists", Status: web.StatusPending,
-		Date: time.Now().UTC(), Data: web.JobData{Keywords: []string{"dentist"}, Lang: "en", Depth: 1, MaxTime: time.Hour}}
+	job := &web.Job{ID: id, Name: keyword, Status: web.StatusPending,
+		Date: time.Now().UTC(), Data: web.JobData{Keywords: []string{keyword}, Lang: "en", Depth: 1, MaxTime: time.Hour}}
 	require.NoError(t, repo.Create(t.Context(), job))
 
 	ctx, cancel := context.WithTimeout(t.Context(), 2500*time.Millisecond)
@@ -101,7 +109,7 @@ func TestNoLeadJobStartsInsideThePauseWindow(t *testing.T) {
 	got, err := repo.Get(t.Context(), job.ID)
 	require.NoError(t, err)
 	assert.Equal(t, web.StatusPending, got.Status)
-	assert.False(t, started.Load())
+	assert.False(t, started.Load(), "no lead job may start")
 }
 
 // untilCancelled writes nothing and returns when its job is stopped.
@@ -119,11 +127,20 @@ func (m *untilCancelled) Close() error { return nil }
 func TestAJobRunningWhenThePauseOpensIsStoppedAndQueuedAgainAsItWas(t *testing.T) {
 	w, repo, inside := pausedRunner(t)
 
+	assertRunningJobStopsAndRequeues(t, w, repo, inside, "22222222-2222-2222-2222-222222222222", "locksmith")
+}
+
+// assertRunningJobStopsAndRequeues starts one job, flips `inside` (the pause window opening, or
+// the yield file appearing) while it runs, and checks it goes back to pending without counting as a
+// failed try.
+func assertRunningJobStopsAndRequeues(t *testing.T, w *webrunner, repo *memoryJobRepo, inside *atomic.Bool, id, keyword string) {
+	t.Helper()
+
 	mate := &untilCancelled{running: make(chan struct{})}
 	w.setupMate = func(context.Context, io.Writer, *web.Job) (mateRunner, error) { return mate, nil }
 
-	job := &web.Job{ID: "22222222-2222-2222-2222-222222222222", Name: "Locksmiths", Status: web.StatusPending,
-		Date: time.Now().UTC(), Data: web.JobData{Keywords: []string{"locksmith"}, Lang: "en", Depth: 1, MaxTime: time.Hour}}
+	job := &web.Job{ID: id, Name: keyword, Status: web.StatusPending,
+		Date: time.Now().UTC(), Data: web.JobData{Keywords: []string{keyword}, Lang: "en", Depth: 1, MaxTime: time.Hour}}
 	require.NoError(t, repo.Create(t.Context(), job))
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -137,10 +154,10 @@ func TestAJobRunningWhenThePauseOpensIsStoppedAndQueuedAgainAsItWas(t *testing.T
 	select {
 	case <-mate.running:
 	case <-time.After(5 * time.Second):
-		t.Fatal("the job never started outside the window")
+		t.Fatal("the job never started")
 	}
 
-	inside.Store(true) // 08:00 in New York
+	inside.Store(true)
 
 	require.Eventually(t, func() bool {
 		got, err := repo.Get(t.Context(), job.ID)
@@ -153,5 +170,5 @@ func TestAJobRunningWhenThePauseOpensIsStoppedAndQueuedAgainAsItWas(t *testing.T
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	assert.Zero(t, w.attempts[job.ID], "a pause is not a failed try")
+	assert.Zero(t, w.attempts[job.ID], "stopping for a pause or a yield is not a failed try")
 }

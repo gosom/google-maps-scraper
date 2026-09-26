@@ -21,6 +21,11 @@
 #                                             this daily window, and one running when it opens is
 #                                             stopped and queued again. Unset since 27 Sep 2026: lead
 #                                             jobs run all day at low priority instead (below).
+#                    LEADS_YIELD_FILE   optional; default $LEADS_DATA_DIR/YIELD, which the AxioIntel
+#                                       collector daemon (collect.sh, COLLECTOR_YIELD_FILE) writes
+#                                       the instant a customer's pull is waiting and removes once
+#                                       none is. While it is present and fresh, no lead job starts
+#                                       and a running one is stopped and requeued (27 Sep 2026).
 #                    WHATSAPP_TOKEN=...                 with the two ids below, turns on WhatsApp
 #                    WHATSAPP_PHONE_NUMBER_ID=...       template sending (Meta WhatsApp Cloud API):
 #                    WHATSAPP_BUSINESS_ACCOUNT_ID=...   a system user's token, the sending number's id
@@ -68,6 +73,7 @@ start() {
     fi
     docker run -d --name "$NAME" --restart unless-stopped \
       --cpu-shares "$CPU_SHARES" --memory "$MEMORY" --oom-score-adj 500 \
+      --log-opt max-size=50m --log-opt max-file=3 \
       -e DISABLE_TELEMETRY=1 ${env_args[@]+"${env_args[@]}"} \
       -p "127.0.0.1:$PORT:8080" \
       -v "$DATA:/data" ${proxy_mount[@]+"${proxy_mount[@]}"} \

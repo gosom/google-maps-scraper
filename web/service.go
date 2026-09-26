@@ -58,6 +58,31 @@ func (s *Service) SelectPending(ctx context.Context) ([]Job, error) {
 	return s.repo.Select(ctx, SelectParams{Status: StatusPending, Limit: 1, Oldest: true})
 }
 
+// PendingCount is how many jobs are queued to run, without decoding any of them.
+func (s *Service) PendingCount(ctx context.Context) (int, error) {
+	return s.repo.Count(ctx, SelectParams{Status: StatusPending})
+}
+
+// PendingPreview is up to n pending jobs, in the order they will run.
+func (s *Service) PendingPreview(ctx context.Context, n int) ([]Job, error) {
+	return s.repo.Select(ctx, SelectParams{Status: StatusPending, Limit: n, Oldest: true})
+}
+
+// RecentHistory is the last n jobs no longer pending (working, ok, or failed).
+func (s *Service) RecentHistory(ctx context.Context, n int) ([]Job, error) {
+	return s.repo.Select(ctx, SelectParams{ExcludeStatus: StatusPending, Limit: n})
+}
+
+// Working is the one job running now, or nil when none is.
+func (s *Service) Working(ctx context.Context) (*Job, error) {
+	jobs, err := s.repo.Select(ctx, SelectParams{Status: StatusWorking, Limit: 1})
+	if err != nil || len(jobs) == 0 {
+		return nil, err
+	}
+
+	return &jobs[0], nil
+}
+
 // csvPath returns the on-disk path of a job's CSV output, rejecting ids that
 // could escape the data folder.
 func (s *Service) csvPath(id string) (string, error) {

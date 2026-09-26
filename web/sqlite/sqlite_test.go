@@ -52,3 +52,35 @@ func TestTheQueueRunsJobsInTheOrderTheyWereAdded(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "third", all[0].ID, "the job list still shows the newest first")
 }
+
+func TestCountAndExcludeStatusMatchWhatSelectWouldReturn(t *testing.T) {
+	dir, err := os.MkdirTemp("", "jobs-count-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
+	repo, err := sqlite.New(filepath.Join(dir, "jobs.db"))
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	t0 := time.Date(2026, 9, 27, 0, 0, 0, 0, time.UTC)
+
+	require.NoError(t, repo.Create(ctx, job("p1", t0)))
+	require.NoError(t, repo.Create(ctx, job("p2", t0.Add(time.Second))))
+
+	done := job("d1", t0.Add(-time.Hour))
+	done.Status = web.StatusOK
+	require.NoError(t, repo.Create(ctx, done))
+
+	n, err := repo.Count(ctx, web.SelectParams{Status: web.StatusPending})
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+
+	n, err = repo.Count(ctx, web.SelectParams{})
+	require.NoError(t, err)
+	assert.Equal(t, 3, n, "no filter counts every job")
+
+	notPending, err := repo.Select(ctx, web.SelectParams{ExcludeStatus: web.StatusPending})
+	require.NoError(t, err)
+	require.Len(t, notPending, 1)
+	assert.Equal(t, "d1", notPending[0].ID)
+}
