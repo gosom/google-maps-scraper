@@ -307,6 +307,7 @@ func (c *reviewCollector) run(ctx context.Context, reported int) *reviewResult {
 func (c *reviewCollector) runNewest(ctx context.Context, set *reviewSet, report *ReviewCollection,
 	finish func(stageOutcome, string) *reviewResult) *reviewResult {
 	report.Stages = append(report.Stages, stageDOM)
+
 	if c.newest == nil {
 		return finish(stageOutcome{reason: stopError, detail: "no review route available"}, stageDOM)
 	}

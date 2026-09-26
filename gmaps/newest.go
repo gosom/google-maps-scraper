@@ -73,6 +73,7 @@ func extractNewestFromPage(ctx context.Context, page scrapemate.BrowserPage, lim
 
 	for attempt := 1; attempt <= newestSortAttempts; attempt++ {
 		clicked := false
+
 		if opened, _ := page.Eval(openSortScript); opened == true {
 			if sleepCtx(ctx, 1200*time.Millisecond) != nil {
 				return nil, false
