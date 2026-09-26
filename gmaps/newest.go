@@ -162,8 +162,9 @@ func relativeAgeHours(desc string) (float64, bool) {
 
 // newestOrdered reports whether these reviews, in page order, run from newest to oldest by the
 // ages they show. Edited reviews and unreadable ages are left out of the comparison, but at least
-// two ages must be readable to judge the order at all. One review or none is trivially in order;
-// a place's whole review list can be that short.
+// two ages must be readable to judge the order at all -- unless the panel shows two reviews or
+// fewer, when the order does not matter: every review it has is in the read. One review or none is
+// trivially in order.
 func newestOrdered(reviews []DOMReview) bool {
 	if len(reviews) < 2 {
 		return true
@@ -185,5 +186,5 @@ func newestOrdered(reviews []DOMReview) bool {
 		readable++
 	}
 
-	return readable >= 2
+	return readable >= 2 || len(reviews) <= 2
 }

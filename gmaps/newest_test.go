@@ -38,8 +38,10 @@ func TestNewestFirstIsJudgedByTheReviewsOwnDates(t *testing.T) {
 	// An edited review is left out of the comparison, not counted against the order.
 	assert.True(t, newestOrdered([]DOMReview{dated("a", "2 hours ago"), dated("b", "Edited a year ago"),
 		dated("c", "3 days ago")}))
-	// Dates it cannot read prove nothing.
-	assert.False(t, newestOrdered([]DOMReview{dated("a", ""), dated("b", "")}))
+	// Dates it cannot read prove nothing about a longer list...
+	assert.False(t, newestOrdered([]DOMReview{dated("a", ""), dated("b", ""), dated("c", "")}))
+	// ...but two reviews, one of them edited, are the whole of a small place: order is moot.
+	assert.True(t, newestOrdered([]DOMReview{dated("a", "3 days ago"), dated("b", "Edited a year ago")}))
 	// A place with one review, or none.
 	assert.True(t, newestOrdered([]DOMReview{dated("a", "")}))
 	assert.True(t, newestOrdered(nil))
