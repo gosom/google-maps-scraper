@@ -12,11 +12,12 @@ import (
 )
 
 // How a newest-only collection reads the public review panel. Google's signed-out limited view
-// shows five to eight reviews and loads no more however far the list is scrolled (measured on
-// 27 Sep 2026 through every proxy in the pool), so a few passes read all of it.
+// usually shows five to eight reviews, and some sessions are served more (30 on 27 Sep 2026), so
+// the panel is scrolled for as long as it keeps loading reviews -- until newestStuckPasses passes
+// in a row add none, the collection's cap, or the review budget (the context's deadline).
 const (
 	newestSortAttempts = 3
-	newestScrollPasses = 6
+	newestStuckPasses  = 3
 )
 
 // openSortScript opens the review panel's sort menu; false when there is no such control.
@@ -98,8 +99,8 @@ func extractNewestFromPage(ctx context.Context, page scrapemate.BrowserPage, lim
 	return nil, false
 }
 
-// readShownReviews reads every review card the panel shows, scrolling a few passes in case more
-// than the first screen is served, in page order.
+// readShownReviews reads every review card the panel will show, in page order, scrolling for as
+// long as scrolling loads more.
 func readShownReviews(ctx context.Context, page scrapemate.BrowserPage, limit int) []DOMReview {
 	_, _ = page.Eval(forgetReadCardsScript)
 
@@ -107,11 +108,19 @@ func readShownReviews(ctx context.Context, page scrapemate.BrowserPage, limit in
 
 	index := make(map[string]int)
 
-	for pass := 0; pass < newestScrollPasses; pass++ {
+	for stuck := 0; stuck < newestStuckPasses && len(reviews) < limit; {
+		before := len(reviews)
+
 		if raw, err := page.Eval(reviewDOMScript); err == nil {
 			if cards, ok := raw.([]any); ok {
 				reviews = mergeDOMReviews(reviews, decodeDOMReviews(cards), index, limit)
 			}
+		}
+
+		if len(reviews) > before {
+			stuck = 0
+		} else {
+			stuck++
 		}
 
 		_, _ = page.Eval(scrollReviewsScript)
