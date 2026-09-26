@@ -17,15 +17,20 @@
 #   AXIO_CRED_DIR    the repository checkout; default /opt/axio-cred
 #   LEADS_ENV_FILE   secrets for the dashboard; default /etc/axiointel/leads.env (root:docker, 640)
 #                    SALESHANDY_API_KEY=...   turns on "Send to Saleshandy"
-#                    LEADS_PAUSE_WINDOW="08:00-20:00 America/New_York"  no lead job runs in this daily
-#                                             window, and one running when it opens is stopped and
-#                                             queued again: AxioIntel's review collection has the
-#                                             machine during US business hours (26 Sep 2026)
+#                    LEADS_PAUSE_WINDOW="08:00-20:00 America/New_York"  optional: no lead job runs in
+#                                             this daily window, and one running when it opens is
+#                                             stopped and queued again. Unset since 27 Sep 2026: lead
+#                                             jobs run all day at low priority instead (below).
 #                    WHATSAPP_TOKEN=...                 with the two ids below, turns on WhatsApp
 #                    WHATSAPP_PHONE_NUMBER_ID=...       template sending (Meta WhatsApp Cloud API):
 #                    WHATSAPP_BUSINESS_ACCOUNT_ID=...   a system user's token, the sending number's id
 #                                                       and the WABA id. Opted-in leads only.
 #   LEADS_CONCURRENCY listings worked on at once; default 3
+#   LEADS_CPU_SHARES  the dashboard's CPU weight against AxioIntel's review collection (Docker's
+#                    default, 1024); default 256, so collection gets four times the CPU when both
+#                    want it and lead jobs use whatever it leaves (owner's decision, 27 Sep 2026)
+#   LEADS_MEMORY     the most memory lead jobs may take; default 2g of the server's 4 GB, and under
+#                    memory pressure the kernel stops a lead job before a review collection
 #   LEADS_PROXIES    proxies for Google; default /etc/axiointel/proxies.txt (root:docker, 640), one
 #                    http://user:pass@host:port per line. When present, every job's Google traffic
 #                    goes through them; business websites (emails) are always fetched directly.
@@ -44,6 +49,9 @@ ENV_FILE="${LEADS_ENV_FILE:-/etc/axiointel/leads.env}"
 PROXIES="${LEADS_PROXIES:-/etc/axiointel/proxies.txt}"
 # Listings worked on at once. Each is a browser tab (~200-300 MB); 3 suits the 2-vCPU, 4 GB server.
 CONCURRENCY="${LEADS_CONCURRENCY:-3}"
+# AxioIntel's review collection comes first; lead jobs never stop for it, they just get less.
+CPU_SHARES="${LEADS_CPU_SHARES:-256}"
+MEMORY="${LEADS_MEMORY:-2g}"
 
 start() {
   sudo mkdir -p "$DATA"
@@ -59,6 +67,7 @@ start() {
       proxy_flag=(-proxies-file /run/proxies.txt)
     fi
     docker run -d --name "$NAME" --restart unless-stopped \
+      --cpu-shares "$CPU_SHARES" --memory "$MEMORY" --oom-score-adj 500 \
       -e DISABLE_TELEMETRY=1 ${env_args[@]+"${env_args[@]}"} \
       -p "127.0.0.1:$PORT:8080" \
       -v "$DATA:/data" ${proxy_mount[@]+"${proxy_mount[@]}"} \
