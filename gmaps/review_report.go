@@ -24,6 +24,13 @@ const (
 	stopNoReviews = "no_reviews"
 	// stopError: anything else -- a transport failure that outlasted its retries.
 	stopError = "error"
+	// stopNewest: a newest-only collection (`ReviewConfig.NewestOnly`) read the reviews the public
+	// listing shows sorted by Newest. Never the whole list, so never complete.
+	stopNewest = "newest"
+	// stopUnsorted: a newest-only collection could not confirm the Newest sort took. What the
+	// listing showed may be its "most relevant" reviews, which would pass for the newest ones, so
+	// nothing is kept and nothing is sent.
+	stopUnsorted = "unsorted"
 )
 
 // Which part of the review path a collection stopped in.

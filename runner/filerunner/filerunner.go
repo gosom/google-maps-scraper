@@ -280,5 +280,6 @@ func (r *fileRunner) reviewConfig() gmaps.ReviewConfig {
 		Budget:     r.cfg.ReviewBudget,
 		MaxReviews: r.cfg.ReviewMax,
 		PageDelay:  r.cfg.ReviewPageDelay,
+		NewestOnly: r.cfg.ReviewNewest,
 	}
 }

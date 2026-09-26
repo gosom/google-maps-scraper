@@ -10,10 +10,13 @@
 # AxioIntel's, fetched from Axio-Backend's scripts/ so they cannot drift from the endpoints they
 # talk to. Nothing here reports, flags or appeals anything.
 #
-# Since 26 Sep 2026 this collector is AxioIntel's first source of reviews, and Apify its backup
-# (owner's decision). AxioIntel asks for a place by marking it requested; the daemon below polls
-# for requests every two minutes, so a person's "Pull now" is answered in minutes. AxioIntel
-# falls back to Apify by itself when a request waits over 15 minutes or this collector slows down.
+# Since 27 Sep 2026 (owner's decision) Apify collects a place's whole review list -- its first pull
+# and a weekly re-pull -- and this collector keeps it current in between: every two hours it reads
+# the reviews the public listing shows sorted by Newest (`-review-newest`). Google shows signed-out
+# visitors a limited view of five to eight reviews, so that is all a collection here can read; a
+# read whose Newest sort cannot be confirmed is not sent. AxioIntel asks for a place by marking it
+# requested or due; the daemon below polls every two minutes, so a person's "Pull now" is answered
+# in minutes.
 #
 # Modes:
 #   lab    (default) collect the places file given, keep every result on this machine, and add one
@@ -37,14 +40,16 @@
 #   COLLECTOR_PLACES_FILE            collect this list instead of asking AxioIntel (one pass only)
 #   COLLECTOR_IMAGE                  docker image built from this repository; default axio-cred-collector
 #   COLLECTOR_PROXIES_FILE           optional; one proxy URL per line, passed as -proxies-file
-#   COLLECTOR_TIMEOUT_SECONDS        per place; default 900, inside AxioIntel's 15-minute wait. The
-#                                    collector's own review clock (-review-budget) is set four minutes
-#                                    under it, so a slow place is written out partial rather than killed
-#                                    and lost; a partial collection is finished by a later pass.
+#   COLLECTOR_REVIEW_MODE            newest (default): only the Newest-sorted reviews the listing shows;
+#                                    full: page through the whole list, as before 27 Sep 2026 (lab use)
+#   COLLECTOR_TIMEOUT_SECONDS        per place; default 240 in newest mode, 900 in full. The
+#                                    collector's own review clock (-review-budget) is set under it, so a
+#                                    slow place is written out partial rather than killed and lost.
 #   COLLECTOR_PARALLEL               daemon: places collected at once; default 3
 #   COLLECTOR_POLL_SECONDS           daemon: how often AxioIntel is asked; default 120
 #   COLLECTOR_MIN_INTERVAL_HOURS     daemon: a place that is due but not requested is collected at
-#                                    most this often; default 6
+#                                    most this often; default 1 (AxioIntel marks a place due every
+#                                    two hours)
 #   COLLECTOR_RETRY_MINUTES          daemon: a place whose last try failed waits this long; default 10
 #   COLLECTOR_WORK_DIR               default /var/lib/axiointel-collector
 #   COLLECTOR_KEEP_DAYS              local results kept this long; default 14
@@ -115,10 +120,15 @@ if [ "$COMMAND" = daemon ] && [ "$MODE" != send ]; then
 fi
 
 IMAGE="${COLLECTOR_IMAGE:-axio-cred-collector}"
-TIMEOUT="${COLLECTOR_TIMEOUT_SECONDS:-900}"
+REVIEW_MODE="${COLLECTOR_REVIEW_MODE:-newest}"
+case "$REVIEW_MODE" in
+  newest) TIMEOUT="${COLLECTOR_TIMEOUT_SECONDS:-240}" ;;
+  full) TIMEOUT="${COLLECTOR_TIMEOUT_SECONDS:-900}" ;;
+  *) echo "COLLECTOR_REVIEW_MODE must be newest or full, not $REVIEW_MODE" >&2; exit 1 ;;
+esac
 PARALLEL="${COLLECTOR_PARALLEL:-3}"
 POLL="${COLLECTOR_POLL_SECONDS:-120}"
-MIN_INTERVAL_S=$(( ${COLLECTOR_MIN_INTERVAL_HOURS:-6} * 3600 ))
+MIN_INTERVAL_S=$(( ${COLLECTOR_MIN_INTERVAL_HOURS:-1} * 3600 ))
 RETRY_S=$(( ${COLLECTOR_RETRY_MINUTES:-10} * 60 ))
 PUSHER="${AXIOINTEL_PUSHER:-$HERE/push_native.py}"
 FETCHER="${AXIOINTEL_FETCHER:-$HERE/fetch_targets.py}"
@@ -159,6 +169,14 @@ if grep -q -- -review-budget <<<"$image_help"; then
   else
     REVIEW_FLAGS=(-review-budget "$((TIMEOUT * 4 / 5))s")
   fi
+fi
+if [ "$REVIEW_MODE" = newest ]; then
+  # An image without the flag would page the whole list under a newest-mode clock: refuse it.
+  grep -q -- -review-newest <<<"$image_help" || {
+    echo "the image $IMAGE predates -review-newest; rebuild it, or set COLLECTOR_REVIEW_MODE=full" >&2
+    exit 1
+  }
+  REVIEW_FLAGS+=(-review-newest)
 fi
 
 # The sender's flags this copy knows; older copies do not know --collected-seconds.
@@ -287,7 +305,12 @@ PY
   fi
 
   local sent=no rc=0
-  if [ "$MODE" = send ]; then
+  if [ "$cov_reason" = unsorted ]; then
+    # The Newest sort did not take: what the listing showed may be its "most relevant" reviews,
+    # and AxioIntel would read them as the newest. Nothing is sent; the next pass tries again.
+    echo "$(date -u +%FT%TZ) $place: the Newest sort could not be confirmed; not sent" >&2
+    rc=1
+  elif [ "$MODE" = send ]; then
     # AxioIntel measures this collector's speed from what it receives: reviews per second of
     # collecting. Older copies of the sender do not know the flag.
     local timing=()
