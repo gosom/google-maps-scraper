@@ -248,6 +248,28 @@ func readQueries(r io.Reader) ([]query, error) {
 	return queries, scanner.Err()
 }
 
+// ReadSteadyQueries reads a queries file for collector v2: one search a line, with an optional
+// "#!#id" (the id defaults to the search itself, so every row says which search found it).
+func ReadSteadyQueries(r io.Reader) ([]gmaps.SteadyQuery, error) {
+	qs, err := readQueries(r)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]gmaps.SteadyQuery, 0, len(qs))
+
+	for _, q := range qs {
+		id := q.id
+		if id == "" {
+			id = q.text
+		}
+
+		out = append(out, gmaps.SteadyQuery{ID: id, Text: q.text})
+	}
+
+	return out, nil
+}
+
 func parseQueryLine(line string) (query, bool, error) {
 	line = strings.TrimSpace(line)
 	if line == "" {

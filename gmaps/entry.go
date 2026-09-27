@@ -133,6 +133,10 @@ type Entry struct {
 	// ReviewCollection is how the extended review collection went (`-extra-reviews` only).
 	ReviewCollection *ReviewCollection `json:"review_collection,omitempty"`
 	Emails           []string          `json:"emails"`
+	// EmailStatus is how the email search for this listing went (see the Email* constants): found,
+	// none, no_website, skipped_social, skipped_budget or fetch_failed:<reason>. Empty when emails
+	// were not asked for.
+	EmailStatus string `json:"email_status,omitempty"`
 }
 
 // entryAlias is used inside Marshal/UnmarshalJSON to avoid infinite recursion
@@ -203,8 +207,14 @@ func (e *Entry) isWithinRadius(lat, lon, radius float64) bool {
 }
 
 func (e *Entry) IsWebsiteValidForEmail() bool {
+	return e.noEmailSearchReason() == ""
+}
+
+// noEmailSearchReason is why the listing's website is not searched for emails (EmailNoWebsite or
+// EmailSkippedSocial), or "" when it is.
+func (e *Entry) noEmailSearchReason() string {
 	if e.WebSite == "" {
-		return false
+		return EmailNoWebsite
 	}
 
 	// Pages on these sites belong to the site, not the business: an address found there is theirs.
@@ -222,11 +232,11 @@ func (e *Entry) IsWebsiteValidForEmail() bool {
 
 	for i := range needles {
 		if strings.Contains(e.WebSite, needles[i]) {
-			return false
+			return EmailSkippedSocial
 		}
 	}
 
-	return true
+	return ""
 }
 
 func (e *Entry) Validate() error {
@@ -279,6 +289,7 @@ func (e *Entry) CsvHeaders() []string {
 		"user_reviews",
 		"user_reviews_extended",
 		"emails",
+		"email_status",
 	}
 }
 
@@ -320,6 +331,7 @@ func (e *Entry) CsvRow() []string {
 		stringify(e.UserReviews),
 		stringify(e.UserReviewsExtended),
 		stringSliceToString(e.Emails),
+		e.EmailStatus,
 	}
 }
 

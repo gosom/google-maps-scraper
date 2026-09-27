@@ -17,6 +17,7 @@ import (
 
 	"github.com/AxioIntel/Axio-CRED/deduper"
 	"github.com/AxioIntel/Axio-CRED/exiter"
+	"github.com/AxioIntel/Axio-CRED/gmaps"
 	"github.com/AxioIntel/Axio-CRED/grid"
 	"github.com/AxioIntel/Axio-CRED/runner"
 	"github.com/AxioIntel/Axio-CRED/tlmt"
@@ -42,8 +43,14 @@ type webrunner struct {
 	mu            sync.Mutex
 	currentID     string
 	cancelCurrent context.CancelFunc
-	stalled       map[string]bool
-	attempts      map[string]int
+	// currentBounded is a running job that bounds its own time (v2); the watchdog leaves it alone.
+	currentBounded bool
+	// lastRun is the start of the running (or just finished) job, for the run ledger.
+	lastRun runStart
+	// newSteady makes collector v2 (tests replace it); nil is gmaps.NewSteadyCollector.
+	newSteady func(gmaps.SteadyConfig, []string) (steadyRunner, error)
+	stalled   map[string]bool
+	attempts  map[string]int
 	// paused are jobs stopped because the pause window opened; they go back in the queue as they
 	// were, without counting as a failed try.
 	paused map[string]bool
@@ -56,6 +63,8 @@ type webrunner struct {
 
 	// watchEvery and stallAfter override the watchdog's timing (tests); zero is the default.
 	watchEvery, stallAfter time.Duration
+	// boundCap caps a v1 job's allowed time (tests; zero is no cap).
+	boundCap time.Duration
 
 	// restartAfterJob is set when a finished job's browsers would not close; exit is how the
 	// process then ends (os.Exit; tests replace it) so the container restarts clean.
@@ -221,6 +230,7 @@ func (w *webrunner) requeueInterrupted(ctx context.Context) {
 		}
 
 		w.ingest(ctx, &jobs[i])
+		w.bumpLedger(ctx, jobs[i].ID, leads.CounterRestarts)
 
 		jobs[i].Status = web.StatusPending
 		if err := w.svc.Update(ctx, &jobs[i]); err != nil {
@@ -248,7 +258,7 @@ func (w *webrunner) backfill(ctx context.Context) {
 	}
 
 	for i := range jobs {
-		if jobs[i].Status != web.StatusOK && jobs[i].Status != web.StatusFailed {
+		if !web.Finished(jobs[i].Status) {
 			continue
 		}
 
@@ -314,6 +324,7 @@ func (w *webrunner) work(ctx context.Context) error {
 
 					w.ingest(ctx, &jobs[i])
 					w.afterJob(ctx, &jobs[i])
+					w.finishLedger(ctx, &jobs[i])
 
 					if w.restartAfterJob {
 						log.Printf("job %s: its browsers would not close; restarting the dashboard to clear them", jobs[i].ID)
@@ -357,6 +368,10 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 	defer func() {
 		_ = outfile.Close()
 	}()
+
+	if job.Data.IsV2() {
+		return w.scrapeV2(ctx, job, outfile)
+	}
 
 	setupMate := w.setupMate
 	if setupMate == nil {
@@ -415,7 +430,14 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 
 		log.Printf("running job %s with %d seed jobs and %d allowed seconds", job.ID, len(seedJobs), allowedSeconds)
 
-		mateCtx, cancel := context.WithTimeout(ctx, time.Duration(allowedSeconds)*time.Second)
+		allowed := time.Duration(allowedSeconds) * time.Second
+		if w.boundCap > 0 {
+			allowed = min(allowed, w.boundCap)
+		}
+
+		w.startLedger(ctx, job, len(job.Data.Keywords), allowed)
+
+		mateCtx, cancel := context.WithTimeout(ctx, allowed)
 		defer cancel()
 
 		w.setCurrent(job.ID, cancel)
@@ -444,7 +466,18 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 			return err
 		}
 
+		// Out of time ("Stop after") is not the same as done: what it found is kept either way.
+		budgetHit := ctx.Err() == nil &&
+			(errors.Is(err, context.DeadlineExceeded) || errors.Is(mateCtx.Err(), context.DeadlineExceeded))
+
 		cancel()
+
+		job.Status = web.StatusOK
+		if budgetHit {
+			job.Status = web.StatusPartial
+		}
+
+		return w.svc.Update(ctx, job)
 	}
 
 	job.Status = web.StatusOK
@@ -623,10 +656,10 @@ func (w *webrunner) watchdog(ctx context.Context) {
 			return
 		case now := <-t.C:
 			w.mu.Lock()
-			id, cancel := w.currentID, w.cancelCurrent
+			id, cancel, bounded := w.currentID, w.cancelCurrent, w.currentBounded
 			w.mu.Unlock()
 
-			if id == "" || cancel == nil {
+			if id == "" || cancel == nil || bounded {
 				watching = ""
 
 				continue
@@ -670,6 +703,8 @@ func (w *webrunner) afterJob(ctx context.Context, job *web.Job) {
 	w.mu.Unlock()
 
 	if paused {
+		w.bumpLedger(ctx, job.ID, leads.CounterDiscarded)
+
 		job.Status = web.StatusPending
 		if err := w.svc.Update(ctx, job); err != nil {
 			log.Printf("job %s: could not requeue after the pause window opened: %v", job.ID, err)
@@ -696,6 +731,8 @@ func (w *webrunner) afterJob(ctx context.Context, job *web.Job) {
 	w.mu.Unlock()
 
 	if stalled {
+		w.bumpLedger(ctx, job.ID, leads.CounterStalls)
+
 		if tries <= maxStallRetries {
 			job.Status = web.StatusPending
 			w.note(fmt.Sprintf("%q queued again after a stall (%d of %d)", job.Name, tries, maxStallRetries))
@@ -711,7 +748,10 @@ func (w *webrunner) afterJob(ctx context.Context, job *web.Job) {
 		return
 	}
 
-	if job.Status != web.StatusOK || strings.HasPrefix(job.Name, retryPrefix) || job.Data.Grid != nil {
+	// v2 does not get the retry job: its retries are its own, and a comparison of v1 against v2
+	// would otherwise count v1's second try as its first.
+	if (job.Status != web.StatusOK && job.Status != web.StatusPartial) || strings.HasPrefix(job.Name, retryPrefix) ||
+		job.Data.Grid != nil || job.Data.IsV2() || job.Data.Tag != "" {
 		return
 	}
 

@@ -2,22 +2,22 @@
 {{range .Rows}}
 <tr>
     <td>
-        <div><strong>{{.Name}}</strong></div>
+        <div><strong>{{.Name}}</strong> <span class="chip chip-{{.Data.CollectorName}}" title="Which collector ran this job">{{.Data.CollectorName}}</span></div>
         <div class="faint">{{.Searches}} search{{if ne .Searches 1}}es{{end}}{{if .Data.Email}} · emails{{end}}</div>
     </td>
     <td class="nowrap muted">{{.Date.Format "Jan 2, 15:04"}} UTC</td>
-    <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
+    <td><span class="badge badge-{{.Status}}"{{if eq .Status "partial"}} title="Ran out of time before every search was done; what it found is kept"{{end}}>{{.Status}}</span></td>
     <td class="num"><strong>{{.Leads}}</strong></td>
     <td class="nowrap">
         {{ if gt .Leads 0 }}<a href="/leads?job={{.ID}}" class="btn btn-sm">Leads</a>{{ end }}
-        {{ if eq .Status "ok" }}
+        {{ if or (eq .Status "ok") (eq .Status "partial") }}
             <button type="button" class="btn btn-sm"
                     hx-get="/view?id={{.ID}}"
                     hx-target="#map-modal-container"
                     hx-swap="innerHTML">Map</button>
             <a href="/download?id={{.ID}}" download class="btn btn-sm" title="Every column the scraper collected">Raw CSV</a>
         {{ end }}
-        {{ if or (eq .Status "ok") (eq .Status "failed") }}
+        {{ if or (eq .Status "ok") (eq .Status "partial") (eq .Status "failed") }}
             <button class="btn btn-sm" hx-post="/rerun?id={{.ID}}" hx-swap="none"
                     hx-confirm="Run this job again next, from its first search? Its leads so far are kept."
                     title="Queue it again; the lead list merges both runs">Rerun</button>

@@ -81,13 +81,17 @@ func (j *EmailExtractJob) Process(ctx context.Context, resp *scrapemate.Response
 
 	log.Info("Processing email job", "url", j.URL)
 
-	// if html fetch failed just return
+	// if html fetch failed just return, saying why
 	if resp.Error != nil {
+		j.Entry.EmailStatus = EmailFetchFailed + fetchFailReason(resp.Error)
+
 		return j.Entry, nil, nil
 	}
 
 	doc, ok := resp.Document.(*goquery.Document)
 	if !ok {
+		j.Entry.EmailStatus = EmailFetchFailed + "not_html"
+
 		return j.Entry, nil, nil
 	}
 
@@ -99,6 +103,7 @@ func (j *EmailExtractJob) Process(ctx context.Context, resp *scrapemate.Response
 	emails := findBusinessEmails(ctx, j.URL, doc, resp.Body, fetch)
 
 	j.Entry.Emails = emails
+	j.Entry.EmailStatus = emailOutcome(emails)
 
 	return j.Entry, nil, nil
 }

@@ -20,6 +20,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/AxioIntel/Axio-CRED/gmaps"
 	"github.com/AxioIntel/Axio-CRED/web/leads"
 	"github.com/AxioIntel/Axio-CRED/web/saleshandy"
 	"github.com/AxioIntel/Axio-CRED/web/whatsapp"
@@ -68,6 +69,7 @@ func New(svc *Service, addr string, opts ...Option) (*Server, error) {
 	mux := http.NewServeMux()
 
 	ans.registerLeadRoutes(mux)
+	ans.registerVerifyRoutes(mux)
 	ans.registerSaleshandyRoutes(mux)
 	ans.registerWhatsAppRoutes(mux)
 	mux.HandleFunc("GET /metrics", ans.metricsPartial)
@@ -176,6 +178,13 @@ func New(svc *Service, addr string, opts ...Option) (*Server, error) {
 		ans.tmpl[key] = tmp
 	}
 
+	verify, err := template.New("verify.html").Funcs(verifyFuncs).ParseFS(static, verifyTemplate)
+	if err != nil {
+		return nil, err
+	}
+
+	ans.tmpl[verifyTemplate] = verify
+
 	return &ans, nil
 }
 
@@ -206,18 +215,20 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 type formData struct {
-	Name     string
-	MaxTime  string
-	Keywords []string
-	Language string
-	Zoom     int
-	FastMode bool
-	Radius   int
-	Lat      string
-	Lon      string
-	Depth    int
-	Email    bool
-	Proxies  []string
+	// Collector is the form's preselected collector, "v1" or "v2".
+	Collector string
+	Name      string
+	MaxTime   string
+	Keywords  []string
+	Language  string
+	Zoom      int
+	FastMode  bool
+	Radius    int
+	Lat       string
+	Lon       string
+	Depth     int
+	Email     bool
+	Proxies   []string
 }
 
 type ctxKey string
@@ -269,17 +280,18 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := formData{
-		Name:     "",
-		MaxTime:  "1h",
-		Keywords: []string{},
-		Language: "en",
-		Zoom:     15,
-		FastMode: false,
-		Radius:   10000,
-		Lat:      "0",
-		Lon:      "0",
-		Depth:    5,
-		Email:    true,
+		Collector: gmaps.CollectorV1,
+		Name:      "",
+		MaxTime:   "1h",
+		Keywords:  []string{},
+		Language:  "en",
+		Zoom:      15,
+		FastMode:  false,
+		Radius:    10000,
+		Lat:       "0",
+		Lon:       "0",
+		Depth:     5,
+		Email:     true,
 	}
 
 	_ = tmpl.Execute(w, data)
@@ -411,6 +423,13 @@ func (s *Server) scrape(w http.ResponseWriter, r *http.Request) {
 
 	// The dashboard always collects the emails on each listing's website; the API still chooses.
 	newJob.Data.Email = true
+
+	newJob.Data.Collector, newJob.Data.Steady, err = collectorFromForm(r.Form.Get)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+
+		return
+	}
 
 	proxies := strings.Split(r.Form.Get("proxies"), "\n")
 	if len(proxies) > 0 {

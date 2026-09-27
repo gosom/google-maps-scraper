@@ -4,6 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/AxioIntel/Axio-CRED/gmaps"
 	"github.com/AxioIntel/Axio-CRED/grid"
 	"github.com/AxioIntel/Axio-CRED/runner"
 )
@@ -81,4 +85,15 @@ func TestCreateGridSeedJobsRejectsEmptyQueryBeforeCustomID(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "empty query text") {
 		t.Fatalf("expected empty query text error, got %v", err)
 	}
+}
+
+func TestReadSteadyQueriesTagsEachSearchWithItself(t *testing.T) {
+	t.Parallel()
+
+	got, err := runner.ReadSteadyQueries(strings.NewReader("dentist in Austin TX\n\n  plumber in Waco TX#!#waco  \n"))
+	require.NoError(t, err)
+	assert.Equal(t, []gmaps.SteadyQuery{
+		{ID: "dentist in Austin TX", Text: "dentist in Austin TX"},
+		{ID: "waco", Text: "plumber in Waco TX"},
+	}, got)
 }

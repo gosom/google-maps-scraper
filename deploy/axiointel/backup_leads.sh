@@ -138,7 +138,7 @@ jobs = sqlite3.connect("file:" + sys.argv[2] + "?mode=ro", uri=True)
 done = {r[0] for r in leads.execute("SELECT job_id FROM ingested_jobs")}
 cutoff = int(time.time()) - 3600
 for (job_id,) in jobs.execute(
-        "SELECT id FROM jobs WHERE status IN ('ok', 'failed') AND updated_at < ?", (cutoff,)):
+        "SELECT id FROM jobs WHERE status IN ('ok', 'partial', 'failed') AND updated_at < ?", (cutoff,)):
     if job_id in done:
         print(job_id)
 PY

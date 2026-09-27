@@ -108,10 +108,12 @@ func Open(path string) (*Store, error) {
 		}
 	}
 
-	if _, err := db.Exec(schema); err != nil {
-		_ = db.Close()
+	for _, ddl := range []string{schema, runsSchema, compareSchema} {
+		if _, err := db.Exec(ddl); err != nil {
+			_ = db.Close()
 
-		return nil, fmt.Errorf("lead schema: %w", err)
+			return nil, fmt.Errorf("lead schema: %w", err)
+		}
 	}
 
 	for _, c := range []struct{ name, decl string }{

@@ -13,6 +13,7 @@
         <nav class="tabs">
             <a href="/" class="active">Scrape</a>
             <a href="/leads">Leads</a>
+            <a href="/verify">Verify v1 / v2</a>
             <a href="/spec">AxioIntel spec</a>
         </nav>
         <div class="spacer"></div>
@@ -25,13 +26,23 @@
             <div class="card-head"><h2>Google Maps scraper</h2><span class="chip">google_maps</span></div>
             <div class="card-body">
                 <div id="error-container" class="error-message"></div>
-                <form
+                <form id="scrape-form" class="{{if eq .Collector "v2"}}is-v2{{end}}"
                     hx-post="/scrape"
                     hx-target="#job-table tbody"
                     hx-swap="afterbegin"
                     hx-on::before-request="document.getElementById('error-container').innerHTML = ''"
                     hx-on::after-request="if(!event.detail.successful) { document.getElementById('error-container').innerHTML = event.detail.xhr.responseText } else { this.querySelector('#keywords').value=''; this.querySelector('#locations').value=''; this.querySelector('#name').value='' }"
                 >
+                    <div class="field">
+                        <label for="collector">Collector</label>
+                        <select id="collector" name="collector" onchange="document.getElementById('scrape-form').classList.toggle('is-v2', this.value === 'v2')">
+                            <option value="v1" {{if ne .Collector "v2"}}selected{{end}}>v1 · browser (current)</option>
+                            <option value="v2" {{if eq .Collector "v2"}}selected{{end}}>v2 · steady HTTP (one site at a time, fixed pace)</option>
+                        </select>
+                        <p class="hint v1-only">v1 opens Google Maps in a browser, scrolls the list, and reads places and websites several at a time.</p>
+                        <p class="hint v2-only">v2 reads Google's results 20 at a time without a browser, then visits each website one after another with a fixed gap. Each search has a fixed time limit, so the job can never run longer than searches × that limit.</p>
+                    </div>
+
                     <div class="field">
                         <label for="keywords">What to search</label>
                         <textarea id="keywords" name="keywords" rows="4" placeholder="dentist&#10;orthodontist" required>{{ .KeywordsString }}</textarea>
@@ -44,7 +55,7 @@
                         <p class="hint">Every search runs in every place: "dentist" × "Austin TX" becomes "dentist in Austin TX". Leave empty to run the searches as typed.</p>
                     </div>
 
-                    <details class="section" id="grid-section">
+                    <details class="section v1-only" id="grid-section">
                         <summary>Map grid: 2,000+ results from one city</summary>
                         <div class="section-body">
                             <label class="check"><input type="checkbox" id="grid" name="grid" class="grid-in"> Split one city into squares and run every search in each square</label>
@@ -88,7 +99,7 @@
                     </details>
 
                     <div class="row2">
-                        <div class="field">
+                        <div class="field v1-only">
                             <label for="depth">Results per search</label>
                             <select id="depth" name="depth">
                                 <option value="1">~20 (quick)</option>
@@ -108,7 +119,73 @@
                         </div>
                     </div>
 
-                    <p class="hint" style="margin:0 0 16px">✉ Every listing with a website has all its email addresses collected: from its front page and its own contact, about and team pages.</p>
+                    <p class="hint v1-only" style="margin:0 0 16px">✉ Every listing with a website has all its email addresses collected: from its front page and its own contact, about and team pages.</p>
+
+                    <details class="section v2-only" open>
+                        <summary>v2 settings</summary>
+                        <div class="section-body">
+                            <div class="row2">
+                                <div class="field">
+                                    <label for="v2_pages">Places per search</label>
+                                    <select id="v2_pages" name="v2_pages">
+                                        <option value="1">~20 (1 page)</option>
+                                        <option value="2">~40 (2 pages)</option>
+                                        <option value="3" selected>~60 (3 pages)</option>
+                                        <option value="6">~120 (6 pages)</option>
+                                    </select>
+                                </div>
+                                <div class="field">
+                                    <label for="v2_contact_pages">Website pages read</label>
+                                    <select id="v2_contact_pages" name="v2_contact_pages">
+                                        <option value="0" selected>Front page only</option>
+                                        <option value="1">+1 contact page</option>
+                                        <option value="2">+2 contact pages</option>
+                                        <option value="4">+4 (like v1)</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="row2">
+                                <div class="field">
+                                    <label for="v2_delay_ms">Gap between requests</label>
+                                    <select id="v2_delay_ms" name="v2_delay_ms">
+                                        <option value="500">0.5 s</option>
+                                        <option value="1000" selected>1 s</option>
+                                        <option value="2000">2 s</option>
+                                        <option value="5000">5 s</option>
+                                    </select>
+                                </div>
+                                <div class="field">
+                                    <label for="v2_query_budget_sec">Time limit per search</label>
+                                    <select id="v2_query_budget_sec" name="v2_query_budget_sec">
+                                        <option value="120">2 minutes</option>
+                                        <option value="240" selected>4 minutes</option>
+                                        <option value="360">6 minutes</option>
+                                        <option value="480">8 minutes</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="row2">
+                                <div class="field">
+                                    <label for="v2_site_timeout_sec">Website timeout</label>
+                                    <select id="v2_site_timeout_sec" name="v2_site_timeout_sec">
+                                        <option value="5">5 s</option>
+                                        <option value="10" selected>10 s</option>
+                                        <option value="20">20 s</option>
+                                    </select>
+                                </div>
+                                <div class="field">
+                                    <label for="v2_retries">Retries on a refusal</label>
+                                    <select id="v2_retries" name="v2_retries">
+                                        <option value="0">None</option>
+                                        <option value="1" selected>1, on the next proxy</option>
+                                        <option value="2">2</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <label class="check"><input type="checkbox" id="v2_follow_redirects" name="v2_follow_redirects" checked> Follow website redirects</label>
+                            <p class="hint">A search that runs out of its time keeps every place it read; websites it did not reach are marked "skipped_budget". "Stop after" still applies.</p>
+                        </div>
+                    </details>
 
                     <div class="field">
                         <label for="name">Job name <span class="opt">(optional)</span></label>
@@ -146,7 +223,7 @@
                         </div>
                     </details>
 
-                    <details class="section">
+                    <details class="section v1-only">
                         <summary>Advanced</summary>
                         <div class="section-body">
                             <label class="check"><input type="checkbox" id="fastmode" name="fastmode" {{if .FastMode}}checked{{end}}> Fast mode (fewer details per place)</label>

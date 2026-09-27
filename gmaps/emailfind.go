@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -232,9 +233,10 @@ func registrableHost(host string) string {
 	return strings.Join(labels[len(labels)-n:], ".")
 }
 
-// contactPageLinks are links on the front page to the same site's contact-like pages, best first.
-func contactPageLinks(doc *goquery.Document, base *url.URL) []string {
-	if doc == nil || base == nil {
+// contactPageLinks are links on the front page to the same site's contact-like pages, best first,
+// at most limit of them.
+func contactPageLinks(doc *goquery.Document, base *url.URL, limit int) []string {
+	if doc == nil || base == nil || limit <= 0 {
 		return nil
 	}
 
@@ -288,9 +290,9 @@ func contactPageLinks(doc *goquery.Document, base *url.URL) []string {
 
 	sort.SliceStable(cands, func(i, j int) bool { return cands[i].score > cands[j].score })
 
-	out := make([]string, 0, maxContactPages)
+	out := make([]string, 0, limit)
 	for _, c := range cands {
-		if len(out) == maxContactPages {
+		if len(out) == limit {
 			break
 		}
 
@@ -303,54 +305,110 @@ func contactPageLinks(doc *goquery.Document, base *url.URL) []string {
 // pageFetcher reads one page of a business's own website.
 type pageFetcher func(ctx context.Context, pageURL string) ([]byte, error)
 
-var contactPageClient = &http.Client{
-	Timeout: contactPageTimeout,
-	CheckRedirect: func(_ *http.Request, via []*http.Request) error {
-		if len(via) >= 5 {
-			return errors.New("too many redirects")
+// newSiteFetcher is a pageFetcher with its own timeout, and with or without following redirects.
+// Not following them is the stricter reading of a site: a page that moved counts as a failed
+// fetch ("HTTP 301"), the way a simple one-request-per-site workflow sees it.
+func newSiteFetcher(timeout time.Duration, followRedirects bool) pageFetcher {
+	client := &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
+			if !followRedirects {
+				return http.ErrUseLastResponse
+			}
+
+			if len(via) >= 5 {
+				return errors.New("too many redirects")
+			}
+
+			return nil
+		},
+	}
+
+	return func(ctx context.Context, pageURL string) ([]byte, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, http.NoBody)
+		if err != nil {
+			return nil, err
 		}
 
-		return nil
-	},
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "+
+			"(KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36")
+		req.Header.Set("Accept", "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+		}
+
+		if ct := resp.Header.Get("Content-Type"); ct != "" && !strings.Contains(ct, "html") {
+			return nil, fmt.Errorf("%s (%s)", notAPage, ct)
+		}
+
+		return io.ReadAll(io.LimitReader(resp.Body, contactPageMaxBytes))
+	}
 }
 
+// notAPage starts the error for a response that is not a web page.
+const notAPage = "not a page"
+
 // fetchSitePage is the production pageFetcher: a plain GET with a browser's user agent, a timeout
-// and a size limit.
-func fetchSitePage(ctx context.Context, pageURL string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, http.NoBody)
-	if err != nil {
-		return nil, err
+// and a size limit, following up to 5 redirects.
+var fetchSitePage = newSiteFetcher(contactPageTimeout, true)
+
+// fetchFailReason names why a site could not be read, for the email_status column: timeout,
+// redirect, http_4xx, http_5xx, not_html or other.
+func fetchFailReason(err error) string {
+	if err == nil {
+		return ""
 	}
 
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "+
-		"(KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8")
+	var netErr net.Error
 
-	resp, err := contactPageClient.Do(req)
-	if err != nil {
-		return nil, err
+	switch msg := err.Error(); {
+	case errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()):
+		return "timeout"
+	case strings.HasPrefix(msg, "HTTP 3") || strings.Contains(msg, "too many redirects"):
+		return "redirect"
+	case strings.HasPrefix(msg, "HTTP 4"):
+		return "http_4xx"
+	case strings.HasPrefix(msg, "HTTP 5"):
+		return "http_5xx"
+	case strings.HasPrefix(msg, notAPage):
+		return "not_html"
+	default:
+		return "other"
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-
-	if ct := resp.Header.Get("Content-Type"); ct != "" && !strings.Contains(ct, "html") {
-		return nil, fmt.Errorf("not a page (%s)", ct)
-	}
-
-	return io.ReadAll(io.LimitReader(resp.Body, contactPageMaxBytes))
 }
 
 // guessedContactPaths are tried when the front page links to no contact-like page at all: many
 // small-business sites have one that only their menu script links to.
 var guessedContactPaths = []string{"/contact", "/contact-us", "/about", "/about-us"}
 
+// emailFindOptions shape one business's search. The zero value reads the front page only.
+type emailFindOptions struct {
+	// MaxContactPages is how many of the site's own contact-like pages are read after the front
+	// page; 0 reads the front page alone, without guessing /contact either.
+	MaxContactPages int
+	// Delay is the pause before each page after the front page.
+	Delay time.Duration
+	// Sleep waits out Delay; nil is a real sleep. Set by tests.
+	Sleep func(context.Context, time.Duration) error
+}
+
 // findBusinessEmails is the whole search for one business: every address on the front page and on
 // up to maxContactPages of its own contact, about and team pages, the business's own domain first.
 func findBusinessEmails(ctx context.Context, siteURL string, doc *goquery.Document, body []byte,
 	fetch pageFetcher) []string {
+	return findBusinessEmailsOpts(ctx, siteURL, doc, body, fetch, emailFindOptions{MaxContactPages: maxContactPages})
+}
+
+// findBusinessEmailsOpts is findBusinessEmails with its limits spelled out.
+func findBusinessEmailsOpts(ctx context.Context, siteURL string, doc *goquery.Document, body []byte,
+	fetch pageFetcher, o emailFindOptions) []string {
 	base, _ := url.Parse(siteURL)
 
 	host := ""
@@ -359,18 +417,31 @@ func findBusinessEmails(ctx context.Context, siteURL string, doc *goquery.Docume
 	}
 
 	found := emailsOnPage(doc, body)
-	if fetch == nil || base == nil {
+	if fetch == nil || base == nil || o.MaxContactPages <= 0 {
 		return rankEmails(found, host)
 	}
 
-	links := contactPageLinks(doc, base)
+	links := contactPageLinks(doc, base, o.MaxContactPages)
 	if len(links) == 0 {
 		for _, p := range guessedContactPaths {
+			if len(links) == o.MaxContactPages {
+				break
+			}
+
 			links = append(links, base.ResolveReference(&url.URL{Path: p}).String())
 		}
 	}
 
+	sleep := o.Sleep
+	if sleep == nil {
+		sleep = sleepCtx
+	}
+
 	for _, link := range links {
+		if err := sleep(ctx, o.Delay); err != nil {
+			break
+		}
+
 		page, err := fetch(ctx, link)
 		if err != nil {
 			continue

@@ -3,7 +3,11 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
+
+	"github.com/AxioIntel/Axio-CRED/gmaps"
 )
 
 var jobs []Job
@@ -13,7 +17,15 @@ const (
 	StatusWorking = "working"
 	StatusOK      = "ok"
 	StatusFailed  = "failed"
+	// StatusPartial is a job that ran out of its time ("Stop after", or v2's bound) before every
+	// search was done. What it found is kept, as for ok; it is not the same as finishing.
+	StatusPartial = "partial"
 )
+
+// Finished is whether a job's run is over, however it ended.
+func Finished(status string) bool {
+	return status == StatusOK || status == StatusPartial || status == StatusFailed
+}
 
 type SelectParams struct {
 	Status string
@@ -83,6 +95,61 @@ type JobData struct {
 	Proxies      []string      `json:"proxies"`
 	// Grid, when set, runs every search once per square of one area (see grid.go).
 	Grid *GridSpec `json:"grid,omitempty"`
+	// Collector is which collector runs the job: "v1" (the browser, the default; also what an
+	// empty value means, so every job from before this field is v1) or "v2" (steady HTTP).
+	Collector string `json:"collector,omitempty"`
+	// Steady is v2's settings; nil is v2's defaults. Ignored for v1.
+	Steady *SteadySpec `json:"steady,omitempty"`
+	// Tag marks a job the Verify page made: "smoke" or "cmp:<comparison id>".
+	Tag string `json:"tag,omitempty"`
+}
+
+// IsV2 is whether the job runs on collector v2.
+//
+//nolint:gocritic // a value receiver so templates can call it on a job passed by value
+func (d JobData) IsV2() bool { return d.Collector == gmaps.CollectorV2 }
+
+// CollectorName is "v1" or "v2".
+//
+//nolint:gocritic // a value receiver so templates can call it on a job passed by value
+func (d JobData) CollectorName() string {
+	if d.IsV2() {
+		return gmaps.CollectorV2
+	}
+
+	return gmaps.CollectorV1
+}
+
+// SteadySpec is v2's settings as the API and the form carry them: plain numbers.
+type SteadySpec struct {
+	Pages          int  `json:"pages,omitempty"`
+	DelayMs        int  `json:"delay_ms,omitempty"`
+	ContactPages   int  `json:"contact_pages"`
+	NoRedirects    bool `json:"no_redirects,omitempty"`
+	SiteTimeoutSec int  `json:"site_timeout_sec,omitempty"`
+	QueryBudgetSec int  `json:"query_budget_sec,omitempty"`
+	// Retries is how many more times a refused Google request is tried; nil is 1.
+	Retries *int `json:"retries,omitempty"`
+}
+
+// SteadyConfig is the job's v2 settings, defaults filled in.
+func (d *JobData) SteadyConfig() gmaps.SteadyConfig {
+	cfg := gmaps.SteadyConfig{Lang: d.Lang, Retries: gmaps.DefaultSteadyRetries}
+
+	if s := d.Steady; s != nil {
+		cfg.Pages = s.Pages
+		cfg.Delay = time.Duration(s.DelayMs) * time.Millisecond
+		cfg.ContactPages = s.ContactPages
+		cfg.NoRedirects = s.NoRedirects
+		cfg.SiteTimeout = time.Duration(s.SiteTimeoutSec) * time.Second
+		cfg.QueryBudget = time.Duration(s.QueryBudgetSec) * time.Second
+
+		if s.Retries != nil {
+			cfg.Retries = *s.Retries
+		}
+	}
+
+	return cfg.WithDefaults()
 }
 
 func (d *JobData) Validate() error {
@@ -110,5 +177,26 @@ func (d *JobData) Validate() error {
 		return errors.New("missing geo coordinates")
 	}
 
-	return nil
+	return d.validateCollector()
+}
+
+// validateCollector checks the collector choice and v2's settings.
+func (d *JobData) validateCollector() error {
+	switch strings.TrimSpace(d.Collector) {
+	case "", gmaps.CollectorV1:
+		return nil
+	case gmaps.CollectorV2:
+	default:
+		return fmt.Errorf("unknown collector %q: use v1 or v2", d.Collector)
+	}
+
+	if d.Grid != nil {
+		return errors.New("the map grid runs on v1 only")
+	}
+
+	if d.FastMode {
+		return errors.New("fast mode is a v1 setting; v2 is already browserless")
+	}
+
+	return d.SteadyConfig().Validate()
 }

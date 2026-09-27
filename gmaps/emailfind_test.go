@@ -4,9 +4,12 @@ package gmaps
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/stretchr/testify/assert"
@@ -120,7 +123,7 @@ func TestContactPageLinksStayOnTheSiteAndRankContactFirst(t *testing.T) {
 	</body></html>`
 	base := mustURL(t, "https://www.smiledental.com/")
 
-	got := contactPageLinks(pageDoc(t, html), base)
+	got := contactPageLinks(pageDoc(t, html), base, maxContactPages)
 
 	assert.Equal(t, []string{"https://www.smiledental.com/contact", "https://www.smiledental.com/about-us"}, got)
 }
@@ -231,4 +234,75 @@ func TestTheEmailJobFetchesTheSiteDirectlyNotThroughTheBrowser(t *testing.T) {
 
 	job.fetchPage = func(context.Context, string) ([]byte, error) { return nil, errors.New("HTTP 403") }
 	assert.Error(t, job.BrowserActions(context.Background(), nil).Error)
+}
+
+func TestFindBusinessEmailsWithNoContactPagesReadsOnlyTheFrontPage(t *testing.T) {
+	front := `<a href="/contact">Contact</a> <a href="mailto:front@site.com">x</a>`
+
+	var asked []string
+
+	got := findBusinessEmailsOpts(context.Background(), "https://site.com/", pageDoc(t, front), []byte(front),
+		func(_ context.Context, u string) ([]byte, error) {
+			asked = append(asked, u)
+
+			return []byte(`contact@site.com`), nil
+		}, emailFindOptions{})
+
+	assert.Equal(t, []string{"front@site.com"}, got)
+	assert.Empty(t, asked, "no page beyond the front page, and no guessed /contact either")
+}
+
+func TestFindBusinessEmailsWaitsBetweenContactPages(t *testing.T) {
+	front := `<a href="/contact">Contact</a> <a href="/about">About</a>`
+
+	var waits []time.Duration
+
+	findBusinessEmailsOpts(context.Background(), "https://site.com/", pageDoc(t, front), []byte(front),
+		func(context.Context, string) ([]byte, error) { return []byte("x"), nil },
+		emailFindOptions{MaxContactPages: 2, Delay: 3 * time.Second, Sleep: func(_ context.Context, d time.Duration) error {
+			waits = append(waits, d)
+
+			return nil
+		}})
+
+	assert.Equal(t, []time.Duration{3 * time.Second, 3 * time.Second}, waits)
+}
+
+func TestSiteFetcherCanRefuseToFollowRedirects(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			http.Redirect(w, r, "/home", http.StatusMovedPermanently)
+
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<a href="mailto:a@b.com">x</a>`))
+	}))
+	defer srv.Close()
+
+	body, err := newSiteFetcher(time.Second, true)(context.Background(), srv.URL+"/")
+	require.NoError(t, err)
+	assert.Contains(t, string(body), "a@b.com")
+
+	_, err = newSiteFetcher(time.Second, false)(context.Background(), srv.URL+"/")
+	require.Error(t, err)
+	assert.Equal(t, "HTTP 301", err.Error())
+	assert.Equal(t, "redirect", fetchFailReason(err))
+}
+
+func TestFetchFailReason(t *testing.T) {
+	for err, want := range map[error]string{
+		errors.New("HTTP 404"):                    "http_4xx",
+		errors.New("HTTP 503"):                    "http_5xx",
+		errors.New("HTTP 302"):                    "redirect",
+		errors.New("not a page (image/png)"):      "not_html",
+		context.DeadlineExceeded:                  "timeout",
+		errors.New("dial tcp: no such host"):      "other",
+		errors.New("stopped: too many redirects"): "redirect",
+	} {
+		assert.Equal(t, want, fetchFailReason(err), err.Error())
+	}
+
+	assert.Empty(t, fetchFailReason(nil))
 }

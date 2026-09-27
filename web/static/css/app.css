@@ -99,6 +99,7 @@ tr:hover td { background: #141417; }
 .badge-working { color: var(--blue); border-color: rgba(59,130,246,.4); }
 .badge-ok { color: var(--green); border-color: rgba(34,197,94,.4); }
 .badge-failed { color: var(--red); border-color: rgba(239,68,68,.4); }
+.badge-partial { color: var(--amber); border-color: rgba(245,181,61,.55); border-style: dashed; }
 .badge-working::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--blue); margin-right: 6px; animation: pulse 1.2s infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
 
@@ -192,3 +193,29 @@ td input.note { min-width: 160px; }
 .error-text { color: var(--red); }
 .chip-ok { color: var(--green, #22c55e); border-color: rgba(34,197,94,.4); }
 .wa-consent { font-size: 12px; margin-top: 2px; }
+
+/* Collector v1 / v2 */
+.chip-v1 { color: var(--muted); }
+.chip-v2 { color: var(--blue); border-color: rgba(59,130,246,.45); }
+.v2-only { display: none; }
+form.is-v2 .v2-only { display: block; }
+form.is-v2 .v1-only { display: none; }
+
+/* Verify page */
+.verify-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.checks { list-style: none; margin: 10px 0 0; padding: 0; }
+.checks li { display: flex; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.checks li:last-child { border-bottom: 0; }
+.checks .mark { width: 18px; flex: none; font-weight: 700; }
+.checks .pass .mark { color: var(--green); }
+.checks .fail .mark { color: var(--red); }
+.checks .warn .mark { color: var(--amber); }
+.checks .detail { color: var(--muted); margin-left: auto; text-align: right; }
+.verdict { padding: 14px 16px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2); margin: 14px 0; font-weight: 600; }
+.verdict-yes { border-color: rgba(34,197,94,.5); color: var(--green); }
+.verdict-no { border-color: rgba(239,68,68,.5); color: var(--red); }
+.verdict-wait { border-color: rgba(245,181,61,.5); color: var(--amber); }
+.range { color: var(--faint); font-size: 11.5px; margin-left: 4px; }
+.arms { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.arm { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--panel-2); }
+.arm .field { margin-bottom: 8px; }

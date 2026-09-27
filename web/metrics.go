@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/AxioIntel/Axio-CRED/gmaps"
+	"github.com/AxioIntel/Axio-CRED/web/leads"
 )
 
 // The metrics strip at the top of every page: how hard the machine is working, and how fast the
@@ -38,6 +39,7 @@ type hostSample struct {
 type JobProgress struct {
 	ID         string
 	Name       string
+	Collector  string // v1 or v2
 	Searches   int
 	Rows       int
 	Expected   int     // rough: searches x results a search at its depth
@@ -77,6 +79,33 @@ type metricsState struct {
 	lastRow  time.Time
 	notes    []string
 	paused   string
+	// jobRes is the machine's CPU and RAM at each sample while a job ran, by job id, for the
+	// run ledger (TakeJobResources).
+	jobRes map[string][]resSample
+}
+
+type resSample struct{ cpu, mem float64 }
+
+// maxResSamples bounds one job's samples (every 5 s: about 11 hours).
+const maxResSamples = 8000
+
+// TakeJobResources is the machine's CPU and RAM use while a job ran, as p50 and p95 percentages,
+// and forgets them.
+func (s *Server) TakeJobResources(jobID string) (cpuP50, cpuP95, memP50, memP95 float64) {
+	s.metrics.mu.Lock()
+	samples := s.metrics.jobRes[jobID]
+	delete(s.metrics.jobRes, jobID)
+	s.metrics.mu.Unlock()
+
+	cpu := make([]float64, 0, len(samples))
+	mem := make([]float64, 0, len(samples))
+
+	for _, r := range samples {
+		cpu = append(cpu, r.cpu)
+		mem = append(mem, r.mem)
+	}
+
+	return leads.Percentile(cpu, 50), leads.Percentile(cpu, 95), leads.Percentile(mem, 50), leads.Percentile(mem, 95)
 }
 
 // SetPaused shows (or, with "", clears) the lead jobs' pause on the strip.
@@ -170,6 +199,16 @@ func (s *Server) sampleMetrics(ctx context.Context) {
 	m.Notes = append([]string(nil), st.notes...)
 	m.Paused = st.paused
 	st.last = m
+
+	if m.Job != nil && ok {
+		if st.jobRes == nil {
+			st.jobRes = map[string][]resSample{}
+		}
+
+		if len(st.jobRes[m.Job.ID]) < maxResSamples {
+			st.jobRes[m.Job.ID] = append(st.jobRes[m.Job.ID], resSample{cpu: m.CPU, mem: m.Mem})
+		}
+	}
 	st.mu.Unlock()
 }
 
@@ -177,6 +216,10 @@ func (s *Server) sampleMetrics(ctx context.Context) {
 // expectedRows is a rough size for a job: searches x results a search gives at its depth, or for
 // a map grid, squares x the few new listings a square adds once its neighbours overlap.
 func expectedRows(job *Job) int {
+	if job.Data.IsV2() {
+		return len(job.Data.Keywords) * 20 * job.Data.SteadyConfig().Pages
+	}
+
 	if g := job.Data.Grid; g != nil {
 		return len(job.Data.Keywords) * g.Cells * resultsPerCell
 	}
@@ -218,7 +261,7 @@ func (s *Server) jobProgress(job *Job, now time.Time) *JobProgress {
 	}
 
 	p := &JobProgress{
-		ID: job.ID, Name: job.Name, Searches: len(job.Data.Keywords), Rows: rows,
+		ID: job.ID, Name: job.Name, Collector: job.Data.CollectorName(), Searches: len(job.Data.Keywords), Rows: rows,
 		Expected:   expectedRows(job),
 		LastRowAgo: now.Sub(st.lastRow).Truncate(time.Second),
 	}
@@ -290,7 +333,7 @@ var metricsTmpl = template.Must(template.New("metrics").Funcs(template.FuncMap{
 <span class="m" title="Network, all traffic">Net <b>↓{{f0 .NetInKBs}}</b> <b>↑{{f0 .NetOutKBs}}</b> <i>KB/s</i></span>
 {{else}}<span class="m faint">Machine metrics are read on the Linux server only</span>{{end}}
 {{with .Job}}
-<span class="m m-job m-{{.State}}" title="{{.Name}}">▶ <b>{{.Rows}}</b> <i>of ~{{.Expected}} ({{.Percent}}%)</i> · <b>{{f1 .RatePerMin}}</b> <i>/min</i> · ETA <b>{{dur .ETA}}</b> · last <b>{{dur .LastRowAgo}}</b> ago · <span class="state">{{.State}}</span></span>
+<span class="m m-job m-{{.State}}" title="{{.Name}}">▶ <span class="chip chip-{{.Collector}}">{{.Collector}}</span> <b>{{.Rows}}</b> <i>of ~{{.Expected}} ({{.Percent}}%)</i> · <b>{{f1 .RatePerMin}}</b> <i>/min</i> · ETA <b>{{dur .ETA}}</b> · last <b>{{dur .LastRowAgo}}</b> ago · <span class="state">{{.State}}</span></span>
 {{else}}<span class="m faint">No job running</span>{{end}}
 {{if .Pending}}<span class="m" title="Jobs waiting">Queue <b>{{.Pending}}</b></span>{{end}}
 <span class="m{{if .Blocks.Recent}} m-hot{{end}}" title="Pages Google refused in the last 10 minutes; each refusal is retried on another browser and slows new page loads">Google blocks <b>{{.Blocks.Recent}}</b> <i>/10 min · {{.Blocks.Total}} total</i>{{if gt .Blocks.Backoff 0}} · slowed <b>{{dur .Blocks.Backoff}}</b>{{end}}</span>

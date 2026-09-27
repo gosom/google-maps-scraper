@@ -157,6 +157,55 @@ paths:
         '500':
           description: Internal server error
 
+  /api/v1/runs:
+    get:
+      summary: The run ledger's per-search rows for one or more jobs
+      description: >
+        One row per search a job ran, for both collectors. v2 rows carry each search's own timing;
+        v1 rows are read from the job's CSV and carry the job's timing (job_level true).
+      parameters:
+        - name: job
+          in: query
+          required: true
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [json, csv]
+      responses:
+        '200':
+          description: The rows
+        '422':
+          description: No job given
+
+  /api/v1/verify/smoke:
+    get:
+      summary: Each collector's latest smoke check
+      responses:
+        '200':
+          description: The latest smoke check of v1 and of v2, keyed by collector
+
+  /api/v1/verify/compare/{id}:
+    get:
+      summary: A comparison of v1 and v2, with each arm's numbers and the verdict
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The comparison report
+        '404':
+          description: No such comparison
+
 components:
   schemas:
     ApiError:
@@ -198,6 +247,15 @@ components:
           type: array
           items:
             type: string
+        collector:
+          type: string
+          enum: [v1, v2]
+          description: >
+            Which collector runs the job. v1 (the default) is the browser collector. v2 reads
+            Google's results without a browser and visits each website one at a time, a fixed gap
+            apart, with a fixed time limit per search.
+        steady:
+          $ref: '#/components/schemas/SteadySpec'
 
     ApiScrapeResponse:
       type: object
@@ -217,6 +275,8 @@ components:
           format: date-time
         status:
           type: string
+          enum: [pending, working, ok, partial, failed]
+          description: partial is a job that ran out of its time before every search was done; what it found is kept.
         data:
           $ref: '#/components/schemas/JobData'
 
@@ -249,4 +309,48 @@ components:
           type: array
           items:
             type: string
+        collector:
+          type: string
+          enum: [v1, v2]
+          description: >
+            Which collector runs the job. v1 (the default) is the browser collector. v2 reads
+            Google's results without a browser and visits each website one at a time, a fixed gap
+            apart, with a fixed time limit per search.
+        steady:
+          $ref: '#/components/schemas/SteadySpec'
+        tag:
+          type: string
+          description: Set by the Verify page on its jobs ("smoke" or "cmp:<comparison id>").
+
+    SteadySpec:
+      type: object
+      description: Collector v2's settings. Every field is optional; the defaults are shown.
+      properties:
+        pages:
+          type: integer
+          description: Pages of 20 places read per search (1 to 6).
+          default: 1
+        delay_ms:
+          type: integer
+          description: Gap between two websites, two results pages and two searches.
+          default: 1000
+        contact_pages:
+          type: integer
+          description: Contact or about pages read per website after its front page (0 to 4).
+          default: 0
+        no_redirects:
+          type: boolean
+          description: Treat a website that redirects as unreadable instead of following it.
+          default: false
+        site_timeout_sec:
+          type: integer
+          default: 10
+        query_budget_sec:
+          type: integer
+          description: Most time one search may take, websites included (30 to 480).
+          default: 240
+        retries:
+          type: integer
+          description: More tries of a refused Google request, each on the next proxy (0 to 3).
+          default: 1
 

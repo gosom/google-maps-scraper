@@ -53,9 +53,16 @@ func (s *Store) IngestCSV(ctx context.Context, jobID, path string) (int, error) 
 	return len(rows), tx.Commit()
 }
 
-// parseMapsCSV reads the Google Maps scraper's CSV (gmaps.Entry.CsvHeaders) by column name, so a
+// csvTable reads the Google Maps scraper's CSV (gmaps.Entry.CsvHeaders) by column name, so a
 // column added upstream does not shift anything.
-func parseMapsCSV(r io.Reader) ([]Lead, error) {
+type csvTable struct {
+	cr      *csv.Reader
+	col     map[string]int
+	columns int
+}
+
+// newCSVTable reads the header; nil (and no error) for an empty file.
+func newCSVTable(r io.Reader) (*csvTable, error) {
 	cr := csv.NewReader(r)
 	cr.FieldsPerRecord = -1
 	cr.LazyQuotes = true
@@ -74,36 +81,65 @@ func parseMapsCSV(r io.Reader) ([]Lead, error) {
 		col[strings.TrimSpace(strings.TrimPrefix(h, "\ufeff"))] = i
 	}
 
-	get := func(rec []string, name string) string {
-		i, ok := col[name]
-		if !ok || i >= len(rec) {
-			return ""
-		}
+	return &csvTable{cr: cr, col: col, columns: len(header)}, nil
+}
 
-		return strings.TrimSpace(rec[i])
-	}
+// has is whether the file has a column.
+func (m *csvTable) has(name string) bool {
+	_, ok := m.col[name]
 
-	var out []Lead
+	return ok
+}
 
+// next is the next complete row, or io.EOF. A row cut off by a job's time limit (a parse error,
+// or fewer fields than the header) ends the file or is skipped: what came before it is kept.
+func (m *csvTable) next() ([]string, error) {
 	for {
-		rec, err := cr.Read()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-
+		rec, err := m.cr.Read()
 		if err != nil {
-			// A row cut off by a job's time limit ends the file; keep what came before it.
 			var perr *csv.ParseError
 			if errors.As(err, &perr) {
-				break
+				return nil, io.EOF
 			}
 
 			return nil, err
 		}
 
-		// A row shorter than the header was cut off mid-write by the job's time limit.
-		if len(rec) < len(header) {
-			continue
+		if len(rec) >= m.columns {
+			return rec, nil
+		}
+	}
+}
+
+// get is a row's value in a column ("" when the file has no such column).
+func (m *csvTable) get(rec []string, name string) string {
+	i, ok := m.col[name]
+	if !ok || i >= len(rec) {
+		return ""
+	}
+
+	return strings.TrimSpace(rec[i])
+}
+
+// parseMapsCSV reads the scraper's CSV into leads.
+func parseMapsCSV(r io.Reader) ([]Lead, error) {
+	m, err := newCSVTable(r)
+	if m == nil || err != nil {
+		return nil, err
+	}
+
+	get := m.get
+
+	var out []Lead
+
+	for {
+		rec, err := m.next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+
+		if err != nil {
+			return nil, err
 		}
 
 		name := get(rec, "title")

@@ -206,6 +206,71 @@ and 11 minutes for 5,000. A larger listing arrives partial, which AxioIntel neve
 removals, and the next pass finishes it; raising `COLLECTOR_TIMEOUT_SECONDS` past 900 means a
 person pulling such a place is served by Apify first. The review clock follows. Pass `-review-max` to the image as well to keep more than 5,000 per place.
 
+## Lead jobs: collector v1 and v2
+
+The leads dashboard (`leads_dashboard.sh`) runs every lead job on one of two collectors, chosen
+per job in the scrape form's **Collector** field (or `"collector": "v2"` in `POST /api/v1/jobs`).
+Every job in the list carries a `v1` or `v2` chip.
+
+- **v1** is the browser collector the dashboard has always used, and stays the default. It
+  scrolls Google Maps in Chromium and reads places and websites several at a time. Up to four
+  contact pages are read per website.
+- **v2** runs one search at a time with no browser. It reads Google's own results request, 20
+  places a page, through the proxies. It then visits each place's website directly, one after
+  another, a fixed gap apart (1 s by default), front page only unless told otherwise. Each
+  search has a fixed time limit (4 minutes by default, 8 at most). A job therefore never runs
+  longer than its searches times that limit; the job log states the bound when it starts. A
+  search that runs out of time keeps every place it read, and websites it did not reach are
+  marked `skipped_budget`.
+
+Both collectors now write an `email_status` column: `found`, `none`, `no_website`,
+`skipped_social`, `skipped_budget`, or `fetch_failed:<reason>`. The reason is one of `timeout`,
+`redirect`, `http_4xx`, `http_5xx`, `not_html` or `other`. "The site had no address" is now told
+apart from "the site could not be read". A job that runs out of its "Stop after" time now ends
+`partial` instead of `ok`; what it found is kept either way.
+
+### Verifying the collectors (the Verify v1 / v2 page)
+
+- **Smoke check** after every deploy: press "Run smoke check" on the v1 and v2 cards. Each runs
+  one search next in the queue, then checks it end to end. The checks cover:
+  - that it finished `ok` inside its bound;
+  - that every row names its place and its search;
+  - that every place reached the lead list;
+  - that every row has an `email_status`;
+  - that there is one ledger row per search.
+
+  v2 also checks that every search stayed inside its limit and that websites were read one at
+  a time. A red card names the check that failed. `GET /api/v1/verify/smoke` returns the same
+  for a cron job or CI.
+- **Comparison**: pick the searches (30 US-county trade searches are filled in), the runs per
+  collector (3 is enough for a verdict) and each collector's settings, then start it. The jobs
+  go into the queue alternating v1, v2, v1, v2, so both meet the same hours and proxies.
+  - A job stopped by the pause window or AxioIntel's yield is kept but not counted.
+  - "Stop" drops the comparison's queued jobs; the one running finishes.
+
+  The results table shows each collector's medians over its fair runs, with the range. It covers
+  places and unique emails per search, websites with an email, unreadable websites, seconds per
+  search (p50, p95, slowest), wall time against the bound, Google refusals, restarts, stalls, and
+  CPU and RAM. v1's time per search is job-level: its searches run in parallel. Both tables
+  export as CSV.
+- **Verdict**: v2 is judged more predictable when all five of these hold:
+  1. Its p95 search time is at most twice its p50, and every job ended inside its bound.
+  2. It had no partial or failed job, stall or restart.
+  3. Its run-to-run spread of places and emails per search is at most 15% and below v1's.
+  4. Google refused it no more often than v1.
+  5. It found at least 70% of v1's unique emails. If only this fails, the optional "v2 deep" arm
+     (two contact pages per site) is checked against the same bar.
+
+  Until each collector has three fair runs, the page says how many more it needs.
+
+The numbers come from the run ledger in `leads.db`: `search_runs` (one row per search) and
+`job_runs` (one per job). `GET /api/v1/runs?job=<id>` returns a job's rows. Time of day and proxy
+health affect both collectors, so compare runs from the same comparison, not across days.
+
+From the command line, `-collector v2` runs a queries file the same way:
+`-v2-pages`, `-v2-delay`, `-v2-contact-pages`, `-v2-query-budget`, `-v2-site-timeout`,
+`-v2-retries` and `-v2-no-redirects` are its settings. It prints one line per search on stderr.
+
 ## Exit status
 
 `collect.sh` exits `0` when every place was collected and sent, and `1` when any place was

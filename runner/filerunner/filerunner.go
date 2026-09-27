@@ -43,6 +43,11 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		return nil, err
 	}
 
+	// v2 writes its own results and starts no browser.
+	if cfg.Collector == gmaps.CollectorV2 {
+		return ans, nil
+	}
+
 	if err := ans.setWriters(); err != nil {
 		return nil, err
 	}
@@ -74,6 +79,10 @@ func (r *fileRunner) Run(ctx context.Context) (err error) {
 
 		_ = runner.Telemetry().Send(ctx, evt)
 	}()
+
+	if r.cfg.Collector == gmaps.CollectorV2 {
+		return r.runV2(ctx)
+	}
 
 	dedup := deduper.New()
 	exitMonitor := exiter.New()
@@ -142,6 +151,11 @@ func (r *fileRunner) Run(ctx context.Context) (err error) {
 func (r *fileRunner) Close(context.Context) error {
 	if r.app != nil {
 		return r.app.Close()
+	}
+
+	if r.outfile != nil && r.cfg.Collector == gmaps.CollectorV2 {
+		_ = r.outfile.Close()
+		r.outfile = nil
 	}
 
 	if r.input != nil {

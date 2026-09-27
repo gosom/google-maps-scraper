@@ -1,0 +1,300 @@
+{{define "page"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verify v1 / v2 · AxioCRED Leads</title>
+    <link rel="stylesheet" href="/static/css/app.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/htmx/1.9.6/htmx.min.js"></script>
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">Axio<span>CRED</span> Leads</div>
+        <nav class="tabs">
+            <a href="/">Scrape</a>
+            <a href="/leads">Leads</a>
+            <a href="/verify" class="active">Verify v1 / v2</a>
+            <a href="/spec">AxioIntel spec</a>
+        </nav>
+        <div class="spacer"></div>
+        <a class="small-link" href="/api/docs" target="_blank" rel="noopener noreferrer">API</a>
+    </header>
+    <div id="metrics" hx-get="/metrics" hx-trigger="load, every 5s" hx-swap="innerHTML"></div>
+
+    <main class="page">
+        <section class="card">
+            <div class="card-head"><h2>Smoke check</h2><span class="faint">One search through a collector, then checked end to end. Run it after every deploy.</span></div>
+            <div class="card-body">
+                <div class="field" style="max-width:420px">
+                    <label for="smoke-query">Search</label>
+                    <input type="text" id="smoke-query" name="query" value="{{.SmokeQuery}}">
+                </div>
+                <div id="smoke-cards" hx-get="/verify/smoke" hx-trigger="every 10s" hx-swap="innerHTML">
+                    {{template "smoke" .Smoke}}
+                </div>
+            </div>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+            <div class="card-head"><h2>Compare v1 and v2</h2><span class="faint">The same searches through each collector, taking turns in the queue, several times over.</span></div>
+            <div class="card-body">
+                <div id="compare-error" class="error-message"></div>
+                <form id="compare-form" hx-post="/verify/compare" hx-swap="none"
+                      hx-on::before-request="document.getElementById('compare-error').innerHTML = ''"
+                      hx-on::after-request="if(!event.detail.successful) { document.getElementById('compare-error').innerHTML = event.detail.xhr.responseText }">
+                    <div class="row2">
+                        <div class="field">
+                            <label for="cmp-name">Name <span class="opt">(optional)</span></label>
+                            <input type="text" id="cmp-name" name="name" placeholder="30 searches × 3 runs">
+                        </div>
+                        <div class="row2">
+                            <div class="field">
+                                <label for="cmp-runs">Runs per collector</label>
+                                <select id="cmp-runs" name="runs">
+                                    <option value="1">1 (a quick look)</option>
+                                    <option value="2">2</option>
+                                    <option value="3" selected>3 (enough for a verdict)</option>
+                                    <option value="5">5</option>
+                                </select>
+                            </div>
+                            <div class="field">
+                                <label for="cmp-maxtime">Stop each job after</label>
+                                <select id="cmp-maxtime" name="maxtime">
+                                    <option value="1h">1 hour</option>
+                                    <option value="2h">2 hours</option>
+                                    <option value="3h" selected>3 hours</option>
+                                    <option value="6h">6 hours</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="field">
+                        <label for="cmp-queries">Searches</label>
+                        <textarea id="cmp-queries" name="queries" rows="7">{{.Queries}}</textarea>
+                        <label class="check"><input type="checkbox" name="save_queries"> Keep this list as the default</label>
+                    </div>
+
+                    <div class="arms">
+                        <div class="arm">
+                            <div><strong>v1</strong> <span class="chip chip-v1">browser</span></div>
+                            <div class="field">
+                                <label for="v1_depth">Results per search</label>
+                                <select id="v1_depth" name="v1_depth">
+                                    <option value="1">~20</option>
+                                    <option value="5" selected>~60</option>
+                                    <option value="10">~120</option>
+                                </select>
+                            </div>
+                            <p class="hint">Front page plus up to 4 contact pages per website, as v1 always does.</p>
+                        </div>
+                        <div class="arm">
+                            <div><strong>v2</strong> <span class="chip chip-v2">steady HTTP</span></div>
+                            <div class="row2">
+                                <div class="field">
+                                    <label for="v2_pages">Places</label>
+                                    <select id="v2_pages" name="v2_pages">
+                                        <option value="1">~20</option>
+                                        <option value="3" selected>~60</option>
+                                        <option value="6">~120</option>
+                                    </select>
+                                </div>
+                                <div class="field">
+                                    <label for="v2_contact_pages">Website pages</label>
+                                    <select id="v2_contact_pages" name="v2_contact_pages">
+                                        <option value="0" selected>Front page</option>
+                                        <option value="1">+1</option>
+                                        <option value="2">+2</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="row2">
+                                <div class="field">
+                                    <label for="v2_delay_ms">Gap</label>
+                                    <select id="v2_delay_ms" name="v2_delay_ms">
+                                        <option value="500">0.5 s</option>
+                                        <option value="1000" selected>1 s</option>
+                                        <option value="2000">2 s</option>
+                                    </select>
+                                </div>
+                                <div class="field">
+                                    <label for="v2_query_budget_sec">Per search</label>
+                                    <select id="v2_query_budget_sec" name="v2_query_budget_sec">
+                                        <option value="120">2 min</option>
+                                        <option value="240" selected>4 min</option>
+                                        <option value="480">8 min</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <input type="hidden" name="v2_site_timeout_sec" value="10">
+                            <input type="hidden" name="v2_retries" value="1">
+                            <label class="check"><input type="checkbox" name="v2_follow_redirects" checked> Follow website redirects</label>
+                        </div>
+                        <div class="arm">
+                            <div><strong>v2 deep</strong> <span class="opt faint">(optional)</span></div>
+                            <label class="check"><input type="checkbox" name="arm_v2_deep"> Also run v2 reading 2 contact pages per website</label>
+                            <p class="hint">Shows what front-page-only costs in emails. Adds one more job per run.</p>
+                        </div>
+                    </div>
+
+                    <p class="hint">Jobs run in the order v1, v2{{/* , v2 deep */}}, v1, v2 … so each collector meets the same hours and proxies. A job stopped by the pause window or AxioIntel's yield is kept but not counted.</p>
+                    <button type="submit" class="btn btn-primary">▶ Start comparison</button>
+                </form>
+            </div>
+        </section>
+
+        {{if .Comparisons}}
+        <section class="card" style="margin-top:16px">
+            <div class="card-head"><h2>Comparisons</h2></div>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>Name</th><th>Started</th><th>Progress</th><th></th></tr></thead>
+                    <tbody>
+                    {{range .Comparisons}}
+                        <tr>
+                            <td><a href="/verify?c={{.ID}}">{{.Name}}</a></td>
+                            <td class="nowrap muted">{{.CreatedAt.Format "Jan 2, 15:04"}} UTC</td>
+                            <td>{{.Done}} of {{.Total}} jobs{{if .Stopped}} · <span class="badge badge-failed">stopped</span>{{else if .Ended}} · <span class="badge badge-ok">done</span>{{end}}</td>
+                            <td><a class="btn btn-sm" href="/verify?c={{.ID}}">Open</a></td>
+                        </tr>
+                    {{end}}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+        {{end}}
+
+        {{with .Selected}}
+        <section class="card" style="margin-top:16px">
+            <div id="report" {{if not .Ended}}hx-get="/verify/compare/{{.ID}}" hx-trigger="every 15s" hx-swap="innerHTML"{{end}}>
+                {{template "report" .}}
+            </div>
+        </section>
+        {{end}}
+    </main>
+</body>
+</html>{{end}}
+
+{{define "smoke"}}
+<div class="verify-grid">
+{{range .}}
+    <div class="arm">
+        <div style="display:flex;align-items:center;gap:8px">
+            <strong>{{.Collector}}</strong>
+            <span class="chip chip-{{.Collector}}">{{if eq .Collector "v2"}}steady HTTP{{else}}browser{{end}}</span>
+            <span class="spacer" style="flex:1"></span>
+            {{if .Running}}
+                <span class="badge badge-{{.Running.Status}}">{{.Running.Status}}</span>
+            {{else}}
+                <button class="btn btn-sm" hx-post="/verify/smoke/{{.Collector}}" hx-include="#smoke-query" hx-target="#smoke-cards" hx-swap="innerHTML">Run smoke check</button>
+            {{end}}
+        </div>
+        {{with .Last}}
+            <div class="verdict {{if .Passed}}verdict-yes{{else}}verdict-no{{end}}" style="margin:10px 0 0">
+                {{if .Passed}}✓ Passed{{else}}✗ Failed{{end}} <span class="faint">· {{.At.Format "Jan 2, 15:04"}} UTC</span>
+            </div>
+            <ul class="checks">
+            {{range .Checks}}
+                <li class="{{.Result}}"><span class="mark">{{if eq .Result "pass"}}✓{{else if eq .Result "warn"}}!{{else}}✗{{end}}</span><span>{{.Name}}</span><span class="detail">{{.Detail}}</span></li>
+            {{end}}
+            </ul>
+        {{else}}
+            <p class="hint">Not run yet.</p>
+        {{end}}
+    </div>
+{{end}}
+</div>
+{{end}}
+
+{{define "report"}}
+<div class="card-head">
+    <h2>{{.Name}}</h2>
+    <span class="faint">{{.Queries}} searches · {{.RunsPerArm}} run(s) per collector · {{.Done}} of {{.Total}} jobs finished</span>
+    <span class="spacer" style="flex:1"></span>
+    {{if and (not .Ended) (not .Stopped)}}
+        <button class="btn btn-sm btn-danger" hx-post="/verify/compare/{{.ID}}/stop" hx-target="#report" hx-swap="innerHTML"
+                hx-confirm="Stop this comparison? Its queued jobs are dropped; the one running now finishes.">Stop</button>
+    {{end}}
+    <a class="btn btn-sm" href="/verify/compare/{{.ID}}/export?table=summary">Export runs CSV</a>
+    <a class="btn btn-sm" href="/verify/compare/{{.ID}}/export?table=searches">Export searches CSV</a>
+</div>
+<div class="card-body">
+    {{with .Verdict}}{{if .Outcome}}
+    <div class="verdict verdict-{{.Outcome}}">{{.Headline}}</div>
+    <ul class="checks">
+        {{range $i, $c := .Criteria}}
+        <li class="{{if $c.Passed}}pass{{else}}fail{{end}}"><span class="mark">{{if $c.Passed}}✓{{else}}✗{{end}}</span><span>{{add $i 1}}. {{$c.Name}}</span><span class="detail">{{$c.Measured}}</span></li>
+        {{end}}
+    </ul>
+    {{end}}{{end}}
+
+    <div class="table-wrap" style="margin-top:14px">
+        <table>
+            <thead>
+                <tr><th>Median over fair runs <span class="range">(min–max)</span></th>{{range $i, $a := .Arms}}<th>{{$a.Name}}<div class="faint" style="text-transform:none;font-weight:400">{{$a.Label}}</div></th>{{end}}</tr>
+            </thead>
+            <tbody>
+                <tr><td>Fair runs · still to run</td>{{range .Summaries}}<td>{{.FairRuns}} · {{.PendingRuns}}</td>{{end}}</tr>
+                <tr><td>Jobs ok · partial · failed</td>{{range .Summaries}}<td>{{.OK}} · {{.Partial}} · {{.Failed}}</td>{{end}}</tr>
+                <tr><td>Places per search</td>{{range .Summaries}}<td>{{stat .Leads 1}} <span class="range">spread {{pct .LeadsCV}}</span></td>{{end}}</tr>
+                <tr><td>Unique emails per search</td>{{range .Summaries}}<td>{{stat .Emails 2}} <span class="range">spread {{pct .EmailsCV}}</span></td>{{end}}</tr>
+                <tr><td>Unique emails per run</td>{{range .Summaries}}<td>{{stat .UniqueEmails 0}}</td>{{end}}</tr>
+                <tr><td>Websites with an email</td>{{range .Summaries}}<td>{{statPct .HitRate}}</td>{{end}}</tr>
+                <tr><td>Websites that could not be read</td>{{range .Summaries}}<td>{{statPct .FetchFail}}</td>{{end}}</tr>
+                <tr><td>Seconds per search · p50</td>{{range .Summaries}}<td>{{stat .SearchP50 1}}{{if .JobLevel}} <span class="range">job-level</span>{{end}}</td>{{end}}</tr>
+                <tr><td>Seconds per search · p95</td>{{range .Summaries}}<td>{{stat .SearchP95 1}}</td>{{end}}</tr>
+                <tr><td>Seconds per search · slowest</td>{{range .Summaries}}<td>{{stat .SearchMax 1}}</td>{{end}}</tr>
+                <tr><td>Job wall time (s)</td>{{range .Summaries}}<td>{{stat .Wall 0}} <span class="range">{{if .AllInBound}}inside bound{{else}}past bound{{end}}</span></td>{{end}}</tr>
+                <tr><td>Google refusals per search</td>{{range .Summaries}}<td>{{stat .Blocks 2}}</td>{{end}}</tr>
+                <tr><td>Restarts · stalls</td>{{range .Summaries}}<td>{{.Restarts}} · {{.Stalls}}</td>{{end}}</tr>
+                <tr><td>CPU p95 · RAM p95 (%)</td>{{range .Summaries}}<td>{{stat .CPUP95 0}} · {{stat .MemP95 0}}</td>{{end}}</tr>
+            </tbody>
+        </table>
+    </div>
+
+    <details class="section" style="margin-top:14px">
+        <summary>Every run</summary>
+        <div class="section-body table-wrap">
+            <table>
+                <thead><tr><th>Arm</th><th>Run</th><th>Status</th><th class="num">Places</th><th class="num">Emails</th><th class="num">s / search p50 · p95</th><th class="num">Wall · bound (s)</th><th class="num">Refusals</th><th></th></tr></thead>
+                <tbody>
+                {{range .Summaries}}{{range .Runs}}
+                    <tr>
+                        <td>{{.Arm}}</td><td>{{.RunNo}}</td>
+                        <td><span class="badge badge-{{.Status}}">{{.Status}}</span>{{if .Discarded}} <span class="chip" title="Stopped by the pause window or AxioIntel's yield: not counted">not counted</span>{{end}}</td>
+                        <td class="num">{{.Places}}</td><td class="num">{{.UniqueEmails}}</td>
+                        <td class="num">{{f1 .SearchP50}} · {{f1 .SearchP95}}{{if .JobLevelTiming}} <span class="range">job-level</span>{{end}}</td>
+                        <td class="num">{{f1 .WallSeconds}} · {{f1 .BoundSeconds}}</td>
+                        <td class="num">{{.Blocks}}</td>
+                        <td>{{if gt .Places 0}}<a class="btn btn-sm" href="/leads?job={{.JobID}}">Leads</a>{{end}}</td>
+                    </tr>
+                {{end}}{{end}}
+                </tbody>
+            </table>
+        </div>
+    </details>
+
+    {{if .Searches}}
+    <details class="section">
+        <summary>Every search ({{len .Searches}})</summary>
+        <div class="section-body table-wrap">
+            <table>
+                <thead><tr><th>Arm</th><th>Run</th><th>Search</th><th>Status</th><th class="num">Places</th><th class="num">Sites</th><th class="num">Found · none · failed · skipped</th><th class="num">Seconds</th></tr></thead>
+                <tbody>
+                {{range .Searches}}
+                    <tr>
+                        <td>{{.Arm}}</td><td>{{.RunNo}}</td><td>{{.Search}}{{if .Error}}<div class="faint">{{.Error}}</div>{{end}}</td>
+                        <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
+                        <td class="num">{{.PlacesFound}}{{if .Duplicates}} <span class="range">+{{.Duplicates}} seen</span>{{end}}</td>
+                        <td class="num">{{.Websites}}</td>
+                        <td class="num">{{.EmailsFound}} · {{.EmailNone}} · {{.EmailFetchFailed}} · {{.EmailSkipped}}</td>
+                        <td class="num">{{if .JobLevel}}<span class="range">job-level</span>{{else}}{{f1 .Seconds}}{{end}}</td>
+                    </tr>
+                {{end}}
+                </tbody>
+            </table>
+        </div>
+    </details>
+    {{end}}
+</div>
+{{end}}

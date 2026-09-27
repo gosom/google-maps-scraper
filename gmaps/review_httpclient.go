@@ -26,9 +26,13 @@ func (azuretlsTransport) do(ctx context.Context, id *reviewIdentity, url string)
 		s.SetTimeout(reviewHTTPTimeout)
 
 		s.UserAgent = id.userAgent
-		if err := s.SetProxy(id.proxy); err != nil {
-			s.Close()
-			return rpcResponse{}, err
+		// An identity without a proxy is the machine's own address (collector v2 without
+		// proxies); the review route never makes one.
+		if id.proxy != "" {
+			if err := s.SetProxy(id.proxy); err != nil {
+				s.Close()
+				return rpcResponse{}, err
+			}
 		}
 
 		id.session = s

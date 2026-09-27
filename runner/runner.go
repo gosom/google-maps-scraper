@@ -16,6 +16,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"golang.org/x/term"
 
+	"github.com/AxioIntel/Axio-CRED/gmaps"
 	"github.com/AxioIntel/Axio-CRED/internal/proxyconfig"
 	"github.com/AxioIntel/Axio-CRED/s3uploader"
 	"github.com/AxioIntel/Axio-CRED/tlmt"
@@ -97,7 +98,13 @@ type Config struct {
 	// results-per-search limit imposed by Google Maps.
 	GridBBox   string  // "minLat,minLon,maxLat,maxLon"
 	GridCellKm float64 // size of each grid cell in km (default: 1.0)
-	Version    bool
+
+	// Collector is "v1" (the browser, the default) or "v2" (steady HTTP, see gmaps/steady.go), for
+	// the file runner; dashboard jobs each choose their own.
+	Collector string
+	// Steady is v2's settings (the -v2-* flags).
+	Steady  gmaps.SteadyConfig
+	Version bool
 }
 
 //nolint:gocyclo // The cyclomatic complexity of this function is high due to the number of configuration options and validations.
@@ -115,7 +122,7 @@ func ParseConfig() *Config {
 		proxiesFile string
 	)
 
-	flag.IntVar(&cfg.Concurrency, "c", min(runtime.NumCPU()/2, 1), "sets the concurrency [default: half of CPU cores]")
+	flag.IntVar(&cfg.Concurrency, "c", max(runtime.NumCPU()/2, 1), "sets the concurrency [default: half of CPU cores]")
 	flag.StringVar(&cfg.CacheDir, "cache", "cache", "sets the cache directory [no effect at the moment]")
 	flag.IntVar(&cfg.MaxDepth, "depth", 10, "maximum scroll depth in search results [default: 10]")
 	flag.StringVar(&cfg.ResultsFile, "results", "stdout", "path to the results file [default: stdout]")
@@ -157,6 +164,14 @@ func ParseConfig() *Config {
 	flag.DurationVar(&cfg.ReviewPageDelay, "review-page-delay", 0, "pause between two review pages [default: 500ms]")
 	flag.BoolVar(&cfg.ReviewNewest, "review-newest", false, "read only the reviews the listing shows sorted by Newest, skipping the RPC stages")
 	flag.BoolVar(&cfg.Version, "version", false, "returns the version of the tool")
+	flag.StringVar(&cfg.Collector, "collector", gmaps.CollectorV1, "v1 (browser) or v2 (steady HTTP: one search and one website at a time, each search inside a fixed time)")
+	flag.IntVar(&cfg.Steady.Pages, "v2-pages", 1, "v2: pages of 20 places read per search")
+	flag.DurationVar(&cfg.Steady.Delay, "v2-delay", gmaps.DefaultSteadyDelay, "v2: gap between two websites, two results pages and two searches")
+	flag.IntVar(&cfg.Steady.ContactPages, "v2-contact-pages", 0, "v2: contact/about pages read per website after its front page")
+	flag.BoolVar(&cfg.Steady.NoRedirects, "v2-no-redirects", false, "v2: treat a website that redirects as unreadable")
+	flag.DurationVar(&cfg.Steady.SiteTimeout, "v2-site-timeout", gmaps.DefaultSteadySiteTimeout, "v2: timeout for one website page")
+	flag.DurationVar(&cfg.Steady.QueryBudget, "v2-query-budget", gmaps.DefaultSteadyQueryBudget, "v2: most time one search may take, websites included")
+	flag.IntVar(&cfg.Steady.Retries, "v2-retries", gmaps.DefaultSteadyRetries, "v2: more tries of a refused Google request, each on the next proxy")
 
 	flag.Parse()
 
@@ -220,6 +235,22 @@ func ParseConfig() *Config {
 
 	if cfg.Dsn == "" && cfg.ProduceOnly {
 		panic("Dsn must be provided when using ProduceOnly")
+	}
+
+	cfg.Steady.Lang = cfg.LangCode
+
+	switch cfg.Collector {
+	case gmaps.CollectorV1:
+	case gmaps.CollectorV2:
+		if err := cfg.Steady.WithDefaults().Validate(); err != nil {
+			panic(err)
+		}
+
+		if cfg.GridBBox != "" || cfg.FastMode {
+			panic("-collector v2 cannot be used with -grid-bbox or -fast-mode")
+		}
+	default:
+		panic("-collector must be v1 or v2")
 	}
 
 	resolvedProxies, err := proxyconfig.Resolve(proxies, proxiesFile)

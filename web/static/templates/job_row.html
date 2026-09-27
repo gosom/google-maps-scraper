@@ -1,6 +1,6 @@
 <tr>
     <td>
-        <div><strong>{{.Name}}</strong></div>
+        <div><strong>{{.Name}}</strong> <span class="chip chip-{{.Data.CollectorName}}" title="Which collector runs this job">{{.Data.CollectorName}}</span></div>
         <div class="faint">{{len .Data.Keywords}} search{{if ne (len .Data.Keywords) 1}}es{{end}}{{if .Data.Email}} · emails{{end}}</div>
     </td>
     <td class="nowrap muted">{{.Date.Format "Jan 2, 15:04"}} UTC</td>
