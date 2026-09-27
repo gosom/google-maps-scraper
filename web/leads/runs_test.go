@@ -108,7 +108,7 @@ func TestV2SearchRunsAndTheJobRunRoundTrip(t *testing.T) {
 	require.Error(t, s.BumpJobRun(ctx, "j2", "nonsense"))
 
 	require.NoError(t, s.FinishJobRun(ctx, &JobRun{JobID: "j2", FinishedAt: at.Add(8 * time.Minute), Status: "ok",
-		Blocks: 3, CPUP50: 20, CPUP95: 55, MemP50: 40, MemP95: 61}))
+		Blocks: 3, UniqueEmails: 14, CPUP50: 20, CPUP95: 55, MemP50: 40, MemP95: 61}))
 
 	jr, err := s.JobRuns(ctx, "j2", "missing")
 	require.NoError(t, err)
@@ -122,6 +122,7 @@ func TestV2SearchRunsAndTheJobRunRoundTrip(t *testing.T) {
 	assert.Equal(t, 1, got.Stalls)
 	assert.Equal(t, 1, got.Restarts)
 	assert.True(t, got.Discarded)
+	assert.Equal(t, 14, got.UniqueEmails)
 	assert.Equal(t, 55.0, got.CPUP95)
 
 	// A new attempt starts clean: its search rows go, its counters stay.
@@ -134,6 +135,7 @@ func TestV2SearchRunsAndTheJobRunRoundTrip(t *testing.T) {
 	jr, err = s.JobRuns(ctx, "j2")
 	require.NoError(t, err)
 	assert.Equal(t, 1, jr["j2"].Restarts)
+	assert.False(t, jr["j2"].Discarded, "the rerun after a pause runs every search again: it counts")
 
 	require.Error(t, s.FinishJobRun(ctx, &JobRun{JobID: "never-started"}))
 }
@@ -181,4 +183,22 @@ func TestComparisonsSmokeChecksAndSettingsRoundTrip(t *testing.T) {
 	v, err = s.Setting(ctx, "queries")
 	require.NoError(t, err)
 	assert.Equal(t, "c", v)
+}
+
+func TestAJobsEmailsAreCountedFromItsOwnCSV(t *testing.T) {
+	_, dir := newStore(t)
+
+	path := writeFile(t, dir, "e.csv", statusCSV+strings.Join([]string{
+		statusRow("a", "A", "P1", "https://a.com", "x@a.com, y@a.com", gmaps.EmailFound),
+		statusRow("b", "B", "P2", "https://b.com", "x@a.com", gmaps.EmailFound),
+		statusRow("b", "C", "P3", "https://c.com", "", gmaps.EmailNone),
+	}, "\n")+"\n")
+
+	n, err := CountCSVEmails(path)
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+
+	n, err = CountCSVEmails(dir + "/missing.csv")
+	require.NoError(t, err)
+	assert.Zero(t, n)
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/AxioIntel/Axio-CRED/gmaps"
@@ -182,7 +181,7 @@ func (d *JobData) Validate() error {
 
 // validateCollector checks the collector choice and v2's settings.
 func (d *JobData) validateCollector() error {
-	switch strings.TrimSpace(d.Collector) {
+	switch d.Collector {
 	case "", gmaps.CollectorV1:
 		return nil
 	case gmaps.CollectorV2:

@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS job_runs (
 	restarts INTEGER NOT NULL DEFAULT 0,
 	stalls INTEGER NOT NULL DEFAULT 0,
 	discarded INTEGER NOT NULL DEFAULT 0,
+	unique_emails INTEGER NOT NULL DEFAULT 0,
 	cpu_p50 REAL NOT NULL DEFAULT 0,
 	cpu_p95 REAL NOT NULL DEFAULT 0,
 	mem_p50 REAL NOT NULL DEFAULT 0,
@@ -158,6 +159,24 @@ func (s *Store) RecordRunsFromCSV(ctx context.Context, jobID, csvPath string, se
 type csvRun struct {
 	run    gmaps.SearchRun
 	emails map[string]bool
+}
+
+// CountCSVEmails is how many distinct email addresses a job's CSV holds (0 for no file).
+func CountCSVEmails(csvPath string) (int, error) {
+	counts, err := countCSVRuns(csvPath)
+	if err != nil {
+		return 0, err
+	}
+
+	all := map[string]bool{}
+
+	for _, c := range counts {
+		for e := range c.emails {
+			all[e] = true
+		}
+	}
+
+	return len(all), nil
 }
 
 // countCSVRuns tallies a job CSV per search.
@@ -311,18 +330,22 @@ type JobRun struct {
 	Restarts   int  // times a restart cut it off
 	Stalls     int  // times the watchdog stopped it
 	Discarded  bool // interrupted by the pause window or AxioIntel's yield: not a fair sample
-	CPUP50     float64
-	CPUP95     float64
-	MemP50     float64
-	MemP95     float64
+	// UniqueEmails are the distinct addresses in the job's own CSV. Not the lead list's: a lead
+	// keeps the emails any job found, so it would credit one collector with another's.
+	UniqueEmails int
+	CPUP50       float64
+	CPUP95       float64
+	MemP50       float64
+	MemP95       float64
 }
 
 // Seconds is how long the job ran.
 func (j *JobRun) Seconds() float64 { return j.FinishedAt.Sub(j.StartedAt).Seconds() }
 
-// StartJobRun records that a job's run began, keeping its restart, stall and discard counts from
-// any earlier attempt. The earlier attempt's search rows are dropped: the ledger holds the job's
-// last run, the one its CSV and status describe.
+// StartJobRun records that a job's run began, keeping its restart and stall counts from any
+// earlier attempt. The earlier attempt's search rows are dropped, and so is its "discarded" mark:
+// a job the pause window or yield stopped runs again from its first search, and that run is
+// whole. The ledger holds the job's last run, the one its CSV and status describe.
 func (s *Store) StartJobRun(ctx context.Context, jobID, collector string, searches int, bound time.Duration,
 	at time.Time) error {
 	if _, err := s.db.ExecContext(ctx, "DELETE FROM search_runs WHERE job_id = ?", jobID); err != nil {
@@ -332,7 +355,8 @@ func (s *Store) StartJobRun(ctx context.Context, jobID, collector string, search
 	_, err := s.db.ExecContext(ctx, `INSERT INTO job_runs (job_id, collector, started_at, searches, bound_ms, status)
 VALUES (?, ?, ?, ?, ?, 'working')
 ON CONFLICT (job_id) DO UPDATE SET collector = excluded.collector, started_at = excluded.started_at,
-	searches = excluded.searches, bound_ms = excluded.bound_ms, status = 'working', finished_at = 0`,
+	searches = excluded.searches, bound_ms = excluded.bound_ms, status = 'working', finished_at = 0,
+	discarded = 0`,
 		jobID, collector, at.UnixMilli(), searches, bound.Milliseconds())
 
 	return err
@@ -340,9 +364,9 @@ ON CONFLICT (job_id) DO UPDATE SET collector = excluded.collector, started_at = 
 
 // FinishJobRun records how a job's run ended.
 func (s *Store) FinishJobRun(ctx context.Context, j *JobRun) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE job_runs SET finished_at = ?, status = ?, blocks = ?, cpu_p50 = ?,
-	cpu_p95 = ?, mem_p50 = ?, mem_p95 = ? WHERE job_id = ?`,
-		j.FinishedAt.UnixMilli(), j.Status, j.Blocks, j.CPUP50, j.CPUP95, j.MemP50, j.MemP95, j.JobID)
+	res, err := s.db.ExecContext(ctx, `UPDATE job_runs SET finished_at = ?, status = ?, blocks = ?,
+	unique_emails = ?, cpu_p50 = ?, cpu_p95 = ?, mem_p50 = ?, mem_p95 = ? WHERE job_id = ?`,
+		j.FinishedAt.UnixMilli(), j.Status, j.Blocks, j.UniqueEmails, j.CPUP50, j.CPUP95, j.MemP50, j.MemP95, j.JobID)
 	if err != nil {
 		return err
 	}
@@ -396,7 +420,7 @@ func (s *Store) JobRuns(ctx context.Context, jobIDs ...string) (map[string]JobRu
 
 	//nolint:gosec // only "?" placeholders are added to the query
 	query := `SELECT job_id, collector, started_at, finished_at, status, searches,
-	bound_ms, blocks, restarts, stalls, discarded, cpu_p50, cpu_p95, mem_p50, mem_p95
+	bound_ms, blocks, restarts, stalls, discarded, unique_emails, cpu_p50, cpu_p95, mem_p50, mem_p95
 FROM job_runs WHERE job_id IN (` + placeholders(len(jobIDs)) + `)`
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -414,7 +438,8 @@ FROM job_runs WHERE job_id IN (` + placeholders(len(jobIDs)) + `)`
 		)
 
 		if err := rows.Scan(&j.JobID, &j.Collector, &started, &finished, &j.Status, &j.Searches, &boundMs,
-			&j.Blocks, &j.Restarts, &j.Stalls, &discarded, &j.CPUP50, &j.CPUP95, &j.MemP50, &j.MemP95); err != nil {
+			&j.Blocks, &j.Restarts, &j.Stalls, &discarded, &j.UniqueEmails, &j.CPUP50, &j.CPUP95, &j.MemP50,
+			&j.MemP95); err != nil {
 			return nil, err
 		}
 
@@ -426,33 +451,6 @@ FROM job_runs WHERE job_id IN (` + placeholders(len(jobIDs)) + `)`
 		j.Bound = time.Duration(boundMs) * time.Millisecond
 		j.Discarded = discarded == 1
 		out[j.JobID] = j
-	}
-
-	return out, rows.Err()
-}
-
-// JobEmails are the distinct email addresses of the leads a job found.
-func (s *Store) JobEmails(ctx context.Context, jobID string) (map[string]bool, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT l.emails FROM leads l JOIN lead_jobs j ON j.lead_id = l.id
-WHERE j.job_id = ? AND l.emails <> ''`, jobID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	out := map[string]bool{}
-
-	for rows.Next() {
-		var emails string
-		if err := rows.Scan(&emails); err != nil {
-			return nil, err
-		}
-
-		for _, e := range strings.Split(emails, ";") {
-			if e = strings.TrimSpace(e); e != "" {
-				out[e] = true
-			}
-		}
 	}
 
 	return out, rows.Err()

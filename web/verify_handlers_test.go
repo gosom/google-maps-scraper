@@ -161,6 +161,10 @@ func TestJobDataValidatesTheCollector(t *testing.T) {
 	bad := base
 	bad.Collector = "v9"
 	require.Error(t, bad.Validate())
+
+	padded := base
+	padded.Collector = "v2 "
+	require.Error(t, padded.Validate(), "validated as v2 but run as v1 would be a silent surprise")
 }
 
 func TestTheVerifyPageRendersEmptyAndWithAComparison(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
@@ -460,4 +461,38 @@ func TestSteadyConfigDefaultsLimitsAndBound(t *testing.T) {
 	}
 
 	assert.Equal(t, 10*(4*time.Minute+time.Second)+time.Minute, cfg.JobBound(10))
+}
+
+// One identity serves many searches, each with its own context: a session made during the first
+// search must still work after that search's context has ended.
+func TestAnIdentityOutlivesTheSearchThatOpenedIt(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+
+	id := &reviewIdentity{userAgent: reviewUserAgents[0]}
+	defer func() {
+		if id.session != nil {
+			id.session.Close()
+		}
+	}()
+
+	first, cancel := context.WithCancel(context.Background())
+
+	resp, err := azuretlsTransport{}.do(first, id, srv.URL)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.Status)
+
+	cancel() // the first search is over
+
+	resp, err = azuretlsTransport{}.do(context.Background(), id, srv.URL)
+	require.NoError(t, err, "the second search reuses the identity")
+	assert.Equal(t, "ok", string(resp.Body))
+
+	ended, stop := context.WithCancel(context.Background())
+	stop()
+
+	_, err = azuretlsTransport{}.do(ended, id, srv.URL)
+	assert.Error(t, err, "a request still ends with its own search's context")
 }

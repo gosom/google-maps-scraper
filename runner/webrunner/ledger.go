@@ -60,11 +60,18 @@ func (w *webrunner) finishLedger(ctx context.Context, job *web.Job) {
 		run.CPUP50, run.CPUP95, run.MemP50, run.MemP95 = w.srv.TakeJobResources(job.ID)
 	}
 
+	csvPath := filepath.Join(w.cfg.DataFolder, job.ID+".csv")
+
+	emails, err := leads.CountCSVEmails(csvPath)
+	if err != nil {
+		log.Printf("job %s: counting its emails: %v", job.ID, err)
+	}
+
+	run.UniqueEmails = emails
+
 	if err := w.leads.FinishJobRun(ctx, &run); err != nil {
 		log.Printf("job %s: recording its end: %v", job.ID, err)
 	}
-
-	csvPath := filepath.Join(w.cfg.DataFolder, job.ID+".csv")
 
 	if !job.Data.IsV2() {
 		if err := w.leads.RecordRunsFromCSV(ctx, job.ID, csvPath, job.Data.Keywords, start.started, finished); err != nil {

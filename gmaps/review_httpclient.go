@@ -22,7 +22,10 @@ type azuretlsTransport struct{}
 
 func (azuretlsTransport) do(ctx context.Context, id *reviewIdentity, url string) (rpcResponse, error) {
 	if id.session == nil {
-		s := azuretls.NewSessionWithContext(ctx)
+		// The session outlives this request: an identity is reused across requests (and, for
+		// collector v2, across searches, each with its own context). Built on ctx itself, every
+		// later request on it would fail once ctx ended.
+		s := azuretls.NewSessionWithContext(context.WithoutCancel(ctx))
 		s.SetTimeout(reviewHTTPTimeout)
 
 		s.UserAgent = id.userAgent
@@ -38,7 +41,7 @@ func (azuretlsTransport) do(ctx context.Context, id *reviewIdentity, url string)
 		id.session = s
 	}
 
-	resp, err := id.session.Do(&azuretls.Request{
+	req := &azuretls.Request{
 		Method:           "GET",
 		Url:              url,
 		DisableRedirects: true,
@@ -49,7 +52,11 @@ func (azuretlsTransport) do(ctx context.Context, id *reviewIdentity, url string)
 			{"referer", "https://www.google.com/maps/"},
 			{"user-agent", id.userAgent},
 		},
-	})
+	}
+	// This request ends with its own context (a search's time limit), not the session's.
+	req.SetContext(ctx)
+
+	resp, err := id.session.Do(req)
 	if err != nil {
 		return rpcResponse{}, err
 	}

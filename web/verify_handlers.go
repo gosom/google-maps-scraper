@@ -617,16 +617,13 @@ func (s *Server) comparisonReport(ctx context.Context, id string) (comparisonRep
 	perArm := map[string][]leads.ArmRun{}
 
 	for _, j := range c.Jobs {
-		ar := leads.ArmRun{Arm: j.Arm, RunNo: j.RunNo, JobID: j.JobID, Job: jobRuns[j.JobID], Searches: byJob[j.JobID]}
+		ar := leads.ArmRun{Arm: j.Arm, RunNo: j.RunNo, JobID: j.JobID, Job: jobRuns[j.JobID], Searches: byJob[j.JobID],
+			UniqueEmails: jobRuns[j.JobID].UniqueEmails}
 
 		ar.JobStatus = s.jobStatus(ctx, j.JobID)
 
 		if Finished(ar.JobStatus) || ar.JobStatus == leads.JobDeleted {
 			rep.Done++
-		}
-
-		if emails, err := s.leads.JobEmails(ctx, j.JobID); err == nil {
-			ar.UniqueEmails = len(emails)
 		}
 
 		perArm[j.Arm] = append(perArm[j.Arm], ar)
