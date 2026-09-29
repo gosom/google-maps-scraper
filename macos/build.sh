@@ -1,6 +1,9 @@
 #!/bin/bash
 # Builds "NNH Maps Scraper.app" (native WebKit window) + NNH-Maps-Scraper-arm64.dmg in the repo root.
-# Usage: macos/build.sh            -> reuse existing scraper binary if present, else build it
+# Usage: macos/build.sh            -> build the scraper binary if needed, then package it.
+#                                     The cached binary at macos/.build/google_maps_scraper is
+#                                     reused only when it is newer than every Go source in the
+#                                     repo (and than go.mod / go.sum); otherwise it is rebuilt.
 #        REBUILD_GO=1 macos/build.sh -> force rebuild of the Go binary
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -9,8 +12,31 @@ DMG="$ROOT/NNH-Maps-Scraper-arm64.dmg"
 BIN_CACHE="$ROOT/macos/.build/google_maps_scraper"
 mkdir -p "$ROOT/macos/.build"
 
-if [ "${REBUILD_GO:-0}" = "1" ] || [ ! -x "$BIN_CACHE" ]; then
-  echo "==> building Go scraper (darwin/arm64)"
+# Staleness check: the cached binary must be newer than every Go source file in
+# the repo plus go.mod/go.sum. `|| true` guards the find|head pipeline against
+# set -o pipefail aborting on SIGPIPE / no matches; a missing BIN_CACHE is
+# handled below by the `! -x` branch, which rebuilds anyway.
+BIN_STALE=0
+if [ -x "$BIN_CACHE" ]; then
+  NEWER_SRC="$(find "$ROOT" -path "$ROOT/macos/.build" -prune -o -type f -name '*.go' -newer "$BIN_CACHE" -print 2>/dev/null | head -n 1 || true)"
+  for dep in "$ROOT/go.mod" "$ROOT/go.sum"; do
+    if [ -z "$NEWER_SRC" ] && [ -f "$dep" ] && [ "$dep" -nt "$BIN_CACHE" ]; then
+      NEWER_SRC="$dep"
+    fi
+  done
+  if [ -n "$NEWER_SRC" ]; then
+    BIN_STALE=1
+  fi
+fi
+
+if [ "${REBUILD_GO:-0}" = "1" ] || [ ! -x "$BIN_CACHE" ] || [ "$BIN_STALE" = "1" ]; then
+  if [ "${REBUILD_GO:-0}" = "1" ]; then
+    echo "==> REBUILD_GO=1 set; building Go scraper (darwin/arm64)"
+  elif [ ! -x "$BIN_CACHE" ]; then
+    echo "==> no cached Go scraper binary; building (darwin/arm64)"
+  else
+    echo "==> cached binary is older than the Go sources; rebuilding"
+  fi
   (cd "$ROOT" && CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o "$BIN_CACHE" .)
 fi
 

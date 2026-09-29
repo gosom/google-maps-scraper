@@ -211,7 +211,7 @@ func (e *Entry) IsWebsiteValidForEmail() bool {
 
 	needles := []string{
 		"facebook",
-		"instragram",
+		"instagram",
 		"twitter",
 	}
 
