@@ -68,6 +68,7 @@ type Config struct {
 	WebRunner                bool
 	AwsLamdbaRunner          bool
 	DataFolder               string
+	WebDedupFile             string
 	Proxies                  []string
 	AwsAccessKey             string
 	AwsSecretKey             string
@@ -126,6 +127,7 @@ func ParseConfig() *Config {
 	flag.IntVar(&cfg.Zoom, "zoom", 15, "set zoom level (0-21) for search")
 	flag.BoolVar(&cfg.WebRunner, "web", false, "run web server instead of crawling")
 	flag.StringVar(&cfg.DataFolder, "data-folder", "webdata", "data folder for web runner")
+	flag.StringVar(&cfg.WebDedupFile, "web-dedup-file", "", "web runner: file of places shared by all jobs; places listed there or returned by an earlier finished job are not scraped again (each finished job appends its places)")
 	flag.StringVar(&proxies, "proxies", "", "comma separated list of proxies to use in the format protocol://user:pass@host:port example: socks5://localhost:9050 or http://user:pass@localhost:9050")
 	flag.StringVar(&proxiesFile, "proxies-file", "", "path to a file containing one proxy URL per line")
 	flag.BoolVar(&cfg.AwsLamdbaRunner, "aws-lambda", false, "run as AWS Lambda function")

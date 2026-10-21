@@ -514,6 +514,8 @@ Web Server:
   -web               Run web server mode
   -addr string       Server address (default: ":8080")
   -data-folder       Data folder for web runner (default: "webdata")
+  -web-dedup-file    File of places shared by all web jobs; places returned by
+                     an earlier finished job are not scraped again
 
 Database:
   -dsn string        PostgreSQL connection string
@@ -557,6 +559,16 @@ Use `-resume` to continue a CLI file scrape after a crash or manual stop:
 Resume mode reads the existing CSV or JSONL results file, appends new results, and skips places that were already written. It also writes completed input queries to `<results>.resume.json`; future resume runs use that sidecar file to skip fully completed queries.
 
 `-resume` is only supported with regular file output. It requires `-results` to be a file path and does not support `stdout`, `-writer`, `-leadsdb-api-key`, or `-fast-mode`. Resume runs should use the same input and scrape options as the original run.
+
+### Skipping Places Across Web Jobs
+
+By default each web job deduplicates places only within itself, so overlapping jobs (for example the same categories in neighbouring areas) open the same place pages again. Pass `-web-dedup-file` to share one list across all jobs and restarts:
+
+```bash
+./google-maps-scraper -web -data-folder /gmapsdata -web-dedup-file /gmapsdata/seen-places.txt
+```
+
+When a job finishes, the places it found are appended to the file; later jobs (and later restarts) skip places already listed, so a place appears only in the results of the first job that returned it. Places are matched by their Google feature ID, so the file can be pre-seeded with the `link` or `data_id` column of earlier results. A job that fails or is deleted before it finishes adds nothing, so running it again scrapes all of its places. Leave the flag off when unrelated jobs must each return their full result set.
 
 ### Using Proxies
 
