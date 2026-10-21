@@ -159,13 +159,13 @@ Mobile and residential proxies for Google Maps scraping, local SEO, lead generat
 
 ---
 
-### [NodeMaven](https://go.nodemaven.com/GoogleMapsScrapperseptember)
+### [NodeMaven](https://go.nodemaven.com/GoogleMapsScrapperoctober)
 
-[![NodeMaven - The most efficient proxy provider for Web Scraping and Automation](./img/nodemaven.png)](https://go.nodemaven.com/GoogleMapsScrapperseptember)
+[![NodeMaven - The most efficient proxy provider for Web Scraping and Automation](./img/nodemaven.png)](https://go.nodemaven.com/GoogleMapsScrapperoctober)
 
-[**NodeMaven**](https://go.nodemaven.com/GoogleMapsScrapperseptember): The most efficient proxy provider for Web Scraping and Automation with the Highest Quality IP on the market.
+[**NodeMaven**](https://go.nodemaven.com/GoogleMapsScrapperoctober): The most efficient proxy provider for Web Scraping and Automation with the Highest Quality IP on the market.
 
-Why [**NodeMaven**](https://go.nodemaven.com/GoogleMapsScrapperseptember)?
+Why [**NodeMaven**](https://go.nodemaven.com/GoogleMapsScrapperoctober)?
 
 - ZIP targeting
 - 99.9% uptime
@@ -178,7 +178,7 @@ Why [**NodeMaven**](https://go.nodemaven.com/GoogleMapsScrapperseptember)?
 - `MAPS35` - 35% off to Mobile and Residential Proxies
 - `MAPS40` - 40% off to ISP (Static) Proxies
 
-[**Visit NodeMaven →**](https://go.nodemaven.com/GoogleMapsScrapperseptember)
+[**Visit NodeMaven →**](https://go.nodemaven.com/GoogleMapsScrapperoctober)
 
 ---
 
