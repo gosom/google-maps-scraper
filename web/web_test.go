@@ -263,3 +263,20 @@ func TestDeleteRendersClampedCurrentPage(t *testing.T) {
 		t.Fatalf("got %d rows, want 20", rows)
 	}
 }
+
+func TestIndexEnablesHTMXTemplateFragments(t *testing.T) {
+	srv := newTestServer(t, t.TempDir())
+
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	rec := httptest.NewRecorder()
+	srv.index(rec, req)
+
+	body := rec.Body.String()
+
+	// job_rows.html returns the <tbody> followed by an out-of-band <div>. Without template
+	// fragments htmx 1.x parses that response inside a <table>, the HTML parser hoists the
+	// <div> in front of it, and the swap replaces #job-tbody with the div's content.
+	if !strings.Contains(body, `<meta name="htmx-config" content='{"useTemplateFragments":true}'>`) {
+		t.Fatal("index.html must enable htmx template fragments, or the job list swap drops #job-tbody")
+	}
+}
