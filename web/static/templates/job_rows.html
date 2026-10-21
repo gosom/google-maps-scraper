@@ -28,24 +28,23 @@
     <td colspan="5" style="text-align: center; padding: 1rem;">0 results</td>
 </tr>
 {{end}}
+{{if .HasPages}}
+<tr class="pagination-row">
+    <td colspan="5">
+        <div class="pagination" style="display: flex; justify-content: center; align-items: center; gap: 1rem; margin-top: 1rem;">
+            {{if .HasPrev}}
+            <button class="button" hx-get="/jobs?page={{.PrevPage}}" hx-target="#job-tbody" hx-swap="outerHTML">Previous</button>
+            {{else}}
+            <button class="button" disabled style="opacity: 0.5; cursor: not-allowed;">Previous</button>
+            {{end}}
+            <span class="page-info">Page {{.CurrentPage}} of {{.TotalPages}}</span>
+            {{if .HasNext}}
+            <button class="button" hx-get="/jobs?page={{.NextPage}}" hx-target="#job-tbody" hx-swap="outerHTML">Next</button>
+            {{else}}
+            <button class="button" disabled style="opacity: 0.5; cursor: not-allowed;">Next</button>
+            {{end}}
+        </div>
+    </td>
+</tr>
+{{end}}
 </tbody>
-
-<div id="pagination-container" hx-swap-oob="true">
-    {{if .HasPages}}
-    <div class="pagination" style="display: flex; justify-content: center; align-items: center; gap: 1rem; margin-top: 1rem;">
-        {{if .HasPrev}}
-        <button class="button" hx-get="/jobs?page={{.PrevPage}}" hx-target="#job-tbody" hx-swap="outerHTML">Previous</button>
-        {{else}}
-        <button class="button" disabled style="opacity: 0.5; cursor: not-allowed;">Previous</button>
-        {{end}}
-        <span class="page-info">Page {{.CurrentPage}} of {{.TotalPages}}</span>
-        {{if .HasNext}}
-        <button class="button" hx-get="/jobs?page={{.NextPage}}" hx-target="#job-tbody" hx-swap="outerHTML">Next</button>
-        {{else}}
-        <button class="button" disabled style="opacity: 0.5; cursor: not-allowed;">Next</button>
-        {{end}}
-    </div>
-    {{else}}
-    <div style="display: none;"></div>
-    {{end}}
-</div>
