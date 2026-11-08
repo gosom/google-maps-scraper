@@ -53,26 +53,81 @@ If this project is useful to you, a GitHub star helps others discover it. Sponso
 
 These sponsors help support development and maintenance of Google Maps Scraper.
 
-<table>
+<table width="100%">
   <tr>
-    <td align="center" width="33%"><a href="https://www.coreclaw.com/?utm_source=github&amp;utm_medium=referral&amp;utm_campaign=gosom&amp;utm_term=&amp;utm_id=gosom"><strong>Coreclaw</strong></a></td>
-    <td align="center" width="33%"><a href="https://evomi.com?utm_source=github&amp;utm_medium=banner&amp;utm_campaign=gosom-maps"><strong>Evomi</strong></a></td>
-    <td align="center" width="33%"><a href="https://gmapsextractor.com?utm_source=github&amp;utm_medium=banner&amp;utm_campaign=gosom"><strong>G Maps Extractor</strong></a></td>
+    <td align="center" valign="middle" width="33%">
+      <a href="https://www.coreclaw.com/?utm_source=github&amp;utm_medium=referral&amp;utm_campaign=gosom&amp;utm_term=&amp;utm_id=gosom">
+        <img src="./img/coreclaw.png" alt="Coreclaw" width="250"><br>
+        <strong>Coreclaw</strong>
+      </a>
+    </td>
+    <td align="center" valign="middle" width="33%">
+      <a href="https://evomi.com?utm_source=github&amp;utm_medium=banner&amp;utm_campaign=gosom-maps">
+        <img src="https://my.evomi.com/images/brand/cta.png" alt="Evomi" width="250"><br>
+        <strong>Evomi</strong>
+      </a>
+    </td>
+    <td align="center" valign="middle" width="33%">
+      <a href="https://gmapsextractor.com?utm_source=github&amp;utm_medium=banner&amp;utm_campaign=gosom">
+        <img src="./img/gmaps-extractor-logo.png" alt="G Maps Extractor" width="250"><br>
+        <strong>G Maps Extractor</strong>
+      </a>
+    </td>
   </tr>
   <tr>
-    <td align="center" width="33%"><a href="https://hasdata.com/scrapers/google-maps?utm_source=github&amp;utm_medium=sponsorship&amp;utm_campaign=gosom"><strong>HasData</strong></a></td>
-    <td align="center" width="33%"><a href="https://go.nodemaven.com/GoogleMapsScrapperoctober"><strong>NodeMaven</strong></a></td>
-    <td align="center" width="33%"><a href="https://www.rapidproxy.io/?ref=gosom"><strong>RapidProxy</strong></a></td>
+    <td align="center" valign="middle" width="33%">
+      <a href="https://hasdata.com/scrapers/google-maps?utm_source=github&amp;utm_medium=sponsorship&amp;utm_campaign=gosom">
+        <img src="./img/hd-gm-banner.png" alt="HasData" width="250"><br>
+        <strong>HasData</strong>
+      </a>
+    </td>
+    <td align="center" valign="middle" width="33%">
+      <a href="https://go.nodemaven.com/GoogleMapsScrapperoctober">
+        <img src="./img/nodemaven.png" alt="NodeMaven" width="250"><br>
+        <strong>NodeMaven</strong>
+      </a>
+    </td>
+    <td align="center" valign="middle" width="33%">
+      <a href="https://www.rapidproxy.io/?ref=gosom">
+        <img src="./img/rapidproxy-banner.png" alt="RapidProxy" width="250"><br>
+        <strong>RapidProxy</strong>
+      </a>
+    </td>
   </tr>
   <tr>
-    <td align="center" width="33%"><a href="https://scrap.io?utm_medium=ads&amp;utm_source=github_gosom_gmap_scraper"><strong>Scrap.io</strong></a></td>
-    <td align="center" width="33%"><a href="https://www.searchapi.io/google-maps?via=gosom&amp;utm_source=github&amp;utm_medium=sponsorship&amp;utm_campaign=gosom"><strong>SearchApi</strong></a></td>
-    <td align="center" width="33%"><a href="https://serpapi.com/?utm_source=google-maps-scraper"><strong>SerpApi</strong></a></td>
+    <td align="center" valign="middle" width="33%">
+      <a href="https://scrap.io?utm_medium=ads&amp;utm_source=github_gosom_gmap_scraper">
+        <img src="./img/premium_scrap_io.png" alt="Scrap.io" width="250"><br>
+        <strong>Scrap.io</strong>
+      </a>
+    </td>
+    <td align="center" valign="middle" width="33%">
+      <a href="https://www.searchapi.io/google-maps?via=gosom&amp;utm_source=github&amp;utm_medium=sponsorship&amp;utm_campaign=gosom">
+        <img src="./img/searchapi_google_maps.png" alt="SearchApi" width="250"><br>
+        <strong>SearchApi</strong>
+      </a>
+    </td>
+    <td align="center" valign="middle" width="33%">
+      <a href="https://serpapi.com/?utm_source=google-maps-scraper">
+        <img src="./img/SerpApi-banner.png" alt="SerpApi" width="250"><br>
+        <strong>SerpApi</strong>
+      </a>
+    </td>
   </tr>
   <tr>
-    <td align="center" width="33%"><a href="https://talordata.com/?campaignid=f01u8cHondg2qA47&amp;utm_source=github&amp;utm_term=googlemaps"><strong>TalorData</strong></a></td>
-    <td align="center" width="33%"><a href="https://www.webshare.io/?referral_code=0q3l81eet8mp"><strong>Webshare</strong></a></td>
-    <td></td>
+    <td align="center" valign="middle" width="33%">
+      <a href="https://talordata.com/?campaignid=f01u8cHondg2qA47&amp;utm_source=github&amp;utm_term=googlemaps">
+        <img src="./img/talordata.png" alt="TalorData" width="250"><br>
+        <strong>TalorData</strong>
+      </a>
+    </td>
+    <td align="center" valign="middle" width="33%">
+      <a href="https://www.webshare.io/?referral_code=0q3l81eet8mp">
+        <img src="./img/webshare-logo.png" alt="Webshare" width="250"><br>
+        <strong>Webshare</strong>
+      </a>
+    </td>
+    <td align="center" valign="middle" width="33%"><a href="https://github.com/sponsors/gosom">Become a sponsor</a></td>
   </tr>
 </table>
 
