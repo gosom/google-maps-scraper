@@ -57,19 +57,19 @@ These sponsors help support development and maintenance of Google Maps Scraper.
   <tr>
     <td align="center" valign="middle" width="33%">
       <a href="https://www.coreclaw.com/?utm_source=github&amp;utm_medium=referral&amp;utm_campaign=gosom&amp;utm_term=&amp;utm_id=gosom">
-        <img src="./img/coreclaw.png" alt="Coreclaw" width="250"><br>
+        <img src="./img/sponsors/coreclaw.svg" alt="Coreclaw" width="250" height="100"><br>
         <strong>Coreclaw</strong>
       </a>
     </td>
     <td align="center" valign="middle" width="33%">
       <a href="https://evomi.com?utm_source=github&amp;utm_medium=banner&amp;utm_campaign=gosom-maps">
-        <img src="https://my.evomi.com/images/brand/cta.png" alt="Evomi" width="250"><br>
+        <img src="./img/sponsors/evomi.svg" alt="Evomi" width="250" height="100"><br>
         <strong>Evomi</strong>
       </a>
     </td>
     <td align="center" valign="middle" width="33%">
       <a href="https://gmapsextractor.com?utm_source=github&amp;utm_medium=banner&amp;utm_campaign=gosom">
-        <img src="./img/gmaps-extractor-logo.png" alt="G Maps Extractor" width="250"><br>
+        <img src="./img/sponsors/g-maps-extractor.svg" alt="G Maps Extractor" width="250" height="100"><br>
         <strong>G Maps Extractor</strong>
       </a>
     </td>
@@ -77,19 +77,19 @@ These sponsors help support development and maintenance of Google Maps Scraper.
   <tr>
     <td align="center" valign="middle" width="33%">
       <a href="https://hasdata.com/scrapers/google-maps?utm_source=github&amp;utm_medium=sponsorship&amp;utm_campaign=gosom">
-        <img src="./img/hd-gm-banner.png" alt="HasData" width="250"><br>
+        <img src="./img/sponsors/hasdata.svg" alt="HasData" width="250" height="100"><br>
         <strong>HasData</strong>
       </a>
     </td>
     <td align="center" valign="middle" width="33%">
       <a href="https://go.nodemaven.com/GoogleMapsScrapperoctober">
-        <img src="./img/nodemaven.png" alt="NodeMaven" width="250"><br>
+        <img src="./img/sponsors/nodemaven.svg" alt="NodeMaven" width="250" height="100"><br>
         <strong>NodeMaven</strong>
       </a>
     </td>
     <td align="center" valign="middle" width="33%">
       <a href="https://www.rapidproxy.io/?ref=gosom">
-        <img src="./img/rapidproxy-banner.png" alt="RapidProxy" width="250"><br>
+        <img src="./img/sponsors/rapidproxy.svg" alt="RapidProxy" width="250" height="100"><br>
         <strong>RapidProxy</strong>
       </a>
     </td>
@@ -97,19 +97,19 @@ These sponsors help support development and maintenance of Google Maps Scraper.
   <tr>
     <td align="center" valign="middle" width="33%">
       <a href="https://scrap.io?utm_medium=ads&amp;utm_source=github_gosom_gmap_scraper">
-        <img src="./img/premium_scrap_io.png" alt="Scrap.io" width="250"><br>
+        <img src="./img/sponsors/scrap-io.svg" alt="Scrap.io" width="250" height="100"><br>
         <strong>Scrap.io</strong>
       </a>
     </td>
     <td align="center" valign="middle" width="33%">
       <a href="https://www.searchapi.io/google-maps?via=gosom&amp;utm_source=github&amp;utm_medium=sponsorship&amp;utm_campaign=gosom">
-        <img src="./img/searchapi_google_maps.png" alt="SearchApi" width="250"><br>
+        <img src="./img/sponsors/searchapi.svg" alt="SearchApi" width="250" height="100"><br>
         <strong>SearchApi</strong>
       </a>
     </td>
     <td align="center" valign="middle" width="33%">
       <a href="https://serpapi.com/?utm_source=google-maps-scraper">
-        <img src="./img/SerpApi-banner.png" alt="SerpApi" width="250"><br>
+        <img src="./img/sponsors/serpapi.svg" alt="SerpApi" width="250" height="100"><br>
         <strong>SerpApi</strong>
       </a>
     </td>
@@ -117,13 +117,13 @@ These sponsors help support development and maintenance of Google Maps Scraper.
   <tr>
     <td align="center" valign="middle" width="33%">
       <a href="https://talordata.com/?campaignid=f01u8cHondg2qA47&amp;utm_source=github&amp;utm_term=googlemaps">
-        <img src="./img/talordata.png" alt="TalorData" width="250"><br>
+        <img src="./img/sponsors/talordata.svg" alt="TalorData" width="250" height="100"><br>
         <strong>TalorData</strong>
       </a>
     </td>
     <td align="center" valign="middle" width="33%">
       <a href="https://www.webshare.io/?referral_code=0q3l81eet8mp">
-        <img src="./img/webshare-logo.png" alt="Webshare" width="250"><br>
+        <img src="./img/sponsors/webshare.svg" alt="Webshare" width="250" height="100"><br>
         <strong>Webshare</strong>
       </a>
     </td>
@@ -144,23 +144,8 @@ These sponsors help support development and maintenance of Google Maps Scraper.
 | **High Performance** | ~120 places/minute with optimized concurrency |
 | **33+ Data Points** | Business details, reviews, emails, coordinates, and more |
 | **Production Ready** | Scale from a single machine to Kubernetes clusters |
-| **Flexible Output** | CSV, JSON, PostgreSQL, S3, LeadsDB, or custom plugins |
+| **Flexible Output** | CSV, JSON, PostgreSQL, S3, or custom plugins |
 | **Proxy Support** | Built-in SOCKS5/HTTP/HTTPS proxy rotation |
-
----
-
-## What's Next After Scraping?
-
-Once you've collected your data, you'll need to manage, deduplicate, and work with your leads. **[LeadsDB](https://getleadsdb.com/)** is a companion tool designed exactly for this:
-
-- **Automatic Deduplication** - Import from multiple scrapes without worrying about duplicates
-- **AI Agent Ready** - Query and manage leads with natural language via MCP
-- **Advanced Filtering** - Combine filters with AND/OR logic on any field
-- **Export Anywhere** - CSV, JSON, or use the REST API
-
-The scraper has [built-in LeadsDB integration](#export-to-leadsdb) - just add your API key and leads flow directly into your database.
-
-**[Start free with 500 leads](https://getleadsdb.com/)**
 
 ---
 
@@ -182,7 +167,6 @@ The scraper has [built-in LeadsDB integration](#export-to-leadsdb) - just add yo
   - [Using Proxies](#using-proxies)
   - [Email Extraction](#email-extraction)
   - [Fast Mode](#fast-mode)
-- [Export to LeadsDB](#export-to-leadsdb)
 - [Advanced Usage](#advanced-usage)
   - [PostgreSQL Database Provider](#postgresql-database-provider)
   - [Kubernetes Deployment](#kubernetes-deployment)
@@ -228,19 +212,6 @@ Useful options:
 | Read proxies from a credentials file | `-proxies-file /path/to/proxies.txt` |
 
 `-c` controls how many scrape jobs run in parallel. Higher concurrency can finish large input files faster, but it also uses more CPU/RAM and can increase blocking or failures, especially without proxies. Start with the default for a first run. For larger jobs on a capable machine, try `-c 4`, `-c 8`, or `-c 16` and measure the result.
-
-**Want to skip CSV files?** Send leads directly to [LeadsDB](https://getleadsdb.com/):
-
-```bash
-docker run \
-  -v gmaps-playwright-cache:/opt \
-  -v "$PWD/example-queries.txt:/queries.txt:ro" \
-  gosom/google-maps-scraper \
-  -input /queries.txt \
-  -depth 1 \
-  -leadsdb-api-key "your-api-key" \
-  -exit-on-inactivity 3m
-```
 
 ### Web UI
 
@@ -356,7 +327,7 @@ go build
 |---------|-------------|
 | **33+ Data Points** | Business name, address, phone, website, reviews, coordinates, and more |
 | **Email Extraction** | Optional crawling of business websites for email addresses |
-| **Multiple Output Formats** | CSV, JSON, PostgreSQL, S3, LeadsDB, or custom plugins |
+| **Multiple Output Formats** | CSV, JSON, PostgreSQL, S3, or custom plugins |
 | **Proxy Support** | SOCKS5, HTTP, HTTPS with authentication |
 | **Scalable Architecture** | Single machine to Kubernetes cluster |
 | **REST API** | Programmatic control for automation |
@@ -472,7 +443,6 @@ Proxy:
   -proxies-file      Path to a file containing one proxy URL per line
 
 Export:
-  -leadsdb-api-key   Export directly to LeadsDB (get key at getleadsdb.com)
 
 Advanced:
   -exit-on-inactivity duration    Exit after inactivity (e.g., '5m')
@@ -503,7 +473,7 @@ Use `-resume` to continue a CLI file scrape after a crash or manual stop:
 
 Resume mode reads the existing CSV or JSONL results file, appends new results, and skips places that were already written. It also writes completed input queries to `<results>.resume.json`; future resume runs use that sidecar file to skip fully completed queries.
 
-`-resume` is only supported with regular file output. It requires `-results` to be a file path and does not support `stdout`, `-writer`, `-leadsdb-api-key`, or `-fast-mode`. Resume runs should use the same input and scrape options as the original run.
+`-resume` is only supported with regular file output. It requires `-results` to be a file path and does not support `stdout`, `-writer`, or `-fast-mode`. Resume runs should use the same input and scrape options as the original run.
 
 ### Using Proxies
 
@@ -615,62 +585,6 @@ When `-pages-per-browser` is greater than 1, the scraper opens multiple tabs wit
 
 ---
 
-## Export to LeadsDB
-
-Skip the CSV files and send leads directly to a managed database. [LeadsDB](https://getleadsdb.com/) handles deduplication, filtering, and provides an API for your applications.
-
-**Using Docker:**
-```bash
-docker run \
-  -v gmaps-playwright-cache:/opt \
-  -v "$PWD/example-queries.txt:/queries.txt:ro" \
-  gosom/google-maps-scraper \
-  -input /queries.txt \
-  -depth 1 \
-  -leadsdb-api-key "your-api-key" \
-  -exit-on-inactivity 3m
-```
-
-**Using binary:**
-```bash
-./google-maps-scraper \
-  -input queries.txt \
-  -leadsdb-api-key "your-api-key" \
-  -exit-on-inactivity 3m
-```
-
-Or via environment variable:
-```bash
-export LEADSDB_API_KEY="your-api-key"
-./google-maps-scraper -input queries.txt -exit-on-inactivity 3m
-```
-
-<details>
-<summary><strong>Field Mapping</strong></summary>
-
-| Google Maps | LeadsDB |
-|-------------|---------|
-| Title | Name |
-| Category | Category |
-| Categories | Tags |
-| Phone | Phone |
-| Website | Website |
-| Address | Address, City, State, Country, PostalCode |
-| Latitude/Longitude | Coordinates |
-| Review Rating | Rating |
-| Review Count | ReviewCount |
-| Emails | Email |
-| Thumbnail | LogoURL |
-| CID | SourceID |
-
-Additional fields (Google Maps link, plus code, price range, etc.) are stored as custom attributes.
-
-</details>
-
-Get your API key at [getleadsdb.com/settings](https://getleadsdb.com/settings) after signing up.
-
----
-
 ## Advanced Usage
 
 ### PostgreSQL Database Provider
@@ -775,7 +689,6 @@ This project is free and open source. Stars, sponsorships, and sponsor referrals
 - Sponsor development: [GitHub Sponsors](https://github.com/sponsors/gosom)
 - Need proxies? See [Proxy Sponsors](docs/proxies.md)
 - Deploying the self-hosted platform? See [SaaS deployment options](docs/saas.md)
-- Managing scraped leads? See [LeadsDB](https://getleadsdb.com/)
 
 ---
 
