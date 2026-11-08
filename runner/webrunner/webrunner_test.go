@@ -4,9 +4,12 @@ package webrunner
 import (
 	"context"
 	"io"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/gosom/google-maps-scraper/deduper"
+	"github.com/gosom/google-maps-scraper/gmaps"
 	"github.com/gosom/google-maps-scraper/runner"
 	"github.com/gosom/google-maps-scraper/web"
 	"github.com/gosom/scrapemate"
@@ -63,11 +66,84 @@ func TestScrapeJobMarksOKBeforeClosingMate(t *testing.T) {
 	}
 }
 
+func TestScrapeJobSharesPlacesOnlyFromJobsThatFinish(t *testing.T) {
+	t.Parallel()
+
+	const (
+		kept = "https://www.google.com/maps/place/Kept/data=!4m7!3m6!1s0x1:0xa!8m2?hl=en"
+		lost = "https://www.google.com/maps/place/Lost/data=!4m7!3m6!1s0x2:0xb!8m2?hl=en"
+	)
+
+	ctx := context.Background()
+	repo := &memoryJobRepo{}
+	svc := web.NewService(repo, t.TempDir())
+
+	shared, err := deduper.NewFile(filepath.Join(t.TempDir(), "seen.txt"))
+	if err != nil {
+		t.Fatalf("NewFile: %v", err)
+	}
+	defer shared.Close()
+
+	run := func(id, place string, deleteWhileRunning bool) {
+		job := web.Job{
+			ID:     id,
+			Name:   id,
+			Date:   time.Now().UTC(),
+			Status: web.StatusPending,
+			Data:   web.JobData{Keywords: []string{"coffee"}, Lang: "en", Zoom: 15, Depth: 1, MaxTime: time.Minute},
+		}
+
+		if err := svc.Create(ctx, &job); err != nil {
+			t.Fatalf("create job: %v", err)
+		}
+
+		w := &webrunner{
+			svc:         svc,
+			cfg:         &runner.Config{DataFolder: t.TempDir(), Concurrency: 1},
+			sharedDedup: shared,
+			setupMate: func(_ context.Context, _ io.Writer, _ *web.Job) (mateRunner, error) {
+				return fakeMate{onStart: func(seeds []scrapemate.IJob) {
+					for _, seed := range seeds {
+						if gj, ok := seed.(*gmaps.GmapJob); ok {
+							gj.Deduper.AddIfNotExists(ctx, place)
+						}
+					}
+
+					if deleteWhileRunning {
+						_ = repo.Delete(ctx, id)
+					}
+				}}, nil
+			},
+		}
+
+		if err := w.scrapeJob(ctx, &job); err != nil {
+			t.Fatalf("scrape job %s: %v", id, err)
+		}
+	}
+
+	run("finished", kept, false)
+	run("deleted", lost, true)
+
+	next := shared.NewJob()
+	if next.AddIfNotExists(ctx, kept) {
+		t.Fatal("place of the finished job should be shared")
+	}
+
+	if !next.AddIfNotExists(ctx, lost) {
+		t.Fatal("place of the deleted job must be scraped again")
+	}
+}
+
 type fakeMate struct {
+	onStart func([]scrapemate.IJob)
 	onClose func()
 }
 
-func (m fakeMate) Start(context.Context, ...scrapemate.IJob) error {
+func (m fakeMate) Start(_ context.Context, seeds ...scrapemate.IJob) error {
+	if m.onStart != nil {
+		m.onStart(seeds)
+	}
+
 	return nil
 }
 
@@ -150,7 +226,11 @@ func (r *memoryJobRepo) Count(_ context.Context, params web.SelectParams) (int, 
 	return count, nil
 }
 
+// Update leaves deleted jobs deleted, like the sqlite repo's UPDATE ... WHERE id = ?.
 func (r *memoryJobRepo) Update(_ context.Context, job *web.Job) error {
-	r.jobs[job.ID] = *job
+	if _, ok := r.jobs[job.ID]; ok {
+		r.jobs[job.ID] = *job
+	}
+
 	return nil
 }
