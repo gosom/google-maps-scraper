@@ -29,14 +29,6 @@
     "active": true
   },
   {
-    "id": "proxidize",
-    "name": "Proxidize",
-    "description": "Mobile and residential proxies for Google Maps scraping, local SEO, lead generation, and data collection.",
-    "referral_url": "https://proxidize.com/?utm_source=github&utm_medium=sponsorship&utm_campaign=google_maps_scraper&utm_content=gosom",
-    "offer": "Use code gmaps20 for 20% off.",
-    "active": true
-  },
-  {
     "id": "nodemaven",
     "name": "NodeMaven",
     "description": "The most efficient proxy provider for Web Scraping and Automation with the Highest Quality IP on the market.",
