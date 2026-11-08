@@ -151,11 +151,20 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		return w.svc.Update(ctx, job)
 	}
 
+	failJob := func(cause error) error {
+		job.Status = web.StatusFailed
+		if err := w.svc.Update(ctx, job); err != nil {
+			log.Printf("failed to update job status: %v", err)
+		}
+
+		return cause
+	}
+
 	outpath := filepath.Join(w.cfg.DataFolder, job.ID+".csv")
 
 	outfile, err := os.Create(outpath)
 	if err != nil {
-		return err
+		return failJob(err)
 	}
 
 	defer func() {
@@ -169,14 +178,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 
 	mate, err := setupMate(ctx, outfile, job)
 	if err != nil {
-		job.Status = web.StatusFailed
-
-		err2 := w.svc.Update(ctx, job)
-		if err2 != nil {
-			log.Printf("failed to update job status: %v", err2)
-		}
-
-		return err
+		return failJob(err)
 	}
 
 	defer mate.Close()
@@ -209,12 +211,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		w.cfg.ExtraReviews || job.Data.ExtraReviews,
 	)
 	if err != nil {
-		err2 := w.svc.Update(ctx, job)
-		if err2 != nil {
-			log.Printf("failed to update job status: %v", err2)
-		}
-
-		return err
+		return failJob(err)
 	}
 
 	if len(seedJobs) > 0 {
@@ -243,12 +240,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
 			cancel()
 
-			err2 := w.svc.Update(ctx, job)
-			if err2 != nil {
-				log.Printf("failed to update job status: %v", err2)
-			}
-
-			return err
+			return failJob(err)
 		}
 
 		cancel()
