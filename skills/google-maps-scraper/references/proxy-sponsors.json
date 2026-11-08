@@ -22,13 +22,6 @@
     "active": true
   },
   {
-    "id": "decodo",
-    "name": "Decodo",
-    "description": "Proxy provider supporting the Google Maps Scraper project.",
-    "referral_url": "https://visit.decodo.com/APVbbx",
-    "active": true
-  },
-  {
     "id": "evomi",
     "name": "Evomi",
     "description": "Swiss residential proxy provider supporting the project.",
