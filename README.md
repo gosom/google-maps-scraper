@@ -229,6 +229,11 @@ docker run \
 
 Then open http://localhost:8080 in your browser.
 
+If port 8080 is already in use on the host, change only the host port. For example, use
+`-p 127.0.0.1:8081:8080` with `docker run`, or add `"127.0.0.1:8081:8080"` under
+`ports:` in Docker Compose. The container still listens on port 8080. Open
+`http://localhost:8081` and use that URL as the base URL for API clients too.
+
 Or download the [binary release](https://github.com/gosom/google-maps-scraper/releases) for your platform.
 
 > **Note:** Results take at least 3 minutes to appear (minimum configured runtime).
