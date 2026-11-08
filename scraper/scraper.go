@@ -203,7 +203,10 @@ func (m *ScraperManager) runCycle(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		cycleCancel()
-		<-scraperDone
+
+		if err := <-scraperDone; err != nil {
+			log.Warn("scraper exited during shutdown", "error", err)
+		}
 
 		return nil
 
@@ -221,7 +224,10 @@ func (m *ScraperManager) runCycle(ctx context.Context) error {
 		)
 
 		cycleCancel()
-		<-scraperDone
+
+		if err := <-scraperDone; err != nil {
+			log.Warn("scraper exited during restart", "error", err)
+		}
 
 		return nil
 	}
