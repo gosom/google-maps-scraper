@@ -7,25 +7,10 @@
     "active": true
   },
   {
-    "id": "swiftproxy",
-    "name": "Swiftproxy",
-    "description": "Residential proxy provider with 90M+ IPs across 220+ locations.",
-    "referral_url": "https://www.swiftproxy.net/?ref=gosom",
-    "offer": "Use code PROXY90 for 10% off.",
-    "active": true
-  },
-  {
     "id": "webshare",
     "name": "Webshare",
     "description": "Proxy provider with HTTP and SOCKS5 support.",
     "referral_url": "https://www.webshare.io/?referral_code=0q3l81eet8mp",
-    "active": true
-  },
-  {
-    "id": "birdproxies",
-    "name": "BirdProxies",
-    "description": "Residential and ISP proxy provider supporting the project.",
-    "referral_url": "https://birdproxies.com/?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom-google-maps-scraper",
     "active": true
   },
   {

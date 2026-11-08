@@ -117,14 +117,6 @@ Unlock global access with consistent, high-speed connections from $0.65/GB, 90M+
 
 ---
 
-### [Swiftproxy](https://www.swiftproxy.net/?ref=gosom) - Reliable Residential Proxies for Web Scraping
-
-[![Swiftproxy - Reliable Residential Proxies for Web Scraping](./img/swiftproxy.png)](https://www.swiftproxy.net/?ref=gosom)
-
-Swiftproxy provides 90M+ clean residential IPs across 220+ locations, with HTTP(S)/SOCKS5 support, flexible targeting, and non-expiring traffic. Ideal for web scraping, data collection, and location-based research. Free testing is available, with 10% off using code `PROXY90`. [**Try Swiftproxy now →**](https://www.swiftproxy.net/?ref=gosom)
-
----
-
 ### [TalorData](https://talordata.com/?campaignid=f01u8cHondg2qA47&utm_source=github&utm_term=googlemaps) - Fast SERP API for Google Maps and Search Data
 
 [![TalorData](./img/talordata.png)](https://talordata.com/?campaignid=f01u8cHondg2qA47&utm_source=github&utm_term=googlemaps)
@@ -138,16 +130,6 @@ Real-time SERP data APIs for Google Maps and search results, with structured JSO
 [![Webshare](./img/webshare-banner.png)](https://www.webshare.io/?referral_code=0q3l81eet8mp)
 
 The most affordable premium proxies across 195 countries & 80+ million IPs, plus a FREE plan for new users. [Learn more](webshare.md)
-
----
-
-### [BirdProxies](https://birdproxies.com/?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom-google-maps-scraper) - Residential and ISP proxies
-
-[![BirdProxies](./img/birdproxies.png)](https://birdproxies.com/?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom-google-maps-scraper)
-
-Hey, we built BirdProxies because proxies shouldn't be complicated or overpriced. Fast residential and ISP proxies in 195+ locations, fair pricing, and real support. Try our FlappyBird game on the landing page for free data!
-
-[**Visit BirdProxies →**](https://birdproxies.com/?utm_source=github&utm_medium=sponsorship&utm_campaign=gosom-google-maps-scraper) | [Join Discord](https://discord.com/invite/birdproxies)
 
 ---
 
