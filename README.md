@@ -175,6 +175,7 @@ Why [**NodeMaven**](https://go.nodemaven.com/GoogleMapsScrapperoctober)?
 
 **Special codes for Google Maps Scraper users:**
 
+- `MAPS2X` - 2X traffic for Black Friday
 - `MAPS35` - 35% off to Mobile and Residential Proxies
 - `MAPS40` - 40% off to ISP (Static) Proxies
 
