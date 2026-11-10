@@ -242,6 +242,13 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page scrapemate.BrowserPa
 	return resp
 }
 
+const (
+	// how often to re-check whether the payload is still growing
+	placeRawPollInterval = 400 * time.Millisecond
+	// how many consecutive checks without growth mean the payload has settled
+	placeRawStablePolls = 5
+)
+
 func (j *PlaceJob) getRaw(ctx context.Context, page scrapemate.BrowserPage) (any, error) {
 	for {
 		select {
@@ -270,7 +277,39 @@ func (j *PlaceJob) getRaw(ctx context.Context, page scrapemate.BrowserPage) (any
 				}
 			}
 
-			return raw, nil
+			str, ok := raw.(string)
+			if !ok {
+				return raw, nil
+			}
+
+			// The payload can still grow after the first one appears. Wait until
+			// its size stops increasing before accepting it.
+			best := str
+
+			for stable := 0; stable < placeRawStablePolls; {
+				<-time.After(placeRawPollInterval)
+
+				next, nErr := page.Eval(js)
+				if nErr != nil {
+					break
+				}
+
+				nextStr, nOk := next.(string)
+				if !nOk {
+					break
+				}
+
+				if len(nextStr) > len(best) {
+					best = nextStr
+					stable = 0
+
+					continue
+				}
+
+				stable++
+			}
+
+			return best, nil
 		}
 	}
 }
@@ -339,20 +378,21 @@ const js = `
 		return null;
 	}
 	const appState = window.APP_INITIALIZATION_STATE[3];
-	
-	// Search all properties of appState for arrays containing JSON strings
+
+	// Google delivers several ")]}'" payloads into the app state. The first one
+	// to appear is often a trimmed response that omits optional sections such as
+	// popular times and review tags. Keep the largest one instead of the first.
+	let best = null;
 	for (const key of Object.keys(appState)) {
 		const arr = appState[key];
-		if (Array.isArray(arr)) {
-			// Check indices 6 and 5 (where place data typically is)
-			for (const idx of [6, 5]) {
-				const item = arr[idx];
-				if (typeof item === 'string' && item.startsWith(")]}'")) {
-					return item;
-				}
+		if (!Array.isArray(arr)) continue;
+		for (let idx = 0; idx < arr.length; idx++) {
+			const item = arr[idx];
+			if (typeof item === 'string' && item.startsWith(")]}'")) {
+				if (best === null || item.length > best.length) best = item;
 			}
 		}
 	}
-	return null;
+	return best;
 })()
 `
