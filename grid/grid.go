@@ -95,23 +95,28 @@ func (c Cell) GeoCoordinates() string {
 // cellSizeKm × cellSizeKm. It returns the center point of every cell.
 //
 // The longitude step is adjusted for the latitude of the bounding box centre
-// so that cells are roughly square on the ground.
+// so that cells are roughly square on the ground. Each side is split into a
+// whole number of equal cells (rounding the count up), so the cells cover the
+// entire bounding box and are at most cellSizeKm wide.
 //
 // Example: a 20×20 km area with cellSizeKm=1 produces ~400 cells.
 func GenerateCells(bbox BoundingBox, cellSizeKm float64) []Cell {
-	cellSizeKm = normalizeCellSizeKm(cellSizeKm)
+	latCells, lonCells := cellCounts(bbox, cellSizeKm)
+	if latCells == 0 || lonCells == 0 {
+		return nil
+	}
 
-	// Latitude step is constant everywhere.
-	latStep := cellSizeKm / kmPerDegreeLat
+	latStep := (bbox.MaxLat - bbox.MinLat) / float64(latCells)
+	lonStep := (bbox.MaxLon - bbox.MinLon) / float64(lonCells)
 
-	// Longitude step varies with latitude; use the midpoint for a good estimate.
-	lonStep := calculateLonStep(bbox, cellSizeKm)
+	cells := make([]Cell, 0, latCells*lonCells)
 
-	var cells []Cell
+	// Each centre is half a step from its cell's lower edge.
+	for i := range latCells {
+		lat := bbox.MinLat + (float64(i)+0.5)*latStep
 
-	// Start at the centre of the first cell (half a step from the edge).
-	for lat := bbox.MinLat + latStep/2; lat < bbox.MaxLat; lat += latStep {
-		for lon := bbox.MinLon + lonStep/2; lon < bbox.MaxLon; lon += lonStep {
+		for j := range lonCells {
+			lon := bbox.MinLon + (float64(j)+0.5)*lonStep
 			cells = append(cells, Cell{Lat: lat, Lon: lon})
 		}
 	}
@@ -122,13 +127,21 @@ func GenerateCells(bbox BoundingBox, cellSizeKm float64) []Cell {
 // EstimateCellCount returns how many cells GenerateCells would produce
 // without allocating them. Useful for logging or validation.
 func EstimateCellCount(bbox BoundingBox, cellSizeKm float64) int {
+	latCells, lonCells := cellCounts(bbox, cellSizeKm)
+
+	return latCells * lonCells
+}
+
+// cellCounts returns how many cells of at most cellSizeKm fit along each side
+// of bbox, rounding up so that the cells cover the whole box.
+func cellCounts(bbox BoundingBox, cellSizeKm float64) (latCells, lonCells int) {
 	cellSizeKm = normalizeCellSizeKm(cellSizeKm)
 
 	latStep := cellSizeKm / kmPerDegreeLat
 	lonStep := calculateLonStep(bbox, cellSizeKm)
 
-	latCells := int(math.Ceil((bbox.MaxLat - bbox.MinLat) / latStep))
-	lonCells := int(math.Ceil((bbox.MaxLon - bbox.MinLon) / lonStep))
+	latCells = int(math.Ceil((bbox.MaxLat - bbox.MinLat) / latStep))
+	lonCells = int(math.Ceil((bbox.MaxLon - bbox.MinLon) / lonStep))
 
 	if latCells < 0 {
 		latCells = 0
@@ -138,7 +151,7 @@ func EstimateCellCount(bbox BoundingBox, cellSizeKm float64) int {
 		lonCells = 0
 	}
 
-	return latCells * lonCells
+	return latCells, lonCells
 }
 
 func normalizeCellSizeKm(cellSizeKm float64) float64 {
