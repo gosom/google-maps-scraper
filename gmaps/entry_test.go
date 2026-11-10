@@ -173,8 +173,18 @@ func Test_EntryFromJSON(t *testing.T) {
 	monday := entry.PopularTimes["Monday"]
 	require.Equal(t, 100, monday[20])
 
+	require.Len(t, entry.ReviewsTags, 10)
+	require.Equal(t, gmaps.ReviewTag{Title: "meze", Count: 21}, entry.ReviewsTags[0])
+	require.Equal(t, gmaps.ReviewTag{Title: "cypriot", Count: 18}, entry.ReviewsTags[1])
+
+	for _, tag := range entry.ReviewsTags {
+		require.NotEmpty(t, tag.Title)
+		require.Greater(t, tag.Count, 0)
+	}
+
 	entry.PopularTimes = nil
 	entry.UserReviews = nil
+	entry.ReviewsTags = nil
 
 	require.Equal(t, expected, entry)
 }

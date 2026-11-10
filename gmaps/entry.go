@@ -54,6 +54,13 @@ type About struct {
 	Options []Option `json:"options"`
 }
 
+// ReviewTag is one of the keyword chips Google shows above the reviews list,
+// together with the number of reviews that mention it.
+type ReviewTag struct {
+	Title string `json:"title"`
+	Count int    `json:"count"`
+}
+
 type Review struct {
 	Name           string
 	ProfilePicture string
@@ -131,6 +138,7 @@ type Entry struct {
 	UserReviews         []Review     `json:"user_reviews"`
 	UserReviewsExtended []Review     `json:"user_reviews_extended"`
 	Emails              []string     `json:"emails"`
+	ReviewsTags         []ReviewTag  `json:"reviews_tags"`
 }
 
 // entryAlias is used inside Marshal/UnmarshalJSON to avoid infinite recursion
@@ -270,6 +278,7 @@ func (e *Entry) CsvHeaders() []string {
 		"user_reviews",
 		"user_reviews_extended",
 		"emails",
+		"reviews_tags",
 	}
 }
 
@@ -311,6 +320,7 @@ func (e *Entry) CsvRow() []string {
 		stringify(e.UserReviews),
 		stringify(e.UserReviewsExtended),
 		stringSliceToString(e.Emails),
+		stringify(e.ReviewsTags),
 	}
 }
 
@@ -407,6 +417,7 @@ func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error)
 	)
 	entry.OpenHours = getHours(darray)
 	entry.PopularTimes = getPopularTimes(darray)
+	entry.ReviewsTags = getReviewsTags(darray)
 	entry.WebSite = extractActualURL(getNthElementAndCast[string](darray, 7, 0))
 	entry.Phone = getNthElementAndCast[string](darray, 178, 0, 0)
 	entry.PlusCode = getNthElementAndCast[string](darray, 183, 2, 2, 0)
@@ -803,6 +814,37 @@ func getHours(darray []any) map[string][]string {
 	}
 
 	return hours
+}
+
+// getReviewsTags extracts the review keyword chips ("view of burj khalifa",
+// "live music", ...) shown above the reviews list, with the number of reviews
+// mentioning each one.
+//
+// Layout of darray[153][0] is a list of entries shaped as:
+//
+//	[["<tag id>"], "<title>", null, [null,null,null,null,<count>,...], ...]
+func getReviewsTags(darray []any) []ReviewTag {
+	items := getNthElementAndCast[[]any](darray, 153, 0) //nolint:mnd // index into Google's payload
+
+	tags := make([]ReviewTag, 0, len(items))
+
+	for i := range items {
+		item, ok := items[i].([]any)
+		if !ok {
+			continue
+		}
+
+		title := getNthElementAndCast[string](item, 1)
+		if title == "" {
+			continue
+		}
+
+		count := int(getNthElementAndCast[float64](item, 3, 4)) //nolint:mnd // index into Google's payload
+
+		tags = append(tags, ReviewTag{Title: title, Count: count})
+	}
+
+	return tags
 }
 
 func getPopularTimes(darray []any) map[string]map[int]int {
