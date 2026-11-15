@@ -22,10 +22,12 @@ type fetchReviewsParams struct {
 	page        scrapemate.BrowserPage
 	mapURL      string
 	reviewCount int
+	capture     *browserReviewCapture
 }
 
 type FetchReviewsResponse struct {
-	pages [][]byte
+	pages      [][]byte
+	collection ReviewCollection
 }
 
 type fetcher struct {
@@ -459,46 +461,62 @@ func decodeDOMReviews(raw []any) []DOMReview {
 
 // extractReviewsFromPage extracts reviews directly from the page DOM
 // This is a fallback when the RPC API fails
-func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([]DOMReview, error) {
+func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage, maxReviews int, states ...*reviewExtractionState) ([]DOMReview, error) {
+	state := &reviewExtractionState{}
+	if len(states) > 0 && states[0] != nil {
+		state = states[0]
+	}
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	log.Printf("Attempting DOM-based review extraction")
 
 	// First, try to click the reviews section to open the reviews panel
 	clickedReviews, _ := page.Eval(`() => {
 		try {
-			// Method 1: Click on the reviews count/link in the place info
-			const reviewsButtons = document.querySelectorAll('button[jsaction*="reviewChart"], button[jsaction*="reviews"]');
-			for (const btn of reviewsButtons) {
-				if (btn.textContent.includes('review') || btn.getAttribute('aria-label')?.includes('review')) {
-					btn.click();
-					return 'reviews_button';
-				}
-			}
+			const triggerClick = (el) => {
+				if (!el) return false;
+				el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+				el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+				el.click();
+				return true;
+			};
 
-			// Method 2: Click on the reviews tab
+			// Method 1: Click on the reviews tab if already visible
 			const tabs = document.querySelectorAll('button[role="tab"]');
 			for (const tab of tabs) {
-				const label = tab.getAttribute('aria-label') || tab.textContent || '';
-				if (label.toLowerCase().includes('review')) {
-					tab.click();
+				const label = (tab.getAttribute('aria-label') || tab.textContent || '').toLowerCase();
+				if (label.includes('review')) {
+					if (tab.getAttribute('aria-selected') !== 'true') triggerClick(tab);
 					return 'reviews_tab';
 				}
 			}
 
-			// Method 3: Click the star rating area which often opens reviews
+			// Method 2: Click the star rating area or reviews count in place info
 			const ratingArea = document.querySelector('.F7nice, .fontDisplayLarge');
 			if (ratingArea) {
-				ratingArea.click();
+				const btn = ratingArea.querySelector('button') || ratingArea.closest('button') || ratingArea;
+				triggerClick(btn);
 				return 'rating_area';
 			}
 
-			// Method 4: Look for "See all reviews" or similar links
+			// Method 3: Look for "See all reviews" or similar links/buttons
 			const allLinks = document.querySelectorAll('a, button');
 			for (const link of allLinks) {
-				const text = link.textContent?.toLowerCase() || '';
+				const text = (link.getAttribute('aria-label') || link.textContent || '').toLowerCase();
 				if (text.includes('all review') || text.includes('see review') || text.includes('more review')) {
-					link.click();
+					triggerClick(link);
 					return 'all_reviews_link';
 				}
+			}
+
+			// Method 4: Click on buttons with review jsaction
+			const reviewsButtons = document.querySelectorAll('button[jsaction*="reviewChart"], button[jsaction*="reviews"]');
+			for (const btn of reviewsButtons) {
+				triggerClick(btn);
+				return 'reviews_button';
 			}
 
 			return false;
@@ -513,11 +531,54 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 	}
 
 	// Wait for reviews panel to load
-	time.Sleep(3 * time.Second)
+	const reviewsWaitTimeout = 5 * time.Second
+
+	_ = page.WaitForSelector(".jftiEf, div[data-review-id]", reviewsWaitTimeout)
+
+	// In case clicking the rating revealed a new "Reviews" tab, ensure the Reviews tab is selected
+	_, _ = page.Eval(`() => {
+		const triggerClick = (el) => {
+			if (!el) return false;
+			el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+			el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+			el.click();
+			return true;
+		};
+		const tabs = document.querySelectorAll('button[role="tab"]');
+		for (const tab of tabs) {
+			const label = (tab.getAttribute('aria-label') || tab.textContent || '').toLowerCase();
+			if (label.includes('review') && tab.getAttribute('aria-selected') !== 'true') {
+				triggerClick(tab);
+				return true;
+			}
+		}
+		return false;
+	}`)
+	// The tab may have been mounted by the first click. Wait again after
+	// selecting it rather than scrolling the place overview while it loads.
+	_ = page.WaitForSelector(".jftiEf, div[data-review-id]", reviewsWaitTimeout)
 
 	var reviews []DOMReview
 
-	maxScrollAttempts := 30
+	var seen domReviewSet
+
+	const defaultMaxScrollAttempts = 50
+
+	maxScrollAttempts := defaultMaxScrollAttempts
+
+	if maxReviews > 0 {
+		// Each scroll pass on Google Maps typically yields ~10 new reviews
+		needed := (maxReviews / 10) + 10
+		if needed > maxScrollAttempts {
+			maxScrollAttempts = needed
+		}
+
+		const absoluteMaxScrollAttempts = 150
+		if maxScrollAttempts > absoluteMaxScrollAttempts {
+			maxScrollAttempts = absoluteMaxScrollAttempts
+		}
+	}
+
 	lastCount := 0
 	stuckCount := 0
 
@@ -536,6 +597,7 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 				// Try multiple selectors for review container elements
 				// Google Maps uses various class names that change over time
 				const reviewSelectors = [
+					'.jJc9Ad',
 					'.jftiEf',                           // Common review container
 					'div[data-review-id]',               // Review with ID attribute
 					'.gws-localreviews__google-review',  // Alternative format
@@ -708,7 +770,8 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 					}
 				}
 
-				return reviews;
+				const limited = document.body.innerText.includes("You're seeing a limited view of Google Maps");
+				return {reviews, limited};
 			} catch (e) {
 				console.error("Error in review extraction:", e);
 				return [];
@@ -716,42 +779,46 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 		}`)
 		if err != nil {
 			log.Printf("Error extracting reviews from DOM: %v", err)
-		} else if reviewsJSON != nil {
-			rawReviews, ok := reviewsJSON.([]any)
-			if ok {
-				decoded := decodeDOMReviews(rawReviews)
-
-				for i := range decoded {
-					// Add if unique (check by author name and text prefix)
-					isDuplicate := false
-
-					for j := range reviews {
-						if reviews[j].AuthorName == decoded[i].AuthorName {
-							if reviews[j].Text == decoded[i].Text {
-								isDuplicate = true
-								break
-							}
-
-							if len(reviews[j].Text) > 20 && len(decoded[i].Text) > 20 &&
-								reviews[j].Text[:20] == decoded[i].Text[:20] {
-								isDuplicate = true
-								break
-							}
-						}
-					}
-
-					if !isDuplicate && decoded[i].AuthorName != "" {
-						reviews = append(reviews, decoded[i])
-					}
-				}
-			}
+		} else {
+			decoded, limited := decodeReviewSnapshot(reviewsJSON)
+			state.limited = state.limited || limited
+			reviews = seen.add(reviews, decoded, maxReviews)
 		}
 
 		currentCount := len(reviews)
+
+		state.capture.drain(ctx)
+
+		if state.capture != nil {
+			state.limited = state.limited || state.capture.limited
+			currentCount = max(currentCount, len(state.capture.ids))
+		}
+
+		if maxReviews > 0 && currentCount >= maxReviews {
+			state.reason = "limit_reached"
+
+			log.Printf("DOM extraction reached target of %d reviews (found %d)", maxReviews, currentCount)
+
+			break
+		}
+
+		if state.limited && currentCount > 0 {
+			state.reason = reviewReasonLimited
+
+			log.Printf("Anonymous review access is limited; preserving %d available reviews", currentCount)
+
+			break
+		}
+
 		if currentCount == lastCount {
 			stuckCount++
-			if stuckCount > 5 {
+
+			const maxConsecutiveStuck = 5
+			if stuckCount >= maxConsecutiveStuck {
+				state.reason = "no_more_reviews"
+
 				log.Printf("Review count stuck at %d, stopping scroll", currentCount)
+
 				break
 			}
 		} else {
@@ -762,21 +829,39 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 		// Scroll to load more reviews
 		_, _ = page.Eval(`() => {
 			try {
-				// Try multiple scroll containers
+				// 1. Walk up from review card to find the true scrollable container
+				const card = document.querySelector('.jJc9Ad, .jftiEf, div[data-review-id]');
+				if (card) {
+					let el = card.parentElement;
+					while (el && el !== document.body) {
+						const st = window.getComputedStyle(el);
+						if ((st.overflowY === 'auto' || st.overflowY === 'scroll') && el.scrollHeight > el.clientHeight && el.clientHeight > 100) {
+							el.scrollTop += Math.max(100, el.clientHeight * 0.8);
+							el.dispatchEvent(new Event('scroll', { bubbles: true }));
+							return true;
+						}
+						el = el.parentElement;
+					}
+				}
+
+				// 2. Try known scrollable containers that actually have scrollable content
 				const selectors = [
+					'div[role="feed"]',
 					'.m6QErb.DxyBCb.kA9KIf.dS8AEf',
 					'.m6QErb.DxyBCb.kA9KIf',
 					'.DxyBCb.kA9KIf',
-					'.m6QErb',
 					'.section-scrollbox',
-					'div[role="feed"]'
+					'.m6QErb'
 				];
 
 				for (const selector of selectors) {
-					const el = document.querySelector(selector);
-					if (el) {
-						el.scrollBy(0, 800);
-						return true;
+					const elements = document.querySelectorAll(selector);
+					for (const el of elements) {
+						if (el.scrollHeight > el.clientHeight && el.clientHeight > 100) {
+							el.scrollTop += Math.max(100, el.clientHeight * 0.8);
+							el.dispatchEvent(new Event('scroll', { bubbles: true }));
+							return true;
+						}
 					}
 				}
 
@@ -788,7 +873,15 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 			}
 		}`)
 
-		time.Sleep(500 * time.Millisecond)
+		const scrollWaitDuration = 1 * time.Second
+
+		timer := time.NewTimer(scrollWaitDuration)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return reviews, ctx.Err()
+		case <-timer.C:
+		}
 	}
 
 	log.Printf("DOM extraction completed: %d reviews found", len(reviews))
@@ -796,8 +889,13 @@ func extractReviewsFromPage(ctx context.Context, page scrapemate.BrowserPage) ([
 	return reviews, nil
 }
 
-// FetchReviewsWithFallback attempts RPC-based extraction first, then falls back to DOM
+// FetchReviewsWithFallback collects anonymous browser-generated review responses
+// alongside a DOM fallback. Callers without a browser retain the legacy HTTP path.
 func FetchReviewsWithFallback(ctx context.Context, params fetchReviewsParams) (FetchReviewsResponse, []DOMReview, error) {
+	if params.page != nil {
+		return collectBrowserReviews(ctx, params)
+	}
+
 	fetcher := newReviewFetcher(params)
 
 	// Try RPC-based extraction first
@@ -819,23 +917,47 @@ func FetchReviewsWithFallback(ctx context.Context, params fetchReviewsParams) (F
 		log.Printf("RPC returned empty reviews, trying DOM extraction")
 	}
 
-	// Fallback to DOM-based extraction
-	if params.page != nil {
-		domReviews, domErr := extractReviewsFromPage(ctx, params.page)
-		if domErr == nil && len(domReviews) > 0 {
-			log.Printf("DOM extraction successful: %d reviews", len(domReviews))
-			return FetchReviewsResponse{}, domReviews, nil
-		}
-
-		if domErr != nil {
-			log.Printf("DOM extraction failed: %v", domErr)
-		}
-	}
-
 	// Return whatever we have
 	if err != nil {
 		return FetchReviewsResponse{}, nil, fmt.Errorf("all review extraction methods failed: %v", err)
 	}
 
 	return rpcResponse, nil, nil
+}
+
+func collectBrowserReviews(ctx context.Context, params fetchReviewsParams) (FetchReviewsResponse, []DOMReview, error) {
+	capture := params.capture
+	if capture == nil {
+		capture = startReviewCapture(params.page)
+		defer capture.close()
+	}
+
+	state := &reviewExtractionState{capture: capture}
+	domReviews, err := extractReviewsFromPage(ctx, params.page, params.reviewCount, state)
+	capture.drain(ctx)
+
+	response := FetchReviewsResponse{collection: ReviewCollection{Method: "dom", Reason: state.reason}}
+	if capture != nil {
+		response.pages = capture.pages
+		if len(capture.pages) > 0 {
+			response.collection.Method = "browser"
+		}
+
+		state.limited = state.limited || capture.limited
+	}
+
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		response.collection.Reason = "timeout"
+	case errors.Is(err, context.Canceled):
+		response.collection.Reason = "canceled"
+	case state.limited:
+		response.collection.Reason = reviewReasonLimited
+	case err != nil:
+		response.collection.Reason = "extraction_error"
+	case response.collection.Reason == "":
+		response.collection.Reason = "scroll_limit"
+	}
+
+	return response, domReviews, err
 }

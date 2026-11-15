@@ -389,8 +389,15 @@ go build
 | 32 | `credit_cards_accepted` | Accepted credit card networks |
 | 33 | `about` | Additional business info |
 | 34 | `user_reviews` | Customer reviews (text, rating, timestamp) |
-| 35 | `user_reviews_extended` | Extended reviews up to ~300 (requires `-extra-reviews`) |
+| 35 | `user_reviews_extended` | Additional anonymously available reviews (requires `-extra-reviews`) |
 | 36 | `emails` | Extracted email addresses (requires `-email` flag) |
+| 37 | `review_collection` | Collection status, method, collected/expected counts, and stopping reason (with `-extra-reviews`) |
+
+With `-extra-reviews`, the scraper observes the anonymous browser's own review responses and uses visible review cards as a fallback. It does not sign in. Google may expose only a small sample; increasing scroll depth or retrying cannot guarantee the full reported review count.
+
+`review_collection.status` is `complete` when the collected count reaches the reported total, `limited` when Google explicitly serves a limited view, and `partial` for other stopping conditions. The object includes `method` (`browser`, `dom`, or `none`), `collected`, `expected`, and a `reason` when incomplete. The JSON field is omitted unless extra reviews were requested; the CSV column is appended after `emails`.
+
+Resuming an older CSV preserves its existing columns. Start a new output file to include `review_collection` if the older file does not have that column.
 
 </details>
 
@@ -429,7 +436,7 @@ Core Options:
 
 Email & Reviews:
   -email             Extract emails from business websites
-  -extra-reviews     Collect extended reviews (up to ~300)
+  -extra-reviews     Collect anonymously available extra reviews and report status
 
 Location Settings:
   -lang string       Language code, e.g., 'de' for German (default: "en")
@@ -438,6 +445,7 @@ Location Settings:
   -radius float      Search radius in meters (default: 10000)
   -grid-bbox string  Bounding box for grid scraping, format: "minLat,minLon,maxLat,maxLon"
   -grid-cell float   Grid cell size in km (default: 1.0, used with -grid-bbox)
+  -grid-strict       Keep only places whose coordinates are inside -grid-bbox
 
 Web Server:
   -web               Run web server mode
@@ -553,6 +561,8 @@ Command example:
 
 Notes:
 - `-grid-bbox` guides where searches are launched from, but results are not strictly clipped to the box.
+- Add `-grid-strict` to keep only places whose coordinates fall inside the box, including its edges. This applies to all output formats. Places outside the box are still fetched before filtering.
+- When resuming, keep the same bounding box and strict-mode setting; use a fresh results file if you change either.
 - For strict distance filtering, use `-fast-mode` with `-geo` + `-radius` (or post-filter by latitude/longitude).
 
 ---

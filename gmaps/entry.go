@@ -110,27 +110,28 @@ type Entry struct {
 	// key are misspelled ("longtitude"); MarshalJSON also emits the correctly
 	// spelled "longitude" key, and UnmarshalJSON accepts either. The field
 	// name is kept for backwards compatibility with existing imports.
-	Longtitude          float64      `json:"longtitude"`
-	Status              string       `json:"status"`
-	Description         string       `json:"description"`
-	ReviewsLink         string       `json:"reviews_link"`
-	Thumbnail           string       `json:"thumbnail"`
-	Timezone            string       `json:"timezone"`
-	PriceRange          string       `json:"price_range"`
-	DataID              string       `json:"data_id"`
-	StreetViewURL       string       `json:"street_view_url"`
-	PlaceID             string       `json:"place_id"`
-	Images              []Image      `json:"images"`
-	Reservations        []LinkSource `json:"reservations"`
-	OrderOnline         []LinkSource `json:"order_online"`
-	Menu                LinkSource   `json:"menu"`
-	Owner               Owner        `json:"owner"`
-	CompleteAddress     Address      `json:"complete_address"`
-	CreditCardsAccepted []string     `json:"credit_cards_accepted"`
-	About               []About      `json:"about"`
-	UserReviews         []Review     `json:"user_reviews"`
-	UserReviewsExtended []Review     `json:"user_reviews_extended"`
-	Emails              []string     `json:"emails"`
+	Longtitude          float64           `json:"longtitude"`
+	Status              string            `json:"status"`
+	Description         string            `json:"description"`
+	ReviewsLink         string            `json:"reviews_link"`
+	Thumbnail           string            `json:"thumbnail"`
+	Timezone            string            `json:"timezone"`
+	PriceRange          string            `json:"price_range"`
+	DataID              string            `json:"data_id"`
+	StreetViewURL       string            `json:"street_view_url"`
+	PlaceID             string            `json:"place_id"`
+	Images              []Image           `json:"images"`
+	Reservations        []LinkSource      `json:"reservations"`
+	OrderOnline         []LinkSource      `json:"order_online"`
+	Menu                LinkSource        `json:"menu"`
+	Owner               Owner             `json:"owner"`
+	CompleteAddress     Address           `json:"complete_address"`
+	CreditCardsAccepted []string          `json:"credit_cards_accepted"`
+	About               []About           `json:"about"`
+	UserReviews         []Review          `json:"user_reviews"`
+	UserReviewsExtended []Review          `json:"user_reviews_extended"`
+	Emails              []string          `json:"emails"`
+	ReviewCollection    *ReviewCollection `json:"review_collection,omitempty"`
 }
 
 // entryAlias is used inside Marshal/UnmarshalJSON to avoid infinite recursion
@@ -270,6 +271,7 @@ func (e *Entry) CsvHeaders() []string {
 		"user_reviews",
 		"user_reviews_extended",
 		"emails",
+		"review_collection",
 	}
 }
 
@@ -311,6 +313,7 @@ func (e *Entry) CsvRow() []string {
 		stringify(e.UserReviews),
 		stringify(e.UserReviewsExtended),
 		stringSliceToString(e.Emails),
+		stringify(e.ReviewCollection),
 	}
 }
 
@@ -322,7 +325,7 @@ func (e *Entry) AddExtraReviews(pages [][]byte) {
 	for _, page := range pages {
 		reviews := extractReviews(page)
 		if len(reviews) > 0 {
-			e.UserReviewsExtended = append(e.UserReviewsExtended, reviews...)
+			e.UserReviewsExtended = appendUniqueReviews(e.UserReviewsExtended, reviews)
 		}
 	}
 }
@@ -479,14 +482,7 @@ func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error)
 		entry.Owner.Link = fmt.Sprintf("https://www.google.com/maps/contrib/%s", entry.Owner.ID)
 	}
 
-	entry.CompleteAddress = Address{
-		Borough:    getNthElementAndCast[string](darray, 183, 1, 0),
-		Street:     getNthElementAndCast[string](darray, 183, 1, 1),
-		City:       getNthElementAndCast[string](darray, 183, 1, 3),
-		PostalCode: getNthElementAndCast[string](darray, 183, 1, 4),
-		State:      getNthElementAndCast[string](darray, 183, 1, 5),
-		Country:    getNthElementAndCast[string](darray, 183, 1, 6),
-	}
+	entry.CompleteAddress = completeAddressFromPlaceArray(darray)
 
 	aboutI := getNthElementAndCast[[]any](darray, 100, 1)
 

@@ -144,12 +144,15 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 	allReviewsRaw, ok := resp.Meta["reviews_raw"].(FetchReviewsResponse)
 	if ok && len(allReviewsRaw.pages) > 0 {
 		entry.AddExtraReviews(allReviewsRaw.pages)
+		enrichKnownReviews(entry.UserReviews, entry.UserReviewsExtended)
+		entry.UserReviewsExtended = dedupeDOMReviewsAgainstPrimary(entry.UserReviews, entry.UserReviewsExtended)
 	}
 
 	// Handle DOM-based reviews (fallback)
 	domReviews, ok := resp.Meta["dom_reviews"].([]DOMReview)
 	if ok && len(domReviews) > 0 {
 		convertedReviews := ConvertDOMReviewsToReviews(domReviews)
+		enrichKnownReviews(entry.UserReviews, convertedReviews)
 
 		deduped := dedupeDOMReviewsAgainstPrimary(entry.UserReviews, convertedReviews)
 		if len(deduped) != len(convertedReviews) {
@@ -157,7 +160,22 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 				len(convertedReviews)-len(deduped), len(convertedReviews))
 		}
 
-		entry.UserReviewsExtended = append(entry.UserReviewsExtended, deduped...)
+		entry.UserReviewsExtended = appendUniqueReviews(entry.UserReviewsExtended, deduped)
+	}
+
+	if j.ExtractExtraReviews {
+		outcome, _ := resp.Meta["review_collection"].(ReviewCollection)
+		if outcome.Method == "" {
+			outcome.Method = "none"
+		}
+
+		entry.finishReviewCollection(outcome)
+	}
+
+	collectedReviews := len(entry.UserReviews) + len(entry.UserReviewsExtended)
+	if j.ExtractExtraReviews && collectedReviews < entry.ReviewCount {
+		log.Printf("Warning: incomplete review collection for %q: collected %d of %d reported reviews",
+			entry.Title, collectedReviews, entry.ReviewCount)
 	}
 
 	if j.ExtractEmail && entry.IsWebsiteValidForEmail() {
@@ -183,7 +201,14 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 }
 
 func (j *PlaceJob) BrowserActions(ctx context.Context, page scrapemate.BrowserPage) scrapemate.Response {
-	var resp scrapemate.Response
+	var (
+		resp    scrapemate.Response
+		capture *browserReviewCapture
+	)
+	if j.ExtractExtraReviews {
+		capture = startReviewCapture(page)
+		defer capture.close()
+	}
 
 	pageResponse, err := page.Goto(j.GetURL(), scrapemate.WaitUntilDOMContentLoaded)
 	if err != nil {
@@ -223,17 +248,23 @@ func (j *PlaceJob) BrowserActions(ctx context.Context, page scrapemate.BrowserPa
 				page:        page,
 				mapURL:      page.URL(),
 				reviewCount: reviewCount,
+				capture:     capture,
 			}
 
-			// Use the new fallback mechanism that tries RPC first, then DOM
+			// Observe the anonymous page's own current RPC requests and keep DOM
+			// reviews when the browser does not expose a structured response.
 			rpcData, domReviews, err := FetchReviewsWithFallback(ctx, params)
+			resp.Meta["review_collection"] = rpcData.collection
 
-			switch {
-			case err != nil:
+			if err != nil {
 				fmt.Printf("Warning: review extraction failed: %v\n", err)
-			case len(rpcData.pages) > 0:
+			}
+
+			if len(rpcData.pages) > 0 {
 				resp.Meta["reviews_raw"] = rpcData
-			case len(domReviews) > 0:
+			}
+
+			if len(domReviews) > 0 {
 				resp.Meta["dom_reviews"] = domReviews
 			}
 		}
