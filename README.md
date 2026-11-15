@@ -18,7 +18,7 @@ Use it for lead generation, local business research, sales prospecting, data enr
 
 ## Paid Setup and Integration
 
-Work directly with the maintainer to deploy Google Maps Scraper on your infrastructure, configure scraping jobs, or integrate the API with your application.
+Work directly with the maintainer to deploy the scraper on your infrastructure, configure scraping jobs, or integrate the API with your application.
 
 **[Book a call](https://www.cal.eu/g-k-lsoknt/gosom)** to discuss your project and scope a paid engagement.
 
