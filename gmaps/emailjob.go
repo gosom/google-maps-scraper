@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"strings"
+	"unicode"
 	"uuid"
 
 	"github.com/PuerkitoBio/goquery"
@@ -106,11 +107,17 @@ func docEmailExtractor(doc *goquery.Document) []string {
 
 	var emails []string
 
-	doc.Find("a[href^='mailto:']").Each(func(_ int, s *goquery.Selection) {
+	doc.Find("a[href]").Each(func(_ int, s *goquery.Selection) {
 		mailto, exists := s.Attr("href")
-		if exists {
-			value := strings.TrimPrefix(mailto, "mailto:")
-			if email, err := getValidEmail(value); err == nil {
+		if exists && len(mailto) >= len("mailto:") && strings.EqualFold(mailto[:len("mailto:")], "mailto:") {
+			value := strings.SplitN(mailto[len("mailto:"):], "?", 2)[0]
+
+			value, err := url.PathUnescape(value)
+			if err != nil {
+				return
+			}
+
+			if email, ok := cleanEmail(value); ok {
 				if !seen[email] {
 					emails = append(emails, email)
 					seen[email] = true
@@ -129,22 +136,79 @@ func regexEmailExtractor(body []byte) []string {
 
 	addresses := emailaddress.Find(body, false)
 	for i := range addresses {
-		if !seen[addresses[i].String()] {
-			emails = append(emails, addresses[i].String())
-			seen[addresses[i].String()] = true
+		email, ok := cleanEmail(addresses[i].String())
+		if !ok {
+			continue
+		}
+
+		if !seen[email] {
+			emails = append(emails, email)
+			seen[email] = true
 		}
 	}
 
 	return emails
 }
 
-func getValidEmail(s string) (string, error) {
-	email, err := emailaddress.Parse(strings.TrimSpace(s))
-	if err != nil {
-		return "", err
+// cleanEmail normalizes raw email candidates and reports whether the address is valid and usable.
+func cleanEmail(raw string) (string, bool) {
+	email := strings.ToLower(strings.TrimSpace(raw))
+	email = strings.Trim(email, `"'<>`)
+	email = strings.TrimSpace(email)
+
+	// Control characters indicate the match was extracted from binary or corrupted markup.
+	if strings.ContainsFunc(email, unicode.IsControl) {
+		return "", false
 	}
 
-	return email.String(), nil
+	if len(email) < 5 || len(email) > 254 || !strings.Contains(email, "@") {
+		return "", false
+	}
+
+	parsed, err := emailaddress.Parse(email)
+	if err != nil {
+		return "", false
+	}
+
+	email = parsed.String()
+
+	if !isUsableEmail(email) {
+		return "", false
+	}
+
+	return email, true
+}
+
+// isUsableEmail rejects asset/media filenames and telemetry/tracker domains.
+func isUsableEmail(email string) bool {
+	for _, ext := range invalidEmailExtensions {
+		if strings.HasSuffix(email, ext) {
+			return false
+		}
+	}
+
+	domain := email[strings.LastIndexByte(email, '@')+1:]
+	for _, suffix := range junkEmailDomainSuffixes {
+		if domain == suffix || strings.HasSuffix(domain, "."+suffix) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// invalidEmailExtensions covers retina srcset filenames ("name@2x.ext") that
+// resemble email addresses and pass syntax validation.
+var invalidEmailExtensions = []string{
+	".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".avif",
+	".jfif", ".bmp", ".ico", ".tif", ".tiff", ".heic", ".heif",
+	".css", ".js", ".mjs", ".json", ".xml", ".html", ".htm",
+	".pdf", ".doc", ".docx", ".zip", ".rar",
+	".mp4", ".webm", ".mp3", ".woff", ".woff2", ".ttf", ".eot",
+}
+
+var junkEmailDomainSuffixes = []string{
+	"sentry.io", "exceptions.doctolib.fr", "vk-portal.net", "wixpress.com",
 }
 
 // normalizeGoogleURL extracts the actual target URL from Google redirect URLs.

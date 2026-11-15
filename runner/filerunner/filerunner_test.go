@@ -25,6 +25,30 @@ func TestNewRejectsResumeWithStdoutResults(t *testing.T) {
 	require.ErrorContains(t, err, "-resume requires -results to be a file path")
 }
 
+func TestNewRejectsInvalidStrictGridConfiguration(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		bbox string
+		fast bool
+		want string
+	}{
+		{"missing box", "", false, "-grid-strict requires -grid-bbox"},
+		{"invalid box", "invalid", false, "invalid -grid-bbox"},
+		{"fast mode", "1,2,3,4", true, "-fast-mode cannot be used"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := filerunner.New(&runner.Config{
+				RunMode: runner.RunModeFile, GridStrict: true, GridBBox: tc.bbox, FastMode: tc.fast,
+			})
+			require.ErrorContains(t, err, tc.want)
+		})
+	}
+}
+
 func TestNewRejectsResumeWithCustomWriter(t *testing.T) {
 	t.Parallel()
 

@@ -40,6 +40,20 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		return nil, fmt.Errorf("%w: %d", runner.ErrInvalidRunMode, cfg.RunMode)
 	}
 
+	if cfg.GridStrict {
+		if cfg.GridBBox == "" {
+			return nil, fmt.Errorf("-grid-strict requires -grid-bbox")
+		}
+
+		if cfg.FastMode {
+			return nil, fmt.Errorf("-fast-mode cannot be used together with -grid-bbox")
+		}
+
+		if _, err := grid.ParseBoundingBox(cfg.GridBBox); err != nil {
+			return nil, fmt.Errorf("invalid -grid-bbox: %w", err)
+		}
+	}
+
 	if cfg.Resume {
 		if cfg.FastMode {
 			return nil, fmt.Errorf("-resume does not support fast mode")
@@ -72,6 +86,12 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 
 	if err := ans.setWriters(); err != nil {
 		return nil, err
+	}
+
+	if cfg.GridStrict {
+		if err := ans.filterGridWriters(); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := ans.setApp(); err != nil {
@@ -278,12 +298,18 @@ func (r *fileRunner) setWriters() error {
 					return headerErr
 				}
 
+				headers, headerErr := readCSVHeaders(r.cfg.ResultsFile)
+				if headerErr != nil {
+					return headerErr
+				}
+
 				r.writers = append(r.writers, resume.NewCSVAppendWriter(
 					csv.NewWriter(resultsWriter),
 					writeHeader,
 					r.resumeIDs,
 					r.resumeProgress,
 					r.outfile.Sync,
+					headers,
 				))
 			}
 		case r.cfg.JSON:
@@ -295,6 +321,26 @@ func (r *fileRunner) setWriters() error {
 	}
 
 	return nil
+}
+
+func readCSVHeaders(path string) ([]string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open CSV header: %w", err)
+	}
+
+	headers, readErr := csv.NewReader(file).Read()
+	closeErr := file.Close()
+
+	if readErr != nil && readErr != io.EOF {
+		return nil, fmt.Errorf("read CSV header: %w", readErr)
+	}
+
+	if closeErr != nil {
+		return nil, fmt.Errorf("close CSV header: %w", closeErr)
+	}
+
+	return headers, nil
 }
 
 func validateResumeFiles(resultsPath string) error {
