@@ -16,6 +16,12 @@ Extract Google Maps business leads, emails, reviews, phone numbers, websites, ra
 
 Use it for lead generation, local business research, sales prospecting, data enrichment, or developer automation.
 
+## Paid Setup and Integration
+
+Work directly with the maintainer to deploy Google Maps Scraper on your infrastructure, configure scraping jobs, or integrate the API with your application.
+
+**[Book a call](https://www.cal.eu/g-k-lsoknt/gosom)** to discuss your project and scope a paid engagement.
+
 ## Ask an AI Agent to Get Leads
 
 The easiest way to use Google Maps Scraper is with an AI coding agent such as [Claude Code](https://claude.com/claude-code), Codex, Cursor, GitHub Copilot, or any [Agent Skills-compatible tool](https://agentskills.io). You describe the leads you want; the agent plans the searches, runs a small validation, starts the full local scrape, monitors it, and helps you work with the results.
@@ -708,6 +714,7 @@ This project is free and open source. Stars, sponsorships, and sponsor referrals
 
 - Star the repository: [github.com/gosom/google-maps-scraper](https://github.com/gosom/google-maps-scraper)
 - Sponsor development: [GitHub Sponsors](https://github.com/sponsors/gosom)
+- Paid setup and API integration: [Book a call with the maintainer](https://www.cal.eu/g-k-lsoknt/gosom)
 - Need proxies? See [Proxy Sponsors](docs/proxies.md)
 - Deploying the self-hosted platform? See [SaaS deployment options](docs/saas.md)
 
