@@ -2,8 +2,13 @@
 package gmaps
 
 import (
+	"context"
+	"fmt"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/gosom/scrapemate"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -97,4 +102,202 @@ func Test_dedupeDOMReviewsAgainstPrimary(t *testing.T) {
 			assert.Equal(t, tt.want, dedupeDOMReviewsAgainstPrimary(tt.primary, tt.dom))
 		})
 	}
+}
+
+type mockBrowserPage struct {
+	evalFn            func(js string, args ...any) (any, error)
+	waitForSelectorFn func(selector string, timeout time.Duration) error
+}
+
+func (m *mockBrowserPage) Goto(url string, _ scrapemate.WaitUntilState) (*scrapemate.PageResponse, error) {
+	return &scrapemate.PageResponse{URL: url, StatusCode: 200}, nil
+}
+
+func (m *mockBrowserPage) URL() string {
+	return "https://www.google.com/maps/place/test"
+}
+
+func (m *mockBrowserPage) Content() (string, error) {
+	return "<html></html>", nil
+}
+
+func (m *mockBrowserPage) Reload(_ scrapemate.WaitUntilState) error {
+	return nil
+}
+
+func (m *mockBrowserPage) Screenshot(_ bool) ([]byte, error) {
+	return nil, nil
+}
+
+func (m *mockBrowserPage) Eval(js string, args ...any) (any, error) {
+	if m.evalFn != nil {
+		return m.evalFn(js, args...)
+	}
+
+	return nil, nil
+}
+
+func (m *mockBrowserPage) WaitForURL(_ string, _ time.Duration) error {
+	return nil
+}
+
+func (m *mockBrowserPage) WaitForSelector(selector string, timeout time.Duration) error {
+	if m.waitForSelectorFn != nil {
+		return m.waitForSelectorFn(selector, timeout)
+	}
+
+	return nil
+}
+
+func (m *mockBrowserPage) WaitForTimeout(_ time.Duration) {}
+
+func (m *mockBrowserPage) Locator(_ string) scrapemate.Locator {
+	return nil
+}
+
+func (m *mockBrowserPage) Close() error {
+	return nil
+}
+
+func (m *mockBrowserPage) Unwrap() any {
+	return nil
+}
+
+func Test_extractReviewsFromPage_ContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	mock := &mockBrowserPage{}
+	reviews, err := extractReviewsFromPage(ctx, mock, 10)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Empty(t, reviews)
+}
+
+func Test_extractReviewsFromPage_TargetLimit(t *testing.T) {
+	callCount := 0
+	mock := &mockBrowserPage{
+		evalFn: func(js string, _ ...any) (any, error) {
+			if strings.Contains(js, "reviewElements") {
+				callCount++
+				// Return 5 unique reviews per call
+				res := make([]any, 0, 5)
+				for i := 0; i < 5; i++ {
+					idx := (callCount-1)*5 + i
+					res = append(res, map[string]any{
+						"review_id":   fmt.Sprintf("review-%d", idx),
+						"author_name": fmt.Sprintf("Author %d", idx),
+						"rating":      5,
+						"text":        "Great place!",
+					})
+				}
+
+				return res, nil
+			}
+
+			return true, nil
+		},
+	}
+
+	ctx := context.Background()
+	// Request 12 reviews, which should stop once 15 reviews (3 batches of 5) are extracted >= 12
+	reviews, err := extractReviewsFromPage(ctx, mock, 12)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(reviews), 12)
+	assert.Equal(t, 15, len(reviews))
+}
+
+func Test_extractReviewsFromPage_Deduplication(t *testing.T) {
+	evalPass := 0
+	mock := &mockBrowserPage{
+		evalFn: func(js string, _ ...any) (any, error) {
+			if strings.Contains(js, "reviewElements") {
+				evalPass++
+				// First pass: 3 reviews
+				if evalPass == 1 {
+					return []any{
+						map[string]any{"review_id": "r1", "author_name": "A", "rating": 5, "text": "Good"},
+						map[string]any{"review_id": "r2", "author_name": "B", "rating": 4, "text": "Nice"},
+						map[string]any{"review_id": "", "author_name": "C", "rating": 5, "text": "Same text"},
+					}, nil
+				}
+				// Second pass: r1 and r2 are duplicates, r3 is new, C is duplicate text
+				return []any{
+					map[string]any{"review_id": "r1", "author_name": "A", "rating": 5, "text": "Good"},
+					map[string]any{"review_id": "r2", "author_name": "B", "rating": 4, "text": "Nice"},
+					map[string]any{"review_id": "r3", "author_name": "D", "rating": 3, "text": "Okay"},
+					map[string]any{"review_id": "", "author_name": "C", "rating": 5, "text": "Same text"},
+				}, nil
+			}
+
+			return true, nil
+		},
+	}
+
+	ctx := context.Background()
+	reviews, err := extractReviewsFromPage(ctx, mock, 4)
+	require.NoError(t, err)
+	// Should have exactly 4 unique reviews: r1, r2, C (no id), r3
+	assert.Len(t, reviews, 4)
+	assert.Equal(t, "r1", reviews[0].ReviewID)
+	assert.Equal(t, "r2", reviews[1].ReviewID)
+	assert.Equal(t, "", reviews[2].ReviewID)
+	assert.Equal(t, "C", reviews[2].AuthorName)
+	assert.Equal(t, "r3", reviews[3].ReviewID)
+}
+
+func Test_extractReviewsFromPage_StuckDetection(t *testing.T) {
+	mock := &mockBrowserPage{
+		evalFn: func(js string, _ ...any) (any, error) {
+			if strings.Contains(js, "reviewElements") {
+				// Always return the exact same 2 reviews
+				return []any{
+					map[string]any{"review_id": "r1", "author_name": "A", "rating": 5, "text": "Good"},
+					map[string]any{"review_id": "r2", "author_name": "B", "rating": 4, "text": "Nice"},
+				}, nil
+			}
+
+			return true, nil
+		},
+	}
+
+	ctx := context.Background()
+	// Ask for 50 reviews, but feed never yields more than 2
+	reviews, err := extractReviewsFromPage(ctx, mock, 50)
+	require.NoError(t, err)
+	// Must exit gracefully after stuck threshold without infinite loop
+	assert.Len(t, reviews, 2)
+}
+
+func Test_FetchReviewsWithFallback_DOMFallbackOnRPCFailure(t *testing.T) {
+	mock := &mockBrowserPage{
+		evalFn: func(js string, _ ...any) (any, error) {
+			if strings.Contains(js, "reviewElements") {
+				return []any{
+					map[string]any{"review_id": "r1", "author_name": "Reviewer 1", "rating": 5, "text": "Loved it"},
+				}, nil
+			}
+			// When fetchWithBrowser tries to call fetch(), it returns error HTTP 403
+			if strings.Contains(js, "credentials") {
+				return map[string]any{"error": "HTTP 403"}, nil
+			}
+
+			return true, nil
+		},
+	}
+
+	ctx := context.Background()
+	params := fetchReviewsParams{
+		page:        mock,
+		mapURL:      "https://www.google.com/maps/place/test/data=!4m7!3m6!1s0x123:0x456!8m2!3d40.1!4d-73.1",
+		reviewCount: 1,
+	}
+
+	rpcResp, domReviews, err := FetchReviewsWithFallback(ctx, params)
+	require.NoError(t, err)
+	assert.Empty(t, rpcResp.pages)
+	require.Len(t, domReviews, 1)
+	assert.Equal(t, "r1", domReviews[0].ReviewID)
+	assert.Equal(t, "Reviewer 1", domReviews[0].AuthorName)
 }
