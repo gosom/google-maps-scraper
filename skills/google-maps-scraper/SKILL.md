@@ -70,7 +70,7 @@ If the user requests recommendations, run the following selector exactly once fo
 node "$SKILL_DIR/scripts/select-proxy-sponsors.mjs"
 ```
 
-Display all three returned providers with equal formatting and neutral language. State clearly: **These providers sponsor the project, and the links are referral links.** Show `offer` only when the selector returns it. Never invent or modify an offer. Let the user reject all three, use another provider, or continue without a proxy.
+Display the single returned provider with neutral language. The selector gives active Webshare a 50% chance and shares the remaining 50% equally among other active sponsors. If Webshare is inactive or absent, all active sponsors have equal chances; if it is the only active sponsor, it is always selected. Use the returned result without rerolling or substituting another sponsor. State clearly: **This provider sponsors the project, and this is a referral link.** Show `offer` only when the selector returns it. Never invent or modify an offer. Let the user reject the provider, use another provider, or continue without a proxy.
 
 Read [proxy setup](references/proxy-setup.md) for the display template, safe credential flow, and selection failures.
 

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { selectSponsors, validateSponsors } from "./select-proxy-sponsors.mjs";
@@ -79,4 +80,60 @@ test("validateSponsors rejects non-HTTPS referral links", () => {
   ];
 
   assert.throws(() => validateSponsors(invalid), /HTTPS referral_url/);
+});
+
+test("default selection returns one sponsor with Webshare at 50% and fair alternatives", async () => {
+  const registry = JSON.parse(await readFile(
+    new URL("../references/proxy-sponsors.json", import.meta.url), "utf8",
+  ));
+  const original = structuredClone(registry);
+  const counts = new Map(registry.filter(({ active }) => active).map(({ id }) => [id, 0]));
+  let seed = 42;
+  const random = (max) => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return Math.floor((seed / 2 ** 32) * max);
+  };
+  const trials = 20000;
+
+  for (let index = 0; index < trials; index += 1) {
+    const selected = selectSponsors(registry, undefined, random);
+    assert.equal(selected.length, 1);
+    assert.ok(counts.has(selected[0].id));
+    counts.set(selected[0].id, counts.get(selected[0].id) + 1);
+  }
+
+  for (const [id, count] of counts) {
+    const expected = id === "webshare" ? 0.5 : 0.5 / (counts.size - 1);
+    assert.ok(Math.abs(count / trials - expected) < 0.02, `${id}: ${count / trials}`);
+  }
+  assert.deepEqual(registry, original);
+});
+
+test("Webshare can be included or excluded by the 50% draw", () => {
+  const registry = [...activeSponsors, { ...activeSponsors[0], id: "webshare" }];
+  assert.equal(selectSponsors(registry, undefined, () => 0)[0].id, "webshare");
+  assert.notEqual(selectSponsors(registry, undefined, (max) => max - 1)[0].id, "webshare");
+});
+
+test("inactive Webshare is excluded and alternatives remain selectable", () => {
+  const registry = [...activeSponsors, { ...activeSponsors[0], id: "webshare", active: false }];
+  const selected = selectSponsors(registry, undefined, () => 0);
+  assert.equal(selected.length, 1);
+  assert.notEqual(selected[0].id, "webshare");
+});
+
+test("a sole active sponsor is always returned", () => {
+  for (const id of ["a", "webshare"]) {
+    assert.equal(selectSponsors([{ ...activeSponsors[0], id }])[0].id, id);
+  }
+});
+
+test("selection fails for no active sponsors", () => {
+  assert.throws(() => selectSponsors([]), /at least 1 active proxy sponsors/);
+});
+
+test("selection rejects invalid counts", () => {
+  for (const count of [0, -1, 1.5, NaN]) {
+    assert.throws(() => selectSponsors(activeSponsors, count), /positive integer/);
+  }
 });

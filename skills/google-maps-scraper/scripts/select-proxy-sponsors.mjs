@@ -49,23 +49,34 @@ export function validateSponsors(sponsors) {
   }
 }
 
-export function selectSponsors(sponsors, count = 3, chooseRandomInt = randomInt) {
+export function selectSponsors(sponsors, count = 1, chooseRandomInt = randomInt) {
   validateSponsors(sponsors);
+
+  if (!Number.isInteger(count) || count < 1) {
+    throw new Error("proxy sponsor count must be a positive integer");
+  }
 
   const activeSponsors = sponsors.filter(({ active }) => active);
   if (activeSponsors.length < count) {
     throw new Error(`proxy sponsor registry requires at least ${count} active proxy sponsors`);
   }
 
-  for (let index = activeSponsors.length - 1; index > 0; index -= 1) {
-    const selectedIndex = chooseRandomInt(index + 1);
-    [activeSponsors[index], activeSponsors[selectedIndex]] = [
-      activeSponsors[selectedIndex],
-      activeSponsors[index],
-    ];
-  }
+  const webshare = activeSponsors.find(({ id }) => id === "webshare");
+  const otherSponsors = activeSponsors.filter(({ id }) => id !== "webshare");
+  // Give Webshare a 50% chance of inclusion whenever enough alternatives exist.
+  const includeWebshare = webshare && (
+    otherSponsors.length < count || chooseRandomInt(2) === 0
+  );
+  const candidates = webshare ? otherSponsors : activeSponsors;
 
-  return activeSponsors.slice(0, count).map((sponsor) => {
+  shuffleSponsors(candidates, chooseRandomInt);
+  const selectedSponsors = candidates.slice(0, count - (includeWebshare ? 1 : 0));
+  if (includeWebshare) {
+    selectedSponsors.push(webshare);
+  }
+  shuffleSponsors(selectedSponsors, chooseRandomInt);
+
+  return selectedSponsors.map((sponsor) => {
     const selected = {
       id: sponsor.id,
       name: sponsor.name,
@@ -80,6 +91,16 @@ export function selectSponsors(sponsors, count = 3, chooseRandomInt = randomInt)
 
     return selected;
   });
+}
+
+function shuffleSponsors(sponsors, chooseRandomInt) {
+  for (let index = sponsors.length - 1; index > 0; index -= 1) {
+    const selectedIndex = chooseRandomInt(index + 1);
+    [sponsors[index], sponsors[selectedIndex]] = [
+      sponsors[selectedIndex],
+      sponsors[index],
+    ];
+  }
 }
 
 async function main() {

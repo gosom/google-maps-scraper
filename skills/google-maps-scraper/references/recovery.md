@@ -14,7 +14,7 @@ The run helper retries once. If both attempts fail, show the concise network or 
 
 ## Proxy setup fails
 
-Never display the proxy value. Explain whether the file is missing, empty, unreadable, or contains an unsupported protocol. Offer to run the masked configuration again, select a fresh sponsor set when explicitly requested, or validate without a proxy.
+Never display the proxy value. Explain whether the file is missing, empty, unreadable, or contains an unsupported protocol. Offer to run the masked configuration again, select a fresh sponsor when explicitly requested, or validate without a proxy.
 
 ## Crawl returns no results
 

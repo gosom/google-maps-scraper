@@ -2,12 +2,34 @@
 
 These sponsors help support development and maintenance of [Google Maps Scraper](README.md).
 
-This page collects sponsor descriptions, banners, referral links, and offers. Sponsor listings are paid placements, and some links are referral links. Sponsors are listed alphabetically.
+This page collects sponsor descriptions, banners, referral links, and offers. Sponsor listings are paid placements, and some links are referral links. The featured sponsor appears first; other sponsors are listed alphabetically.
 
 For help configuring proxies, see [proxy setup and sponsors](docs/proxies.md).
 
+## Featured Sponsor
+
+### Webshare
+
+<table width="100%">
+  <tr>
+    <td align="left" valign="middle" width="67%">
+      <a href="https://www.webshare.io/?referral_code=0q3l81eet8mp">
+        <img src="./img/webshare-featured-banner.png" alt="Webshare — Premium proxies for scraping" width="600">
+      </a>
+    </td>
+    <td align="left" valign="middle" width="33%">
+      <p>The most affordable premium proxies across 195 countries &amp; 80+ million IPs, plus a FREE plan for new users.</p>
+      <p><a href="https://www.webshare.io/?referral_code=0q3l81eet8mp">Visit Webshare →</a></p>
+      <a href="webshare.md">Learn more</a>
+    </td>
+  </tr>
+</table>
+
+---
+
 ## Sponsor Directory
 
+- [**Webshare — Featured Sponsor**](#webshare)
 - [Coreclaw](#coreclaw)
 - [Evomi](#evomi)
 - [G Maps Extractor](#g-maps-extractor)
@@ -18,7 +40,6 @@ For help configuring proxies, see [proxy setup and sponsors](docs/proxies.md).
 - [SearchApi](#searchapi)
 - [SerpApi](#serpapi)
 - [TalorData](#talordata)
-- [Webshare](#webshare)
 
 ---
 
@@ -135,16 +156,6 @@ Fast, reliable, and scalable. Used by Fortune 500 companies. [**View all APIs �
 [![TalorData](./img/talordata.png)](https://talordata.com/?campaignid=f01u8cHondg2qA47&utm_source=github&utm_term=googlemaps)
 
 Real-time SERP data APIs for Google Maps and search results, with structured JSON / HTML responses and 1,000 free API responses to start. [**Start using TalorData →**](https://talordata.com/?campaignid=f01u8cHondg2qA47&utm_source=github&utm_term=googlemaps) | [Learn more](talordata.md)
-
----
-
-## Webshare
-
-[Visit Webshare](https://www.webshare.io/?referral_code=0q3l81eet8mp) — Premium proxies for scraping at scale
-
-[![Webshare](./img/webshare-banner.png)](https://www.webshare.io/?referral_code=0q3l81eet8mp)
-
-The most affordable premium proxies across 195 countries & 80+ million IPs, plus a FREE plan for new users. [Learn more](webshare.md)
 
 ---
 
