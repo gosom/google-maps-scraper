@@ -30,7 +30,7 @@ Then ask your agent in plain language:
 
 > Find dentists in Berlin and include their websites and email addresses.
 
-The agent automatically checks for the latest skill and Docker image, then asks only for details it still needs. For larger crawls, you can provide your own proxy, continue without one, or review three randomly selected proxy sponsors. Proxy credentials are entered through a masked local terminal prompt and are never pasted into the agent chat.
+The agent automatically checks for the latest skill and Docker image, then asks only for details it still needs. For larger crawls, you can provide your own proxy, continue without one, or review one randomly selected proxy sponsor. Proxy credentials are entered through a masked local terminal prompt and are never pasted into the agent chat.
 
 Requires Docker and Node.js on macOS, Linux, or Windows through WSL. See [how the agent workflow works](#ai-agent-skill).
 
@@ -48,6 +48,22 @@ Requires Docker and Node.js on macOS, Linux, or Windows through WSL. See [how th
 If this project is useful to you, a GitHub star helps others discover it. Sponsorships help fund maintenance and new work.
 
 ---
+
+## Featured Sponsor
+
+<table width="100%">
+  <tr>
+    <td align="left" valign="middle" width="67%">
+      <a href="https://www.webshare.io/?referral_code=0q3l81eet8mp">
+        <img src="./img/webshare-featured-banner.png" alt="Webshare — Premium proxies for scraping" width="600">
+      </a>
+    </td>
+    <td align="left" valign="middle" width="33%">
+      <p>The most affordable premium proxies across 195 countries &amp; 80+ million IPs, plus a FREE plan for new users.</p>
+      <a href="https://www.webshare.io/?referral_code=0q3l81eet8mp">Visit Webshare →</a>
+    </td>
+  </tr>
+</table>
 
 ## Sponsored By
 
@@ -121,13 +137,8 @@ These sponsors help support development and maintenance of Google Maps Scraper.
         <strong>TalorData</strong>
       </a>
     </td>
-    <td align="center" valign="middle" width="33%">
-      <a href="https://www.webshare.io/?referral_code=0q3l81eet8mp">
-        <img src="./img/sponsors/webshare.svg" alt="Webshare" width="250" height="100"><br>
-        <strong>Webshare</strong>
-      </a>
-    </td>
     <td align="center" valign="middle" width="33%"><a href="https://github.com/sponsors/gosom">Become a sponsor</a></td>
+    <td width="33%"></td>
   </tr>
 </table>
 
@@ -282,13 +293,13 @@ The agent will:
 
 1. Noninteractively check for the latest skill and Docker image.
 2. Infer sensible search defaults and ask only for missing essentials.
-3. Let you use your own proxy, continue without one, or choose from three randomly selected proxy sponsors.
+3. Let you use your own proxy, continue without one, or review one randomly selected proxy sponsor.
 4. Collect proxy credentials through a masked local terminal prompt instead of chat.
 5. Run a small validation scrape before the full job.
 6. Start and monitor the Docker crawl in the background.
 7. Present the results with options to save, filter, analyze, or export.
 
-Proxy sponsor recommendations are clearly disclosed and shown with equal placement. Any discount or offer is displayed only when it is configured in the skill's [active sponsor registry](skills/google-maps-scraper/references/proxy-sponsors.json). You can always use another provider or no proxy.
+Proxy sponsor recommendations are clearly disclosed. One provider is selected per request: Webshare has a 50% chance, and the other active sponsors share the remaining 50% equally. If Webshare is inactive, active sponsors have equal chances; a sole active sponsor is always selected. Any discount or offer is displayed only when it is configured in the skill's [active sponsor registry](skills/google-maps-scraper/references/proxy-sponsors.json). You can always use another provider or no proxy.
 
 Requires Docker and Node.js on macOS, Linux, or Windows through WSL. See the [skill definition](skills/google-maps-scraper/SKILL.md) for details.
 
@@ -306,7 +317,7 @@ docker pull gosom/google-maps-scraper
 
 ### Build from Source
 
-Requirements: Go 1.27.3+
+Requirements: Go 1.27.4+
 
 ```bash
 git clone https://github.com/gosom/google-maps-scraper.git

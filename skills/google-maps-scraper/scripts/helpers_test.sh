@@ -157,7 +157,7 @@ if [[ $(grep -Fc 'select-proxy-sponsors.mjs' "$skill_file") -ne 1 ]]; then
 	exit 1
 fi
 
-if ! grep -Fiq 'sponsor the project' "$skill_file"; then
+if ! grep -Fiq 'sponsors the project' "$skill_file"; then
 	echo "SKILL.md does not require sponsorship disclosure" >&2
 	exit 1
 fi

@@ -6,19 +6,19 @@ A proxy is optional for a small validation or shallow crawl. Recommend consideri
 
 ## Sponsor presentation
 
-Run `scripts/select-proxy-sponsors.mjs` once for the setup. Present the returned entries in their returned order with identical formatting:
+Run `scripts/select-proxy-sponsors.mjs` once for the setup. The selector returns one provider: Webshare has a 50% chance while the other active sponsors share the remaining 50% equally. Without active Webshare, selection is uniform among active sponsors; a sole active sponsor is always selected. Present the returned provider without rerolling:
 
 ```text
-These providers sponsor the project, and the links are referral links. You can also use your own proxy or continue without one.
+This provider sponsors the project, and this is a referral link. You can also use your own proxy or continue without one.
 
-1. Provider name — factual description
+Provider name — factual description
    Current offer: offer text (only when returned)
    Referral link: URL
 ```
 
 Do not call one provider the best, cheapest, fastest, or recommended over the others unless independently verified product data is added in a future release. Do not hide the referral disclosure.
 
-If the selector fails, explain that sponsor recommendations are temporarily unavailable and offer own-proxy or no-proxy setup. If the user explicitly rejects the displayed set and asks for alternatives, a new setup may select a fresh set.
+If the selector fails, explain that sponsor recommendations are temporarily unavailable and offer own-proxy or no-proxy setup. If the user explicitly rejects the displayed provider and asks for alternatives, a new setup may select a fresh provider.
 
 ## Credential entry
 
