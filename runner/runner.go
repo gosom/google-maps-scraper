@@ -36,6 +36,9 @@ const (
 
 var (
 	ErrInvalidRunMode = errors.New("invalid run mode")
+
+	// releaseVersion is set by the Makefile through linker flags for release builds.
+	releaseVersion string
 )
 
 type Runner interface {
@@ -154,6 +157,11 @@ func ParseConfig() *Config {
 	flag.Parse()
 
 	if cfg.Version {
+		if releaseVersion != "" {
+			fmt.Println(releaseVersion)
+			os.Exit(0)
+		}
+
 		info, ok := debug.ReadBuildInfo()
 		if !ok {
 			fmt.Println("build info not available")
