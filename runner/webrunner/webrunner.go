@@ -29,6 +29,9 @@ type webrunner struct {
 	svc       *web.Service
 	cfg       *runner.Config
 	setupMate func(context.Context, io.Writer, *web.Job) (mateRunner, error)
+	// sharedDedup, set by -web-dedup-file, holds the places of finished jobs
+	// so a later job (or a later process) does not scrape them again.
+	sharedDedup *deduper.FileDeduper
 }
 
 type mateRunner interface {
@@ -68,6 +71,13 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		setupMate: defaultSetupMate(cfg),
 	}
 
+	if cfg.WebDedupFile != "" {
+		ans.sharedDedup, err = deduper.NewFile(cfg.WebDedupFile)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return &ans, nil
 }
 
@@ -86,6 +96,10 @@ func (w *webrunner) Run(ctx context.Context) error {
 }
 
 func (w *webrunner) Close(context.Context) error {
+	if w.sharedDedup != nil {
+		return w.sharedDedup.Close()
+	}
+
 	return nil
 }
 
@@ -186,7 +200,16 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		coords = job.Data.Lat + "," + job.Data.Lon
 	}
 
-	dedup := deduper.New()
+	var (
+		dedup    deduper.Deduper = deduper.New()
+		jobDedup *deduper.JobDeduper
+	)
+
+	if w.sharedDedup != nil {
+		jobDedup = w.sharedDedup.NewJob()
+		dedup = jobDedup
+	}
+
 	exitMonitor := exiter.New()
 
 	seedJobs, err := runner.CreateSeedJobs(
@@ -256,7 +279,32 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 
 	job.Status = web.StatusOK
 
-	return w.svc.Update(ctx, job)
+	if err := w.svc.Update(ctx, job); err != nil {
+		return err
+	}
+
+	w.commitDedup(ctx, job.ID, jobDedup)
+
+	return nil
+}
+
+// commitDedup shares a finished job's places with later jobs. A job deleted
+// while it ran has lost its results, so its places stay unseen and a rerun
+// scrapes them again.
+func (w *webrunner) commitDedup(ctx context.Context, jobID string, jobDedup *deduper.JobDeduper) {
+	if jobDedup == nil {
+		return
+	}
+
+	if got, err := w.svc.Get(ctx, jobID); err != nil || got.ID != jobID {
+		log.Printf("job %s was removed before it finished; its places are not added to the dedup file", jobID)
+
+		return
+	}
+
+	if err := jobDedup.Commit(); err != nil {
+		log.Printf("job %s: %v", jobID, err)
+	}
 }
 
 func defaultSetupMate(cfg *runner.Config) func(context.Context, io.Writer, *web.Job) (mateRunner, error) {
