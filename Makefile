@@ -1,5 +1,6 @@
 APP_NAME := google_maps_scraper
-VERSION := 1.19.0
+VERSION := 1.19.1
+VERSION_LDFLAGS := -X github.com/gosom/google-maps-scraper/runner.releaseVersion=v$(VERSION)
 
 default: help
 
@@ -38,12 +39,12 @@ lint: ## runs the linter
 	go tool golangci-lint -v run ./...
 
 cross-compile: ## cross compiles the application
-	GOOS=linux GOARCH=amd64 go build -o bin/$(APP_NAME)-${VERSION}-linux-amd64
-	GOOS=darwin GOARCH=amd64 go build -o bin/$(APP_NAME)-${VERSION}-darwin-amd64
-	GOOS=windows GOARCH=amd64 go build -o bin/$(APP_NAME)-${VERSION}-windows-amd64.exe
+	GOOS=linux GOARCH=amd64 go build -ldflags="$(VERSION_LDFLAGS)" -o bin/$(APP_NAME)-${VERSION}-linux-amd64
+	GOOS=darwin GOARCH=amd64 go build -ldflags="$(VERSION_LDFLAGS)" -o bin/$(APP_NAME)-${VERSION}-darwin-amd64
+	GOOS=windows GOARCH=amd64 go build -ldflags="$(VERSION_LDFLAGS)" -o bin/$(APP_NAME)-${VERSION}-windows-amd64.exe
 
 build: ## builds the application (default: playwright)
-	go build -o bin/$(APP_NAME) .
+	go build -ldflags="$(VERSION_LDFLAGS)" -o bin/$(APP_NAME) .
 
 docker: ## builds docker image with playwright (default)
 	docker build -t $(APP_NAME):$(VERSION) .
