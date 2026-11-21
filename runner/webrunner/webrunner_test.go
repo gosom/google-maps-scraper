@@ -3,7 +3,11 @@ package webrunner
 
 import (
 	"context"
+	"errors"
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -63,12 +67,71 @@ func TestScrapeJobMarksOKBeforeClosingMate(t *testing.T) {
 	}
 }
 
+func TestScrapeJobMarksFailedOnError(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name      string
+		blockCSV  bool
+		latitude  string
+		startErr  error
+		wantError string
+	}{
+		{name: "output file", blockCSV: true, latitude: "37.77", wantError: "job-error.csv"},
+		{name: "seed jobs", latitude: "invalid", wantError: "invalid latitude"},
+		{name: "scraper", latitude: "37.77", startErr: errors.New("scraper failed"), wantError: "scraper failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			data := t.TempDir()
+			svc := web.NewService(&memoryJobRepo{}, data)
+			job := web.Job{
+				ID:     "job-error",
+				Status: web.StatusPending,
+				Data: web.JobData{
+					Keywords: []string{"coffee"},
+					FastMode: true,
+					Lat:      tc.latitude,
+					Lon:      "-122.42",
+					Zoom:     15,
+				},
+			}
+			if err := svc.Create(ctx, &job); err != nil {
+				t.Fatal(err)
+			}
+			if tc.blockCSV {
+				if err := os.Mkdir(filepath.Join(data, job.ID+".csv"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			w := &webrunner{
+				svc: svc,
+				cfg: &runner.Config{DataFolder: data},
+				setupMate: func(context.Context, io.Writer, *web.Job) (mateRunner, error) {
+					return fakeMate{startErr: tc.startErr}, nil
+				},
+			}
+			if err := w.scrapeJob(ctx, &job); err == nil || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("scrapeJob() error = %v, want %q", err, tc.wantError)
+			}
+			stored, err := svc.Get(ctx, job.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stored.Status != web.StatusFailed {
+				t.Fatalf("stored status = %q, want %q", stored.Status, web.StatusFailed)
+			}
+		})
+	}
+}
+
 type fakeMate struct {
-	onClose func()
+	onClose  func()
+	startErr error
 }
 
 func (m fakeMate) Start(context.Context, ...scrapemate.IJob) error {
-	return nil
+	return m.startErr
 }
 
 func (m fakeMate) Close() error {
