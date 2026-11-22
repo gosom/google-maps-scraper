@@ -176,6 +176,11 @@ func (w *ScrapeWorker) Work(ctx context.Context, job *river.Job[ScrapeJobArgs]) 
 	// Create the appropriate scrape job based on mode
 	var scrapeJob scrapemate.IJob
 
+	maxDepth := args.MaxDepth
+	if maxDepth == 0 {
+		maxDepth = 10
+	}
+
 	if args.FastMode {
 		params := &gmaps.MapSearchParams{
 			Query: args.Keyword,
@@ -193,6 +198,7 @@ func (w *ScrapeWorker) Work(ctx context.Context, job *river.Job[ScrapeJobArgs]) 
 		}
 
 		searchJob := gmaps.NewSearchJob(params,
+			gmaps.WithSearchJobDepth(maxDepth),
 			gmaps.WithSearchJobExitMonitor(exitMon),
 			gmaps.WithSearchJobWriterManagedCompletion(),
 		)
@@ -200,11 +206,6 @@ func (w *ScrapeWorker) Work(ctx context.Context, job *river.Job[ScrapeJobArgs]) 
 
 		scrapeJob = searchJob
 	} else {
-		maxDepth := args.MaxDepth
-		if maxDepth == 0 {
-			maxDepth = 10
-		}
-
 		opts := []gmaps.GmapJobOptions{
 			gmaps.WithExitMonitor(exitMon),
 			gmaps.WithWriterManagedCompletion(),

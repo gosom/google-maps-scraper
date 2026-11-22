@@ -68,6 +68,10 @@ func CreateSeedJobs(
 	var lat, lon float64
 
 	if fastmode {
+		if maxDepth < 1 {
+			return nil, fmt.Errorf("fast mode depth must be at least 1")
+		}
+
 		if geoCoordinates == "" {
 			return nil, fmt.Errorf("geo coordinates are required in fast mode")
 		}
@@ -163,7 +167,7 @@ func CreateSeedJobs(
 				Hl:        langCode,
 			}
 
-			opts := []gmaps.SearchJobOptions{}
+			opts := []gmaps.SearchJobOptions{gmaps.WithSearchJobDepth(maxDepth)}
 
 			if exitMonitor != nil {
 				opts = append(opts, gmaps.WithSearchJobExitMonitor(exitMonitor))
