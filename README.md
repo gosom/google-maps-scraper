@@ -28,7 +28,9 @@ The easiest way to use Google Maps Scraper is with an AI coding agent such as [C
 
 Copy this prompt into your coding agent:
 
-> Read https://raw.githubusercontent.com/gosom/google-maps-scraper/main/INSTALL_FOR_AGENTS.md and set up Google Maps Scraper and its agent skill. Prefer a compatible native binary. Ask me what businesses and location I want, then run a small sample and show me the CSV.
+```text
+Read https://raw.githubusercontent.com/gosom/google-maps-scraper/main/INSTALL_FOR_AGENTS.md and set up Google Maps Scraper and its agent skill. Prefer a compatible native binary. Ask me what businesses and location I want, then run a small sample and show me the CSV.
+```
 
 The [agent installation guide](INSTALL_FOR_AGENTS.md) covers verified native binaries and Docker setup. Native installation requires a release with matching binaries and `checksums.txt`.
 
