@@ -1,0 +1,106 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: manual-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Build binaries and prepare draft release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Read version from Makefile
+        id: version
+        shell: bash
+        run: |
+          version=$(awk '$1 == "VERSION" && $2 == ":=" {print $3}' Makefile)
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Makefile VERSION must be a stable version such as 1.20.0." >&2
+            exit 1
+          fi
+          tag="v$version"
+          if git rev-parse --verify "refs/tags/$tag" >/dev/null 2>&1; then
+            if [[ "$(git rev-parse "refs/tags/$tag^{commit}")" != "$GITHUB_SHA" ]]; then
+              echo "Tag $tag already points to a different commit. Update Makefile VERSION." >&2
+              exit 1
+            fi
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.4'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Test
+        run: make test
+      - name: Build binaries and checksums
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          make cross-compile VERSION="$RELEASE_VERSION"
+          make release-checksums VERSION="$RELEASE_VERSION"
+          cd bin
+          sha256sum -c checksums.txt
+      - name: Create tag and draft release with assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          release_exists=false
+          if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft > "$RUNNER_TEMP/release-draft"; then
+            release_exists=true
+            if [[ "$(cat "$RUNNER_TEMP/release-draft")" != true ]]; then
+              echo "Release $RELEASE_TAG is already published; update Makefile VERSION for a new release." >&2
+              exit 1
+            fi
+          fi
+          if ! git rev-parse --verify "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            git tag "$RELEASE_TAG" "$GITHUB_SHA"
+            git push origin "refs/tags/$RELEASE_TAG"
+          fi
+          if [[ "$release_exists" == false ]]; then
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "$RELEASE_TAG" --generate-notes
+          fi
+          gh release upload "$RELEASE_TAG" bin/google_maps_scraper-"$RELEASE_VERSION"-* bin/checksums.txt --clobber
+
+  images:
+    name: Publish container images
+    needs: prepare
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/publish.yml
+    with:
+      release_tag: ${{ needs.prepare.outputs.tag }}
+    secrets: inherit
+
+  publish:
+    name: Publish GitHub release
+    needs: [prepare, images]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish completed release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: gh release edit "$RELEASE_TAG" --draft=false --latest

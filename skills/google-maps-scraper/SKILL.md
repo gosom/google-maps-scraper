@@ -4,13 +4,13 @@ description: >
   Find businesses, leads, emails, reviews, ratings, and contact details from Google Maps.
   Use for requests such as "find dentists in Berlin", "scrape Google Maps", "get local
   business leads", or "collect Google Maps reviews". Runs the open-source scraper locally
-  with Docker and guides nontechnical users through setup, monitoring, and results.
+  with a native binary or Docker and guides nontechnical users through setup, monitoring, and results.
 license: MIT
-compatibility: "Requires Docker and Node.js on macOS, Linux, or Windows through WSL."
 metadata:
+  compatibility: "Agent helpers require Node.js 20+. Uses a native binary or Docker on macOS/Linux; Windows through WSL."
   author: gosom
   email: hi@gosom.dev
-  version: "1.12.1"
+  version: "1.13.0"
   repository: "https://github.com/gosom/google-maps-scraper"
 allowed-tools: Bash(node:*) Bash(bash:*) Bash(docker:*) Read Write
 ---
@@ -44,7 +44,9 @@ bash "$SKILL_DIR/scripts/ensure-latest.sh"
 
 The helper noninteractively updates only `google-maps-scraper` when a newer installed-skill version is available. Re-read `SKILL.md` from `SKILL_DIR` after it finishes so updated instructions apply immediately. If the check cannot reach the network, state briefly that the installed version will be used and continue.
 
-### 1. Understand the request
+### 1. Check setup and understand the request
+
+Prefer a configured native binary; respect an explicit Docker preference. Read [local execution](references/local-execution.md) for setup and backend selection. Missing Docker is not an error when native execution is configured.
 
 Infer sensible defaults and ask only for missing essentials:
 
@@ -58,7 +60,7 @@ Summarize the inferred configuration briefly before setup. Do not ask for confir
 
 ### 2. Offer the proxy choice
 
-Explain whether the requested volume makes a proxy optional or recommended. Ask the user to choose one path:
+For a small first sample, continue without a proxy unless the user requests one or has already selected one. For larger crawls or suspected blocking, explain the trade-off and offer these paths:
 
 1. Use an existing proxy
 2. See proxy sponsor recommendations
@@ -94,17 +96,17 @@ Write one query per line to a descriptive file under `/tmp`. For a normal first 
 
 Run the validation crawl with shallow depth and a dedicated output directory. Use the bundled execution helper described in [local execution](references/local-execution.md). Include `--proxy-file` only when configured.
 
-The helper starts Docker in the background. Tell the user that the validation has started, then inspect it with the status helper until it completes. A validation succeeds only when the container exits successfully and produces at least one result.
+The helper starts the selected backend in the background. Tell the user that the validation has started, then inspect it with the status helper until it completes. A validation succeeds only when the run exits successfully, produces at least one complete result, and a small preview matches the requested business type and location. Report missing requested fields without treating their absence alone as an execution failure. If the user asked only for a sample, present that output and stop; do not repeat the same crawl.
 
 If validation fails, follow [failure recovery](references/recovery.md) before starting the full crawl.
 
 ### 5. Run and monitor the full crawl
 
-Use the same execution helper with the complete query file and selected options. When validation already checked the Docker image during this workflow, add `--skip-image-pull` to avoid a redundant network request. Without a preceding validation, keep the default image check. Report:
+Use the same execution helper with the complete query file and selected options. For Docker, when validation already checked the image during this workflow, add `--skip-image-pull` to avoid a redundant network request. For native execution, reuse the installed executable. For Docker without a preceding validation, keep the default image check. Report:
 
 - That the crawl has started
 - Whether the first image download may add startup time
-- Container state
+- Run state
 - Elapsed time
 - Current result count
 
@@ -114,7 +116,7 @@ For grid search, extra reviews, email extraction, and other non-default flags, r
 
 ### 6. Present and continue working with results
 
-After a successful crawl, read [result handling](references/results.md). Count the complete result set and show at most 20 preview rows with the most useful available fields:
+After a successful crawl, read [result handling](references/results.md). Count complete records, report availability of requested fields, and show at most 20 preview rows with the most useful available fields:
 
 - Business name
 - Category

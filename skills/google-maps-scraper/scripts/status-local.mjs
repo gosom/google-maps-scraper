@@ -3,6 +3,40 @@
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { join, resolve } from "node:path";
+import { reconcileState } from "./run-state.mjs";
+
+export function countCSV(contents) {
+  let quoted = false;
+  let fieldStart = true;
+  let record = false;
+  let records = 0;
+  for (let index = 0; index < contents.length; index++) {
+    const char = contents[index];
+    if (quoted) {
+      if (char === '"') {
+        if (contents[index + 1] === '"') index++;
+        else quoted = false;
+      }
+    } else if (char === '"' && fieldStart) {
+      quoted = true;
+      record = true;
+      fieldStart = false;
+    } else if (char === "\n") {
+      if (record) records++;
+      record = false;
+      fieldStart = true;
+    } else if (char === ",") {
+      record = true;
+      fieldStart = true;
+    } else if (char !== "\r") {
+      record = true;
+      fieldStart = false;
+    }
+  }
+  // A live writer may still be filling the final record. Count only terminated rows.
+  return Math.max(0, records - 1);
+}
 
 export async function countResults(outputPath, format) {
   if (format !== "csv" && format !== "json") {
@@ -19,8 +53,14 @@ export async function countResults(outputPath, format) {
     throw error;
   }
 
-  const lineCount = contents.split(/\r?\n/).filter((line) => line.trim() !== "").length;
-  return format === "csv" ? Math.max(0, lineCount - 1) : lineCount;
+  if (format === "csv") return countCSV(contents);
+  const lines = contents.split(/\r?\n/);
+  lines.pop(); // The scraper terminates complete records with a newline.
+  return lines.filter((line) => {
+    if (!line.trim()) return false;
+    const entry = JSON.parse(line);
+    return entry !== null && typeof entry === "object" && !Array.isArray(entry);
+  }).length;
 }
 
 export function elapsedSeconds(startedAt, now = new Date()) {
@@ -41,7 +81,9 @@ function parseArguments(args) {
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
-    if (argument === "--container") {
+    if (argument === "--run-dir") {
+      options.run_dir = args[++index] ?? "";
+    } else if (argument === "--container") {
       options.container = args[++index] ?? "";
     } else if (argument === "--format") {
       options.format = args[++index] ?? "";
@@ -52,8 +94,8 @@ function parseArguments(args) {
     }
   }
 
-  if (!options.output) {
-    throw new Error("--output is required");
+  if (!options.output && !options.run_dir) {
+    throw new Error("--run-dir or --output is required");
   }
 
   return options;
@@ -61,6 +103,18 @@ function parseArguments(args) {
 
 async function main() {
   const options = parseArguments(process.argv.slice(2));
+  if (options.run_dir) {
+    const state = reconcileState(JSON.parse(await readFile(join(resolve(options.run_dir), "run.json"), "utf8")));
+    const { status, exit_code: exitCode, finished_at: finishedAt } = state;
+    console.log(JSON.stringify({
+      backend: state.backend, status,
+      elapsed_seconds: elapsedSeconds(state.started_at, finishedAt ? new Date(finishedAt) : new Date()),
+      result_count: await countResults(state.output, state.format), output: state.output,
+      ...(status === "exited" ? { exit_code: exitCode } : {}),
+      ...(state.error ? { error: state.error } : {}),
+    }, null, 2));
+    return;
+  }
   const rawState = execFileSync(
     "docker",
     ["inspect", "--format", "{{json .State}}", options.container],
@@ -70,7 +124,7 @@ async function main() {
   const status = {
     container: options.container,
     status: state.Status,
-    elapsed_seconds: elapsedSeconds(state.StartedAt),
+    elapsed_seconds: elapsedSeconds(state.StartedAt, state.Status === "exited" ? new Date(state.FinishedAt) : new Date()),
     result_count: await countResults(options.output, options.format),
     output: options.output,
   };
