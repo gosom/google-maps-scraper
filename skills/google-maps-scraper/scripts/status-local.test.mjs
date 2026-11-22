@@ -26,6 +26,20 @@ test("countResults returns zero for a missing output file", async () => {
   assert.equal(await countResults("/path/that/does/not/exist.csv", "csv"), 0);
 });
 
+test("countResults handles quoted newlines and ignores an unfinished CSV record", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gmaps-status-"));
+  const output = join(directory, "results.csv");
+  await writeFile(output, 'title,address\nCafe,"Floor 1\nMain Street"\nShop,"unfinished\n', "utf8");
+  assert.equal(await countResults(output, "csv"), 1);
+});
+
+test("countResults ignores a partially written JSON object", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gmaps-status-"));
+  const output = join(directory, "results.json");
+  await writeFile(output, '{"title":"Cafe"}\n{"title":', "utf8");
+  assert.equal(await countResults(output, "json"), 1);
+});
+
 test("elapsedSeconds returns a non-negative whole number", () => {
   const startedAt = "2026-07-22T12:00:00.000Z";
   const now = new Date("2026-07-22T12:01:40.900Z");

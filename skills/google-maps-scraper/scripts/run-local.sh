@@ -133,6 +133,11 @@ container_name="gmaps-scraper-agent"
 image_name="gosom/google-maps-scraper"
 result_name="results.$output_format"
 
+if ! $dry_run && [[ -e "$output_dir/$result_name" ]]; then
+	echo "Results already exist. Use a fresh output directory or run-local.mjs --resume for a managed run." >&2
+	exit 1
+fi
+
 docker_args=(
 	run -d
 	--name "$container_name"
@@ -216,5 +221,7 @@ if docker inspect "$container_name" >/dev/null 2>&1; then
 	docker rm "$container_name" >/dev/null
 fi
 
+# Keep private output host-owned; the scraper opens this file in place.
+(umask 077; set -o noclobber; : > "$output_dir/$result_name")
 docker "${docker_args[@]}"
 printf 'Results will be written to %s/%s\n' "$output_dir" "$result_name"

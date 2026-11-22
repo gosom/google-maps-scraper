@@ -26,6 +26,12 @@ Work directly with the maintainer to deploy the scraper on your infrastructure, 
 
 The easiest way to use Google Maps Scraper is with an AI coding agent such as [Claude Code](https://claude.com/claude-code), Codex, Cursor, GitHub Copilot, or any [Agent Skills-compatible tool](https://agentskills.io). You describe the leads you want; the agent plans the searches, runs a small validation, starts the full local scrape, monitors it, and helps you work with the results.
 
+Copy this prompt into your coding agent:
+
+> Read https://raw.githubusercontent.com/gosom/google-maps-scraper/main/INSTALL_FOR_AGENTS.md and set up Google Maps Scraper and its agent skill. Prefer a compatible native binary. Ask me what businesses and location I want, then run a small sample and show me the CSV.
+
+The [agent installation guide](INSTALL_FOR_AGENTS.md) covers verified native binaries and Docker setup. Native installation requires a release with matching binaries and `checksums.txt`.
+
 Install the skill:
 
 ```bash
@@ -36,9 +42,9 @@ Then ask your agent in plain language:
 
 > Find dentists in Berlin and include their websites and email addresses.
 
-The agent automatically checks for the latest skill and Docker image, then asks only for details it still needs. For larger crawls, you can provide your own proxy, continue without one, or review one randomly selected proxy sponsor. Proxy credentials are entered through a masked local terminal prompt and are never pasted into the agent chat.
+The agent checks for the latest skill and, when using Docker, its image, then asks only for details it still needs. For larger crawls, you can provide your own proxy, continue without one, or review one randomly selected proxy sponsor. Proxy credentials are entered through a masked local terminal prompt and are never pasted into the agent chat.
 
-Requires Docker and Node.js on macOS, Linux, or Windows through WSL. See [how the agent workflow works](#ai-agent-skill).
+The agent helpers require Node.js 20+ and either a native binary or Docker on macOS/Linux, or Windows through WSL. The standalone native installer does not require Node.js. See [how the agent workflow works](#ai-agent-skill).
 
 | Goal | Start here |
 |---|---|
@@ -297,23 +303,33 @@ Then just ask your agent:
 
 The agent will:
 
-1. Noninteractively check for the latest skill and Docker image.
+1. Check setup and the latest skill; check the image when using Docker.
 2. Infer sensible search defaults and ask only for missing essentials.
 3. Let you use your own proxy, continue without one, or review one randomly selected proxy sponsor.
 4. Collect proxy credentials through a masked local terminal prompt instead of chat.
 5. Run a small validation scrape before the full job.
-6. Start and monitor the Docker crawl in the background.
+6. Start and monitor the native or Docker crawl in the background.
 7. Present the results with options to save, filter, analyze, or export.
 
 Proxy sponsor recommendations are clearly disclosed. One provider is selected per request: Webshare has a 50% chance, and the other active sponsors share the remaining 50% equally. If Webshare is inactive, active sponsors have equal chances; a sole active sponsor is always selected. Any discount or offer is displayed only when it is configured in the skill's [active sponsor registry](skills/google-maps-scraper/references/proxy-sponsors.json). You can always use another provider or no proxy.
 
-Requires Docker and Node.js on macOS, Linux, or Windows through WSL. See the [skill definition](skills/google-maps-scraper/SKILL.md) for details.
+The agent helpers require Node.js 20+ and either a native binary or Docker on macOS/Linux, or Windows through WSL. The standalone native installer does not require Node.js. See the [skill definition](skills/google-maps-scraper/SKILL.md) for details.
 
 ---
 
 ## Installation
 
-### Using Docker (Recommended)
+### Native binary (macOS/Linux)
+
+From a checkout, run:
+
+```bash
+bash install.sh
+```
+
+The installer selects a compatible release, verifies its SHA-256 checksum, and installs the browser runtime. It prints the executable path. Use `--version vX.Y.Z` to select a release or `--install-dir DIR` to choose the destination. Existing releases without checksums are not supported by the installer. Linux may require additional browser system libraries.
+
+### Using Docker
 
 The published Docker image uses Playwright:
 

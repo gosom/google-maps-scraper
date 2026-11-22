@@ -10,7 +10,7 @@ Use grid search when the user explicitly requests broad area coverage or a norma
 
 Grid input contains the business type without neighborhood expansion. Use `-grid-bbox "minLat,minLon,maxLat,maxLon"`, `-grid-cell NUMBER`, and depth 5 or 10. Warn that a large grid can take 30 minutes or longer and cannot guarantee every listing.
 
-The current local helper does not expose grid flags. For Release 1, construct the equivalent secret-safe Docker command using the same mounts as `run-local.sh`, including a read-only proxy file and `-proxies-file /run/secrets/gmaps-proxies` when applicable. Never use inline proxy credentials.
+Use `run-local.mjs --grid-bbox "minLat,minLon,maxLat,maxLon" --grid-cell NUMBER`. Both backends use the same validated options and status interface. Use `--concurrency NUMBER` to control concurrency. Other advanced flags below are scraper CLI flags; do not pass unsupported flags to the helper.
 
 ## Advanced flags
 

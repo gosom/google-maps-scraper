@@ -15,8 +15,7 @@ format: ## runs go fmt
 	gofmt -s -w .
 
 test-agent-skill: ## tests the bundled AI agent workflow
-	node --test skills/google-maps-scraper/scripts/select-proxy-sponsors.test.mjs
-	node --test skills/google-maps-scraper/scripts/status-local.test.mjs
+	node --test skills/google-maps-scraper/scripts/*.test.mjs
 	bash skills/google-maps-scraper/scripts/helpers_test.sh
 
 test: test-agent-skill ## runs the unit tests
@@ -39,9 +38,14 @@ lint: ## runs the linter
 	go tool golangci-lint -v run ./...
 
 cross-compile: ## cross compiles the application
-	GOOS=linux GOARCH=amd64 go build -ldflags="$(VERSION_LDFLAGS)" -o bin/$(APP_NAME)-${VERSION}-linux-amd64
-	GOOS=darwin GOARCH=amd64 go build -ldflags="$(VERSION_LDFLAGS)" -o bin/$(APP_NAME)-${VERSION}-darwin-amd64
-	GOOS=windows GOARCH=amd64 go build -ldflags="$(VERSION_LDFLAGS)" -o bin/$(APP_NAME)-${VERSION}-windows-amd64.exe
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="$(VERSION_LDFLAGS)" -o bin/$(APP_NAME)-${VERSION}-linux-amd64
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="$(VERSION_LDFLAGS)" -o bin/$(APP_NAME)-${VERSION}-linux-arm64
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="$(VERSION_LDFLAGS)" -o bin/$(APP_NAME)-${VERSION}-darwin-amd64
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="$(VERSION_LDFLAGS)" -o bin/$(APP_NAME)-${VERSION}-darwin-arm64
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="$(VERSION_LDFLAGS)" -o bin/$(APP_NAME)-${VERSION}-windows-amd64.exe
+
+release-checksums: ## generates checksums for existing binaries of VERSION; upload manually with the release
+	cd bin && if command -v sha256sum >/dev/null 2>&1; then sha256sum $(APP_NAME)-$(VERSION)-* > checksums.txt; else shasum -a 256 $(APP_NAME)-$(VERSION)-* > checksums.txt; fi
 
 build: ## builds the application (default: playwright)
 	go build -ldflags="$(VERSION_LDFLAGS)" -o bin/$(APP_NAME) .

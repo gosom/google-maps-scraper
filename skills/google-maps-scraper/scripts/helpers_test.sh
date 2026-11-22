@@ -101,7 +101,7 @@ export DOCKER_TEST_LOG="$docker_log"
 
 PATH="$fake_bin:$PATH" bash "$script_dir/run-local.sh" \
 	--queries "$queries_file" \
-	--output-dir "$output_dir" \
+	--output-dir "$output_dir/online" \
 	--depth 1 >/dev/null
 
 if [[ $(grep -c '^pull gosom/google-maps-scraper$' "$docker_log") -ne 1 ]]; then
@@ -112,7 +112,7 @@ fi
 : > "$docker_log"
 PATH="$fake_bin:$PATH" bash "$script_dir/run-local.sh" \
 	--queries "$queries_file" \
-	--output-dir "$output_dir" \
+	--output-dir "$output_dir/skipped-pull" \
 	--depth 1 \
 	--skip-image-pull >/dev/null
 
@@ -124,7 +124,7 @@ fi
 : > "$docker_log"
 if ! DOCKER_PULL_FAIL=1 PATH="$fake_bin:$PATH" bash "$script_dir/run-local.sh" \
 	--queries "$queries_file" \
-	--output-dir "$output_dir" \
+	--output-dir "$output_dir/offline" \
 	--depth 1 >/dev/null 2>&1; then
 	echo "run-local.sh blocked an offline run despite an available local image" >&2
 	exit 1

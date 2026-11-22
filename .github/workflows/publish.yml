@@ -7,6 +7,11 @@ permissions:
 on:
   release:
     types: [published]
+  workflow_call:
+    inputs:
+      release_tag:
+        required: true
+        type: string
 
 jobs:
   push_playwright_image:
@@ -15,6 +20,8 @@ jobs:
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.event.release.tag_name }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
@@ -33,6 +40,9 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: gosom/google-maps-scraper
+          tags: |
+            type=raw,value=${{ inputs.release_tag || github.event.release.tag_name }}
+            type=raw,value=latest,enable=${{ !github.event.release.prerelease }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
@@ -51,6 +61,8 @@ jobs:
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.event.release.tag_name }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
@@ -70,6 +82,9 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/gosom/google-maps-scraper-saas
+          tags: |
+            type=raw,value=${{ inputs.release_tag || github.event.release.tag_name }}
+            type=raw,value=latest,enable=${{ !github.event.release.prerelease }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
