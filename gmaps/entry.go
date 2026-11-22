@@ -484,35 +484,7 @@ func EntryFromJSON(raw []byte, reviewCountOnly ...bool) (entry Entry, err error)
 
 	entry.CompleteAddress = completeAddressFromPlaceArray(darray)
 
-	aboutI := getNthElementAndCast[[]any](darray, 100, 1)
-
-	for i := range aboutI {
-		el := getNthElementAndCast[[]any](aboutI, i)
-		about := About{
-			ID:   getNthElementAndCast[string](el, 0),
-			Name: getNthElementAndCast[string](el, 1),
-		}
-
-		optsI := getNthElementAndCast[[]any](el, 2)
-
-		for j := range optsI {
-			opt := Option{
-				Enabled: (getNthElementAndCast[float64](optsI, j, 2, 1, 0, 0)) == 1,
-				Name:    getNthElementAndCast[string](optsI, j, 1),
-				Values:  getOptionValues(getNthElementAndCast[[]any](optsI, j)),
-			}
-
-			if opt.Name != "" {
-				addOrMergeOption(&about.Options, opt)
-			}
-
-			if about.ID == "payments" && opt.Name == "Credit cards" && len(opt.Values) > 0 {
-				entry.CreditCardsAccepted = mergeStringSlices(entry.CreditCardsAccepted, opt.Values)
-			}
-		}
-
-		entry.About = append(entry.About, about)
-	}
+	entry.About, entry.CreditCardsAccepted = aboutFromPlaceArray(darray)
 
 	entry.ReviewsPerRating = map[int]int{
 		1: int(getNthElementAndCast[float64](darray, 175, 3, 0)),
@@ -1042,4 +1014,42 @@ func filterAndSortEntriesWithinRadius(entries []*Entry, lat, lon, radius float64
 	}
 
 	return slices.Collect(iter.Seq[*Entry](resultIterator))
+}
+
+// aboutFromPlaceArray reads attributes shared by search results and place details.
+func aboutFromPlaceArray(darray []any) (groups []About, cards []string) {
+	aboutI := getNthElementAndCast[[]any](darray, 100, 1)
+	if len(aboutI) > 0 {
+		groups = make([]About, 0, len(aboutI))
+	}
+
+	for i := range aboutI {
+		el := getNthElementAndCast[[]any](aboutI, i)
+		about := About{
+			ID:   getNthElementAndCast[string](el, 0),
+			Name: getNthElementAndCast[string](el, 1),
+		}
+
+		optsI := getNthElementAndCast[[]any](el, 2)
+
+		for j := range optsI {
+			opt := Option{
+				Enabled: (getNthElementAndCast[float64](optsI, j, 2, 1, 0, 0)) == 1,
+				Name:    getNthElementAndCast[string](optsI, j, 1),
+				Values:  getOptionValues(getNthElementAndCast[[]any](optsI, j)),
+			}
+
+			if opt.Name != "" {
+				addOrMergeOption(&about.Options, opt)
+			}
+
+			if about.ID == "payments" && opt.Name == "Credit cards" && len(opt.Values) > 0 {
+				cards = mergeStringSlices(cards, opt.Values)
+			}
+		}
+
+		groups = append(groups, about)
+	}
+
+	return groups, cards
 }
