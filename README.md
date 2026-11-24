@@ -29,19 +29,17 @@ Free and open source under the MIT license. Run locally with a CLI, Web UI, REST
 
 ## Featured Sponsor
 
-<table width="100%">
-  <tr>
-    <td align="left" valign="middle" width="67%">
-      <a href="https://www.webshare.io/?referral_code=0q3l81eet8mp">
-        <img src="./img/webshare-featured-banner.png" alt="Webshare — Premium proxies for scraping" width="600">
-      </a>
-    </td>
-    <td align="left" valign="middle" width="33%">
-      <p>The most affordable premium proxies across 195 countries &amp; 80+ million IPs, plus a FREE plan for new users.</p>
-      <a href="https://www.webshare.io/?referral_code=0q3l81eet8mp">Visit Webshare →</a>
-    </td>
-  </tr>
-</table>
+<p>
+  <a href="https://www.webshare.io/?referral_code=0q3l81eet8mp">
+    <img src="./img/webshare-mapsscraper-banner.png" alt="Webshare — Use MAPSSCRAPER20 for 20% off your first purchase" width="600">
+  </a>
+</p>
+
+<p>The most affordable premium proxies across 195 countries &amp; 80+ million IPs, plus a FREE plan for new users.</p>
+
+<p>Use code <code>MAPSSCRAPER20</code> for <strong>20% off your first purchase</strong>.</p>
+
+<p><a href="https://www.webshare.io/?referral_code=0q3l81eet8mp">Visit Webshare →</a></p>
 
 ## Quick Start
 

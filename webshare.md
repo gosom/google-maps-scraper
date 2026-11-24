@@ -8,9 +8,11 @@
 
 <p align="center">
   <a href="https://www.webshare.io/?referral_code=0q3l81eet8mp">
-    <img src="./img/webshare-banner.png" alt="Webshare premium proxies banner" width="900">
+    <img src="./img/webshare-mapsscraper-banner.png" alt="Webshare — Use MAPSSCRAPER20 for 20% off your first purchase" width="900">
   </a>
 </p>
+
+Use code **`MAPSSCRAPER20`** for **20% off your first purchase**.
 
 ## Why Choose Webshare? ✅
 
