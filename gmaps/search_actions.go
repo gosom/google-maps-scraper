@@ -55,7 +55,7 @@ func searchActions(business []any) (reservations, orders []LinkSource) {
 
 func appendSearchLink(links []LinkSource, rawURL, source string) []LinkSource {
 	parsed, err := url.Parse(rawURL)
-	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Hostname() == "" {
+	if err != nil || (parsed.Scheme != urlSchemeHTTPS && parsed.Scheme != urlSchemeHTTP) || parsed.Hostname() == "" {
 		return links
 	}
 

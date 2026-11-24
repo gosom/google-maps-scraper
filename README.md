@@ -76,6 +76,8 @@ Open **`gmaps-output/results.csv`** in your spreadsheet app. The first run downl
 
 Add `-email` to collect emails from business websites. For JSON Lines output (one business per line), replace `-results /out/results.csv` with `-json -results /out/results.jsonl`. The file will be saved as `gmaps-output/results.jsonl`.
 
+Email extraction checks the listed website page first. If it finds no usable email, it follows up to three same-site contact/about links from that page, prioritizing contact pages and stopping at the first page with usable emails. Each fallback page has a 10-second fetch timeout. Failed pages do not discard the business result.
+
 **No Docker?** [Download a release binary](https://github.com/gosom/google-maps-scraper/releases/latest) and follow the [binary instructions](#installation). No Go installation is needed.
 
 ### Web UI

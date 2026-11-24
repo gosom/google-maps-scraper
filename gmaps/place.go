@@ -68,7 +68,7 @@ func sanitizePlaceURL(rawURL string) string {
 	)
 
 	parsedURL, err := url.Parse(rawURL)
-	if err != nil || parsedURL.Scheme != "https" || parsedURL.User != nil || parsedURL.Port() != "" ||
+	if err != nil || parsedURL.Scheme != urlSchemeHTTPS || parsedURL.User != nil || parsedURL.Port() != "" ||
 		!strings.EqualFold(parsedURL.Hostname(), "www.google.com") {
 		return rawURL
 	}
