@@ -11,6 +11,7 @@ import (
 
 	"github.com/gosom/google-maps-scraper/deduper"
 	"github.com/gosom/google-maps-scraper/exiter"
+	"github.com/gosom/google-maps-scraper/gmaps"
 	"github.com/gosom/google-maps-scraper/grid"
 	"github.com/gosom/google-maps-scraper/leadsdb"
 	"github.com/gosom/google-maps-scraper/runner"
@@ -187,7 +188,7 @@ func (r *fileRunner) Run(ctx context.Context) (err error) {
 
 	go exitMonitor.Run(ctx)
 
-	err = r.app.Start(ctx, seedJobs...)
+	err = r.app.Start(gmaps.WithEmailProxies(ctx, r.cfg.Proxies), seedJobs...)
 
 	return err
 }
