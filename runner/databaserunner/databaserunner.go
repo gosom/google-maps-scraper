@@ -10,6 +10,7 @@ import (
 	// postgres driver
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	"github.com/gosom/google-maps-scraper/gmaps"
 	"github.com/gosom/google-maps-scraper/postgres"
 	"github.com/gosom/google-maps-scraper/runner"
 	"github.com/gosom/google-maps-scraper/tlmt"
@@ -110,7 +111,7 @@ func (d *dbrunner) Run(ctx context.Context) error {
 		return d.produceSeedJobs(ctx)
 	}
 
-	return d.app.Start(ctx)
+	return d.app.Start(gmaps.WithEmailProxies(ctx, d.cfg.Proxies))
 }
 
 func (d *dbrunner) Close(context.Context) error {

@@ -6,7 +6,7 @@ ARG GO_VERSION=1.27.4
 FROM golang:${GO_VERSION}-trixie AS playwright-deps
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/browsers
 ENV PLAYWRIGHT_DRIVER_PATH=/opt/ms-playwright-go
-ARG PLAYWRIGHT_GO_VERSION=v0.6100.0
+ARG PLAYWRIGHT_GO_VERSION=v0.6401.0
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \

@@ -92,7 +92,7 @@ func fetchExternalIP() string {
 		"https://ifconfig.co",
 	}
 
-	rand.Shuffle(len(endpoints), func(i, j int) { //nolint:gosec // Randomizing endpoint order has no security impact.
+	rand.Shuffle(len(endpoints), func(i, j int) {
 		endpoints[i], endpoints[j] = endpoints[j], endpoints[i]
 	})
 

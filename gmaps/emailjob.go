@@ -22,6 +22,14 @@ type EmailExtractJob struct {
 	Entry                   *Entry
 	ExitMonitor             exiter.Exiter
 	WriterManagedCompletion bool
+
+	// ContactPages holds the remaining fallback URLs for queued enrichment.
+	ContactPages []string
+	// ContactOrigin is the final homepage URL used to restrict fallback results.
+	ContactOrigin *url.URL
+	// IsContactPage prevents recursive link discovery on fallback pages.
+	IsContactPage bool
+	forwarded     bool
 }
 
 func NewEmailJob(parentID string, entry *Entry, opts ...EmailExtractJobOptions) *EmailExtractJob {
@@ -69,7 +77,7 @@ func (j *EmailExtractJob) Process(ctx context.Context, resp *scrapemate.Response
 	}()
 
 	defer func() {
-		if j.ExitMonitor != nil && !j.WriterManagedCompletion {
+		if j.ExitMonitor != nil && !j.WriterManagedCompletion && !j.forwarded {
 			j.ExitMonitor.IncrPlacesCompleted(1)
 		}
 	}()
@@ -78,24 +86,57 @@ func (j *EmailExtractJob) Process(ctx context.Context, resp *scrapemate.Response
 
 	log.Info("Processing email job", "url", j.URL)
 
-	// if html fetch failed just return
-	if resp.Error != nil {
-		return j.Entry, nil, nil
+	if resp.Error == nil && (resp.StatusCode == 0 || resp.StatusCode == 200) {
+		j.extractEmails(resp)
 	}
 
-	doc, ok := resp.Document.(*goquery.Document)
-	if !ok {
-		return j.Entry, nil, nil
-	}
+	if len(j.Entry.Emails) == 0 && len(j.ContactPages) > 0 && ctx.Err() == nil {
+		next := NewEmailJob(j.ID, j.Entry,
+			WithEmailJobExitMonitor(j.ExitMonitor))
+		next.WriterManagedCompletion = j.WriterManagedCompletion
+		next.URL = j.ContactPages[0]
+		next.Timeout = contactPageTimeout
+		next.ContactPages = j.ContactPages[1:]
+		next.ContactOrigin = j.ContactOrigin
+		next.IsContactPage = true
+		j.forwarded = true
 
-	emails := docEmailExtractor(doc)
-	if len(emails) == 0 {
-		emails = regexEmailExtractor(resp.Body)
+		return nil, []scrapemate.IJob{next}, nil
 	}
-
-	j.Entry.Emails = emails
 
 	return j.Entry, nil, nil
+}
+
+// UseInResults emits the business only after email enrichment finishes.
+func (j *EmailExtractJob) UseInResults() bool {
+	return !j.forwarded
+}
+
+func (j *EmailExtractJob) extractEmails(resp *scrapemate.Response) {
+	doc, ok := resp.Document.(*goquery.Document)
+	if !ok || doc == nil {
+		return
+	}
+
+	pageURL := j.URL
+	if resp.URL != "" {
+		pageURL = resp.URL
+	}
+
+	base, err := url.Parse(pageURL)
+	if err != nil || (j.IsContactPage && !sameContactSite(j.ContactOrigin, base)) {
+		return
+	}
+
+	j.Entry.Emails = docEmailExtractor(doc)
+	if len(j.Entry.Emails) == 0 {
+		j.Entry.Emails = regexEmailExtractor(resp.Body)
+	}
+
+	if !j.IsContactPage && len(j.Entry.Emails) == 0 {
+		j.ContactOrigin = base
+		j.ContactPages = discoverContactPages(doc, base)
+	}
 }
 
 func (j *EmailExtractJob) ProcessOnFetchError() bool {

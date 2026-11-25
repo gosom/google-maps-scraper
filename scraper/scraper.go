@@ -194,7 +194,7 @@ func (m *ScraperManager) runCycle(ctx context.Context) error {
 			}
 		}()
 
-		scraperDone <- app.Start(cycleCtx)
+		scraperDone <- app.Start(gmaps.WithEmailProxies(cycleCtx, m.proxies))
 	}()
 
 	log.Info("scraper cycle started", "max_jobs", m.maxJobs)
