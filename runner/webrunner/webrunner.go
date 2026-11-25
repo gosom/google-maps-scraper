@@ -179,7 +179,7 @@ func (w *webrunner) scrapeJob(ctx context.Context, job *web.Job) error {
 		return err
 	}
 
-	defer mate.Close()
+	defer closeMateWithTimeout(mate, 10*time.Second)
 
 	var coords string
 	if job.Data.Lat != "" && job.Data.Lon != "" {
@@ -312,5 +312,18 @@ func defaultSetupMate(cfg *runner.Config) func(context.Context, io.Writer, *web.
 		}
 
 		return scrapemateapp.NewScrapeMateApp(matecfg)
+	}
+}
+
+func closeMateWithTimeout(m mateRunner, timeout time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		_ = m.Close()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		log.Printf("warning: scrapemate Close() timed out after %v (#346 safeguard)", timeout)
 	}
 }
