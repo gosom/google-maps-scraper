@@ -28,6 +28,7 @@ func discoverContactPages(doc *goquery.Document, base *url.URL) []string {
 	var candidates []candidate
 
 	seen := map[string]bool{contactPageKey(base): true}
+	linkBase := contactLinkBase(doc, base)
 
 	doc.Find("a[href]").Each(func(_ int, link *goquery.Selection) {
 		href, _ := link.Attr("href")
@@ -37,7 +38,7 @@ func discoverContactPages(doc *goquery.Document, base *url.URL) []string {
 			return
 		}
 
-		target, err := base.Parse(href)
+		target, err := linkBase.Parse(href)
 		if err != nil || !sameContactSite(base, target) {
 			return
 		}
@@ -66,6 +67,22 @@ func discoverContactPages(doc *goquery.Document, base *url.URL) []string {
 	}
 
 	return pages
+}
+
+// contactLinkBase honors the first base element with an href, including relative
+// bases. The fetched page URL remains the origin used by sameContactSite.
+func contactLinkBase(doc *goquery.Document, pageURL *url.URL) *url.URL {
+	href, exists := doc.Find("base[href]").First().Attr("href")
+	if !exists {
+		return pageURL
+	}
+
+	base, err := pageURL.Parse(strings.TrimSpace(href))
+	if err != nil || base.Scheme == "data" || base.Scheme == "javascript" {
+		return pageURL
+	}
+
+	return base
 }
 
 func contactLinkRank(label string) int {

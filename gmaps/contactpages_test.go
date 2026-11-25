@@ -30,6 +30,44 @@ func TestDiscoverContactPages(t *testing.T) {
 		want []string
 	}{
 		{
+			name: "root base overrides redirected directory",
+			base: "https://example.org/en/",
+			html: `<base href="/"><a href="contact">Contact</a>`,
+			want: []string{"https://example.org/contact"},
+		},
+		{
+			name: "relative base and first href take precedence",
+			base: "https://example.org/en/",
+			html: `<base target="_blank"><base href="../company/"><base href="/ignored/">
+				<a href="contact">Contact</a>`,
+			want: []string{"https://example.org/company/contact"},
+		},
+		{
+			name: "external base never changes allowed origin",
+			base: "https://example.org/en/",
+			html: `<base href="https://unrelated.org/"><a href="contact">Contact</a>
+				<a href="https://example.org/about">About</a>`,
+			want: []string{"https://example.org/about"},
+		},
+		{
+			name: "invalid first base falls back to document URL",
+			base: "https://example.org/en/",
+			html: `<base href="https://[invalid"><base href="/ignored/"><a href="contact">Contact</a>`,
+			want: []string{"https://example.org/en/contact"},
+		},
+		{
+			name: "empty first base uses document URL",
+			base: "https://example.org/en/",
+			html: `<base href=""><base href="/ignored/"><a href="contact">Contact</a>`,
+			want: []string{"https://example.org/en/contact"},
+		},
+		{
+			name: "javascript base falls back to document URL",
+			base: "https://example.org/en/",
+			html: `<base href="javascript:alert(1)"><a href="contact">Contact</a>`,
+			want: []string{"https://example.org/en/contact"},
+		},
+		{
 			name: "prioritize contact and bound candidates",
 			base: "https://example.org/",
 			html: `<a href="/about">About</a><a href="/team">Team</a>
@@ -337,4 +375,89 @@ func TestEmailFallbackHomepageRedirect(t *testing.T) {
 	require.Empty(t, next)
 	require.Same(t, job.Entry, result)
 	require.Equal(t, []string{"redirected@example.org"}, job.Entry.Emails)
+}
+
+func TestEmailFallbackHTTPRedirects(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name        string
+		baseElement string
+		contactPath string
+		offsite     bool
+	}{
+		{name: "redirected homepage", contactPath: "/en/contact"},
+		{name: "redirected homepage with root base", baseElement: `<base href="/">`, contactPath: "/contact"},
+		{name: "contact redirect to unrelated site", contactPath: "/en/contact", offsite: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			unrelated := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, err := w.Write([]byte("wrong@unrelated.org"))
+				if err != nil {
+					t.Errorf("write unrelated page: %v", err)
+				}
+			}))
+			t.Cleanup(unrelated.Close)
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/":
+					http.Redirect(w, r, "/en/", http.StatusFound)
+				case "/en/":
+					_, err := w.Write([]byte(tc.baseElement + `<a href="contact">Contact</a>`))
+					if err != nil {
+						t.Errorf("write homepage: %v", err)
+					}
+				case tc.contactPath:
+					target := "/contact-final"
+					if tc.offsite {
+						target = unrelated.URL
+					}
+
+					http.Redirect(w, r, target, http.StatusFound)
+				case "/contact-final":
+					_, err := w.Write([]byte("contact@example.org"))
+					if err != nil {
+						t.Errorf("write contact page: %v", err)
+					}
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			fetcher := httpfetcher.New(server.Client())
+			job := NewEmailJob("place", &Entry{WebSite: server.URL})
+			resp := fetcher.Fetch(t.Context(), job)
+			require.NoError(t, resp.Error)
+			require.Equal(t, server.URL+"/en/", resp.URL)
+			doc, err := goquery.NewDocumentFromReader(bytes.NewReader(resp.Body))
+			require.NoError(t, err)
+
+			resp.Document = doc
+			_, next, err := job.Process(t.Context(), &resp)
+			require.NoError(t, err)
+			require.Len(t, next, 1)
+			require.Equal(t, server.URL+tc.contactPath, next[0].GetURL())
+
+			resp = fetcher.Fetch(t.Context(), next[0])
+			require.NoError(t, resp.Error)
+			doc, err = goquery.NewDocumentFromReader(bytes.NewReader(resp.Body))
+			require.NoError(t, err)
+
+			resp.Document = doc
+			result, next, err := next[0].Process(t.Context(), &resp)
+			require.NoError(t, err)
+			require.Empty(t, next)
+			require.Same(t, job.Entry, result)
+
+			if tc.offsite {
+				require.Empty(t, job.Entry.Emails)
+			} else {
+				require.Equal(t, []string{"contact@example.org"}, job.Entry.Emails)
+			}
+		})
+	}
 }
