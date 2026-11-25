@@ -78,7 +78,7 @@ func contactLinkBase(doc *goquery.Document, pageURL *url.URL) *url.URL {
 	}
 
 	base, err := pageURL.Parse(strings.TrimSpace(href))
-	if err != nil || base.Scheme == "data" || base.Scheme == "javascript" {
+	if err != nil || (base.Scheme != urlSchemeHTTP && base.Scheme != urlSchemeHTTPS) {
 		return pageURL
 	}
 

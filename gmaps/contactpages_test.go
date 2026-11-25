@@ -461,3 +461,28 @@ func TestEmailFallbackHTTPRedirects(t *testing.T) {
 		})
 	}
 }
+
+func TestContactLinkBaseRejectsNonWebSchemes(t *testing.T) {
+	t.Parallel()
+
+	for _, href := range []string{
+		"javascript:alert(1)",
+		"vbscript:msgbox(1)",
+		"VbScRiPt:msgbox(1)",
+		"data:text/html,contact",
+		"file:///tmp/",
+		"ftp://example.org/",
+		"mailto:contact@example.org",
+	} {
+		t.Run(href, func(t *testing.T) {
+			t.Parallel()
+
+			pageURL, err := url.Parse("https://example.org/en/")
+			require.NoError(t, err)
+			doc, err := goquery.NewDocumentFromReader(strings.NewReader(
+				`<base href="` + href + `"><a href="contact">Contact</a>`))
+			require.NoError(t, err)
+			require.Equal(t, []string{"https://example.org/en/contact"}, discoverContactPages(doc, pageURL))
+		})
+	}
+}
