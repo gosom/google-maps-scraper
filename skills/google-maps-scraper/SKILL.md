@@ -3,14 +3,14 @@ name: google-maps-scraper
 description: >
   Find businesses, leads, emails, reviews, ratings, and contact details from Google Maps.
   Use for requests such as "find dentists in Berlin", "scrape Google Maps", "get local
-  business leads", or "collect Google Maps reviews". Runs the open-source scraper locally
-  with a native binary or Docker and guides nontechnical users through setup, monitoring, and results.
+  business leads", or "collect Google Maps reviews". Prefer the Google Maps Scraper MCP
+  server when connected. Also supports local CLI runs with a native binary or Docker.
 license: MIT
 metadata:
   compatibility: "Agent helpers require Node.js 20+. Uses a native binary or Docker on macOS/Linux; Windows through WSL."
   author: gosom
   email: hi@gosom.dev
-  version: "1.13.0"
+  version: "1.14.0"
   repository: "https://github.com/gosom/google-maps-scraper"
 allowed-tools: Bash(node:*) Bash(bash:*) Bash(docker:*) Read Write
 ---
@@ -19,7 +19,13 @@ allowed-tools: Bash(node:*) Bash(bash:*) Bash(docker:*) Read Write
 
 Turn a natural-language lead request into a validated local Google Maps crawl, monitor it, and help the user work with the results.
 
-Resolve the directory containing this file as `SKILL_DIR`. Run bundled scripts from that directory; do not assume the current directory is the repository checkout.
+## Use the MCP server when connected
+
+For a business search, call the `google-maps-scraper` server's `start_scrape` first. For “up to 10 dentists in Latsia, show three with phones and give me the CSV”, use `{"query":"dentists","location":"Latsia, CY","limit":10,"fields":["phone"],"response":"preview"}`. A named city uses a grid even when the preview is small. Leave mode on auto for contacts, including emails. Request review text or detailed mode when the user asks.
+
+If the job is still running and the user wants the full CSV, follow the same job with `get_scrape_results` until it finishes. Answer with the actual count, requested preview, and returned CSV path. If more rows are needed for the preview, use `next_offset`. Report absent fields as unavailable. A completed search below the user's maximum is a valid result. Use web search or outside directories only when the user asks for independent verification or additional sources.
+
+Use the CLI workflow below when the MCP tools are unavailable or the user chooses a native CLI or Docker run. If the user specifically requires MCP and it is unavailable, explain how to connect it.
 
 ## Guardrails
 
@@ -32,11 +38,11 @@ Resolve the directory containing this file as `SKILL_DIR`. Run bundled scripts f
 - Preserve partial output when a crawl fails or is interrupted.
 - Do not expose raw logs unless a concise excerpt is necessary for diagnosis and contains no secrets.
 
-## Workflow
+## CLI workflow
 
 ### 0. Refresh the workflow
 
-At the beginning of every new skill workflow, run this exactly once without asking for confirmation:
+Resolve the directory containing this file as `SKILL_DIR`. At the beginning of each CLI workflow, run this once from the installed skill:
 
 ```bash
 bash "$SKILL_DIR/scripts/ensure-latest.sh"

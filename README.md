@@ -14,7 +14,8 @@
 
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
-  <a href="#use-an-ai-agent">AI agent</a> ·
+  <a href="#use-with-an-mcp-client">MCP server</a> ·
+  <a href="#use-an-ai-agent">Agent skill</a> ·
   <a href="#choose-a-mode">Modes & data</a> ·
   <a href="#documentation">Documentation</a> ·
   <a href="#sponsored-by">Sponsors</a> ·
@@ -25,7 +26,9 @@
 
 Get names, phone numbers, websites, ratings, hours, and locations in CSV or JSON. Add website email extraction and reviews when you need more detail.
 
-Free and open source under the MIT license. Run locally with a CLI, Web UI, REST API, or AI coding agent. No Google Maps API key required.
+Run locally with the CLI, Web UI, REST API, or directly from an AI agent. Free and open source under the MIT license. No Google Maps API key required.
+
+**Agent-ready with a local MCP server and an agent skill.** Ask Codex or Claude Code to find businesses by city, show a few listed contacts in chat, and save the full list as a CSV. The client starts the scraper itself, so you can leave the Web UI closed. [Set up MCP](#use-with-an-mcp-client) · [Get the skill](#use-an-ai-agent)
 
 ## Featured Sponsor
 
@@ -45,13 +48,15 @@ Free and open source under the MIT license. Run locally with a CLI, Web UI, REST
 
 ### Use an AI Agent
 
-Paste this into Codex, Claude Code, Cursor, or another coding agent:
+In Codex or Claude Code, connect the **Model Context Protocol (MCP) server** for direct access to the scraper. The optional **agent skill** prefers that connection and can also guide a local CLI or Docker run. [Install with one prompt](#install-with-one-prompt) · [Codex CLI commands](#codex-cli) · [Claude Code commands](#claude-code)
+
+Once connected, try this in chat.
 
 ```text
-Read https://raw.githubusercontent.com/gosom/google-maps-scraper/main/INSTALL_FOR_AGENTS.md and set up Google Maps Scraper and its agent skill. Prefer a compatible native binary. Ask me what businesses and location I want, then run a small sample and show me the CSV.
+Find up to 10 dentists in Latsia, Cyprus. Show me three with their phone numbers and give me the CSV for the full list.
 ```
 
-Your agent will help you install the scraper, choose a search, and check a small sample. [Setup details](INSTALL_FOR_AGENTS.md).
+To install just the skill, run `npx skills add gosom/google-maps-scraper --skill google-maps-scraper` with Node.js 20 or newer and choose your agent. [Skill installation and CLI setup](INSTALL_FOR_AGENTS.md)
 
 ### Command Line
 
@@ -99,9 +104,106 @@ docker run --rm \
 
 Open **http://localhost:8080**, create a job, and download its results. Your jobs are saved in `gmapsdata`.
 
+## Use with an MCP Client
+
+The server runs locally over stdio. City names resolve locally and the default search covers a grid around the city center. Results stay on your machine as CSV and JSONL. The agent can show three rows, share the whole file, or reconnect to a running job.
+
+### Install with one prompt
+
+Paste this into Codex or Claude Code. If you are trying an unreleased branch, open the client in that checkout first.
+
+```text
+Set up Google Maps Scraper for this client. Use the current scraper checkout
+if available, or clone https://github.com/gosom/google-maps-scraper into a new
+directory. Follow “Use with an MCP Client” in its README.
+Reuse a local binary if its -mcp -help lists -data-folder. Otherwise build this
+checkout to a stable absolute path. Install the browser runtime for detailed mode.
+Register the stdio server for this client. Install the google-maps-scraper skill
+from this checkout for this client, then check that the MCP server is registered.
+If a new session is needed, tell me how to open it and give me the Quick Start
+dentist prompt to try there.
+```
+
+### 1. Get an MCP-enabled binary
+
+On macOS, Linux, or WSL, build from a checkout that contains this MCP section. Run these commands from the repository root with Go installed.
+
+```bash
+gmaps_bin="$HOME/.local/bin/google-maps-scraper-mcp"
+mkdir -p "$(dirname "$gmaps_bin")"
+go build -o "$gmaps_bin" .
+"$gmaps_bin" -mcp -help
+```
+
+If you already have a release binary, set `gmaps_bin` to its absolute path and run the same help check. A compatible binary prints `Usage of -mcp:` and lists `-data-folder`. If your release predates MCP, build from the checkout.
+
+For detailed mode, install the browser runtime once. Fast mode and website email lookup work without this step.
+
+```bash
+PLAYWRIGHT_INSTALL_ONLY=1 "$gmaps_bin"
+```
+
+### 2. Register the server
+
+Run the block for your client in the same terminal. Both clients launch the binary over stdio.
+
+#### Codex CLI
+
+```bash
+codex mcp add google-maps-scraper -- "$gmaps_bin" -mcp
+codex mcp list
+codex
+```
+
+#### Claude Code
+
+```bash
+claude mcp add --transport stdio --scope user google-maps-scraper -- "$gmaps_bin" -mcp
+claude mcp list
+claude
+```
+
+Claude Code's user scope makes the server available across your local projects. [Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli) · [Claude Code MCP documentation](https://code.claude.com/docs/en/mcp)
+
+### 3. Verify with a search
+
+In the new session, enter `/mcp` and look for `google-maps-scraper`. Try the [dentist prompt in Quick Start](#use-an-ai-agent). Look for a `start_scrape` tool call, three names and listed numbers when available, and a link to the CSV containing all returned rows. “Up to 10” sets a maximum. The agent can answer directly from the listings, even if some numbers are unavailable. Ask explicitly if you also want it to verify contacts against other sources.
+
+Fast mode is the MCP default. Ask for emails to add website lookups while keeping fast mode. Ask for review text or say “use detailed mode” to open individual listings.
+
+### Other stdio clients
+
+For clients that accept an `mcpServers` JSON object, use the absolute path to the same binary.
+
+```json
+{
+  "mcpServers": {
+    "google-maps-scraper": {
+      "command": "/path/to/google-maps-scraper",
+      "args": ["-mcp"]
+    }
+  }
+}
+```
+
+### Coverage and results
+
+The city grid covers an approximate area and spreads the result limit across its cells. Ask for a nearby search or specify a radius for a centered search. Provide bounds to grid a specific area. The bundled city index uses GeoNames data under CC BY 4.0 and includes supplemental Cyprus locality names. [GeoNames](https://www.geonames.org/export/) · [License](https://creativecommons.org/licenses/by/4.0/) · [Cyprus locality names](https://data.gov.cy/el/resource/lau2-codes-and-names) · [Latsia coordinates](https://www.geonames.org/postal-codes/CY/04/nicosia-district.html)
+
+| What the user wants | How the MCP client can get it |
+|---|---|
+| A few businesses in chat | Call `start_scrape` with `response: "preview"`. It waits up to 20 seconds and returns up to three rows, the job status, and available export paths. Use `fields` to select columns. |
+| Only the file | Use `response: "export"`. Counts and paths fit in one response when the job finishes within 20 seconds. |
+| Results as they arrive | Use `response: "live"` for the first rows. Pass `next_offset` as `offset` to `get_scrape_results` with `wait_for: "rows"` for the next page. |
+| A background job | Omit `response` to get the job ID immediately. You can close the client, reconnect, and find the job with `list_scrapes`. |
+
+Check the returned job status. For a running job, `get_scrape_results` waits up to 20 seconds for completion by default. Use `view: "export"` for just the paths, `view: "full"` for full records within the page size limit, or `wait_for: "none"` for an immediate snapshot. The server marks incomplete results as partial. To customize where jobs and exports live, add `"-data-folder", "/path/to/jobs"` to the client's arguments.
+
 <a id="features"></a>
 
 ## Choose a Mode
+
+The table describes CLI modes. The MCP server selects fast mode by default and can add a separate website email lookup to a fast search.
 
 | What you need | Use | How it works |
 |---|---|---|

@@ -1,6 +1,8 @@
 # Install Google Maps Scraper for an agent
 
-Set up the scraper, install its skill, and produce a small useful sample. Prefer a native release binary on macOS/Linux; respect an explicit Docker preference. Native Windows agent execution is not supported yet; use WSL.
+For Codex, Claude Code, or another MCP client, prefer the local MCP server. Follow the README to connect it, then install the skill below if desired. If the server is already connected, use its `start_scrape` tool for the first sample. [MCP setup and one-prompt install](README.md#use-with-an-mcp-client)
+
+For a CLI workflow, use the native release binary on macOS or Linux, or Docker when requested. On Windows, run the agent helpers in WSL.
 
 ## Install the scraper
 
@@ -42,7 +44,7 @@ npx --yes skills add gosom/google-maps-scraper --skill google-maps-scraper --age
 
 For a local branch test, replace `gosom/google-maps-scraper` with the checkout's absolute path and run from an isolated temporary working directory.
 
-## Verify with real results
+## Verify a CLI installation with real results
 
 Ask only for the missing business type and location. Use a shallow sample and an unused output directory. Invoke `scripts/run-local.mjs` from the installed skill with `--backend native`, or `--backend docker` when selected. Monitor with `scripts/status-local.mjs --run-dir DIR`.
 

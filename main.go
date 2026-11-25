@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/gosom/google-maps-scraper/internal/mcpserver"
 	"github.com/gosom/google-maps-scraper/runner"
 	"github.com/gosom/google-maps-scraper/runner/databaserunner"
 	"github.com/gosom/google-maps-scraper/runner/filerunner"
@@ -18,6 +20,15 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "-mcp" || os.Args[1] == "-mcp-worker") {
+		if err := runMCP(); err != nil {
+			log.Print(err)
+			os.Exit(1)
+		}
+
+		return
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	runner.Banner()
@@ -81,4 +92,34 @@ func runnerFactory(cfg *runner.Config) (runner.Runner, error) {
 	default:
 		return nil, fmt.Errorf("%w: %d", runner.ErrInvalidRunMode, cfg.RunMode)
 	}
+}
+
+func runMCP() error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if os.Args[1] == "-mcp-worker" {
+		if len(os.Args) != 3 {
+			return errors.New("expected a worker job directory")
+		}
+
+		return mcpserver.Work(ctx, os.Args[2])
+	}
+
+	flags := flag.NewFlagSet("-mcp", flag.ContinueOnError)
+
+	root := flags.String("data-folder", "", "MCP job directory")
+	if err := flags.Parse(os.Args[2:]); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+
+		return err
+	}
+
+	if flags.NArg() != 0 {
+		return errors.New("unexpected MCP arguments")
+	}
+
+	return mcpserver.Serve(ctx, *root)
 }

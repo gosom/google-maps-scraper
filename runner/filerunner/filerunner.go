@@ -37,6 +37,19 @@ type fileRunner struct {
 }
 
 func New(cfg *runner.Config) (runner.Runner, error) {
+	return newRunner(cfg, nil)
+}
+
+// NewWithResultWriter runs a file search with a caller-provided streaming writer.
+func NewWithResultWriter(cfg *runner.Config, writer scrapemate.ResultWriter) (runner.Runner, error) {
+	if writer == nil || cfg.Resume || cfg.CustomWriter != "" || cfg.LeadsDBAPIKey != "" {
+		return nil, fmt.Errorf("a streaming writer requires exclusive control of result output")
+	}
+
+	return newRunner(cfg, writer)
+}
+
+func newRunner(cfg *runner.Config, writer scrapemate.ResultWriter) (runner.Runner, error) {
 	if cfg.RunMode != runner.RunModeFile {
 		return nil, fmt.Errorf("%w: %d", runner.ErrInvalidRunMode, cfg.RunMode)
 	}
@@ -85,7 +98,9 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 		return nil, err
 	}
 
-	if err := ans.setWriters(); err != nil {
+	if writer != nil {
+		ans.writers = []scrapemate.ResultWriter{writer}
+	} else if err := ans.setWriters(); err != nil {
 		return nil, err
 	}
 

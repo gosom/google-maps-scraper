@@ -127,7 +127,8 @@ func (j *GmapJob) ProcessOnFetchError() bool {
 	return true
 }
 
-func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, []scrapemate.IJob, error) {
+func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (_ any, _ []scrapemate.IJob, processErr error) {
+	defer func() { reportSearchError(ctx, processErr) }()
 	defer func() {
 		resp.Document = nil
 		resp.Body = nil
