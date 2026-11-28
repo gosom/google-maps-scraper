@@ -1,4 +1,4 @@
-name: Build release images
+name: Build and verify release images
 
 on:
   workflow_call:
@@ -6,6 +6,13 @@ on:
       release_tag:
         required: true
         type: string
+      source_ref:
+        description: Tag to build when called for an existing release
+        type: string
+      verify_tag_only:
+        description: Pull and smoke-test the assembled tag
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -32,9 +39,12 @@ jobs:
     runs-on: ${{ matrix.platform.runner }}
     steps:
       - uses: actions/checkout@v4
+        if: ${{ !inputs.verify_tag_only }}
         with:
+          ref: ${{ inputs.source_ref || github.sha }}
           persist-credentials: false
       - uses: docker/setup-buildx-action@v4
+        if: ${{ !inputs.verify_tag_only }}
       - uses: docker/login-action@v3
         if: matrix.image.name == 'scraper'
         with:
@@ -47,11 +57,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/metadata-action@v5
+        if: ${{ !inputs.verify_tag_only }}
         id: meta
         with:
           images: ${{ matrix.image.repository }}
           tags: type=raw,value=${{ inputs.release_tag }}
       - name: Build and push by digest
+        if: ${{ !inputs.verify_tag_only }}
         uses: docker/build-push-action@v6
         id: build
         with:
@@ -66,13 +78,34 @@ jobs:
       - name: Smoke-test the image
         env:
           KIND: ${{ matrix.image.name }}
-          REPOSITORY: ${{ matrix.image.repository }}
+          ARCH: ${{ matrix.platform.arch }}
+          IMAGE: ${{ inputs.verify_tag_only && format('{0}:{1}', matrix.image.repository, inputs.release_tag) || format('{0}@{1}', matrix.image.repository, steps.build.outputs.digest) }}
+        run: |
+          docker pull --platform "linux/$ARCH" "$IMAGE"
+          [[ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$IMAGE")" == "linux/$ARCH" ]]
+
+          case "$KIND" in
+            scraper)
+              docker run --rm --network none "$IMAGE" -version
+              # Exercise the bundled driver and browser together, without downloading anything.
+              docker run --rm --network none --entrypoint /bin/sh "$IMAGE" -ec '
+                "$PLAYWRIGHT_DRIVER_PATH/node" "$PLAYWRIGHT_DRIVER_PATH/package/cli.js" \
+                  screenshot --browser chromium about:blank /tmp/smoke.png
+                test -s /tmp/smoke.png
+              '
+              ;;
+            saas)
+              docker run --rm --network none "$IMAGE" --help
+              ;;
+          esac
+      - name: Record tested digest
+        if: ${{ !inputs.verify_tag_only }}
+        env:
           DIGEST: ${{ steps.build.outputs.digest }}
           ARCH: ${{ matrix.platform.arch }}
-        run: |
-          bash .github/scripts/smoke-release-image.sh "$KIND" "$REPOSITORY@$DIGEST" "$ARCH"
-          echo "$DIGEST" > "$RUNNER_TEMP/$ARCH"
+        run: echo "$DIGEST" > "$RUNNER_TEMP/$ARCH"
       - uses: actions/upload-artifact@v4
+        if: ${{ !inputs.verify_tag_only }}
         with:
           name: digest-${{ matrix.image.name }}-${{ matrix.platform.arch }}
           path: ${{ runner.temp }}/${{ matrix.platform.arch }}

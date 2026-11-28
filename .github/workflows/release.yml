@@ -163,26 +163,17 @@ jobs:
     secrets: inherit
 
   verify_rehearsal:
-    name: Verify rehearsal tags / ${{ matrix.platform.arch }}
+    name: Verify rehearsal tags
     if: inputs.rehearsal
     needs: [version, tag_images]
-    strategy:
-      matrix:
-        platform:
-          - arch: amd64
-            runner: ubuntu-24.04
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.platform.runner }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Pull and run both multi-platform images
-        env:
-          TAG: ${{ needs.version.outputs.tag }}
-          ARCH: ${{ matrix.platform.arch }}
-        run: |
-          bash .github/scripts/smoke-release-image.sh scraper "docker.io/gosom/google-maps-scraper:$TAG" "$ARCH"
-          bash .github/scripts/smoke-release-image.sh saas "ghcr.io/gosom/google-maps-scraper-saas:$TAG" "$ARCH"
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-images.yml
+    with:
+      release_tag: ${{ needs.version.outputs.tag }}
+      verify_tag_only: true
+    secrets: inherit
 
   publish:
     name: Publish GitHub release

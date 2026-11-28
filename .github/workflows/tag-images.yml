@@ -27,6 +27,14 @@ jobs:
           - name: saas
             repository: ghcr.io/gosom/google-maps-scraper-saas
     steps:
+      - name: Generate image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ matrix.image.repository }}
+          tags: |
+            type=raw,value=${{ inputs.tag }}
+            type=raw,value=latest,enable=${{ inputs.latest }}
       - uses: docker/login-action@v3
         if: matrix.image.name == 'scraper'
         with:
@@ -46,12 +54,11 @@ jobs:
       - name: Assemble and tag the verified platforms
         env:
           REPOSITORY: ${{ matrix.image.repository }}
-          TAG: ${{ inputs.tag }}
-          LATEST: ${{ inputs.latest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
         run: |
-          tags=(--tag "$REPOSITORY:$TAG")
-          if [[ "$LATEST" == true ]]; then
-            tags+=(--tag "$REPOSITORY:latest")
-          fi
+          tags=()
+          while IFS= read -r tag; do
+            tags+=(--tag "$tag")
+          done <<< "$TAGS"
           docker buildx imagetools create "${tags[@]}" \
             "$REPOSITORY@$(cat digests/amd64)" "$REPOSITORY@$(cat digests/arm64)"

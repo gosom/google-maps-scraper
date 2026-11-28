@@ -3,6 +3,11 @@ name: publish
 on:
   release:
     types: [published]
+  workflow_call:
+    inputs:
+      release_tag:
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -12,13 +17,14 @@ jobs:
   build:
     uses: ./.github/workflows/build-images.yml
     with:
-      release_tag: ${{ github.event.release.tag_name }}
+      release_tag: ${{ inputs.release_tag || github.event.release.tag_name }}
+      source_ref: ${{ inputs.release_tag || github.event.release.tag_name }}
     secrets: inherit
 
   tag:
     needs: build
     uses: ./.github/workflows/tag-images.yml
     with:
-      tag: ${{ github.event.release.tag_name }}
+      tag: ${{ inputs.release_tag || github.event.release.tag_name }}
       latest: ${{ !github.event.release.prerelease }}
     secrets: inherit
