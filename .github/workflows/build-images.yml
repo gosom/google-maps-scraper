@@ -1,0 +1,129 @@
+name: Build and verify release images
+
+on:
+  workflow_call:
+    inputs:
+      release_tag:
+        required: true
+        type: string
+      source_ref:
+        description: Tag to build when called for an existing release
+        type: string
+      version_tag:
+        description: Planned Git tag for the release commit's Go build metadata
+        type: string
+      verify_tag_only:
+        description: Pull and smoke-test the assembled tag
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    name: ${{ matrix.image.name }} / ${{ matrix.platform.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - name: scraper
+            repository: docker.io/gosom/google-maps-scraper
+            dockerfile: Dockerfile
+          - name: saas
+            repository: ghcr.io/gosom/google-maps-scraper-saas
+            dockerfile: Dockerfile.saas
+        platform:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.platform.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        if: ${{ !inputs.verify_tag_only }}
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+          persist-credentials: false
+      - name: Set the planned version in the local build checkout
+        if: ${{ !inputs.verify_tag_only && inputs.version_tag != '' }}
+        env:
+          VERSION_TAG: ${{ inputs.version_tag }}
+        run: |
+          if ! git tag --points-at HEAD --list "$VERSION_TAG" | grep -Fxq "$VERSION_TAG"; then
+            git tag "$VERSION_TAG" HEAD
+          fi
+      - uses: docker/setup-buildx-action@v4
+        if: ${{ !inputs.verify_tag_only }}
+      - uses: docker/login-action@v3
+        if: matrix.image.name == 'scraper'
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - uses: docker/login-action@v3
+        if: matrix.image.name == 'saas'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        if: ${{ !inputs.verify_tag_only }}
+        id: meta
+        with:
+          images: ${{ matrix.image.repository }}
+          tags: type=raw,value=${{ inputs.release_tag }}
+      - name: Build and push by digest
+        if: ${{ !inputs.verify_tag_only }}
+        uses: docker/build-push-action@v6
+        id: build
+        with:
+          context: .
+          file: ${{ matrix.image.dockerfile }}
+          platforms: linux/${{ matrix.platform.arch }}
+          pull: true
+          cache-from: type=gha,scope=release-${{ matrix.image.name }}-${{ matrix.platform.arch }}
+          cache-to: type=gha,scope=release-${{ matrix.image.name }}-${{ matrix.platform.arch }},mode=max,ignore-error=true
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ matrix.image.repository }},push-by-digest=true,name-canonical=true,push=true
+      - name: Smoke-test the image
+        env:
+          KIND: ${{ matrix.image.name }}
+          ARCH: ${{ matrix.platform.arch }}
+          VERSION_TAG: ${{ inputs.version_tag }}
+          IMAGE: ${{ inputs.verify_tag_only && format('{0}:{1}', matrix.image.repository, inputs.release_tag) || format('{0}@{1}', matrix.image.repository, steps.build.outputs.digest) }}
+        run: |
+          docker pull --platform "linux/$ARCH" "$IMAGE"
+          [[ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$IMAGE")" == "linux/$ARCH" ]]
+
+          case "$KIND" in
+            scraper)
+              version_output=$(docker run --rm --network none "$IMAGE" -version)
+              printf '%s\n' "$version_output"
+              if [[ -n "$VERSION_TAG" ]]; then
+                grep -Fxq "$VERSION_TAG-${GITHUB_SHA:0:7}" <<< "$version_output"
+              fi
+              # Exercise the bundled driver and browser together, without downloading anything.
+              docker run --rm --network none --entrypoint /bin/sh "$IMAGE" -ec '
+                "$PLAYWRIGHT_DRIVER_PATH/node" "$PLAYWRIGHT_DRIVER_PATH/package/cli.js" \
+                  screenshot --browser chromium about:blank /tmp/smoke.png
+                test -s /tmp/smoke.png
+              '
+              ;;
+            saas)
+              docker run --rm --network none "$IMAGE" --help
+              ;;
+          esac
+      - name: Record tested digest
+        if: ${{ !inputs.verify_tag_only }}
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          ARCH: ${{ matrix.platform.arch }}
+        run: echo "$DIGEST" > "$RUNNER_TEMP/$ARCH"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !inputs.verify_tag_only }}
+        with:
+          name: digest-${{ matrix.image.name }}-${{ matrix.platform.arch }}
+          path: ${{ runner.temp }}/${{ matrix.platform.arch }}
+          if-no-files-found: error
+          overwrite: true
