@@ -1,5 +1,5 @@
 APP_NAME := google_maps_scraper
-VERSION := 1.30.0
+VERSION := 1.30.1
 VERSION_LDFLAGS := -X github.com/gosom/google-maps-scraper/runner.releaseVersion=v$(VERSION)
 
 default: help
