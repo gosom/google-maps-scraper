@@ -2,21 +2,25 @@ name: Release
 
 on:
   workflow_dispatch:
+    inputs:
+      rehearsal:
+        description: Test the release with temporary image tags
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: manual-release
+  group: ${{ inputs.rehearsal && format('release-rehearsal-{0}', github.run_id) || 'manual-release' }}
   cancel-in-progress: false
 
 jobs:
-  prepare:
-    name: Build binaries and prepare draft release
+  version:
+    name: Validate release version
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     outputs:
+      version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
@@ -24,6 +28,9 @@ jobs:
           fetch-depth: 0
       - name: Read version from Makefile
         id: version
+        env:
+          REHEARSAL: ${{ inputs.rehearsal }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           version=$(awk '$1 == "VERSION" && $2 == ":=" {print $3}' Makefile)
@@ -32,14 +39,27 @@ jobs:
             exit 1
           fi
           tag="v$version"
-          if git rev-parse --verify "refs/tags/$tag" >/dev/null 2>&1; then
+          if [[ "$REHEARSAL" == true ]]; then
+            tag="rehearsal-$GITHUB_RUN_ID"
+          elif git rev-parse --verify "refs/tags/$tag" >/dev/null 2>&1; then
             if [[ "$(git rev-parse "refs/tags/$tag^{commit}")" != "$GITHUB_SHA" ]]; then
               echo "Tag $tag already points to a different commit. Update Makefile VERSION." >&2
               exit 1
             fi
           fi
+          if [[ "$REHEARSAL" == false && "$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null)" == false ]]; then
+            echo "Release $tag is already published; update Makefile VERSION for a new release." >&2
+            exit 1
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: Run release tests
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-go@v6
         with:
           go-version: '1.27.4'
@@ -48,19 +68,68 @@ jobs:
           node-version: '20'
       - name: Test
         run: make test
+
+  binaries:
+    name: Build release binaries
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.4'
       - name: Build binaries and checksums
         env:
-          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
         run: |
           make cross-compile VERSION="$RELEASE_VERSION"
           make release-checksums VERSION="$RELEASE_VERSION"
           cd bin
           sha256sum -c checksums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-binaries
+          path: |
+            bin/google_maps_scraper-${{ needs.version.outputs.version }}-*
+            bin/checksums.txt
+          compression-level: 0
+          if-no-files-found: error
+          overwrite: true
+
+  images:
+    needs: version
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-images.yml
+    with:
+      release_tag: ${{ needs.version.outputs.tag }}
+    secrets: inherit
+
+  prepare:
+    name: Verify assets and prepare publication
+    needs: [version, test, binaries, images]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        if: ${{ !inputs.rehearsal }}
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-binaries
+          path: bin
+      - name: Verify downloaded assets
+        working-directory: bin
+        run: sha256sum --strict --check checksums.txt
       - name: Create tag and draft release with assets
+        if: ${{ !inputs.rehearsal }}
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.version.outputs.tag }}
-          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
         shell: bash
         run: |
           release_exists=false
@@ -71,7 +140,9 @@ jobs:
               exit 1
             fi
           fi
-          if ! git rev-parse --verify "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+          if git rev-parse --verify "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            [[ "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" == "$GITHUB_SHA" ]]
+          else
             git tag "$RELEASE_TAG" "$GITHUB_SHA"
             git push origin "refs/tags/$RELEASE_TAG"
           fi
@@ -80,20 +151,43 @@ jobs:
           fi
           gh release upload "$RELEASE_TAG" bin/google_maps_scraper-"$RELEASE_VERSION"-* bin/checksums.txt --clobber
 
-  images:
-    name: Publish container images
-    needs: prepare
+  tag_images:
+    needs: [version, prepare]
     permissions:
       contents: read
       packages: write
-    uses: ./.github/workflows/publish.yml
+    uses: ./.github/workflows/tag-images.yml
     with:
-      release_tag: ${{ needs.prepare.outputs.tag }}
+      tag: ${{ needs.version.outputs.tag }}
+      latest: ${{ !inputs.rehearsal }}
     secrets: inherit
+
+  verify_rehearsal:
+    name: Verify rehearsal tags / ${{ matrix.platform.arch }}
+    if: inputs.rehearsal
+    needs: [version, tag_images]
+    strategy:
+      matrix:
+        platform:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.platform.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pull and run both multi-platform images
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+          ARCH: ${{ matrix.platform.arch }}
+        run: |
+          bash .github/scripts/smoke-release-image.sh scraper "docker.io/gosom/google-maps-scraper:$TAG" "$ARCH"
+          bash .github/scripts/smoke-release-image.sh saas "ghcr.io/gosom/google-maps-scraper-saas:$TAG" "$ARCH"
 
   publish:
     name: Publish GitHub release
-    needs: [prepare, images]
+    if: ${{ !inputs.rehearsal }}
+    needs: [version, tag_images]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -102,5 +196,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
         run: gh release edit "$RELEASE_TAG" --draft=false --latest

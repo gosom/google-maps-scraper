@@ -1,98 +1,24 @@
 name: publish
 
+on:
+  release:
+    types: [published]
+
 permissions:
   contents: read
   packages: write
 
-on:
-  release:
-    types: [published]
-  workflow_call:
-    inputs:
-      release_tag:
-        required: true
-        type: string
-
 jobs:
-  push_playwright_image:
-    name: Push Playwright Docker image to Docker Hub
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out the repo
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.release_tag || github.event.release.tag_name }}
+  build:
+    uses: ./.github/workflows/build-images.yml
+    with:
+      release_tag: ${{ github.event.release.tag_name }}
+    secrets: inherit
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: gosom/google-maps-scraper
-          tags: |
-            type=raw,value=${{ inputs.release_tag || github.event.release.tag_name }}
-            type=raw,value=latest,enable=${{ !github.event.release.prerelease }}
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          no-cache: true
-
-  push_saas_image:
-    name: Push SaaS Docker image to GHCR
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out the repo
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.release_tag || github.event.release.tag_name }}
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/gosom/google-maps-scraper-saas
-          tags: |
-            type=raw,value=${{ inputs.release_tag || github.event.release.tag_name }}
-            type=raw,value=latest,enable=${{ !github.event.release.prerelease }}
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile.saas
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          no-cache: true
+  tag:
+    needs: build
+    uses: ./.github/workflows/tag-images.yml
+    with:
+      tag: ${{ github.event.release.tag_name }}
+      latest: ${{ !github.event.release.prerelease }}
+    secrets: inherit

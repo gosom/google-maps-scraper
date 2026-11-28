@@ -62,6 +62,8 @@ For branch testing, use the checkout's installer and skill together; do not refr
 
 Update `VERSION` in the Makefile and commit it with the release changes. In GitHub Actions, select **Release → Run workflow** on that commit's branch. There is no version input and pushing a tag does not trigger this workflow.
 
-The workflow reads the Makefile version, runs tests, builds five platform binaries and checksums, creates the matching `vX.Y.Z` tag and a draft release with generated notes, publishes the Docker images from that tag, and publishes the release after both images succeed. Existing Docker Hub credentials are reused. A tag pointing to another commit or an already published release is rejected. If a run fails after preparing a draft, rerun failed jobs for the same commit; the draft and assets are retained for retry.
+The workflow validates the Makefile version, then runs the race tests, builds the five platform binaries and checksums, and builds the Docker images in parallel from the selected commit. AMD64 and ARM64 runners smoke-test their native images. Once these jobs pass, the workflow verifies the downloaded binaries, creates the matching Git tag and draft release, tags both multi-platform images, and publishes the GitHub release. A tag pointing to another commit or an already published release is rejected. Use **Re-run failed jobs** to retry publication using the verified image digests from that run.
+
+To rehearse from a branch, select **Test the release with temporary image tags**. The workflow verifies the binaries and pulls and tests both images as `rehearsal-<run-id>` on both architectures. The rehearsal can use a Makefile version that has already shipped. Production image tags and GitHub releases are published only in release mode.
 
 For a manual release, `make release-checksums VERSION=X.Y.Z` generates `bin/checksums.txt` from existing binaries. Upload it with those exact binaries. This local command does not publish anything.
