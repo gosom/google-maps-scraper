@@ -1,6 +1,7 @@
 package gmaps
 
 import (
+	"bytes"
 	"context"
 	"net/url"
 	"strings"
@@ -113,11 +114,6 @@ func (j *EmailExtractJob) UseInResults() bool {
 }
 
 func (j *EmailExtractJob) extractEmails(resp *scrapemate.Response) {
-	doc, ok := resp.Document.(*goquery.Document)
-	if !ok || doc == nil {
-		return
-	}
-
 	pageURL := j.URL
 	if resp.URL != "" {
 		pageURL = resp.URL
@@ -126,6 +122,19 @@ func (j *EmailExtractJob) extractEmails(resp *scrapemate.Response) {
 	base, err := url.Parse(pageURL)
 	if err != nil || (j.IsContactPage && !sameContactSite(j.ContactOrigin, base)) {
 		return
+	}
+
+	doc, ok := resp.Document.(*goquery.Document)
+	if !ok || doc == nil {
+		// Synchronous email enrichment receives the fetched body directly.
+		if len(resp.Body) == 0 {
+			return
+		}
+
+		doc, err = goquery.NewDocumentFromReader(bytes.NewReader(resp.Body))
+		if err != nil {
+			return
+		}
 	}
 
 	j.Entry.Emails = docEmailExtractor(doc)

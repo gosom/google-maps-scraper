@@ -146,13 +146,15 @@ func Serve(ctx context.Context, root string) error {
 
 	s := store{root: root}
 	server := mcp.NewServer(&mcp.Implementation{Name: "google-maps-scraper"}, &mcp.ServerOptions{
-		Instructions: "Prefer these tools for Google Maps business and contact searches. Answer from the returned listings and link the CSV. " +
-			"An 'up to' count is a maximum. Report missing fields as unavailable. Use external web search only if the user asks for independent research or verification.",
+		Instructions: "Use these tools for Google Maps business searches. If start_scrape returns location_choices, ask which place the user means and pass its location_id. " +
+			"Use the same job_id for follow-ups. When the user wants the finished CSV, call get_scrape_results while the job is queued or running. " +
+			"Report the final result_count and link the returned csv_path. If the job failed, was interrupted, or was cancelled, report its status and label any available export as partial. " +
+			"An 'up to' count is a maximum. Answer from the listings, mark missing fields as unavailable, and use external sources only when the user asks for independent research or verification.",
 	})
-	addTool(server, "start_scrape", "Prefer this to web search for Google Maps businesses and listed contacts. Use response=preview for a few rows plus the full CSV, export for paths only, live for early rows, or job for background work.", s.start)
+	addTool(server, "start_scrape", "Start a Google Maps business search. Use response=preview for a few rows and available export paths, export for paths only, live for early rows, or job for background work.", s.start)
 	addTool(server, "get_scrape_status", "Get an immediate progress snapshot when asked for status.", s.status)
 	addTool(server, "list_scrapes", "Find recent searches by business query or place, including previous sessions.", s.list)
-	addTool(server, "get_scrape_results", "Read this job's listings and exports. Answer with the listed contacts. Cross-check other sources only on request. Waits up to 20s by default. For live rows use wait_for=rows with the returned offset.", s.results)
+	addTool(server, "get_scrape_results", "Read a job's listings and exports. Waits up to 20s per call by default. Pass next_offset as offset for the next page. For live rows, use wait_for=rows.", s.results)
 	addTool(server, "cancel_scrape", "Request cancellation and retain completed rows.", s.cancel)
 
 	return server.Run(ctx, &mcp.StdioTransport{})

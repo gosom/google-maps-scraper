@@ -1,6 +1,12 @@
 # Install Google Maps Scraper for an agent
 
-For Codex, Claude Code, or another MCP client, prefer the local MCP server. Follow the README to connect it, then install the skill below if desired. If the server is already connected, use its `start_scrape` tool for the first sample. [MCP setup and one-prompt install](README.md#use-with-an-mcp-client)
+For Codex or Claude Code, paste the setup prompt into chat to connect the local MCP server. Other stdio clients can use the JSON configuration. [Setup prompt](README.md#install-with-one-prompt) · [Other stdio clients](README.md#other-stdio-clients)
+
+Once connected, paste this into chat.
+
+```text
+Find up to 10 cafés within 2 km of central Athens, Greece. Show me three with their addresses and ratings, and give me the full CSV.
+```
 
 For a CLI workflow, use the native release binary on macOS or Linux, or Docker when requested. On Windows, run the agent helpers in WSL.
 

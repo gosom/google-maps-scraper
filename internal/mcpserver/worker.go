@@ -77,7 +77,7 @@ func Work(ctx context.Context, dir string) error {
 		}
 	}()
 
-	runErr := runScrape(runCtx, dir, &j)
+	runErr := runScrape(runCtx, dir, &j, scrapeCell)
 
 	close(heartbeat)
 	<-done
@@ -99,7 +99,9 @@ func Work(ctx context.Context, dir string) error {
 	return errors.Join(runErr, writeState(dir, &j))
 }
 
-func runScrape(ctx context.Context, dir string, j *job) error {
+type cellScraper func(context.Context, string, *plan, grid.Cell, scrapemate.ResultWriter) error
+
+func runScrape(ctx context.Context, dir string, j *job, runCell cellScraper) error {
 	input := filepath.Join(dir, "query.txt")
 	if err := os.WriteFile(input, []byte(j.Plan.Query+"\n"), 0o600); err != nil {
 		return err
@@ -139,13 +141,17 @@ func runScrape(ctx context.Context, dir string, j *job) error {
 	var firstScrapeError error
 
 	for index, cell := range p.Cells {
+		if j.Count >= p.Limit {
+			break
+		}
+
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 
 		writer.cellLimit = (p.Limit*(index+1) + len(p.Cells) - 1) / len(p.Cells)
 
-		scrapeErr := scrapeCell(ctx, input, p, cell, writer)
+		scrapeErr := runCell(ctx, input, p, cell, writer)
 		if writer.err != nil {
 			return errors.Join(scrapeErr, writer.err)
 		}

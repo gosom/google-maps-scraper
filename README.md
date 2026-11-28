@@ -48,23 +48,21 @@ Run locally with the CLI, Web UI, REST API, or directly from an AI agent. Free a
 
 ### Use an AI Agent
 
-In Codex or Claude Code, connect the **Model Context Protocol (MCP) server** for direct access to the scraper. The optional **agent skill** prefers that connection and can also guide a local CLI or Docker run. [Install with one prompt](#install-with-one-prompt) · [Codex CLI commands](#codex-cli) · [Claude Code commands](#claude-code)
-
-Once connected, try this in chat.
+In Codex or Claude Code, connect Google Maps Scraper once with the [setup prompt](#install-with-one-prompt). Then paste this into chat.
 
 ```text
-Find up to 10 dentists in Latsia, Cyprus. Show me three with their phone numbers and give me the CSV for the full list.
+Find up to 10 cafés within 2 km of central Athens, Greece. Show me three with their addresses and ratings, and give me the full CSV.
 ```
 
-To install just the skill, run `npx skills add gosom/google-maps-scraper --skill google-maps-scraper` with Node.js 20 or newer and choose your agent. [Skill installation and CLI setup](INSTALL_FOR_AGENTS.md)
+The agent shows up to three cafés in chat and links a local CSV with every result from the search. You can use MCP on its own. The optional agent skill also supports CLI and Docker. [More prompts to copy](#more-prompts-to-copy) · [Install the skill](INSTALL_FOR_AGENTS.md#install-the-agent-skill)
 
 ### Command Line
 
-With Docker installed, paste these commands into a terminal on macOS, Linux, or Windows with WSL. Change `dentists in Berlin` to your own search.
+With Docker installed, paste these commands into a terminal on macOS, Linux, or Windows with WSL. Change `cafes in Athens, Greece` to your own search.
 
 ```bash
 mkdir -p gmaps-output
-printf '%s\n' 'dentists in Berlin' > gmaps-queries.txt
+printf '%s\n' 'cafes in Athens, Greece' > gmaps-queries.txt
 
 docker run --rm \
   -v gmaps-playwright-cache:/opt \
@@ -110,18 +108,14 @@ The server runs locally over stdio. City names resolve locally and the default s
 
 ### Install with one prompt
 
-Paste this into Codex or Claude Code. If you are trying an unreleased branch, open the client in that checkout first.
+Paste this into Codex or Claude Code. If you are trying an unreleased branch, open the client in that checkout first. For manual setup, use the [Codex CLI](#codex-cli) or [Claude Code](#claude-code) commands below.
 
 ```text
-Set up Google Maps Scraper for this client. Use the current scraper checkout
-if available, or clone https://github.com/gosom/google-maps-scraper into a new
-directory. Follow “Use with an MCP Client” in its README.
-Reuse a local binary if its -mcp -help lists -data-folder. Otherwise build this
-checkout to a stable absolute path. Install the browser runtime for detailed mode.
-Register the stdio server for this client. Install the google-maps-scraper skill
-from this checkout for this client, then check that the MCP server is registered.
-If a new session is needed, tell me how to open it and give me the Quick Start
-dentist prompt to try there.
+Set up Google Maps Scraper for this client. Use the current checkout if available,
+or clone https://github.com/gosom/google-maps-scraper.
+Follow the manual setup steps in the README and install the skill from the same checkout.
+Verify the connection. If I need a new session, tell me how to open it.
+Give me the Athens café prompt to paste when setup is complete.
 ```
 
 ### 1. Get an MCP-enabled binary
@@ -167,9 +161,47 @@ Claude Code's user scope makes the server available across your local projects. 
 
 ### 3. Verify with a search
 
-In the new session, enter `/mcp` and look for `google-maps-scraper`. Try the [dentist prompt in Quick Start](#use-an-ai-agent). Look for a `start_scrape` tool call, three names and listed numbers when available, and a link to the CSV containing all returned rows. “Up to 10” sets a maximum. The agent can answer directly from the listings, even if some numbers are unavailable. Ask explicitly if you also want it to verify contacts against other sources.
+In the new session, enter `/mcp` and look for `google-maps-scraper`. Then paste this into chat.
 
-Fast mode is the MCP default. Ask for emails to add website lookups while keeping fast mode. Ask for review text or say “use detailed mode” to open individual listings.
+```text
+Find up to 10 cafés within 2 km of central Athens, Greece. Show me three with their addresses and ratings, and give me the full CSV.
+```
+
+Look for a `start_scrape` call. The agent should report how many cafés it found and link the finished CSV. A search can return fewer than 10. If the job stops early, the agent should tell you and label any saved results as partial.
+
+### More prompts to copy
+
+**See more of the same results**
+
+```text
+Show me the next three cafés from that Athens search, with their addresses and ratings.
+```
+
+**Get the file in a new chat**
+
+```text
+Find my most recent café search in Athens, Greece, and give me its CSV when it’s finished.
+```
+
+**Start a search with website emails**
+
+```text
+Find up to 10 cafés in Athens, Greece. Check their websites for public email addresses and give me the CSV.
+```
+
+**Start a search in the background**
+
+```text
+Start a background search for up to 30 cafés in Athens, Greece. Give me the job ID so I can check back later.
+```
+
+**Stop the running search**
+
+```text
+Stop my running Athens café search and give me the results collected so far.
+```
+
+The default search uses fast mode, including for email lookups. Ask for review text to open individual listings in detailed mode.
 
 ### Other stdio clients
 
@@ -190,6 +222,9 @@ For clients that accept an `mcpServers` JSON object, use the absolute path to th
 
 The city grid covers an approximate area and spreads the result limit across its cells. Ask for a nearby search or specify a radius for a centered search. Provide bounds to grid a specific area. The bundled city index uses GeoNames data under CC BY 4.0 and includes supplemental Cyprus locality names. [GeoNames](https://www.geonames.org/export/) · [License](https://creativecommons.org/licenses/by/4.0/) · [Cyprus locality names](https://data.gov.cy/el/resource/lau2-codes-and-names) · [Latsia coordinates](https://www.geonames.org/postal-codes/CY/04/nicosia-district.html)
 
+<details>
+<summary>MCP tool arguments for client developers</summary>
+
 | What the user wants | How the MCP client can get it |
 |---|---|
 | A few businesses in chat | Call `start_scrape` with `response: "preview"`. It waits up to 20 seconds and returns up to three rows, the job status, and available export paths. Use `fields` to select columns. |
@@ -197,7 +232,11 @@ The city grid covers an approximate area and spreads the result limit across its
 | Results as they arrive | Use `response: "live"` for the first rows. Pass `next_offset` as `offset` to `get_scrape_results` with `wait_for: "rows"` for the next page. |
 | A background job | Omit `response` to get the job ID immediately. You can close the client, reconnect, and find the job with `list_scrapes`. |
 
-Check the returned job status. For a running job, `get_scrape_results` waits up to 20 seconds for completion by default. Use `view: "export"` for just the paths, `view: "full"` for full records within the page size limit, or `wait_for: "none"` for an immediate snapshot. The server marks incomplete results as partial. To customize where jobs and exports live, add `"-data-folder", "/path/to/jobs"` to the client's arguments.
+When the user asks for the finished file, pass the same `job_id` to `get_scrape_results` while the status is `queued` or `running`. Each call waits up to 20 seconds by default. Report `result_count` and link `csv_path` when the job completes. For a failed, interrupted, or cancelled job, label any available file as partial. Use `view: "export"` for paths only, `view: "full"` for full records within the page size limit, or `wait_for: "none"` for an immediate snapshot.
+
+</details>
+
+To change where jobs and exports are saved, add `"-data-folder", "/path/to/jobs"` to the client's arguments.
 
 <a id="features"></a>
 
@@ -332,7 +371,7 @@ Open a terminal in that folder. The commands below install the browser runtime a
 ```bash
 chmod +x google-maps-scraper
 PLAYWRIGHT_INSTALL_ONLY=1 ./google-maps-scraper
-printf '%s\n' 'dentists in Berlin' > queries.txt
+printf '%s\n' 'cafes in Athens, Greece' > queries.txt
 ./google-maps-scraper -input queries.txt -results results.csv -depth 1 -exit-on-inactivity 3m
 ```
 
@@ -342,7 +381,7 @@ printf '%s\n' 'dentists in Berlin' > queries.txt
 $env:PLAYWRIGHT_INSTALL_ONLY = "1"
 .\google-maps-scraper.exe
 Remove-Item Env:PLAYWRIGHT_INSTALL_ONLY
-'dentists in Berlin' | Set-Content -Encoding ascii queries.txt
+'cafes in Athens, Greece' | Set-Content -Encoding ascii queries.txt
 .\google-maps-scraper.exe -input queries.txt -results results.csv -depth 1 -exit-on-inactivity 3m
 ```
 
@@ -441,11 +480,13 @@ If you have not installed it yet:
 npx skills add gosom/google-maps-scraper
 ```
 
-Then just ask your agent:
+Paste this into chat.
 
-> Find dentists in Berlin with their emails
+```text
+Find up to 10 cafés in Athens, Greece. Check their websites for public email addresses and give me the CSV.
+```
 
-The agent will:
+With MCP connected, the agent runs the search directly. For a native CLI or Docker run, the skill walks through these steps.
 
 1. Check setup and the latest skill; check the image when using Docker.
 2. Infer sensible search defaults and ask only for missing essentials.
@@ -521,7 +562,7 @@ Resuming an older CSV preserves its existing columns. Start a new output file to
 <details>
 <summary><strong>Input formats: search queries, Maps URLs, and custom IDs</strong></summary>
 
-Use one search query per line, such as `dentists in Berlin`.
+Use one search query per line, such as `cafes in Athens, Greece`.
 
 **Custom Input IDs:** Add your own ID after `#!#`:
 
@@ -661,10 +702,10 @@ Email extraction is **disabled by default**. When enabled, the scraper visits ea
 <details>
 <summary><strong>Fast Mode</strong></summary>
 
-Fast mode gets business data without opening a browser. After [installing the native binary](#installation), run this example to search for cafés within 5 km of the given San Francisco coordinates:
+Fast mode gets business data without opening a browser. After installing the native binary, run this example to search for cafés within 2 km of central Athens. [Installation](#installation)
 
 ```bash
-printf '%s\n' 'cafes in San Francisco' > queries.txt
+printf '%s\n' 'cafes in Athens, Greece' > queries.txt
 
 ./google-maps-scraper \
   -input queries.txt \
@@ -672,8 +713,8 @@ printf '%s\n' 'cafes in San Francisco' > queries.txt
   -fast-mode \
   -depth 3 \
   -zoom 15 \
-  -radius 5000 \
-  -geo '37.7749,-122.4194'
+  -radius 2000 \
+  -geo '37.98376,23.72784'
 ```
 
 - `-geo` sets the search center as latitude,longitude. It is required.
