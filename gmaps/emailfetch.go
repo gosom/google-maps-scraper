@@ -87,3 +87,21 @@ func (j *EmailExtractJob) fetchEmailPage(ctx context.Context, client *http.Clien
 		Error:      err,
 	}
 }
+
+// EnrichWebsiteEmails looks for public email addresses on an entry's website
+// using the same validated HTTP fetches as the scraper's email jobs.
+func EnrichWebsiteEmails(ctx context.Context, entry *Entry) {
+	for job := NewEmailJob(entry.ID, entry); ctx.Err() == nil; {
+		response := job.BrowserActions(ctx, nil)
+
+		_, next, err := job.Process(ctx, &response)
+		if err != nil || len(next) == 0 {
+			return
+		}
+
+		job, _ = next[0].(*EmailExtractJob)
+		if job == nil {
+			return
+		}
+	}
+}

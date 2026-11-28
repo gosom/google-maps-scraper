@@ -183,7 +183,7 @@ func TestEmailContactFallback(t *testing.T) {
 				}
 			}))
 			t.Cleanup(server.Close)
-			fetcher := httpfetcher.New(server.Client())
+
 			tracker := &emailCompletionCounter{}
 			entry := &Entry{ID: "seed", Title: "Business", WebSite: server.URL}
 			job := NewEmailJob("place", entry, WithEmailJobExitMonitor(tracker))
@@ -201,12 +201,7 @@ func TestEmailContactFallback(t *testing.T) {
 
 				paths = append(paths, path)
 
-				resp := fetcher.Fetch(t.Context(), job)
-				if resp.Error == nil {
-					resp.Document, err = goquery.NewDocumentFromReader(strings.NewReader(string(resp.Body)))
-					require.NoError(t, err)
-				}
-
+				resp := job.fetchEmailPage(t.Context(), server.Client())
 				result, next, err := job.Process(t.Context(), &resp)
 				require.NoError(t, err)
 				require.Nil(t, resp.Body)

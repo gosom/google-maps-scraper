@@ -2,15 +2,15 @@
 name: google-maps-scraper
 description: >
   Find businesses, leads, emails, reviews, ratings, and contact details from Google Maps.
-  Use for requests such as "find dentists in Berlin", "scrape Google Maps", "get local
-  business leads", or "collect Google Maps reviews". Runs the open-source scraper locally
-  with a native binary or Docker and guides nontechnical users through setup, monitoring, and results.
+  Use for requests such as "find cafés in Athens", "scrape Google Maps", "get local
+  business leads", or "collect Google Maps reviews". Prefer the Google Maps Scraper MCP
+  server when connected. Also supports local CLI runs with a native binary or Docker.
 license: MIT
 metadata:
   compatibility: "Agent helpers require Node.js 20+. Uses a native binary or Docker on macOS/Linux; Windows through WSL."
   author: gosom
   email: hi@gosom.dev
-  version: "1.13.0"
+  version: "1.14.0"
   repository: "https://github.com/gosom/google-maps-scraper"
 allowed-tools: Bash(node:*) Bash(bash:*) Bash(docker:*) Read Write
 ---
@@ -19,7 +19,21 @@ allowed-tools: Bash(node:*) Bash(bash:*) Bash(docker:*) Read Write
 
 Turn a natural-language lead request into a validated local Google Maps crawl, monitor it, and help the user work with the results.
 
-Resolve the directory containing this file as `SKILL_DIR`. Run bundled scripts from that directory; do not assume the current directory is the repository checkout.
+## Use the MCP server when connected
+
+For a new business search, call `start_scrape` on the `google-maps-scraper` server. For the Athens quick-start prompt, use the following arguments.
+
+```json
+{"query":"cafes","location":"Athens, GR","radius_km":2,"limit":10,"fields":["address","rating"],"response":"preview"}
+```
+
+Use the requested radius for a nearby search. A named city on its own uses a grid. If the tool returns `location_choices`, ask the user which place they mean and pass the selected `location_id`. Leave mode on auto for contacts. Request `emails` for website lookups or `reviews` for review text.
+
+For the full CSV, call `get_scrape_results` with the same `job_id` while the status is `queued` or `running`. When it completes, report the actual count, show the requested preview, and link the returned `csv_path`. A completed search can return fewer rows than the requested maximum. If the job fails, is interrupted, or is cancelled, give its status and label any available file as partial. Report missing fields as unavailable. Use outside sources only when the user asks for independent research or verification.
+
+For the next page, pass `next_offset` as `offset` on the same job. In a new chat, use `list_scrapes` to find the previous search. For a cancellation, use `cancel_scrape` and check the final status before sharing the retained rows.
+
+Use the CLI workflow below when the MCP tools are unavailable or the user chooses a native CLI or Docker run. If the user specifically requires MCP and it is unavailable, explain how to connect it.
 
 ## Guardrails
 
@@ -32,11 +46,11 @@ Resolve the directory containing this file as `SKILL_DIR`. Run bundled scripts f
 - Preserve partial output when a crawl fails or is interrupted.
 - Do not expose raw logs unless a concise excerpt is necessary for diagnosis and contains no secrets.
 
-## Workflow
+## CLI workflow
 
 ### 0. Refresh the workflow
 
-At the beginning of every new skill workflow, run this exactly once without asking for confirmation:
+Resolve the directory containing this file as `SKILL_DIR`. At the beginning of each CLI workflow, run this once from the installed skill:
 
 ```bash
 bash "$SKILL_DIR/scripts/ensure-latest.sh"

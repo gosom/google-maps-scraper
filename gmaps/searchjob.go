@@ -91,7 +91,9 @@ func WithSearchJobDepth(depth int) SearchJobOptions {
 	return func(j *SearchJob) { j.maxDepth = max(1, depth) }
 }
 
-func (j *SearchJob) Process(ctx context.Context, resp *scrapemate.Response) (any, []scrapemate.IJob, error) {
+func (j *SearchJob) Process(ctx context.Context, resp *scrapemate.Response) (_ any, _ []scrapemate.IJob, processErr error) {
+	defer func() { reportSearchError(ctx, processErr) }()
+
 	continuing := false
 
 	defer func() {
