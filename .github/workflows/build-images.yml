@@ -9,6 +9,9 @@ on:
       source_ref:
         description: Tag to build when called for an existing release
         type: string
+      version_tag:
+        description: Planned Git tag for the release commit's Go build metadata
+        type: string
       verify_tag_only:
         description: Pull and smoke-test the assembled tag
         type: boolean
@@ -43,6 +46,14 @@ jobs:
         with:
           ref: ${{ inputs.source_ref || github.sha }}
           persist-credentials: false
+      - name: Set the planned version in the local build checkout
+        if: ${{ !inputs.verify_tag_only && inputs.version_tag != '' }}
+        env:
+          VERSION_TAG: ${{ inputs.version_tag }}
+        run: |
+          if ! git tag --points-at HEAD --list "$VERSION_TAG" | grep -Fxq "$VERSION_TAG"; then
+            git tag "$VERSION_TAG" HEAD
+          fi
       - uses: docker/setup-buildx-action@v4
         if: ${{ !inputs.verify_tag_only }}
       - uses: docker/login-action@v3
@@ -79,6 +90,7 @@ jobs:
         env:
           KIND: ${{ matrix.image.name }}
           ARCH: ${{ matrix.platform.arch }}
+          VERSION_TAG: ${{ inputs.version_tag }}
           IMAGE: ${{ inputs.verify_tag_only && format('{0}:{1}', matrix.image.repository, inputs.release_tag) || format('{0}@{1}', matrix.image.repository, steps.build.outputs.digest) }}
         run: |
           docker pull --platform "linux/$ARCH" "$IMAGE"
@@ -86,7 +98,11 @@ jobs:
 
           case "$KIND" in
             scraper)
-              docker run --rm --network none "$IMAGE" -version
+              version_output=$(docker run --rm --network none "$IMAGE" -version)
+              printf '%s\n' "$version_output"
+              if [[ -n "$VERSION_TAG" ]]; then
+                grep -Fxq "$VERSION_TAG-${GITHUB_SHA:0:7}" <<< "$version_output"
+              fi
               # Exercise the bundled driver and browser together, without downloading anything.
               docker run --rm --network none --entrypoint /bin/sh "$IMAGE" -ec '
                 "$PLAYWRIGHT_DRIVER_PATH/node" "$PLAYWRIGHT_DRIVER_PATH/package/cli.js" \
