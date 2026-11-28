@@ -28,7 +28,7 @@ func TwoFactorVerifyPageHandler(appState *AppState) http.HandlerFunc {
 			return
 		}
 
-		_, err = appState.Store.GetSession(r.Context(), cookie.Value)
+		_, err = appState.Store.GetPendingSession(r.Context(), cookie.Value)
 		if err != nil {
 			http.Redirect(w, r, "/admin/login?error=Session+expired", http.StatusSeeOther)
 			return
@@ -60,7 +60,7 @@ func TwoFactorVerifySubmitHandler(appState *AppState) http.HandlerFunc {
 			return
 		}
 
-		pendingSession, err := appState.Store.GetSession(r.Context(), pendingCookie.Value)
+		pendingSession, err := appState.Store.GetPendingSession(r.Context(), pendingCookie.Value)
 		if err != nil {
 			http.Redirect(w, r, "/admin/login?error=Session+expired", http.StatusSeeOther)
 			return
@@ -110,11 +110,18 @@ func TwoFactorVerifySubmitHandler(appState *AppState) http.HandlerFunc {
 			return
 		}
 
+		ipAddress := r.RemoteAddr
+		userAgent := r.UserAgent()
+
+		session, err := appState.Store.CompletePendingSession(r.Context(), pendingCookie.Value, ipAddress, userAgent, 24*time.Hour)
+		if err != nil {
+			http.Redirect(w, r, "/admin/login?error=Failed+to+create+session", http.StatusSeeOther)
+			return
+		}
+
 		// Reset both rate limits on successful 2FA verification (login is now complete)
 		_ = appState.RateLimiter.Reset(r.Context(), rateLimitKey)
 		_ = appState.RateLimiter.Reset(r.Context(), "login:"+user.Username)
-
-		_ = appState.Store.DeleteSession(r.Context(), pendingCookie.Value)
 
 		http.SetCookie(w, &http.Cookie{ //nolint:gosec // Secure is enabled for HTTPS and intentionally disabled for local HTTP development.
 			Name:     appState.CookieName + "_pending",
@@ -125,15 +132,6 @@ func TwoFactorVerifySubmitHandler(appState *AppState) http.HandlerFunc {
 			Secure:   isSecureRequest(r),
 			SameSite: http.SameSiteLaxMode,
 		})
-
-		ipAddress := r.RemoteAddr
-		userAgent := r.UserAgent()
-
-		session, err := appState.Store.CreateSession(r.Context(), user.ID, ipAddress, userAgent, 24*time.Hour)
-		if err != nil {
-			http.Redirect(w, r, "/admin/login?error=Failed+to+create+session", http.StatusSeeOther)
-			return
-		}
 
 		log.Info("audit", "action", "login_2fa", "user_id", user.ID, "ip", ipAddress)
 

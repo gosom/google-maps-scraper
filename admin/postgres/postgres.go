@@ -310,46 +310,84 @@ func (s *store) ValidateBackupCode(ctx context.Context, userID int, code string)
 	return true, nil
 }
 
-// CreateSession creates a new session for a user.
+// CreateSession creates a fully authenticated session.
 func (s *store) CreateSession(ctx context.Context, userID int, ipAddress, userAgent string, duration time.Duration) (*admin.Session, error) {
-	sessionID, _ := cryptoext.GenerateRandomHexString(32)
-	expiresAt := time.Now().UTC().Add(duration)
-
-	var session admin.Session
-
-	err := s.db.QueryRow(ctx,
-		`INSERT INTO admin_sessions (id, user_id, expires_at, ip_address, user_agent)
-		 VALUES ($1, $2, $3, $4, $5)
-		 RETURNING id, user_id, created_at, expires_at, ip_address, user_agent`,
-		sessionID, userID, expiresAt, ipAddress, userAgent,
-	).Scan(&session.ID, &session.UserID, &session.CreatedAt, &session.ExpiresAt, &session.IPAddress, &session.UserAgent)
-	if err != nil {
-		return nil, err
-	}
-
-	return &session, nil
+	return s.createSession(ctx, userID, ipAddress, userAgent, duration, false)
 }
 
-// GetSession retrieves and validates a session.
-func (s *store) GetSession(ctx context.Context, sessionID string) (*admin.Session, error) {
-	var session admin.Session
+// CreatePendingSession creates a short-lived session for second-factor verification.
+func (s *store) CreatePendingSession(ctx context.Context, userID int, ipAddress, userAgent string, duration time.Duration) (*admin.Session, error) {
+	return s.createSession(ctx, userID, ipAddress, userAgent, duration, true)
+}
 
-	err := s.db.QueryRow(ctx,
-		`SELECT id, user_id, created_at, expires_at, ip_address, user_agent
-		 FROM admin_sessions WHERE id = $1`,
-		sessionID,
-	).Scan(&session.ID, &session.UserID, &session.CreatedAt, &session.ExpiresAt, &session.IPAddress, &session.UserAgent)
+func (s *store) createSession(ctx context.Context, userID int, ipAddress, userAgent string, duration time.Duration, pending bool) (*admin.Session, error) {
+	sessionID, err := cryptoext.GenerateRandomHexString(32)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, admin.ErrSessionNotFound
-		}
+		return nil, fmt.Errorf("generate session ID: %w", err)
+	}
 
+	return scanSession(s.db.QueryRow(ctx,
+		`INSERT INTO admin_sessions (session_token, user_id, expires_at, ip_address, user_agent, pending_2fa)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 RETURNING session_token, user_id, created_at, expires_at, ip_address, user_agent`,
+		sessionID, userID, time.Now().UTC().Add(duration), ipAddress, userAgent, pending,
+	))
+}
+
+// GetSession retrieves a fully authenticated session.
+func (s *store) GetSession(ctx context.Context, sessionID string) (*admin.Session, error) {
+	return s.getSession(ctx, sessionID, false)
+}
+
+// GetPendingSession retrieves a session awaiting second-factor verification.
+func (s *store) GetPendingSession(ctx context.Context, sessionID string) (*admin.Session, error) {
+	return s.getSession(ctx, sessionID, true)
+}
+
+func (s *store) getSession(ctx context.Context, sessionID string, pending bool) (*admin.Session, error) {
+	session, err := scanSession(s.db.QueryRow(ctx,
+		`SELECT session_token, user_id, created_at, expires_at, ip_address, user_agent
+		 FROM admin_sessions WHERE session_token = $1 AND pending_2fa = $2`,
+		sessionID, pending,
+	))
+	if err != nil {
 		return nil, err
 	}
 
-	if time.Now().After(session.ExpiresAt) {
+	if !time.Now().Before(session.ExpiresAt) {
 		_ = s.DeleteSession(ctx, sessionID)
 		return nil, admin.ErrSessionExpired
+	}
+
+	return session, nil
+}
+
+// CompletePendingSession consumes an unexpired challenge and rotates its ID in one write.
+func (s *store) CompletePendingSession(ctx context.Context, sessionID, ipAddress, userAgent string, duration time.Duration) (*admin.Session, error) {
+	newID, err := cryptoext.GenerateRandomHexString(32)
+	if err != nil {
+		return nil, fmt.Errorf("generate session ID: %w", err)
+	}
+
+	return scanSession(s.db.QueryRow(ctx,
+		`UPDATE admin_sessions
+		 SET session_token = $2, pending_2fa = FALSE, created_at = NOW(), expires_at = $3, ip_address = $4, user_agent = $5
+		 WHERE session_token = $1 AND pending_2fa AND expires_at > NOW()
+		 RETURNING session_token, user_id, created_at, expires_at, ip_address, user_agent`,
+		sessionID, newID, time.Now().UTC().Add(duration), ipAddress, userAgent,
+	))
+}
+
+func scanSession(row pgx.Row) (*admin.Session, error) {
+	var session admin.Session
+
+	err := row.Scan(&session.ID, &session.UserID, &session.CreatedAt, &session.ExpiresAt, &session.IPAddress, &session.UserAgent)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, admin.ErrSessionNotFound
+	}
+
+	if err != nil {
+		return nil, err
 	}
 
 	return &session, nil
@@ -357,7 +395,7 @@ func (s *store) GetSession(ctx context.Context, sessionID string) (*admin.Sessio
 
 // DeleteSession deletes a session.
 func (s *store) DeleteSession(ctx context.Context, sessionID string) error {
-	_, err := s.db.Exec(ctx, `DELETE FROM admin_sessions WHERE id = $1`, sessionID)
+	_, err := s.db.Exec(ctx, `DELETE FROM admin_sessions WHERE session_token = $1`, sessionID)
 	return err
 }
 
@@ -365,7 +403,7 @@ func (s *store) DeleteSession(ctx context.Context, sessionID string) error {
 // Used to invalidate other sessions after a password change.
 func (s *store) DeleteUserSessionsExcept(ctx context.Context, userID int, exceptSessionID string) error {
 	_, err := s.db.Exec(ctx,
-		`DELETE FROM admin_sessions WHERE user_id = $1 AND id != $2`,
+		`DELETE FROM admin_sessions WHERE user_id = $1 AND session_token != $2`,
 		userID, exceptSessionID,
 	)
 

@@ -49,6 +49,8 @@ After the initial deployment, push updates with:
 curl -fsSL https://raw.githubusercontent.com/gosom/google-maps-scraper/main/PROVISION | sh -s update
 ```
 
+When upgrading across the admin two-factor session migration, drain admin traffic from old server instances before running the update. Resume admin traffic on upgraded instances. Admins who signed in within the preceding five minutes must sign in again. Older completed sessions retain their original expiry.
+
 ## REST API
 
 All endpoints require an API key (`X-API-Key` header). Create keys from the admin UI.

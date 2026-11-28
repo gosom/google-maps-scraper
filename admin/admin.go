@@ -50,7 +50,11 @@ type IStore interface {
 
 	// Sessions
 	CreateSession(ctx context.Context, userID int, ipAddress, userAgent string, duration time.Duration) (*Session, error)
+	// GetSession accepts only fully authenticated sessions.
 	GetSession(ctx context.Context, sessionID string) (*Session, error)
+	CreatePendingSession(ctx context.Context, userID int, ipAddress, userAgent string, duration time.Duration) (*Session, error)
+	GetPendingSession(ctx context.Context, sessionID string) (*Session, error)
+	CompletePendingSession(ctx context.Context, sessionID, ipAddress, userAgent string, duration time.Duration) (*Session, error)
 	DeleteSession(ctx context.Context, sessionID string) error
 	DeleteUserSessionsExcept(ctx context.Context, userID int, exceptSessionID string) error
 	CleanupExpiredSessions(ctx context.Context) (int64, error)

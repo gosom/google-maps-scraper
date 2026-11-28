@@ -94,7 +94,7 @@ func LoginSubmitHandler(appState *AppState) http.HandlerFunc {
 			ipAddress := r.RemoteAddr
 			userAgent := r.UserAgent()
 
-			pendingSession, err := appState.Store.CreateSession(r.Context(), user.ID, ipAddress, userAgent, 5*time.Minute)
+			pendingSession, err := appState.Store.CreatePendingSession(r.Context(), user.ID, ipAddress, userAgent, 5*time.Minute)
 			if err != nil {
 				http.Redirect(w, r, "/admin/login?error=Failed+to+create+session", http.StatusSeeOther)
 				return
