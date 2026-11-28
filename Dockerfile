@@ -54,11 +54,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=playwright-deps /opt/browsers /opt/browsers
-COPY --from=playwright-deps /opt/ms-playwright-go /opt/ms-playwright-go
-
-RUN chmod -R 755 /opt/browsers \
-    && chmod -R 755 /opt/ms-playwright-go
+COPY --from=playwright-deps --chmod=0755 /opt/browsers /opt/browsers
+COPY --from=playwright-deps --chmod=0755 /opt/ms-playwright-go /opt/ms-playwright-go
 
 COPY --from=builder /usr/bin/google-maps-scraper /usr/bin/
 
