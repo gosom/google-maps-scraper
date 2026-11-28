@@ -66,4 +66,6 @@ The workflow validates the Makefile version, then runs the race tests, builds th
 
 To rehearse from a branch, select **Test the release with temporary image tags**. The workflow verifies the binaries and pulls and tests both images as `rehearsal-<run-id>` on both architectures. The rehearsal can use a Makefile version that has already shipped. Production image tags and GitHub releases are published only in release mode.
 
+When comparing release times, allow for the first run to populate four Docker build caches, one per image and architecture. Compare a subsequent source-only build on the same branch to measure how much the cached dependency layers save.
+
 For a manual release, `make release-checksums VERSION=X.Y.Z` generates `bin/checksums.txt` from existing binaries. Upload it with those exact binaries. This local command does not publish anything.
