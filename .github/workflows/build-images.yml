@@ -58,6 +58,9 @@ jobs:
           context: .
           file: ${{ matrix.image.dockerfile }}
           platforms: linux/${{ matrix.platform.arch }}
+          pull: true
+          cache-from: type=gha,scope=release-${{ matrix.image.name }}-${{ matrix.platform.arch }}
+          cache-to: type=gha,scope=release-${{ matrix.image.name }}-${{ matrix.platform.arch }},mode=max,ignore-error=true
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=${{ matrix.image.repository }},push-by-digest=true,name-canonical=true,push=true
       - name: Smoke-test the image
