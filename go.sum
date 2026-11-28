@@ -350,8 +350,8 @@ github.com/gosom/go-leadsdb v0.0.0-20251228094956-ed313efc171f h1:8KIQahEHhRiH57
 github.com/gosom/go-leadsdb v0.0.0-20251228094956-ed313efc171f/go.mod h1:OMwL4AkjK8P5taMjIMORw06LA9nszTY+WKnYlScLP+M=
 github.com/gosom/kit v0.0.0-20230309082109-543b32ac686a h1:5tcB33GTXm0pFUiEFpmE91tMsHQj+I+W7zubT8J/ugI=
 github.com/gosom/kit v0.0.0-20230309082109-543b32ac686a/go.mod h1:ngnWSsuBEpCA5Y43kZRa3x8RBYZZ4LDtvZHO4N5dHZ0=
-github.com/gosom/scrapemate v1.4.2 h1:mhWtRrz+NXbhdhyyKvzFAHwf8sjADgpq27rZoTDUTco=
-github.com/gosom/scrapemate v1.4.2/go.mod h1:1CApZ/M5UJs1lThGJdZ/q/aJh0HsQFebrGVfymYPsDE=
+github.com/gosom/scrapemate v1.5.0 h1:UJ9UUkJu0+qfu57T9RPeNVXG+PYRqn24e8/7FvD7ORg=
+github.com/gosom/scrapemate v1.5.0/go.mod h1:1CApZ/M5UJs1lThGJdZ/q/aJh0HsQFebrGVfymYPsDE=
 github.com/gostaticanalysis/analysisutil v0.7.1 h1:ZMCjoue3DtDWQ5WyU16YbjbQEQ3VuzwxALrpYd+HeKk=
 github.com/gostaticanalysis/analysisutil v0.7.1/go.mod h1:v21E3hY37WKMGSnbsw2S/ojApNWb6C1//mXO48CXbVc=
 github.com/gostaticanalysis/comment v1.4.2/go.mod h1:KLUTGDv6HOCotCH8h2erHKmpci2ZoR8VPu34YA2uzdM=
